@@ -136,7 +136,7 @@ export function CleanupPage(): React.ReactElement {
                   type="button"
                   disabled={!mergeInto[b.id]}
                   onClick={() => merge.mutate({ fromId: b.id, intoId: mergeInto[b.id]! })}
-                  className="h-10 rounded-ctl bg-accent px-3 text-sm font-semibold text-accent-ink disabled:opacity-40"
+                  className="key key-accent h-10 px-3 text-sm"
                 >
                   Fusionar
                 </button>
@@ -144,7 +144,7 @@ export function CleanupPage(): React.ReactElement {
                 <button
                   type="button"
                   onClick={() => confirm.mutate(b.id)}
-                  className="h-10 rounded-ctl border border-line px-3 text-sm font-medium"
+                  className="key key-quiet h-10 px-3 text-sm"
                 >
                   Es un edificio propio
                 </button>
@@ -177,7 +177,7 @@ export function CleanupPage(): React.ReactElement {
               <button
                 type="button"
                 onClick={() => dismiss.mutate(q.id)}
-                className="shrink-0 rounded-ctl border border-line px-2 py-1 text-xs"
+                className="key key-quiet shrink-0 px-2 py-1 text-xs"
               >
                 Revisada
               </button>

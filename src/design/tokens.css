@@ -1,9 +1,21 @@
 /*
- * Sistema de diseño — tomado del prototipo aprobado.
+ * Sistema de diseño.
  *
- * Petróleo frío sobre un fondo gris verdoso, no el azul genérico de antes.
- * Cada color de estado trae su tinte: el estado puede teñir una fila entera sin
- * recurrir a opacidades, que sobre fondo oscuro se ensucian.
+ * Petróleo frío sobre gris verdoso en claro —el prototipo aprobado, intacto—.
+ * En oscuro, grafito neutro: ni negro puro ni tinte de color.
+ *
+ * LA DECISIÓN QUE ORDENA TODO LO DEMÁS: cada estado tiene **dos** colores, no
+ * uno.
+ *
+ *   --accent  la MARCA. Texto, raíles, iconos. Contrasta contra el fondo.
+ *   --accent-fill / --accent-ink  el CUERPO de una tecla y su texto.
+ *
+ * Antes era un solo token para los dos trabajos, y ahí nacía el problema: un
+ * color que tiene que leerse como texto sobre fondo oscuro es forzosamente
+ * claro, y ese mismo color usado como relleno da un bloque de neón. Siete
+ * comprobaciones en verde eran siete bloques de verde menta bajando por la
+ * pantalla. Separados, un OK marcado es una tecla verde profunda con texto
+ * claro, que es como se ve el equipo de una sala de control.
  *
  * Los tokens van como triplete RGB sin envolver para que Tailwind pueda
  * aplicarles opacidad (`bg-accent/10`).
@@ -12,26 +24,37 @@
 :root {
   --ground: 236 240 240;
   --surface: 251 252 252;
+  --raised: 234 238 238;
   --sunken: 227 233 233;
   --line: 205 216 217;
   --line-soft: 223 231 231;
 
   --ink: 16 24 25;
   --ink-2: 65 83 87;
-  --muted: 100 122 127;
+  --muted: 88 108 113;
 
   --accent: 4 106 120;
+  --accent-fill: 4 106 120;
+  --accent-ink: 251 252 252;
   --mark: 0 140 158;
   --accent-tint: 223 239 241;
-  --accent-ink: 251 252 252;
 
   --ok: 19 122 71;
+  --ok-fill: 19 122 71;
+  --ok-ink: 240 250 244;
   --ok-tint: 226 241 233;
+
   --warn: 138 90 0;
+  --warn-fill: 138 90 0;
+  --warn-ink: 253 250 243;
   --warn-tint: 248 239 220;
+
   --crit: 176 35 24;
+  --crit-fill: 176 35 24;
+  --crit-ink: 253 244 243;
   --crit-tint: 250 232 230;
-  --na: 95 112 120;
+
+  --na: 86 102 110;
   --na-tint: 231 236 237;
 
   /*
@@ -44,65 +67,132 @@
   --r-tag: 4px;
 
   --lift: 0 1px 1px rgb(16 24 25 / 0.05), 0 18px 44px -26px rgb(16 24 25 / 0.4);
+
+  /*
+   * El brillo de una tecla.
+   *
+   * Se apaga en **22px fijos**, no en un porcentaje del alto. La diferencia
+   * importa: en porcentaje, un botón alto se lleva un degradado de arriba abajo
+   * por toda la cara y deja de parecer una tecla para parecer una rampa de
+   * color. En píxeles es siempre lo mismo, que es lo que pasa de verdad: la luz
+   * pega en el bisel de arriba, y el bisel mide lo que mide independientemente
+   * de lo grande que sea el botón.
+   *
+   * `--edge` es lo que le da canto: una línea de luz arriba y una sombra
+   * abajo, por dentro. Es el detalle que separa una tecla de un rectángulo
+   * pintado, y ninguno de los dos se nota por separado.
+   */
+  --sheen: linear-gradient(180deg, rgb(255 255 255 / 0.22), rgb(255 255 255 / 0) 22px);
+  --edge: inset 0 1px 0 rgb(255 255 255 / 0.3), inset 0 -1px 0 rgb(0 0 0 / 0.1);
+  --edge-quiet: inset 0 1px 0 rgb(255 255 255 / 0.6);
+
+  /*
+   * Curvas. Las de serie de CSS son demasiado flojas: les falta el golpe que
+   * hace que una animación parezca intencionada. Todo el movimiento de la
+   * aplicación sale de estas tres, nunca de una curva suelta.
+   */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-/* El tema oscuro se elige, no se invierte: los estados se aclaran para mantener
-   el contraste sobre fondo oscuro sin perder su identidad. */
+/*
+ * Tema oscuro. No es el claro invertido: es una paleta propia.
+ *
+ * El fondo sube de #0A1012 (casi negro con tinte petróleo) a #141618, un
+ * grafito neutro. Suena a poco y cambia todo: sobre negro puro las superficies
+ * no se separan —había diez puntos RGB entre el fondo y la tarjeta— y cualquier
+ * color encima sale disparado.
+ *
+ * Las marcas bajan mucho de croma y los rellenos se vuelven profundos. El
+ * contraste no baja: está calculado, y `npm run check:contrast` falla si
+ * alguien lo rompe.
+ */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --ground: 10 16 18;
-    --surface: 20 28 30;
-    --sunken: 27 37 40;
-    --line: 44 57 60;
-    --line-soft: 34 45 48;
+    --ground: 20 22 24;
+    --surface: 28 31 33;
+    --raised: 37 42 44;
+    --sunken: 16 18 19;
+    --line: 52 57 60;
+    --line-soft: 38 42 45;
 
-    --ink: 232 240 241;
-    --ink-2: 163 179 183;
-    --muted: 122 141 146;
+    --ink: 226 231 232;
+    --ink-2: 156 166 169;
+    --muted: 128 139 143;
 
-    --accent: 63 182 198;
-    --mark: 34 167 184;
-    --accent-tint: 12 39 44;
-    --accent-ink: 6 23 25;
+    --accent: 126 173 182;
+    --accent-fill: 21 79 90;
+    --accent-ink: 214 238 242;
+    --mark: 106 158 168;
+    --accent-tint: 18 38 42;
 
-    --ok: 79 194 134;
-    --ok-tint: 15 38 25;
-    --warn: 224 166 75;
-    --warn-tint: 42 32 19;
-    --crit: 242 130 122;
-    --crit-tint: 44 23 20;
+    --ok: 106 178 138;
+    --ok-fill: 25 71 50;
+    --ok-ink: 210 236 220;
+    --ok-tint: 22 36 28;
+
+    --warn: 199 154 94;
+    --warn-fill: 74 54 24;
+    --warn-ink: 245 232 213;
+    --warn-tint: 38 32 25;
+
+    --crit: 224 138 130;
+    --crit-fill: 108 42 37;
+    --crit-ink: 250 226 223;
+    --crit-tint: 42 26 24;
+
     --na: 139 154 161;
-    --na-tint: 27 37 40;
+    --na-tint: 30 34 37;
 
     --lift: 0 1px 1px rgb(0 0 0 / 0.5), 0 18px 44px -26px rgb(0 0 0 / 0.9);
+
+    --sheen: linear-gradient(180deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0) 22px);
+    --edge: inset 0 1px 0 rgb(255 255 255 / 0.1), inset 0 -1px 0 rgb(0 0 0 / 0.18);
+    --edge-quiet: inset 0 1px 0 rgb(255 255 255 / 0.05);
   }
 }
 
 /* El interruptor del usuario gana sobre la preferencia del sistema. */
 :root[data-theme='dark'] {
-  --ground: 10 16 18;
-  --surface: 20 28 30;
-  --sunken: 27 37 40;
-  --line: 44 57 60;
-  --line-soft: 34 45 48;
+  --ground: 20 22 24;
+  --surface: 28 31 33;
+  --raised: 37 42 44;
+  --sunken: 16 18 19;
+  --line: 52 57 60;
+  --line-soft: 38 42 45;
 
-  --ink: 232 240 241;
-  --ink-2: 163 179 183;
-  --muted: 122 141 146;
+  --ink: 226 231 232;
+  --ink-2: 156 166 169;
+  --muted: 128 139 143;
 
-  --accent: 63 182 198;
-  --mark: 34 167 184;
-  --accent-tint: 12 39 44;
-  --accent-ink: 6 23 25;
+  --accent: 126 173 182;
+  --accent-fill: 21 79 90;
+  --accent-ink: 214 238 242;
+  --mark: 106 158 168;
+  --accent-tint: 18 38 42;
 
-  --ok: 79 194 134;
-  --ok-tint: 15 38 25;
-  --warn: 224 166 75;
-  --warn-tint: 42 32 19;
-  --crit: 242 130 122;
-  --crit-tint: 44 23 20;
+  --ok: 106 178 138;
+  --ok-fill: 25 71 50;
+  --ok-ink: 210 236 220;
+  --ok-tint: 22 36 28;
+
+  --warn: 199 154 94;
+  --warn-fill: 74 54 24;
+  --warn-ink: 245 232 213;
+  --warn-tint: 38 32 25;
+
+  --crit: 224 138 130;
+  --crit-fill: 108 42 37;
+  --crit-ink: 250 226 223;
+  --crit-tint: 42 26 24;
+
   --na: 139 154 161;
-  --na-tint: 27 37 40;
+  --na-tint: 30 34 37;
 
   --lift: 0 1px 1px rgb(0 0 0 / 0.5), 0 18px 44px -26px rgb(0 0 0 / 0.9);
+
+  --sheen: linear-gradient(180deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0) 22px);
+  --edge: inset 0 1px 0 rgb(255 255 255 / 0.1), inset 0 -1px 0 rgb(0 0 0 / 0.18);
+  --edge-quiet: inset 0 1px 0 rgb(255 255 255 / 0.05);
 }

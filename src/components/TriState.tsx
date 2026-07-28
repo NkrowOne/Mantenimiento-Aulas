@@ -22,9 +22,17 @@ const OPTIONS: Array<{ value: CheckResult; label: string; symbol: string }> = [
   { value: 'na', label: 'N/A', symbol: '–' },
 ]
 
+/**
+ * La tecla marcada usa el relleno profundo del estado, no su color de marca.
+ *
+ * Es la diferencia entre un panel de sala de control y una plantilla: con el
+ * color de marca, siete comprobaciones en verde eran siete bloques de menta
+ * bajando por la pantalla. Con el relleno, son siete teclas verdes apagadas con
+ * el texto encendido.
+ */
 const SELECTED: Record<CheckResult, string> = {
-  ok: 'bg-ok text-white border-ok',
-  incidencia: 'bg-crit text-white border-crit',
+  ok: 'key-ok border-transparent',
+  incidencia: 'key-crit border-transparent',
   na: 'bg-na-tint text-na border-na/40',
 }
 
@@ -65,9 +73,9 @@ export function TriState({ value, onChange, label, hint }: Props): React.ReactEl
               aria-checked={selected}
               onClick={() => onChange(opt.value)}
               className={[
-                'flex h-11 w-[3.25rem] flex-col items-center justify-center rounded-ctl border',
-                'text-[0.625rem] font-semibold leading-none transition-colors',
-                selected ? SELECTED[opt.value] : 'border-line bg-surface text-muted',
+                'key flex h-11 w-[3.25rem] flex-col items-center justify-center border',
+                'text-[0.625rem] leading-none',
+                selected ? SELECTED[opt.value] : 'key-quiet text-muted',
               ].join(' ')}
             >
               <span aria-hidden className="mb-0.5 text-sm font-bold">

@@ -70,9 +70,12 @@ export function RoomListPage({ building, onPick, onBack }: Props): React.ReactEl
                 onClick={() => onPick(room)}
                 className="flex w-full items-center gap-3 px-4 py-3 text-left"
               >
+                {/* Raíl recto, no cápsula: mismo lenguaje que `StatTile`, y
+                    una cápsula de color en cada fila de una lista de 276 es
+                    justo el tic decorativo que sobra aquí. */}
                 <span
                   aria-hidden
-                  className={`h-8 w-1 shrink-0 rounded-full ${overdue ? 'bg-warn' : 'bg-ok'}`}
+                  className={`h-8 w-[3px] shrink-0 ${overdue ? 'bg-warn' : 'bg-ok'}`}
                 />
 
                 <span className="min-w-0 flex-1">

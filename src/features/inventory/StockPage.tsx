@@ -114,7 +114,7 @@ export function StockPage(): React.ReactElement {
                     <button
                       type="button"
                       onClick={() => move.mutate({ itemId: l.stock_item_id, qty: -1, kind: 'consumo' })}
-                      className="h-9 w-9 rounded-ctl border border-line font-semibold"
+                      className="key key-quiet h-9 w-9"
                       aria-label={`Consumir una unidad de ${l.name}`}
                     >
                       −
@@ -122,7 +122,7 @@ export function StockPage(): React.ReactElement {
                     <button
                       type="button"
                       onClick={() => move.mutate({ itemId: l.stock_item_id, qty: 1, kind: 'compra' })}
-                      className="h-9 w-9 rounded-ctl border border-line font-semibold"
+                      className="key key-quiet h-9 w-9"
                       aria-label={`Añadir una unidad de ${l.name}`}
                     >
                       +

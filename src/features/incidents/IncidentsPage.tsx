@@ -80,8 +80,10 @@ export function IncidentsPage(): React.ReactElement {
           return (
             <li key={i.id} className="py-3">
               <div className="flex items-start gap-3">
+                {/* Rectángulo, no píldora: esto es una etiqueta de un parte de
+                    trabajo. La cápsula en todo es el tic más repetido. */}
                 <span
-                  className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${STATE_STYLE[i.state]}`}
+                  className={`shrink-0 rounded-tag px-2 py-0.5 text-xs font-medium ${STATE_STYLE[i.state]}`}
                 >
                   {STATE_LABEL[i.state]}
                 </span>
@@ -101,7 +103,7 @@ export function IncidentsPage(): React.ReactElement {
                       <button
                         type="button"
                         onClick={() => advance.mutate({ id: i.id, state: 'en_curso' })}
-                        className="rounded-ctl border border-line px-2 py-1 text-xs font-medium"
+                        className="key key-quiet px-2 py-1 text-xs"
                       >
                         Empezar
                       </button>
@@ -109,7 +111,7 @@ export function IncidentsPage(): React.ReactElement {
                     <button
                       type="button"
                       onClick={() => advance.mutate({ id: i.id, state: 'resuelta' })}
-                      className="rounded-ctl bg-accent px-2 py-1 text-xs font-medium text-accent-ink"
+                      className="key key-accent px-2 py-1 text-xs"
                     >
                       Resolver
                     </button>

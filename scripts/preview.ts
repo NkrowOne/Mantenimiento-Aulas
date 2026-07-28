@@ -156,6 +156,62 @@ async function main(): Promise<void> {
   await page.waitForTimeout(400)
   await shot('revision-oscuro')
 
+  /*
+   * El colapso del bloque de incidencia, a cámara lenta.
+   *
+   * A velocidad normal una animación de 200ms no se puede juzgar en una
+   * captura: o está abierta o está cerrada. Multiplicada por siete se ve lo que
+   * de verdad hay que mirar —si el contenido se recorta limpio, si la opacidad
+   * y el alto van sincronizados— que es donde fallan estas cosas.
+   */
+  await page.emulateMedia({ colorScheme: 'light' })
+  await page.addStyleTag({
+    content: '.collapse-y, .collapse-y[data-open="true"] { transition-duration: 3s !important }',
+  })
+  await page.locator('button[role="radio"][aria-checked="false"]').nth(4).click()
+  // 150ms de 3s. La curva es `ease-out`, que arranca rapidísimo: a la mitad del
+  // tiempo ya está casi abierto, así que hay que mirar mucho antes.
+  await page.waitForTimeout(150)
+  await shot('animacion-a-media')
+
+  /*
+   * La lámpara encendida. Sin esto solo se comprueba el estado apagado, que es
+   * justamente el que no dice nada: el que hay que revisar es el otro.
+   */
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve, reject) => {
+      const open = indexedDB.open('mantenimiento-aulas')
+      open.onsuccess = () => {
+        const tx = open.result.transaction(['outbox'], 'readwrite')
+        for (let i = 0; i < 3; i++) {
+          tx.objectStore('outbox').put({
+            id: `demo-${i}`,
+            entity: 'inspection',
+            op: 'upsert',
+            payload: {},
+            createdAt: Date.now(),
+            attempts: 0,
+            nextAttemptAt: Date.now(),
+            status: 'pendiente',
+            lastError: null,
+          })
+        }
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      }
+      open.onerror = () => reject(open.error)
+    })
+  })
+  // Recarga obligatoria: la escritura va por IndexedDB en crudo, así que Dexie
+  // no se entera y `useLiveQuery` no se reevalúa. Es limitación del sembrado,
+  // no de la aplicación —ahí las escrituras pasan por Dexie y sí notifican—.
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.locator('input[name="pin"]').fill(PIN)
+  await page.getByRole('button', { name: 'Entrar' }).click()
+  await page.waitForTimeout(1200)
+  await page.locator('header').first().screenshot({ path: 'dist/preview-lampara.png' })
+  console.log('  dist/preview-lampara.png')
+
   await browser.close()
   server.close()
 }

@@ -31,13 +31,27 @@
     @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-ground;
   }
 
+  /*
+   * Movimiento reducido significa **más suave, no nada**.
+   *
+   * Antes esto mataba todas las duraciones con `!important`, incluidas las de
+   * color, que son justo las que ayudan a entender un cambio de estado: marcar
+   * OK pasaba a ser un salto seco. Ahora se conserva lo que se ve sin moverse
+   * —opacidad, color, sombra— y se retira todo lo que desplaza: `transform`,
+   * `grid-template-rows`, y las animaciones con fotogramas.
+   */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
     *::after {
-      animation-duration: 0.01ms !important;
+      animation-duration: 1ms !important;
       animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
+      transition-property: opacity, color, background-color, border-color, box-shadow !important;
+      transition-duration: 120ms !important;
+    }
+
+    .key:active {
+      transform: none;
     }
   }
 }
@@ -46,6 +60,59 @@
   .card {
     @apply bg-surface border border-line rounded-card;
     box-shadow: var(--lift);
+  }
+
+  /*
+   * La tecla.
+   *
+   * Se llama así porque es lo que es: una tecla de un panel, no un `<button>`
+   * genérico. Tres cosas la separan de un rectángulo pintado, y ninguna se nota
+   * por separado:
+   *
+   *  - `--sheen`, un degradado de ~4%. Superficie iluminada desde arriba, no
+   *    rampa de color.
+   *  - `--edge`, una línea de luz arriba y una sombra abajo, por dentro. Es lo
+   *    que le da canto.
+   *  - Se hunde al pulsar. 120ms, porque el técnico la toca cientos de veces al
+   *    día y a esa frecuencia cualquier cosa más lenta se convierte en retraso.
+   *
+   * El color lo pone la variante (`key-accent`, `key-ok`…), no esta clase.
+   */
+  .key {
+    @apply rounded-ctl font-semibold;
+    background-image: var(--sheen);
+    box-shadow: var(--edge);
+    transition:
+      transform 120ms var(--ease-out),
+      background-color 120ms var(--ease-out),
+      border-color 120ms var(--ease-out),
+      color 120ms var(--ease-out);
+  }
+
+  .key:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  .key:disabled {
+    @apply opacity-40;
+  }
+
+  .key-accent {
+    @apply bg-accent-fill text-accent-ink;
+  }
+
+  .key-ok {
+    @apply bg-ok-fill text-ok-ink;
+  }
+
+  .key-crit {
+    @apply bg-crit-fill text-crit-ink;
+  }
+
+  /* La tecla secundaria: mismo canto y mismo hundido, sin color propio. */
+  .key-quiet {
+    @apply border border-line bg-surface text-ink;
+    box-shadow: var(--edge-quiet);
   }
 
   /* Etiqueta en versalitas: la usan las cabeceras de sección y los eyebrows. */
@@ -57,4 +124,69 @@
     @apply overflow-x-auto;
     -webkit-overflow-scrolling: touch;
   }
+
+  /*
+   * Colapso vertical sin medir alturas en JavaScript.
+   *
+   * El truco es `grid-template-rows: 0fr → 1fr`: la rejilla interpola la
+   * fracción, así que se anima el alto automático de un contenido que no se
+   * conoce de antemano. Sin esto habría que medir con `scrollHeight` y volver a
+   * medir cada vez que el contenido cambia.
+   *
+   * La salida (160ms) es más rápida que la entrada (200ms) a propósito: al
+   * abrir el usuario está decidiendo, al cerrar el sistema está respondiendo.
+   */
+  .collapse-y {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transition:
+      grid-template-rows 160ms var(--ease-out),
+      opacity 160ms var(--ease-out);
+  }
+
+  .collapse-y > * {
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .collapse-y[data-open='true'] {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    transition:
+      grid-template-rows 200ms var(--ease-out),
+      opacity 200ms var(--ease-out);
+  }
+}
+
+/*
+ * Entrada de un panel anclado. Nunca desde `scale(0)`: nada en el mundo real
+ * aparece de la nada, y a 0 se ve como surgido del vacío. Desde 0.97 ya tiene
+ * forma, como un globo desinflado.
+ *
+ * Va como fotogramas y no como transición a propósito: es una animación de
+ * montaje, de una sola vez, que nadie va a interrumpir a media reproducción.
+ */
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+/*
+ * La franja de «hay una versión nueva» entra por el borde inferior, que es donde
+ * vive. Es de las poquísimas cosas de esta aplicación que se ven una vez cada
+ * varios meses, así que aquí sí cabe un gesto: la curva es la de los cajones de
+ * iOS, y 260ms, porque no compite con nada.
+ */
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+}
+
+.update-bar {
+  animation: slide-up 260ms var(--ease-drawer);
 }

@@ -88,7 +88,7 @@ export function ReportsPage(): React.ReactElement {
             type="button"
             disabled={!from || !to || generate.isPending}
             onClick={() => generate.mutate({ kind: 'personalizado', from, to })}
-            className="h-11 rounded-ctl bg-accent px-4 text-sm font-semibold text-accent-ink disabled:opacity-40"
+            className="key key-accent h-11 px-4 text-sm"
           >
             {generate.isPending ? 'Generando…' : 'Generar'}
           </button>
@@ -114,7 +114,7 @@ export function ReportsPage(): React.ReactElement {
             <button
               type="button"
               onClick={() => void download(r.storage_path)}
-              className="rounded-ctl border border-line px-3 py-1.5 text-xs font-medium"
+              className="key key-quiet px-3 py-1.5 text-xs"
             >
               Descargar
             </button>

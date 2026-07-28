@@ -52,6 +52,15 @@ export function baseOption(): Record<string, unknown> {
 
   return {
     color: [...categorical()],
+    /*
+     * Sin animación de dibujado, y es una decisión, no un olvido.
+     *
+     * Un gráfico que se dibuja solo obliga a esperar para poder leerlo. Esto es
+     * dato que alguien está consultando para decidir a qué aula va, no una
+     * pantalla de bienvenida. Además iguala lo que ya hace el worker de
+     * informes, que renderiza sin navegador: el panel y el PDF salen idénticos.
+     */
+    animation: false,
     textStyle: { fontFamily: '"IBM Plex Sans Variable", system-ui, sans-serif', color: ink },
     grid: { left: 8, right: 16, top: 28, bottom: 8, containLabel: true },
     tooltip: {

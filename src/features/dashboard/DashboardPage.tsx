@@ -124,9 +124,12 @@ export function DashboardPage(): React.ReactElement {
                   <td className="py-2 text-muted">{l.projector_hours ?? '—'} h</td>
                   <td className="py-2 text-right">
                     <span className="inline-flex items-center gap-2">
-                      <span className="h-1.5 w-16 overflow-hidden rounded-full bg-line">
+                      {/* Es una medida leída de un proyector, no una barra de
+                          progreso: recta, y sin animarse al entrar — animarla
+                          obligaría a esperar para poder leerla. */}
+                      <span className="h-1.5 w-16 overflow-hidden bg-line">
                         <span
-                          className="block h-full rounded-full bg-crit"
+                          className="block h-full bg-crit"
                           style={{ width: `${Math.max(2, l.lamp_pct * 100)}%` }}
                         />
                       </span>

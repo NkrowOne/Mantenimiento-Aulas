@@ -160,7 +160,7 @@ export function App(): React.ReactElement {
                   void lock().then(() => setUnlocked(false))
                 }
               }}
-              className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-muted"
+              className="key key-quiet px-3 py-1.5 text-xs font-medium text-muted"
               title="La sesión no caduca sola: solo termina aquí."
             >
               Cerrar sesión

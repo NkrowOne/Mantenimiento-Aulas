@@ -152,7 +152,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
           <button
             type="submit"
             disabled={busy || pin.length < MIN_PIN_LENGTH}
-            className="h-touch rounded-ctl bg-accent font-semibold text-accent-ink disabled:opacity-40"
+            className="key key-accent h-touch"
           >
             {busy ? 'Un momento…' : enrolling ? 'Dar de alta' : 'Entrar'}
           </button>

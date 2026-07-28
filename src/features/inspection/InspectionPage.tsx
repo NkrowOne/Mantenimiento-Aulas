@@ -76,21 +76,27 @@ export function InspectionPage({
       />
 
       {/* Revisión por excepción: primero la vía rápida, y solo se baja al
-          detalle quien tenga algo que reportar. */}
-      {missing.length > 0 && (
-        <div className="px-4 pt-4">
-          <button
-            type="button"
-            onClick={markRestOk}
-            className="flex h-touch w-full items-center justify-center gap-2 rounded-ctl bg-ok font-semibold text-white"
-          >
-            <span aria-hidden className="text-lg">✓</span>
-            {draft.checks.size === 0
-              ? 'Todo correcto'
-              : `Marcar OK las ${missing.length} restantes`}
-          </button>
+          detalle quien tenga algo que reportar.
+
+          Se queda montado y colapsa en vez de desaparecer: al pulsarlo se va y
+          la lista entera saltaba setenta píxeles hacia arriba, justo debajo del
+          dedo. `inert` lo saca del orden de tabulación mientras está cerrado. */}
+      <div className="collapse-y" data-open={missing.length > 0} inert={missing.length === 0}>
+        <div>
+          <div className="px-4 pt-4">
+            <button
+              type="button"
+              onClick={markRestOk}
+              className="key key-ok flex h-touch w-full items-center justify-center gap-2"
+            >
+              <span aria-hidden className="text-lg">✓</span>
+              {draft.checks.size === 0
+                ? 'Todo correcto'
+                : `Marcar OK las ${missing.length} restantes`}
+            </button>
+          </div>
         </div>
-      )}
+      </div>
 
       <div className="divide-y divide-line px-4">
         {applicable.map(({ key, applicable: isApplicable }) => {
@@ -118,35 +124,42 @@ export function InspectionPage({
                 onChange={(result) => setCheck(key, result)}
               />
 
-              {check?.result === 'incidencia' && (
-                <div className="pb-3">
-                  <p className="eyebrow mb-2">Gravedad</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {SEVERITIES.map((s) => (
-                      <button
-                        key={s.value}
-                        type="button"
-                        onClick={() => setCheck(key, 'incidencia', { severity: s.value })}
-                        className={`rounded-ctl border px-2 py-2 text-xs font-medium ${
-                          check.severity === s.value
-                            ? 'border-crit bg-crit text-white'
-                            : 'border-line bg-surface text-muted'
-                        }`}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
+              {/* El detalle de la incidencia se despliega, no aparece de golpe.
+                  Marcar «Falla» insertaba de repente ochenta píxeles en mitad de
+                  la lista y todo lo de abajo se teleportaba. */}
+              <div
+                className="collapse-y"
+                data-open={check?.result === 'incidencia'}
+                inert={check?.result !== 'incidencia'}
+              >
+                <div>
+                  <div className="pb-3">
+                    <p className="eyebrow mb-2">Gravedad</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {SEVERITIES.map((s) => (
+                        <button
+                          key={s.value}
+                          type="button"
+                          onClick={() => setCheck(key, 'incidencia', { severity: s.value })}
+                          className={`key px-2 py-2 text-xs ${
+                            check?.severity === s.value ? 'key-crit' : 'key-quiet text-muted'
+                          }`}
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
 
-                  <textarea
-                    value={check.note ?? ''}
-                    onChange={(e) => setCheck(key, 'incidencia', { note: e.target.value })}
-                    placeholder="¿Qué has visto?"
-                    rows={2}
-                    className="mt-2 w-full rounded-ctl border border-crit/25 bg-surface p-2 text-sm"
-                  />
+                    <textarea
+                      value={check?.note ?? ''}
+                      onChange={(e) => setCheck(key, 'incidencia', { note: e.target.value })}
+                      placeholder="¿Qué has visto?"
+                      rows={2}
+                      className="mt-2 w-full rounded-ctl border border-crit/25 bg-surface p-2 text-sm"
+                    />
+                  </div>
                 </div>
-              )}
+              </div>
 
               {check?.result === 'ok' && measure && (
                 <label className="mb-4 flex items-center gap-3 text-sm">
@@ -183,7 +196,7 @@ export function InspectionPage({
           <button
             type="button"
             onClick={() => fileInput.current?.click()}
-            className="h-touch w-full rounded-ctl border-2 border-dashed border-line font-medium text-muted"
+            className="key h-touch w-full border-2 border-dashed border-line bg-transparent text-muted shadow-none"
           >
             {photoCount > 0 ? `${photoCount} foto${photoCount === 1 ? '' : 's'} · añadir otra` : 'Añadir foto'}
           </button>
@@ -223,7 +236,7 @@ export function InspectionPage({
             type="button"
             disabled={missing.length > 0}
             onClick={() => void complete().then(() => onDone(false))}
-            className="h-touch flex-1 rounded-ctl border border-line font-semibold disabled:opacity-40"
+            className="key key-quiet h-touch flex-1"
           >
             Guardar
           </button>
@@ -231,7 +244,7 @@ export function InspectionPage({
             type="button"
             disabled={missing.length > 0}
             onClick={() => void complete().then(() => onDone(true))}
-            className="h-touch flex-[2] rounded-ctl bg-accent font-semibold text-accent-ink disabled:opacity-40"
+            className="key key-accent h-touch flex-[2]"
           >
             Guardar y siguiente sala
           </button>
