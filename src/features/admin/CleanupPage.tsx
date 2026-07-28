@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { AssetTypeTray } from './AssetTypeTray'
 
 interface ProvisionalBuilding {
   id: string
@@ -187,6 +188,8 @@ export function CleanupPage(): React.ReactElement {
 
         {quarantine?.length === 0 && <p className="mt-4 text-sm text-muted">Nada pendiente de revisar.</p>}
       </section>
+
+      <AssetTypeTray />
     </div>
   )
 }

@@ -86,6 +86,10 @@ if [[ "${1:-}" == '--con-seed' ]]; then
     [ -f supabase/seed.sql ] || fail 'No existe supabase/seed.sql. Ejecuta antes: npm run import:excel -- <xlsx>'
     docker compose exec -T db psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 < supabase/seed.sql
     ok 'seed cargado'
+    # Las migraciones corrieron antes que el seed, así que cuando el relleno de
+    # inventario se ejecutó no había ni una sala. Se repite ahora que sí las hay.
+    docker compose exec -T db psql -U postgres -d postgres -q -c 'select public.backfill_room_assets()' >/dev/null
+    ok 'inventario de las salas materializado'
   fi
 fi
 

@@ -50,7 +50,13 @@ export function RoomPlate({ building, zone, title, code, onBack }: Props): React
           <p className="font-mono text-[0.625rem] font-bold uppercase tracking-[0.17em] text-muted">
             {building} · {zone}
           </p>
-          <h1 className="mt-1 truncate text-[1.6rem] font-bold leading-none tracking-tight">
+          {/*
+            `leading-none` recortaba las letras con trazo descendente: la caja de
+            línea mide exactamente 1em, `truncate` esconde lo que se salga, y la
+            «g» de Criminología caía justo por debajo. Con 1.2 hay sitio para el
+            descendente sin que el título deje de ser compacto.
+          */}
+          <h1 className="mt-1 truncate text-[1.6rem] font-bold leading-[1.2] tracking-tight">
             {title}
           </h1>
         </div>

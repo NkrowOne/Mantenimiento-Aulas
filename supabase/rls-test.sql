@@ -260,3 +260,160 @@ begin;
     else 'FALLO: ve ' || (select count(*) from rooms) || ' salas'
   end as resultado;
 rollback;
+
+\echo ''
+\echo '=== 14. Un técnico da de alta un tipo de equipo, pero SIN confirmar ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  -- El caso real: está en un aula, encuentra un aparato que no está en el
+  -- catálogo y lo apunta. Si esto no funciona, no lo apunta.
+  insert into asset_types (id, name) values
+    ('aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', 'Cañón corto de prueba');
+
+  select case
+    when (select confirmed from asset_types where id = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa') = false
+    then 'OK: el tipo entra sin confirmar'
+    else 'FALLO: ha entrado ya confirmado'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 15. Un técnico NO puede autoconfirmarse un tipo ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  savepoint s;
+
+  -- Ni colándolo en el alta...
+  do $$
+  begin
+    insert into asset_types (id, name, confirmed) values
+      ('bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb', 'Tipo colado', true);
+    raise exception 'FALLO: ha podido crear un tipo ya confirmado';
+  exception when insufficient_privilege then
+    raise notice 'OK: RLS impidió crear un tipo confirmado';
+  end $$;
+  rollback to savepoint s;
+
+  -- ...ni llamando a la función del coordinador.
+  do $$
+  begin
+    perform public.confirm_asset_type(public.asset_type_id('Proyector'));
+    raise exception 'FALLO: un técnico ha confirmado un tipo';
+  exception when raise_exception then
+    if sqlerrm like 'FALLO%' then raise; end if;
+    raise notice 'OK: confirm_asset_type rechazó al técnico';
+  end $$;
+  rollback to savepoint s;
+rollback;
+
+\echo ''
+\echo '=== 16. El coordinador confirma, corrige y fusiona ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  insert into asset_types (id, name) values
+    ('cccccccc-1111-4111-8111-cccccccccccc', 'Amplificador raro');
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+
+  select public.confirm_asset_type('cccccccc-1111-4111-8111-cccccccccccc');
+
+  -- Corregir a otra palabra: el nombre viejo tiene que quedarse de alias, o
+  -- quien lo teclee mañana creará un duplicado en vez de encontrar este.
+  select public.rename_asset_type('cccccccc-1111-4111-8111-cccccccccccc', 'Amplificador de sala');
+
+  select case
+    when (select name from asset_types where id = 'cccccccc-1111-4111-8111-cccccccccccc')
+         = 'Amplificador de sala'
+     and (select 'Amplificador raro' = any(aliases) from asset_types
+           where id = 'cccccccc-1111-4111-8111-cccccccccccc')
+     and public.asset_type_id('Amplificador raro') = 'cccccccc-1111-4111-8111-cccccccccccc'
+    then 'OK: renombrado, y el nombre viejo sigue encontrándolo'
+    else 'FALLO: el renombrado no conservó el nombre anterior'
+  end as resultado;
+
+  -- Corregir solo la tilde NO debe dejar un alias redundante: la búsqueda ya
+  -- normaliza, así que «Canon» encontraría «Cañón» sin ayuda.
+  select public.rename_asset_type('cccccccc-1111-4111-8111-cccccccccccc', 'Amplificador de salá');
+
+  select case
+    when (select cardinality(aliases) from asset_types
+           where id = 'cccccccc-1111-4111-8111-cccccccccccc') = 1
+    then 'OK: una corrección de tilde no añade alias de más'
+    else 'FALLO: se acumuló un alias que la normalización ya cubría'
+  end as resultado;
+
+  -- Fusionar mueve los equipos y hace que el nombre absorbido resuelva al bueno.
+  select public.merge_asset_type(
+    'cccccccc-1111-4111-8111-cccccccccccc',
+    public.asset_type_id('Proyector'));
+
+  select case
+    when (select merged_into from asset_types where id = 'cccccccc-1111-4111-8111-cccccccccccc')
+         = public.asset_type_id('Proyector')
+     and public.asset_type_id('Amplificador raro') = public.asset_type_id('Proyector')
+    then 'OK: fusionado, y el nombre absorbido ya resuelve a Proyector'
+    else 'FALLO: la fusión no redirigió el nombre'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 17. Dos equipos con la misma etiqueta en una sala: imposible ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  savepoint s;
+
+  -- Es lo que hace legible una incidencia: si hay dos «Pantalla 2», el parte
+  -- no dice cuál de las dos falla.
+  do $$
+  begin
+    insert into assets (asset_type_id, room_id, label)
+    select a.asset_type_id, a.room_id, a.label
+      from assets a
+     where a.room_id is not null and a.label is not null and a.status <> 'retirado'
+     limit 1;
+    raise exception 'FALLO: ha entrado una etiqueta duplicada en la misma sala';
+  exception when unique_violation then
+    raise notice 'OK: el índice impidió la etiqueta duplicada';
+  end $$;
+  rollback to savepoint s;
+rollback;
+
+\echo ''
+\echo '=== 18. El mismo nombre de tipo no puede entrar dos veces ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  savepoint s;
+
+  -- Aquí la defensa es del servidor. La del cliente es el id derivado del
+  -- nombre, que hace que las dos altas sean literalmente la misma fila.
+  do $$
+  begin
+    insert into asset_types (id, name) values
+      ('dddddddd-1111-4111-8111-dddddddddddd', 'PROYECTOR');
+    raise exception 'FALLO: ha entrado un segundo «Proyector»';
+  exception when unique_violation then
+    raise notice 'OK: el índice normalizado bloqueó el duplicado de grafía';
+  end $$;
+  rollback to savepoint s;
+rollback;
+
+\echo ''
+\echo '=== 19. Un renombrado no puede dejar un alias ambiguo ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  -- «Canon» ya es alias de Proyector en el catálogo base.
+  insert into asset_types (id, name) values
+    ('eeeeeeee-1111-4111-8111-eeeeeeeeeeee', 'Canon');
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  select public.rename_asset_type('eeeeeeee-1111-4111-8111-eeeeeeeeeeee', 'Proyector de repuesto');
+
+  select case
+    when not (select 'Canon' = any(aliases) from asset_types
+               where id = 'eeeeeeee-1111-4111-8111-eeeeeeeeeeee')
+     and public.asset_type_id('Canon') = public.asset_type_id('Proyector')
+    then 'OK: no se robó el alias; «Canon» sigue siendo Proyector'
+    else 'FALLO: «Canon» quedó apuntando a dos tipos'
+  end as resultado;
+rollback;

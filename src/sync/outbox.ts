@@ -18,16 +18,22 @@ const TABLE: Record<OutboxEntry['entity'], string> = {
   stock_movement: 'stock_movements',
   attachment: 'attachments',
   asset_event: 'asset_events',
+  asset_type: 'asset_types',
+  asset: 'assets',
 }
 
 /** Orden de subida: una revisión debe existir antes que sus checks. */
 const ORDER: Record<OutboxEntry['entity'], number> = {
-  inspection: 0,
-  inspection_check: 1,
-  incident: 2,
-  asset_event: 3,
-  stock_movement: 4,
-  attachment: 5,
+  // Un tipo tiene que existir antes que el elemento que lo usa, y el elemento
+  // antes que la comprobación que lo nombra.
+  asset_type: 0,
+  asset: 1,
+  inspection: 2,
+  inspection_check: 3,
+  incident: 4,
+  asset_event: 5,
+  stock_movement: 6,
+  attachment: 7,
 }
 
 export type SyncState = 'inactivo' | 'sincronizando' | 'sin-conexion' | 'error'
@@ -67,12 +73,29 @@ function isPermanentFailure(status: number | undefined): boolean {
   return status >= 400 && status < 500
 }
 
+/**
+ * Entidades que al chocar no se pisan, se ignoran.
+ *
+ * Un tipo de equipo lo puede crear cualquiera desde un aula, y su id sale del
+ * nombre, así que dos técnicos sin cobertura que registren «Cañón corto» envían
+ * exactamente la misma fila. Con un upsert normal la segunda se convierte en un
+ * UPDATE, que el técnico no tiene permiso para hacer: acabaría rechazada y
+ * apareciendo como un error que no lo es.
+ *
+ * Y protege lo importante: que un alta repetida no pueda devolver a «sin
+ * confirmar» un tipo que el coordinador ya validó.
+ */
+const IGNORE_DUPLICATES = new Set<OutboxEntry['entity']>(['asset_type'])
+
 async function pushEntry(entry: OutboxEntry): Promise<void> {
   await db.outbox.update(entry.id, { status: 'enviando' })
 
   const { error, status } = await supabase
     .from(TABLE[entry.entity])
-    .upsert(entry.payload, { onConflict: 'id' })
+    .upsert(entry.payload, {
+      onConflict: 'id',
+      ignoreDuplicates: IGNORE_DUPLICATES.has(entry.entity),
+    })
 
   if (!error) {
     await db.outbox.delete(entry.id)

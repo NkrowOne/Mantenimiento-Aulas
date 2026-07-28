@@ -135,11 +135,51 @@ where code = '2.3';
 update rooms set active = false where code = '0.6';
 ```
 
-**`capabilities` es lo que hace el formulario rápido.** Si dice que la sala no
-tiene micrófono, esa comprobación nace en «No aplica» y el técnico no la toca.
-Mantenerlo al día es lo que mantiene la revisión en dos o tres toques.
+**`capabilities` describe el equipamiento**, pero ya no es lo que dibuja el
+formulario: la revisión pregunta por los **elementos** de `assets`, uno por
+aparato. Si cambias `capabilities`, materializa los elementos que falten:
+
+```sql
+select public.backfill_room_assets();   -- idempotente, no duplica nada
+```
 
 Campos: `proyector`, `altavoces`, `camara`, `microfono`, `botonera`, `tv`.
+
+## Catálogo de equipos
+
+Un técnico puede **dar de alta un tipo desde el aula**. Entra sin confirmar, sale
+en naranja y **se usa igual**: bloquear la revisión hasta que alguien apruebe un
+nombre es el camino más corto a que el equipo deje de apuntar lo que encuentra.
+
+La contrapartida está en **Datos → Equipos sin validar**, y tiene tres salidas.
+Ninguna es borrar: lo que alguien apuntó porque lo tenía delante existe.
+
+| | Cuándo | Qué hace |
+|---|---|---|
+| **Confirmar** | Era un tipo nuevo legítimo | Deja de salir en naranja |
+| **Corregir nombre** | Estaba bien pero mal escrito | Renombra y **guarda el nombre viejo como alias**, así quien lo teclee mañana encuentra este |
+| **Fusionar** | Ya existía con otra palabra | Mueve los equipos al tipo bueno y el nombre absorbido pasa a ser alias suyo |
+
+Los duplicados de grafía —«Micrófono» y «microfono»— no llegan aquí: los para el
+índice único sobre el nombre normalizado, y el cliente refuerza lo mismo
+derivando el id del nombre, así que dos técnicos sin cobertura que registren lo
+mismo generan **la misma fila**. Lo que sí llega es el duplicado de vocabulario
+—«Cañón» y «Proyector»—, y para eso está la fusión.
+
+Los alias son la mitad del valor: quien escribe `jab` encuentra el micrófono que
+ya existe y nunca llega a la opción de crear.
+
+```sql
+-- Ver qué hay pendiente y cuánto se usa
+select t.name, count(a.id) as en_salas
+  from asset_types t left join assets a on a.asset_type_id = t.id
+ where not t.confirmed and t.merged_into is null
+ group by t.name order by 2 desc;
+
+-- Añadir un alias a mano
+update asset_types set aliases = aliases || 'proyeltor'
+ where id = public.asset_type_id('Proyector');
+```
 
 Todo cambio en `rooms`, `buildings`, `stock_items`, `assets`, `incidents` y
 `profiles` **queda auditado** con autor y valores anterior y posterior:

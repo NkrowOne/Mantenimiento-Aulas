@@ -1,17 +1,13 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { RoomPlate } from '@/components/RoomPlate'
 import { TriState } from '@/components/TriState'
+import { RoomInventory } from '@/features/inventory/RoomInventory'
 import { PHOTO_ACCEPT, capturePhoto } from '@/lib/photos'
-import {
-  CHECK_HINTS,
-  CHECK_LABELS,
-  CHECK_MEASURE,
-  type CheckKey,
-  type Room,
-  type Severity,
-} from '@/domain/types'
+import { db } from '@/db/dexie'
+import { type CheckKey, type Room, type Severity } from '@/domain/types'
 import { displayRoomCode } from '@/domain/normalize'
-import { checksForRoom, useInspection } from './useInspection'
+import { useInspection } from './useInspection'
 
 interface Props {
   room: Room
@@ -37,19 +33,23 @@ export function InspectionPage({
   onDone,
   onBack,
 }: Props): React.ReactElement {
-  const { draft, saving, setCheck, setNotes, markRestOk, complete } = useInspection(room, userId)
+  const { draft, rows, saving, setCheck, setNotes, markRestOk, complete } = useInspection(room, userId)
   const [photoError, setPhotoError] = useState<string | null>(null)
   const [photoCount, setPhotoCount] = useState(0)
   const fileInput = useRef<HTMLInputElement>(null)
+
+  const assets = useLiveQuery(
+    () => db.assets.where('room_id').equals(room.id).toArray(),
+    [room.id],
+  )
+  const types = useLiveQuery(() => db.assetTypes.toArray(), [])
+  const typesById = useMemo(() => new Map((types ?? []).map((t) => [t.id, t])), [types])
 
   if (!draft) {
     return <p className="p-6 text-muted">Preparando…</p>
   }
 
-  const applicable = checksForRoom(room)
-  const missing = applicable.filter(
-    ({ key, applicable: ok }) => ok && !draft.checks.get(key),
-  )
+  const missing = rows.filter((row) => !draft.checks.get(row.key))
   const incidents = [...draft.checks.values()].filter((c) => c.result === 'incidencia')
   const needsPhoto = incidents.length > 0 && photoCount === 0
 
@@ -99,9 +99,10 @@ export function InspectionPage({
       </div>
 
       <div className="divide-y divide-line px-4">
-        {applicable.map(({ key, applicable: isApplicable }) => {
+        {rows.map((row) => {
+          const key = row.key
           const check = draft.checks.get(key)
-          const measure = CHECK_MEASURE[key]
+          const measure = row.measure
 
           return (
             <div
@@ -118,8 +119,12 @@ export function InspectionPage({
               }
             >
               <TriState
-                label={CHECK_LABELS[key]}
-                hint={isApplicable ? CHECK_HINTS[key] : 'La sala no lo tiene'}
+                label={row.label}
+                hint={row.hint}
+                /* Naranja mientras nadie lo valida, y usable igual: bloquear la
+                   revisión hasta que alguien apruebe un nombre sería el camino
+                   más corto a que el equipo deje de apuntar lo que encuentra. */
+                flag={row.pending ? 'Sin validar' : null}
                 value={check?.result ?? null}
                 onChange={(result) => setCheck(key, result)}
               />
@@ -182,7 +187,19 @@ export function InspectionPage({
             </div>
           )
         })}
+      </div>
 
+      {/* El inventario, aquí y no en otra pantalla: el momento en que alguien
+          descubre que está mal es estando delante del aparato. */}
+      <RoomInventory
+        roomId={room.id}
+        userId={userId}
+        assets={assets ?? []}
+        types={types ?? []}
+        typesById={typesById}
+      />
+
+      <div className="border-t border-line px-4">
         <div className="py-4">
           <p className="eyebrow mb-2">Fotos y observaciones</p>
 
@@ -196,8 +213,9 @@ export function InspectionPage({
           <button
             type="button"
             onClick={() => fileInput.current?.click()}
-            className="key h-touch w-full border-2 border-dashed border-line bg-transparent text-muted shadow-none"
+            className="key flex h-touch w-full items-center justify-center gap-2 border-2 border-dashed border-line bg-transparent text-muted shadow-none"
           >
+            <span aria-hidden className="text-lg leading-none">+</span>
             {photoCount > 0 ? `${photoCount} foto${photoCount === 1 ? '' : 's'} · añadir otra` : 'Añadir foto'}
           </button>
 

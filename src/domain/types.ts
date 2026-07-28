@@ -11,10 +11,66 @@ export type Role = 'tecnico' | 'supervisor' | 'admin'
 /** Resultado de una comprobación. El tri-estado unificado de todo el formulario. */
 export type CheckResult = 'ok' | 'incidencia' | 'na'
 
-/** Las cuatro comprobaciones fijas, más las que dependan del equipamiento de la sala. */
-export type CheckKey = 'pantallas' | 'microfono' | 'red' | 'sonido' | 'proyector' | 'camara' | 'botonera'
+/**
+ * Clave de una comprobación dentro de una revisión.
+ *
+ * Dos formas:
+ *  - `red` — una comprobación **de la sala**, que no es ningún aparato.
+ *  - `asset:<uuid>` — una comprobación **de un elemento** del inventario.
+ *
+ * La segunda es el cambio de fondo. Antes había una casilla «Pantallas» que
+ * tapaba tres objetos distintos: si fallaba, el parte decía que algo de las
+ * pantallas iba mal, pero no cuál. Ahora la revisión pregunta por el Proyector,
+ * por la Pantalla y por la Pantalla 2 por separado, y una incidencia apunta a un
+ * aparato con su número de serie.
+ */
+export type CheckKey = string
 
-export const CHECK_LABELS: Record<CheckKey, string> = {
+/** Lo que se comprueba en la sala y no en un aparato concreto. */
+export type RoomCheckKey = 'red'
+
+export const ROOM_CHECKS: RoomCheckKey[] = ['red']
+
+export const ROOM_CHECK_LABELS: Record<RoomCheckKey, string> = {
+  red: 'Red',
+}
+
+/**
+ * Qué hay que mirar en cada comprobación.
+ *
+ * Idea tomada del prototipo aprobado: sin esto, «Red» es ambiguo y cada técnico
+ * comprueba una cosa distinta. Con el subtítulo, la revisión es repetible entre
+ * personas.
+ */
+export const ROOM_CHECK_HINTS: Record<RoomCheckKey, string> = {
+  red: 'Conectividad del puesto',
+}
+
+export const ROOM_CHECK_MEASURE: Partial<Record<RoomCheckKey, { unit: string; label: string }>> = {
+  red: { unit: 'Mbps', label: 'Velocidad medida' },
+}
+
+/** La medida que se le pide a un elemento, si su tipo la lleva. */
+export const LAMP_MEASURE = { unit: 'h', label: 'Horas de lámpara' } as const
+
+const ASSET_PREFIX = 'asset:'
+
+export function assetCheckKey(assetId: string): CheckKey {
+  return `${ASSET_PREFIX}${assetId}`
+}
+
+export function assetIdFromCheckKey(key: CheckKey): string | null {
+  return key.startsWith(ASSET_PREFIX) ? key.slice(ASSET_PREFIX.length) : null
+}
+
+/**
+ * Nombres de las comprobaciones fijas que existieron antes del inventario.
+ *
+ * No se usan para revisar: están para que una revisión guardada entonces se
+ * siga leyendo con palabras y no con claves. Borrarlas convertiría el histórico
+ * en `pantallas: ok`.
+ */
+export const LEGACY_CHECK_LABELS: Record<string, string> = {
   pantallas: 'Pantallas',
   proyector: 'Proyector',
   microfono: 'Micrófono',
@@ -22,43 +78,6 @@ export const CHECK_LABELS: Record<CheckKey, string> = {
   sonido: 'Sonido',
   camara: 'Cámara',
   botonera: 'Botonera',
-}
-
-/**
- * Qué hay que mirar en cada comprobación.
- *
- * Idea tomada del prototipo aprobado: sin esto, «Sonido» es ambiguo y cada
- * técnico comprueba una cosa distinta. Con el subtítulo, la revisión es
- * repetible entre personas.
- */
-export const CHECK_HINTS: Record<CheckKey, string> = {
-  pantallas: 'Proyector · TV · monitor auxiliar',
-  proyector: 'Horas y estado de lámpara',
-  microfono: 'Captación y nivel',
-  red: 'Conectividad del puesto',
-  sonido: 'Altavoces y balance',
-  camara: 'Encuadre y enfoque',
-  botonera: 'Control de sala',
-}
-
-/**
- * Qué comprobación exige qué equipamiento. Si la sala no lo tiene, el check
- * nace en 'na' y plegado: el técnico solo toca lo que existe de verdad.
- */
-export const CHECK_REQUIRES: Record<CheckKey, keyof RoomCapabilities | null> = {
-  pantallas: null, // toda sala tiene algo donde proyectar o una TV
-  proyector: 'proyector',
-  microfono: 'microfono',
-  red: null,
-  sonido: 'altavoces',
-  camara: 'camara',
-  botonera: 'botonera',
-}
-
-/** Unidad de la medida numérica opcional de cada check, cuando aporta algo. */
-export const CHECK_MEASURE: Partial<Record<CheckKey, { unit: string; label: string }>> = {
-  red: { unit: 'Mbps', label: 'Velocidad medida' },
-  proyector: { unit: 'h', label: 'Horas de lámpara' },
 }
 
 export type Severity = 'baja' | 'media' | 'alta'
@@ -136,6 +155,52 @@ export interface InspectionCheck {
   measure: number | null
   measure_unit: string | null
   note: string | null
+}
+
+// -----------------------------------------------------------------------------
+// Inventario instalado
+// -----------------------------------------------------------------------------
+
+/**
+ * Un tipo del catálogo: «Proyector», «Pantalla», «Micrófono Jabra».
+ *
+ * `confirmed: false` es un tipo que creó un técnico desde un aula. Se usa igual
+ * que cualquier otro —la revisión no se puede quedar bloqueada esperando a
+ * nadie— pero sale marcado hasta que un coordinador lo valida, lo corrige o lo
+ * fusiona con uno que ya existía.
+ */
+export interface AssetType {
+  id: string
+  name: string
+  category: string
+  tracks_serial: boolean
+  tracks_lamp_hours: boolean
+  confirmed: boolean
+  /** Lo que la gente escribe de verdad: `jab`, `cañón`, `tv`. */
+  aliases: string[]
+  /** Lápida de una fusión: este tipo se absorbió en otro. */
+  merged_into: string | null
+}
+
+export type AssetStatus = 'instalado' | 'retirado' | 'averiado'
+
+/** Un aparato concreto instalado en una sala. */
+export interface Asset {
+  id: string
+  asset_type_id: string
+  room_id: string | null
+  /** Cómo se llama en ESTA sala: «Pantalla 2», o «Pantalla atril» si se corrige. */
+  label: string | null
+  serial: string | null
+  model: string | null
+  status: AssetStatus
+  created_at: string | null
+}
+
+export const ASSET_STATUS_LABELS: Record<AssetStatus, string> = {
+  instalado: 'Instalado',
+  averiado: 'Averiado',
+  retirado: 'Retirado',
 }
 
 export type IncidentState = 'abierta' | 'en_curso' | 'resuelta'

@@ -58,16 +58,23 @@ entra sin PIN.
    revisar arriba del todo, así que basta con ir bajando.
    - La franja **naranja** a la izquierda marca las que tocan.
    - La etiqueta **«A medias»** significa que dejaste una revisión sin terminar.
-3. **Marca cada comprobación.** Tres opciones siempre:
+3. **Marca cada equipo.** La lista no es fija: son **los aparatos que hay en esa
+   sala**, uno por línea, con su modelo y su número de serie debajo. Si el aula
+   tiene dos pantallas, verás «Pantalla» y «Pantalla 2» por separado.
 
    | | Cuándo |
    |---|---|
    | **✓ OK** | Funciona |
    | **! Incidencia** | Algo falla |
-   | **– No aplica** | La sala no tiene ese equipo |
+   | **– No aplica** | Hoy no se puede comprobar |
 
-   Lo que la sala no tiene **ya viene marcado como «No aplica»**. Si un aula no
-   tiene micrófono, no te preguntará por él. Normalmente son dos o tres toques.
+   Preguntar por cada aparato en vez de por «pantallas» en general es lo que
+   hace que el parte diga **cuál** falla, y que quien vaya a repararlo sepa qué
+   se va a encontrar antes de subir.
+
+   Una etiqueta naranja **«Sin validar»** significa que ese equipo lo dio de alta
+   alguien desde un aula y el coordinador aún no lo ha revisado. Se marca igual
+   que los demás: no bloquea nada.
 
 4. **Si marcas Incidencia**, se despliega la gravedad y un hueco para describirlo:
    - **Leve** — molesta pero se puede dar clase.
@@ -77,6 +84,27 @@ entra sin PIN.
    Haz una foto. A quien vaya a repararlo le ahorra un viaje.
 
 5. **Guardar y siguiente sala** te lleva directo a la siguiente sin volver atrás.
+
+### Si el inventario no cuadra
+
+Abajo del todo, **«Equipos de la sala»**. Se abre tocándolo y sirve para el día
+en que lo que tienes delante no es lo que dice la pantalla. Se corrige **desde
+aquí**, sin salir de la revisión.
+
+- **Falta un aparato.** Escribe lo que sea —`proyector`, `jab`, `cañón`— y te lo
+  busca por el nombre y por como lo llamáis vosotros. Si ya existe, lo eliges y
+  ya está.
+- **No está en la lista.** Sale **«Crear "lo que has escrito"»** en naranja.
+  Créalo y sigue: el equipo queda dado de alta y usable al momento, y el
+  coordinador lo confirma después. **No esperes a preguntar** — lo que no se
+  apunta en el momento no se apunta.
+- **El número.** Si ya había una pantalla, la nueva se llama «Pantalla 2» sola.
+  No teclees el número.
+- **Corregir.** Cada equipo tiene su botón: cambiar el nombre —«Pantalla 2» se
+  puede reescribir a «Pantalla del atril», que dice mucho más—, apuntar modelo y
+  número de serie, marcarlo **averiado**, o **retirarlo** de la sala.
+
+Todo esto funciona sin cobertura, igual que el resto.
 
 ### Se guarda solo
 

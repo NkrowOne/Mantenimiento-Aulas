@@ -128,6 +128,11 @@ fi
 if [ -f supabase/seed.sql ]; then
   echo "▸ Cargando el seed"
   psql "$PGURL" -q -v ON_ERROR_STOP=1 -f supabase/seed.sql
+
+  # En una instalación limpia las migraciones corren antes que el seed, así que
+  # cuando el relleno de inventario se ejecutó no había ni una sala. Ahora sí.
+  echo "▸ Materializando el inventario de las salas"
+  psql "$PGURL" -t -A -c "select public.backfill_room_assets() || ' elementos creados'" | sed 's/^/   /'
 fi
 
 echo "▸ Recuento"

@@ -75,6 +75,36 @@ const ROOMS = [
   { code: '-2.1', name: 'Lab Criminología', caps: { proyector: true, altavoces: true, camara: true, microfono: true, botonera: true, tv: true }, days: 302 },
 ]
 
+/**
+ * Catálogo e inventario. La revisión ya no sale de una lista fija: sus filas son
+ * los equipos de la sala, así que sin sembrarlos la captura solo mostraría la
+ * comprobación de red.
+ *
+ * `Cañón corto` va sin confirmar a propósito: es el caso que hay que poder
+ * mirar, el del tipo creado desde un aula que sale en naranja y se usa igual.
+ */
+const TYPES = [
+  { name: 'Proyector', lamp: true, confirmed: true },
+  { name: 'Pantalla', lamp: false, confirmed: true },
+  { name: 'Altavoces', lamp: false, confirmed: true },
+  { name: 'Micrófono', lamp: false, confirmed: true },
+  { name: 'Cámara', lamp: false, confirmed: true },
+  { name: 'Botonera', lamp: false, confirmed: true },
+  { name: 'Cañón corto', lamp: false, confirmed: false },
+]
+
+/** El inventario de la sala que se fotografía. */
+const INVENTORY = [
+  { type: 'Proyector', label: 'Proyector', model: 'NP-M403HG', serial: '0340985RL' },
+  { type: 'Pantalla', label: 'Pantalla', model: null, serial: '04204526NB' },
+  { type: 'Pantalla', label: 'Pantalla 2', model: null, serial: null },
+  { type: 'Altavoces', label: 'Altavoces', model: null, serial: null },
+  { type: 'Micrófono', label: 'Micrófono', model: 'Jabra 710', serial: null },
+  { type: 'Cámara', label: 'Cámara', model: '520 PRO', serial: '5310306900024' },
+  { type: 'Botonera', label: 'Botonera', model: null, serial: null },
+  { type: 'Cañón corto', label: 'Cañón corto', model: null, serial: null },
+]
+
 async function main(): Promise<void> {
   await new Promise<void>((r) => server.listen(PORT, r))
   const browser = await chromium.launch({
@@ -97,12 +127,15 @@ async function main(): Promise<void> {
 
   const sealed = await seal(PIN, { access_token: 'demo', refresh_token: 'demo' })
   await page.evaluate(
-    async ([sealedSession, rooms]) => {
+    async ([sealedSession, rooms, types, inventory]) => {
       await new Promise<void>((resolve, reject) => {
         const open = indexedDB.open('mantenimiento-aulas')
         open.onsuccess = () => {
           const db = open.result
-          const tx = db.transaction(['meta', 'buildings', 'zones', 'rooms'], 'readwrite')
+          const tx = db.transaction(
+            ['meta', 'buildings', 'zones', 'rooms', 'assetTypes', 'assets'],
+            'readwrite',
+          )
           tx.objectStore('meta').put({ key: 'sealed-session', value: sealedSession })
           tx.objectStore('buildings').put({
             id: 'b1', code: 'H', name: 'EDIFICIO H', sort_order: 1, needs_review: false,
@@ -117,13 +150,44 @@ async function main(): Promise<void> {
               active: true,
             })
           })
+          const typeIds = new Map<string, string>()
+          ;(types as Array<Record<string, unknown>>).forEach((ty, i) => {
+            const id = `t${i}`
+            typeIds.set(ty['name'] as string, id)
+            tx.objectStore('assetTypes').put({
+              id,
+              name: ty['name'],
+              category: 'av',
+              tracks_serial: true,
+              tracks_lamp_hours: ty['lamp'],
+              confirmed: ty['confirmed'],
+              aliases: [],
+              merged_into: null,
+            })
+          })
+
+          // El inventario va en la sala que se fotografía, que es la última.
+          const roomId = `r${(rooms as unknown[]).length - 1}`
+          ;(inventory as Array<Record<string, unknown>>).forEach((it, i) => {
+            tx.objectStore('assets').put({
+              id: `e${i}`,
+              asset_type_id: typeIds.get(it['type'] as string),
+              room_id: roomId,
+              label: it['label'],
+              model: it['model'],
+              serial: it['serial'],
+              status: 'instalado',
+              created_at: new Date(2026, 0, 1 + i).toISOString(),
+            })
+          })
+
           tx.oncomplete = () => resolve()
           tx.onerror = () => reject(tx.error)
         }
         open.onerror = () => reject(open.error)
       })
     },
-    [sealed, ROOMS] as const,
+    [sealed, ROOMS, TYPES, INVENTORY] as const,
   )
 
   await page.reload({ waitUntil: 'networkidle' })
@@ -155,6 +219,19 @@ async function main(): Promise<void> {
   await page.emulateMedia({ colorScheme: 'dark' })
   await page.waitForTimeout(400)
   await shot('revision-oscuro')
+
+  // El inventario de la sala, que nace plegado.
+  await page.emulateMedia({ colorScheme: 'light' })
+  await page.getByRole('button', { name: /Equipos de la sala/ }).click()
+  await page.waitForTimeout(500)
+  await page.getByRole('button', { name: /Equipos de la sala/ }).scrollIntoViewIfNeeded()
+  await page.waitForTimeout(300)
+  await shot('inventario')
+
+  // Y el alta: al teclear algo que no está, la única salida es crearlo naranja.
+  await page.getByPlaceholder('Añadir equipo').fill('atril')
+  await page.waitForTimeout(400)
+  await shot('inventario-alta')
 
   /*
    * El colapso del bloque de incidencia, a cámara lenta.

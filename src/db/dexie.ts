@@ -12,6 +12,8 @@
 
 import Dexie, { type EntityTable } from 'dexie'
 import type {
+  Asset,
+  AssetType,
   Attachment,
   Building,
   Incident,
@@ -26,7 +28,15 @@ import type {
 export interface OutboxEntry {
   /** uuid v7 del registro afectado. Reenviarlo dos veces no duplica nada. */
   id: string
-  entity: 'inspection' | 'inspection_check' | 'incident' | 'stock_movement' | 'attachment' | 'asset_event'
+  entity:
+    | 'inspection'
+    | 'inspection_check'
+    | 'incident'
+    | 'stock_movement'
+    | 'attachment'
+    | 'asset_event'
+    | 'asset_type'
+    | 'asset'
   op: 'upsert'
   payload: Record<string, unknown>
   createdAt: number
@@ -63,6 +73,11 @@ export class AulasDB extends Dexie {
   rooms!: EntityTable<Room, 'id'>
   stockItems!: EntityTable<StockItem, 'id'>
   incidents!: EntityTable<Incident, 'id'>
+  assetTypes!: EntityTable<AssetType, 'id'>
+
+  // El inventario es a la vez maestro y cosa que el técnico produce: lo lee de
+  // aquí para revisar y escribe aquí al dar de alta un elemento en el aula.
+  assets!: EntityTable<Asset, 'id'>
 
   // Lo que el técnico produce. La UI lee SIEMPRE de aquí, nunca espera a la red.
   inspections!: EntityTable<Inspection, 'id'>
@@ -82,6 +97,8 @@ export class AulasDB extends Dexie {
       rooms: 'id, zone_id, code, last_inspection_at',
       stockItems: 'id, name',
       incidents: 'id, room_id, state, opened_at',
+      assetTypes: 'id, name, confirmed',
+      assets: 'id, room_id, asset_type_id, status',
 
       inspections: 'id, room_id, status, occurred_at',
       checks: 'id, inspection_id, [inspection_id+check_key]',

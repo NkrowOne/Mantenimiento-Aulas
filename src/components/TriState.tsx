@@ -50,13 +50,22 @@ interface Props {
   onChange: (value: CheckResult) => void
   label: string
   hint: string
+  /** Marca naranja junto al nombre. La usa el equipo sin validar todavía. */
+  flag?: string | null
 }
 
-export function TriState({ value, onChange, label, hint }: Props): React.ReactElement {
+export function TriState({ value, onChange, label, hint, flag }: Props): React.ReactElement {
   return (
     <div className={`flex items-center gap-3 py-2.5 ${value ? (ROW[value] ?? '') : ''}`}>
       <div className="min-w-0 flex-1">
-        <p className="font-semibold leading-tight">{label}</p>
+        <p className="flex items-center gap-1.5 font-semibold leading-tight">
+          <span className="truncate">{label}</span>
+          {flag && (
+            <span className="shrink-0 rounded-tag bg-warn-tint px-1.5 py-0.5 text-[0.625rem] font-medium uppercase tracking-wide text-warn">
+              {flag}
+            </span>
+          )}
+        </p>
         <p className="mt-0.5 font-mono text-[0.6875rem] uppercase leading-tight tracking-wide text-muted">
           {hint}
         </p>

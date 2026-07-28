@@ -10,14 +10,28 @@
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
-    /* Sin rebote elástico en iOS: la barra de acción inferior debe quedarse quieta. */
-    overscroll-behavior-y: none;
+    /*
+     * Ni rebote elástico ni arrastre lateral. La aplicación se usa como una app
+     * y no como una página: la barra de acción inferior tiene que quedarse
+     * quieta, y el tirón horizontal accidental —fácil sujetando el iPad con una
+     * mano— sacaba la pantalla de sitio en mitad de una revisión.
+     */
+    overscroll-behavior: none;
   }
 
   body {
     @apply bg-ground text-ink font-sans antialiased;
     /* Área segura del iPhone: el notch y la barra de gestos se comen píxeles reales. */
     padding-top: env(safe-area-inset-top);
+
+    /*
+     * `pan-y` deja el desplazamiento vertical y quita todo lo demás: pellizco
+     * para ampliar, arrastre lateral y el zoom por doble toque. Es lo que
+     * bloquea el pellizco en Android y en Chrome; el WebKit de iOS necesita
+     * además los manejadores de `main.tsx`.
+     */
+    touch-action: pan-y;
+    overscroll-behavior: none;
   }
 
   /* Toda columna de dígitos alinea. Números de serie, horas de lámpara, cantidades. */

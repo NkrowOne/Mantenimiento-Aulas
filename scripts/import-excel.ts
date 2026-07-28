@@ -626,21 +626,29 @@ function emit(): void {
 
   out.push('')
   out.push('-- Tipos de equipo')
+  // El catálogo base ya viene de la migración de inventario, con sus alias:
+  // `TV` y `Monitor` resuelven a `Pantalla`. Aquí solo se da de alta lo que no
+  // resuelve a nada, y se marca confirmado porque viene del Excel oficial.
   const typeNames = [...new Set(assets.map((a) => a.typeName))]
   for (const t of typeNames) {
     out.push(
-      `insert into asset_types (id, name, tracks_lamp_hours) values (${sql(uuidFor('assettype', t))}, ${sql(t)}, ${sql(t === 'Proyector')}) on conflict (name) do nothing;`,
+      `insert into asset_types (name, tracks_lamp_hours, confirmed) ` +
+        `select ${sql(t)}, ${sql(t === 'Proyector')}, true ` +
+        `where public.asset_type_id(${sql(t)}) is null;`,
     )
   }
 
   out.push('')
   out.push('-- Equipo instalado (solo lo que tiene número de serie)')
+  // El tipo se resuelve por nombre en el momento del insert, nunca por un id
+  // calculado aquí: si el tipo ya existía con otro id —el caso normal ahora que
+  // hay catálogo base— un id calculado apuntaría a una fila que no existe.
   const seenSerials = new Set<string>()
   for (const a of assets) {
     if (seenSerials.has(a.serial ?? '')) continue
     seenSerials.add(a.serial ?? '')
     out.push(
-      `insert into assets (id, asset_type_id, room_id, serial, model) values (${sql(a.id)}, ${sql(uuidFor('assettype', a.typeName))}, ${sql(a.roomId)}, ${sql(a.serial)}, ${sql(a.model)}) on conflict (id) do nothing;`,
+      `insert into assets (id, asset_type_id, room_id, serial, model) values (${sql(a.id)}, public.asset_type_id(${sql(a.typeName)}), ${sql(a.roomId)}, ${sql(a.serial)}, ${sql(a.model)}) on conflict (id) do nothing;`,
     )
   }
 
