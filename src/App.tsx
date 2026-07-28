@@ -10,7 +10,7 @@ import { StockPage } from '@/features/inventory/StockPage'
 import { CleanupPage } from '@/features/admin/CleanupPage'
 import { ReportsPage } from '@/features/reports/ReportsPage'
 
-import { getSealed, shouldRelock, touch } from '@/auth/session'
+import { getSealed, lock, resumeSession, touch } from '@/auth/session'
 import { db, requestPersistentStorage } from '@/db/dexie'
 import { pullMaster } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
@@ -56,12 +56,14 @@ export function App(): React.ReactElement {
   useEffect(() => {
     void (async () => {
       setSealed(await getSealed())
-      if (!(await shouldRelock())) {
-        const { data } = await supabase.auth.getSession()
-        if (data.session) {
-          setUserId(data.session.user.id)
-          setUnlocked(true)
-        }
+      // Reanuda sin PIN si la pestaña sigue viva y no se ha superado el tiempo
+      // de inactividad. Antes esto no funcionaba nunca: el cliente de Supabase
+      // va sin persistencia, así que getSession() devolvía null tras cualquier
+      // recarga y la app volvía a pedir el PIN una y otra vez.
+      if (await resumeSession()) {
+        const { data } = await supabase.auth.getUser()
+        setUserId(data.user?.id ?? null)
+        setUnlocked(true)
       }
     })()
   }, [])
@@ -118,7 +120,17 @@ export function App(): React.ReactElement {
       <header className="sticky top-0 z-10 border-b border-line bg-ground/95 backdrop-blur">
         <div className="flex items-center justify-between px-4 py-2">
           <span className="eyebrow">Mantenimiento de aulas</span>
-          <SyncChip />
+          <div className="flex items-center gap-2">
+            <SyncChip />
+            <button
+              type="button"
+              onClick={() => void lock().then(() => setUnlocked(false))}
+              className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-muted"
+              title="Pide el PIN de nuevo. Útil al prestar el dispositivo."
+            >
+              Bloquear
+            </button>
+          </div>
         </div>
       </header>
 

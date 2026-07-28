@@ -155,6 +155,13 @@ producción lo levanta `docker compose up reports-worker` y lo despierta
 | Despliegue sobre Postgres gestionado | ✅ verificado en Postgres desnudo |
 | Integración con ServiceNow | 🔌 puerto listo, falta la implementación |
 
+## Guías
+
+- **[Guía del técnico](docs/guia-tecnico.md)** — una página, para quien revisa aulas.
+- **[Guía de administración](docs/guia-administracion.md)** — editar datos, confirmar
+  los nombres dudosos de la importación, usuarios, stock e informes.
+- **[Despliegue con Postgres gestionado](docs/despliegue-postgres-gestionado.md)**
+
 ## Antes de producción
 
 Lo verificado y lo que no, sin adornos.
