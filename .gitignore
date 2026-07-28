@@ -11,3 +11,6 @@ dev-dist/
 supabase/volumes/
 reports-worker/__pycache__/
 *.pyc
+
+# Caché incremental de TypeScript: cambia en cada compilación.
+*.tsbuildinfo
