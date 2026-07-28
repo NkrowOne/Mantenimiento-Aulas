@@ -249,3 +249,18 @@ export function incidentDedupeKey(parts: {
 }): string {
   return [norm(parts.ref), norm(parts.room), parts.date, norm(parts.problem).slice(0, 80)].join('|')
 }
+
+/**
+ * El código tal y como debe verse en pantalla.
+ *
+ * Los códigos de plantas bajo rasante empiezan por guion (`-2.1`), y ese guion
+ * se lee como un error de tecleo más que como un menos. Se sustituye por el
+ * signo menos real (U+2212), que es más ancho y va a la altura de los dígitos:
+ * se ve intencionado, no como una errata.
+ *
+ * Solo afecta a la presentación. El dato guardado no se toca, porque es la
+ * clave con la que cruzan las incidencias del histórico.
+ */
+export function displayRoomCode(code: string): string {
+  return code.replace(/^-/, '\u2212')
+}

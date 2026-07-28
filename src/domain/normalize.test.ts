@@ -10,6 +10,7 @@ import {
   splitIncidentKey,
   stripParenthetical,
   truthy,
+  displayRoomCode,
 } from './normalize'
 
 // Todos los casos de este fichero salen del Excel real del equipo, no son
@@ -176,5 +177,17 @@ describe('incidentDedupeKey', () => {
     expect(incidentDedupeKey({ ...base, problem: 'Altavoces' })).not.toBe(
       incidentDedupeKey({ ...base, problem: 'Proyector' }),
     )
+  })
+})
+
+describe('displayRoomCode', () => {
+  it('convierte el guion inicial en signo menos, que no se lee como errata', () => {
+    expect(displayRoomCode('-2.1')).toBe('−2.1')
+    expect(displayRoomCode('-1.3')).toBe('−1.3')
+  })
+
+  it('no toca los códigos normales ni los guiones interiores', () => {
+    expect(displayRoomCode('1.7')).toBe('1.7')
+    expect(displayRoomCode('Lab 5 -1.4')).toBe('Lab 5 -1.4')
   })
 })

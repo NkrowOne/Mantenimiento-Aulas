@@ -84,6 +84,17 @@ async function main(): Promise<void> {
 
   await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' })
 
+  // Las variables de Supabase se compilan dentro del bundle. Si el `dist` se
+  // construyó sin ellas, la aplicación muestra el aviso de configuración y aquí
+  // solo se vería un tiempo de espera agotado buscando el campo del PIN.
+  if (await page.getByText('Configuración incompleta').count()) {
+    throw new Error(
+      'El dist actual se construyó sin las variables de Supabase.\n' +
+        'Para previsualizar basta con valores de relleno:\n' +
+        '  VITE_SUPABASE_URL=http://127.0.0.1:54321 VITE_SUPABASE_ANON_KEY=demo npm run build',
+    )
+  }
+
   const sealed = await seal(PIN, { access_token: 'demo', refresh_token: 'demo' })
   await page.evaluate(
     async ([sealedSession, rooms]) => {

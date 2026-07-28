@@ -10,6 +10,7 @@ import {
   type Room,
   type Severity,
 } from '@/domain/types'
+import { displayRoomCode } from '@/domain/normalize'
 import { checksForRoom, useInspection } from './useInspection'
 
 interface Props {
@@ -69,8 +70,8 @@ export function InspectionPage({
       <RoomPlate
         building={buildingName}
         zone={zoneName}
-        title={room.name === room.code ? `Sala ${room.code}` : room.name}
-        code={room.code}
+        title={room.name === room.code ? `Sala ${displayRoomCode(room.code)}` : room.name}
+        code={displayRoomCode(room.code)}
         onBack={onBack}
       />
 

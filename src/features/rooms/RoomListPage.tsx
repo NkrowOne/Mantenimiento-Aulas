@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
+import { displayRoomCode } from '@/domain/normalize'
 import { OVERDUE_INSPECTION_DAYS, type Building, type Room } from '@/domain/types'
 
 interface Props {
@@ -21,6 +22,11 @@ function daysSince(iso: string | null): number | null {
  * empezar cada vez.
  */
 export function RoomListPage({ building, onPick, onBack }: Props): React.ReactElement {
+  const zonesById = useLiveQuery(async () => {
+    const zones = await db.zones.where('building_id').equals(building.id).toArray()
+    return new Map(zones.map((z) => [z.id, z.name]))
+  }, [building.id])
+
   const rooms = useLiveQuery(async () => {
     const zones = await db.zones.where('building_id').equals(building.id).toArray()
     const zoneIds = new Set(zones.map((z) => z.id))
@@ -70,10 +76,15 @@ export function RoomListPage({ building, onPick, onBack }: Props): React.ReactEl
                 />
 
                 <span className="min-w-0 flex-1">
-                  <span className="block font-mono font-semibold">{room.code}</span>
-                  {room.name !== room.code && (
-                    <span className="block truncate text-sm text-muted">{room.name}</span>
-                  )}
+                  <span className="block font-mono font-semibold tabular">
+                    {displayRoomCode(room.code)}
+                  </span>
+                  {/* La planta va en cada fila: aquí el código aparece suelto,
+                      y `−2.1` sin contexto se lee como una errata. */}
+                  <span className="block truncate text-sm text-muted">
+                    {zonesById?.get(room.zone_id) ?? ''}
+                    {room.name !== room.code && ` · ${room.name}`}
+                  </span>
                 </span>
 
                 <span className="shrink-0 text-right text-xs">
