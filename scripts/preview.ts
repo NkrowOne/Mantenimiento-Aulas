@@ -201,18 +201,21 @@ async function main(): Promise<void> {
   }
 
   await shot('edificios')
-  await page.getByText('EDIFICIO H').click()
+  await page.getByRole('button', { name: /EDIFICIO H/ }).click()
   await page.waitForTimeout(500)
   await shot('salas')
 
-  await page.getByText('Lab Criminología').click()
+  // La fila de la sala, no el título de la placa: ahora hay buscador y cabecera
+  // con el mismo texto.
+  await page.getByRole('button', { name: /Lab Criminología/ }).first().click()
   await page.waitForTimeout(800)
   await shot('revision')
 
   // Y cómo queda tras marcar una incidencia y usar la vía rápida.
   await page.locator('button[role="radio"][aria-checked="false"]').nth(1).click()
   await page.waitForTimeout(400)
-  await page.getByRole('button', { name: /Marcar OK/ }).click()
+  // El acelerador vive ahora en la barra de acción, junto al recuento.
+  await page.getByRole('button', { name: /marcar OK/ }).click()
   await page.waitForTimeout(600)
   await shot('revision-incidencia')
 
@@ -255,6 +258,46 @@ async function main(): Promise<void> {
    * La lámpara encendida. Sin esto solo se comprueba el estado apagado, que es
    * justamente el que no dice nada: el que hay que revisar es el otro.
    */
+  /*
+   * El bucle de la ronda, comprobado de verdad y no solo fotografiado.
+   *
+   * Es el arreglo con más palanca de toda la auditoría y el más fácil de
+   * romper sin enterarse: si `complete()` dejara de marcar la sala en local,
+   * «siguiente sala» devolvería a la misma aula y la captura seguiría saliendo
+   * bien. Por eso se afirma, no se mira.
+   */
+  await page.emulateMedia({ colorScheme: 'light' })
+  // A estas alturas del recorrido puede quedar algo sin marcar o no, según lo
+  // que hayan tocado los pasos anteriores.
+  const acelerador = page.getByRole('button', { name: /marcar OK/ })
+  if (await acelerador.count()) {
+    await acelerador.click()
+    await page.waitForTimeout(400)
+  }
+
+  const salaAntes = await page.locator('h1').first().innerText()
+  await page.getByRole('button', { name: 'Guardar y siguiente sala' }).click()
+  await page.waitForTimeout(900)
+
+  const salaDespues = await page.locator('h1').first().innerText()
+  if (salaAntes === salaDespues) {
+    throw new Error(
+      `«Guardar y siguiente sala» no ha cambiado de aula: sigue en «${salaAntes}».`,
+    )
+  }
+  console.log(`  ✓ encadena salas: ${salaAntes} → ${salaDespues}`)
+  await shot('siguiente-sala')
+
+  // Y la sala terminada tiene que haber bajado en la lista.
+  await page.getByRole('button', { name: '← Volver' }).click()
+  await page.waitForTimeout(600)
+  const primera = await page.locator('ul li button').first().innerText()
+  if (primera.includes('Criminología')) {
+    throw new Error('La sala recién revisada sigue encabezando la lista.')
+  }
+  console.log('  ✓ la sala revisada baja en la lista')
+  await shot('lista-tras-revisar')
+
   await page.evaluate(async () => {
     await new Promise<void>((resolve, reject) => {
       const open = indexedDB.open('mantenimiento-aulas')

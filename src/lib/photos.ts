@@ -67,16 +67,36 @@ export async function capturePhoto(
   }
 
   const id = uuidv7()
+  const takenAt = new Date().toISOString()
+
   await db.photos.put({
     id,
     entityType,
     entityId,
     blob,
-    takenAt: new Date().toISOString(),
+    takenAt,
     attempts: 0,
     nextAttemptAt: 0,
     status: 'pendiente',
     lastError: null,
+  })
+
+  /*
+   * Y se apunta el adjunto en local, no solo la foto en cola.
+   *
+   * La cola es un búfer: `pushPhoto` borra la entrada en cuanto la sube. Si la
+   * interfaz contara fotos desde ahí, el número caería a cero al sincronizar y
+   * volvería a aparecer «Añade una foto de la incidencia» sobre una revisión que
+   * sí la tiene. Con la fila de adjunto, el recuento sobrevive a la subida, a
+   * salir de la sala y a recargar la aplicación.
+   */
+  await db.attachments.put({
+    id,
+    entity_type: entityType,
+    entity_id: entityId,
+    storage_path: `${entityType}/${entityId}/${id}.jpg`,
+    taken_at: takenAt,
+    by_user: null,
   })
 
   return { ok: true, id }

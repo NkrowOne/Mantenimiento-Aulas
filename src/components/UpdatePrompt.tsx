@@ -43,7 +43,7 @@ export function UpdatePrompt(): React.ReactElement | null {
         <button
           type="button"
           onClick={() => setNeedRefresh(false)}
-          className="rounded-ctl px-3 py-2 text-sm font-medium text-muted"
+          className="key key-quiet min-h-11 px-3 text-sm font-medium text-muted"
         >
           Ahora no
         </button>

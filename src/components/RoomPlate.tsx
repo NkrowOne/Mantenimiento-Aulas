@@ -29,7 +29,7 @@ export function RoomPlate({ building, zone, title, code, onBack }: Props): React
       <button
         type="button"
         onClick={onBack}
-        className="mb-2 font-mono text-[0.6875rem] uppercase tracking-[0.14em] text-accent"
+        className="-ml-2 mb-1 inline-flex min-h-11 items-center px-2 font-mono text-[0.6875rem] uppercase tracking-[0.14em] text-accent"
       >
         ← Volver
       </button>

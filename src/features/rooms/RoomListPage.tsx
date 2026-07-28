@@ -1,64 +1,125 @@
+import { useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { displayRoomCode } from '@/domain/normalize'
 import { OVERDUE_INSPECTION_DAYS, type Building, type Room } from '@/domain/types'
+import {
+  ROOM_ORDER_LABELS,
+  daysSince,
+  roomMatches,
+  sortRooms,
+  type RoomOrder,
+} from './orden'
 
 interface Props {
   building: Building
   onPick: (room: Room) => void
   onBack: () => void
-}
-
-function daysSince(iso: string | null): number | null {
-  if (!iso) return null
-  return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
+  order: RoomOrder
+  onOrderChange: (order: RoomOrder) => void
 }
 
 /**
- * Lista de salas ordenada por *la que lleva más tiempo sin revisar primero*.
+ * Lista de salas: la ruta de trabajo del día.
  *
- * Es la decisión de diseño que convierte la lista en una ruta de trabajo: el
- * técnico baja por ella y va haciendo, en vez de tener que decidir por dónde
- * empezar cada vez.
+ * Dos cosas la hacen usable con 39 salas en un edificio y 276 en total:
+ * **se puede buscar** y **se puede elegir el orden**. Antes solo había un orden
+ * fijo y ningún filtro, así que llegar a un aula concreta —el caso de «falla el
+ * proyector del −2.1 del H», que llega por radio— era bajar leyendo fila a fila.
  */
-export function RoomListPage({ building, onPick, onBack }: Props): React.ReactElement {
-  const zonesById = useLiveQuery(async () => {
-    const zones = await db.zones.where('building_id').equals(building.id).toArray()
-    return new Map(zones.map((z) => [z.id, z.name]))
+export function RoomListPage({
+  building,
+  onPick,
+  onBack,
+  order,
+  onOrderChange,
+}: Props): React.ReactElement {
+  const [query, setQuery] = useState('')
+
+  const zones = useLiveQuery(async () => {
+    const list = await db.zones.where('building_id').equals(building.id).toArray()
+    return new Map(list.map((z) => [z.id, z]))
   }, [building.id])
 
   const rooms = useLiveQuery(async () => {
-    const zones = await db.zones.where('building_id').equals(building.id).toArray()
-    const zoneIds = new Set(zones.map((z) => z.id))
-    const all = await db.rooms.filter((r) => zoneIds.has(r.zone_id)).toArray()
-
-    return all.sort((a, b) => {
-      // Sin revisar nunca va primero: es el vacío más caro de la lista.
-      if (!a.last_inspection_at && b.last_inspection_at) return -1
-      if (a.last_inspection_at && !b.last_inspection_at) return 1
-      if (!a.last_inspection_at && !b.last_inspection_at) return a.code.localeCompare(b.code)
-      return a.last_inspection_at!.localeCompare(b.last_inspection_at!)
-    })
+    const list = await db.zones.where('building_id').equals(building.id).toArray()
+    const zoneIds = new Set(list.map((z) => z.id))
+    return db.rooms.filter((r) => zoneIds.has(r.zone_id)).toArray()
   }, [building.id])
 
   const drafts = useLiveQuery(
     () => db.inspections.filter((i) => i.status === 'borrador').toArray(),
     [],
   )
-  const draftRoomIds = new Set((drafts ?? []).map((d) => d.room_id))
+  const draftRoomIds = useMemo(
+    () => new Set((drafts ?? []).map((d) => d.room_id)),
+    [drafts],
+  )
+
+  const visible = useMemo(() => {
+    if (!rooms || !zones) return []
+    const filtered = rooms.filter((r) => roomMatches(r, query, zones.get(r.zone_id)?.name))
+    return sortRooms(filtered, zones, order)
+  }, [rooms, zones, order, query])
+
+  const cargando = rooms === undefined || zones === undefined
 
   return (
     <div>
-      <header className="border-b border-line bg-surface px-4 py-3">
-        <button type="button" onClick={onBack} className="text-sm text-accent">
+      <header className="border-b border-line bg-surface px-4 pb-3 pt-2">
+        <button type="button" onClick={onBack} className="-ml-2 min-h-11 px-2 text-sm text-accent">
           ← Edificios
         </button>
-        <h1 className="mt-1 text-xl font-semibold">{building.name}</h1>
-        <p className="text-sm text-muted">{rooms?.length ?? 0} salas · las más antiguas primero</p>
+        <h1 className="text-xl font-semibold">{building.name}</h1>
+
+        <label className="mt-2 block">
+          <span className="sr-only">Buscar sala en {building.name}</span>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Buscar sala"
+            enterKeyHint="search"
+            className="h-touch w-full rounded-ctl border border-line bg-ground px-3"
+          />
+        </label>
+
+        {/* El orden se elige y se ve. Antes era fijo y solo lo decía un texto. */}
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <div role="group" aria-label="Orden de la lista" className="flex gap-1">
+            {(Object.keys(ROOM_ORDER_LABELS) as RoomOrder[]).map((o) => (
+              <button
+                key={o}
+                type="button"
+                aria-pressed={order === o}
+                onClick={() => onOrderChange(o)}
+                className={`key min-h-11 px-3 text-xs ${
+                  order === o ? 'key-accent' : 'key-quiet text-muted'
+                }`}
+              >
+                {ROOM_ORDER_LABELS[o]}
+              </button>
+            ))}
+          </div>
+          <span className="shrink-0 text-sm text-muted">
+            {visible.length}
+            {query && rooms ? ` de ${rooms.length}` : ' salas'}
+          </span>
+        </div>
       </header>
 
+      {cargando && <p className="p-6 text-sm text-muted">Cargando las salas…</p>}
+
+      {!cargando && visible.length === 0 && (
+        <p className="p-6 text-sm text-muted">
+          {query
+            ? `Ninguna sala coincide con «${query}».`
+            : 'Este edificio no tiene salas. Conéctate una vez para descargarlas.'}
+        </p>
+      )}
+
       <ul className="divide-y divide-line">
-        {(rooms ?? []).map((room) => {
+        {visible.map((room) => {
           const days = daysSince(room.last_inspection_at)
           const overdue = days === null || days > OVERDUE_INSPECTION_DAYS
           const hasDraft = draftRoomIds.has(room.id)
@@ -68,11 +129,11 @@ export function RoomListPage({ building, onPick, onBack }: Props): React.ReactEl
               <button
                 type="button"
                 onClick={() => onPick(room)}
-                className="flex w-full items-center gap-3 px-4 py-3 text-left"
+                /* Responde al toque. Era el objetivo más pulsado del día y el
+                   único sin ninguna señal al pulsarlo. */
+                className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors duration-100 active:bg-raised"
               >
-                {/* Raíl recto, no cápsula: mismo lenguaje que `StatTile`, y
-                    una cápsula de color en cada fila de una lista de 276 es
-                    justo el tic decorativo que sobra aquí. */}
+                {/* Raíl recto, no cápsula: mismo lenguaje que `StatTile`. */}
                 <span
                   aria-hidden
                   className={`h-8 w-[3px] shrink-0 ${overdue ? 'bg-warn' : 'bg-ok'}`}
@@ -85,7 +146,7 @@ export function RoomListPage({ building, onPick, onBack }: Props): React.ReactEl
                   {/* La planta va en cada fila: aquí el código aparece suelto,
                       y `−2.1` sin contexto se lee como una errata. */}
                   <span className="block truncate text-sm text-muted">
-                    {zonesById?.get(room.zone_id) ?? ''}
+                    {zones?.get(room.zone_id)?.name ?? ''}
                     {room.name !== room.code && ` · ${room.name}`}
                   </span>
                 </span>

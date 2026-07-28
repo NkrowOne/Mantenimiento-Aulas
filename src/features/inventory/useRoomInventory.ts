@@ -96,9 +96,18 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
     [roomId, userId],
   )
 
-  /** Guarda un cambio del elemento en local y lo encola. */
+  /**
+   * Guarda un cambio del elemento en local y lo encola.
+   *
+   * Relee el elemento de Dexie en vez de fiarse del objeto que le pasan. Ese
+   * objeto viene capturado del render, y bastaba con escribir el modelo y pulsar
+   * «Averiado» seguido para que la segunda escritura, con el elemento de antes
+   * en la mano, mandara `model: null` y borrara lo recién escrito. El técnico lo
+   * veía en pantalla —el campo conservaba el texto— y el dato ya no estaba.
+   */
   const patchAsset = useCallback(async (asset: Asset, patch: Partial<Asset>): Promise<void> => {
-    const next = { ...asset, ...patch }
+    const actual = (await db.assets.get(asset.id)) ?? asset
+    const next = { ...actual, ...patch }
     await db.assets.put(next)
     await enqueue('asset', next.id, {
       id: next.id,
@@ -116,7 +125,8 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
     async (asset: Asset, status: AssetStatus): Promise<void> => {
       // Volver a pulsar el mismo estado lo deshace: es un interruptor, no una
       // acción irreversible que obligue a buscar cómo revertirla.
-      await patchAsset(asset, { status: asset.status === status ? 'instalado' : status })
+      const actual = (await db.assets.get(asset.id)) ?? asset
+      await patchAsset(actual, { status: actual.status === status ? 'instalado' : status })
     },
     [patchAsset],
   )

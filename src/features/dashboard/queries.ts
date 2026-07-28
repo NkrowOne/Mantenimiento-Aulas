@@ -51,7 +51,13 @@ export function useSummary() {
         supabase.from('alerts_overdue_rooms').select('*', head),
         supabase.from('buildings').select('*', head).eq('needs_review', true),
         supabase.from('import_quarantine').select('*', head).eq('resolved', false),
-      ]).then((rs) => rs.map((r) => r.count ?? 0))
+      ]).then((rs) => {
+        // Si una sola consulta falla, el panel entero es mentira: enseñaría
+        // «0 incidencias abiertas» en verde sin haber leído ni una fila.
+        const fallo = rs.find((r) => r.error)
+        if (fallo?.error) throw fallo.error
+        return rs.map((r) => r.count ?? 0)
+      })
 
       const { data: stock } = await supabase
         .from('stock_levels')

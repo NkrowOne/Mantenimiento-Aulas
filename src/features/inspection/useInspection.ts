@@ -315,6 +315,23 @@ export function useInspection(room: Room | null, userId: string | null) {
     await db.inspections.put(inspection)
     await db.checks.bulkPut([...draft.checks.values()])
 
+    /*
+     * Y la sala se marca revisada **en local**, no solo en el servidor.
+     *
+     * Sin esto la lista mentía justo cuando más se usa: `last_inspection_at`
+     * solo se escribía al descargar el maestro, y ese pull ocurre una única vez
+     * al desbloquear la sesión. Así que el aula recién terminada volvía a la
+     * lista con su raíl naranja, diciendo «Sin revisar» y en primera posición,
+     * indistinguible de la que no has tocado — durante toda la mañana si no hay
+     * cobertura. El riesgo real no es estético: es volver a entrar en un aula ya
+     * hecha.
+     *
+     * Es optimista y el siguiente pull lo confirma con el valor del servidor.
+     */
+    await db.rooms.update(inspection.room_id, {
+      last_inspection_at: inspection.occurred_at,
+    })
+
     await enqueue('inspection', inspection.id, { ...inspection, recorded_at: undefined })
     for (const check of draft.checks.values()) {
       await enqueue('inspection_check', check.id, check)
@@ -325,7 +342,22 @@ export function useInspection(room: Room | null, userId: string | null) {
     return inspection
   }, [draft])
 
-  return { draft, rows, saving, setCheck, setNotes, markRestOk, complete }
+  // `assets`, `types` y `typesById` se devuelven además de usarse aquí: la
+  // página los necesita para el bloque de inventario y antes montaba SU PROPIA
+  // copia de las dos mismas consultas de Dexie, con su propio observador y su
+  // propio ciclo de re-render por cada cambio.
+  return {
+    draft,
+    rows,
+    assets: assets ?? [],
+    types: types ?? [],
+    typesById,
+    saving,
+    setCheck,
+    setNotes,
+    markRestOk,
+    complete,
+  }
 }
 
 export type { Severity }

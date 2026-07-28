@@ -145,24 +145,25 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                       <button
                         type="button"
                         onClick={() => setFixing(fixing === asset.id ? null : asset.id)}
-                        className="key key-quiet shrink-0 px-2 py-1 text-xs"
+                        className="key key-quiet min-h-11 shrink-0 px-3 text-xs"
                       >
                         Corregir
                       </button>
                     </div>
 
-                    <div
-                      className="collapse-y"
-                      data-open={fixing === asset.id}
-                      inert={fixing !== asset.id}
-                    >
+                    {/* Se monta solo al abrirlo. Una sala de ocho equipos tenía
+                        ocho formularios completos —24 campos y 16 botones— vivos
+                        dentro de un panel que nace cerrado. */}
+                    <div className="collapse-y" data-open={fixing === asset.id}>
                       <div>
-                        <AssetFixer
-                          asset={asset}
-                          assetsInRoom={assets}
-                          onPatch={(patch) => void patchAsset(asset, patch)}
-                          onStatus={(status) => void setStatus(asset, status)}
-                        />
+                        {fixing === asset.id && (
+                          <AssetFixer
+                            asset={asset}
+                            assetsInRoom={assets}
+                            onPatch={(patch) => void patchAsset(asset, patch)}
+                            onStatus={(status) => void setStatus(asset, status)}
+                          />
+                        )}
                       </div>
                     </div>
                   </li>
@@ -255,16 +256,26 @@ function AssetFixer({
           <button
             type="button"
             onClick={() => onStatus('averiado')}
-            className={`key flex-1 px-2 py-2 text-xs ${
+            className={`key min-h-11 flex-1 px-2 text-xs ${
               asset.status === 'averiado' ? 'key-crit' : 'key-quiet text-muted'
             }`}
           >
             Averiado
           </button>
+          {/*
+            Se confirma, y va en su propia fila.
+            Retirar un equipo lo saca de la revisión y del inventario, y estaba
+            pegado a «Averiado» en un objetivo de 32px: el fallo de pulsación era
+            cuestión de tiempo. Cerrar sesión ya se confirmaba; esto pesa más.
+          */}
           <button
             type="button"
-            onClick={() => onStatus('retirado')}
-            className="key key-quiet flex-1 px-2 py-2 text-xs text-muted"
+            onClick={() => {
+              if (confirm(`¿Retirar «${asset.label ?? 'este equipo'}» de la sala?`)) {
+                onStatus('retirado')
+              }
+            }}
+            className="key key-quiet min-h-11 flex-1 px-2 text-xs text-muted"
           >
             Retirar de la sala
           </button>

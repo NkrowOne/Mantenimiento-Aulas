@@ -5,6 +5,8 @@ import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { LockScreen } from '@/features/auth/LockScreen'
 import { InspectionPage } from '@/features/inspection/InspectionPage'
 import { RoomListPage } from '@/features/rooms/RoomListPage'
+import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
+import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
 import { IncidentsPage } from '@/features/incidents/IncidentsPage'
 import { StockPage } from '@/features/inventory/StockPage'
 import { CleanupPage } from '@/features/admin/CleanupPage'
@@ -50,6 +52,7 @@ export function App(): React.ReactElement {
   const [role, setRole] = useState<Role>('tecnico')
   const [tab, setTab] = useState<Tab>('revisar')
   const [view, setView] = useState<RoomView>({ name: 'edificios' })
+  const [roomOrder, setRoomOrder] = useState<RoomOrder>('antiguedad')
 
   const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [])
 
@@ -61,6 +64,24 @@ export function App(): React.ReactElement {
         view.name === 'revision' ? (await db.zones.get(view.room.zone_id))?.name : undefined,
       [view],
     ) ?? ''
+
+  /*
+   * Las salas del edificio en curso, para poder saltar a «la siguiente».
+   *
+   * Se calcula con el MISMO orden que muestra la lista. Si cada una ordenara por
+   * su cuenta, la siguiente sala sería una distinta de la que el técnico ve
+   * primera, y eso solo se nota cuando ya te has equivocado de aula.
+   */
+  const buildingId = view.name === 'edificios' ? null : view.building.id
+  const rondaActual = useLiveQuery(async () => {
+    if (!buildingId) return null
+    const zones = await db.zones.where('building_id').equals(buildingId).toArray()
+    const zoneIds = new Set(zones.map((z) => z.id))
+    return {
+      rooms: await db.rooms.filter((r) => zoneIds.has(r.zone_id)).toArray(),
+      zones: new Map(zones.map((z) => [z.id, z])),
+    }
+  }, [buildingId])
 
   useEffect(() => {
     void (async () => {
@@ -170,13 +191,17 @@ export function App(): React.ReactElement {
       </header>
 
       {tab === 'revisar' && view.name === 'edificios' && (
+        <>
+          <BuscadorGlobal
+            onPick={(building, room) => setView({ name: 'revision', building, room })}
+          />
         <ul className="divide-y divide-line">
           {(buildings ?? []).map((b) => (
             <li key={b.id}>
               <button
                 type="button"
                 onClick={() => setView({ name: 'salas', building: b })}
-                className="flex w-full items-center gap-3 px-4 py-4 text-left"
+                className="flex w-full items-center gap-3 px-4 py-4 text-left transition-colors duration-100 active:bg-raised"
               >
                 <span className="w-14 shrink-0 font-mono text-sm font-semibold text-accent">
                   {b.code}
@@ -196,11 +221,14 @@ export function App(): React.ReactElement {
             </li>
           )}
         </ul>
+        </>
       )}
 
       {tab === 'revisar' && view.name === 'salas' && (
         <RoomListPage
           building={view.building}
+          order={roomOrder}
+          onOrderChange={setRoomOrder}
           onBack={() => setView({ name: 'edificios' })}
           onPick={(room) => setView({ name: 'revision', building: view.building, room })}
         />
@@ -213,7 +241,28 @@ export function App(): React.ReactElement {
           buildingName={view.building.name}
           zoneName={zoneName}
           onBack={() => setView({ name: 'salas', building: view.building })}
-          onDone={() => setView({ name: 'salas', building: view.building })}
+          /*
+            «Guardar y siguiente sala» salta de verdad a la siguiente.
+            Antes este manejador ignoraba el parámetro, así que los dos botones
+            de la barra hacían exactamente lo mismo: el que ocupa dos tercios
+            prometía encadenar salas y devolvía a la lista.
+
+            Funciona porque `complete()` ya ha marcado la sala como revisada en
+            local, así que con el orden por antigüedad la recién terminada cae al
+            final y la primera del resto es la que toca.
+          */
+          onDone={(encadenar) => {
+            const siguiente =
+              encadenar && rondaActual
+                ? nextRoom(rondaActual.rooms, rondaActual.zones, roomOrder, view.room.id)
+                : null
+
+            setView(
+              siguiente
+                ? { name: 'revision', building: view.building, room: siguiente }
+                : { name: 'salas', building: view.building },
+            )
+          }}
         />
       )}
 
@@ -244,7 +293,7 @@ export function App(): React.ReactElement {
                 type="button"
                 onClick={() => setTab(t.id)}
                 aria-current={tab === t.id ? 'page' : undefined}
-                className={`w-full whitespace-nowrap px-3 py-3 text-xs font-medium ${
+                className={`flex h-touch w-full items-center justify-center whitespace-nowrap px-3 text-xs font-medium ${
                   tab === t.id
                     ? 'border-t-2 border-accent -mt-px text-accent'
                     : 'text-muted'
@@ -258,7 +307,11 @@ export function App(): React.ReactElement {
       </nav>
       )}
 
-      <UpdatePrompt />
+      {/* El aviso lleva z-30 y la barra de la revisión vive en la misma esquina:
+          su «Actualizar» caía justo donde está «Guardar y siguiente sala», así
+          que el pulgar recargaba la aplicación en mitad de un aula. Reaparece al
+          volver a la lista, que es cuando recargar no cuesta nada. */}
+      {!inspecting && <UpdatePrompt />}
     </div>
   )
 }

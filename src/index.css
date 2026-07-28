@@ -17,6 +17,13 @@
      * mano— sacaba la pantalla de sitio en mitad de una revisión.
      */
     overscroll-behavior: none;
+
+    /*
+     * La barra de acción de la revisión mide ~138px y es `fixed`. Sin esto, al
+     * enfocar un campo cercano al final el navegador lo desplaza justo debajo de
+     * la barra: el técnico escribe a ciegas.
+     */
+    scroll-padding-bottom: 10rem;
   }
 
   body {
@@ -41,8 +48,17 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /*
+   * El foco va con `outline`, no con `ring`.
+   *
+   * El `ring` de Tailwind se dibuja con `box-shadow`, y `.key` usa `box-shadow`
+   * para su canto: la clase pisaba el anillo y el foco no se veía en NINGÚN
+   * botón de la aplicación. `outline` es una capa distinta y no colisiona con
+   * nada; `outline-offset` le da el aire que daba el ring.
+   */
   :focus-visible {
-    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-ground;
+    outline: 2px solid rgb(var(--accent));
+    outline-offset: 2px;
   }
 
   /*

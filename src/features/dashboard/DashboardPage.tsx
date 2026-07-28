@@ -11,14 +11,37 @@ import {
 } from './queries'
 
 export function DashboardPage(): React.ReactElement {
-  const { data: s, isLoading } = useSummary()
+  const { data: s, isPending, isError, refetch } = useSummary()
   const { data: lamps } = useLampAlerts()
   const { data: stale } = useStaleIncidents()
   const { data: byBuilding } = useIncidentsByBuilding()
   const { data: byMonth } = useIncidentsByMonth()
 
-  if (isLoading || !s) {
-    return <p className="p-6 text-muted">Cargando…</p>
+  if (isPending) {
+    return <p className="p-6 text-muted">Cargando el panel…</p>
+  }
+
+  // Antes esto caía en el mismo `if` que la carga y pintaba ceros en verde:
+  // el peor fallo posible en una pantalla de supervisión, porque parece una
+  // buena noticia.
+  if (isError || !s) {
+    return (
+      <div className="mx-auto max-w-md p-6">
+        <div className="card p-4">
+          <h2 className="font-semibold text-crit">No se ha podido leer el panel</h2>
+          <p className="mt-1 text-sm text-muted">
+            Necesita conexión. Las revisiones que hagas sin cobertura se guardan igual.
+          </p>
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            className="key key-quiet mt-3 min-h-11 px-3 text-sm"
+          >
+            Reintentar
+          </button>
+        </div>
+      </div>
+    )
   }
 
   const pct = s.roomsTotal ? Math.round((s.inspectedThisMonth / s.roomsTotal) * 100) : 0

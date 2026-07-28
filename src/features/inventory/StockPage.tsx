@@ -110,11 +110,11 @@ export function StockPage(): React.ReactElement {
                   {l.min_threshold || '—'}
                 </td>
                 <td className="py-2 text-right">
-                  <span className="inline-flex gap-1">
+                  <span className="inline-flex gap-2">
                     <button
                       type="button"
                       onClick={() => move.mutate({ itemId: l.stock_item_id, qty: -1, kind: 'consumo' })}
-                      className="key key-quiet h-9 w-9"
+                      className="key key-quiet h-11 w-11"
                       aria-label={`Consumir una unidad de ${l.name}`}
                     >
                       −
@@ -122,7 +122,7 @@ export function StockPage(): React.ReactElement {
                     <button
                       type="button"
                       onClick={() => move.mutate({ itemId: l.stock_item_id, qty: 1, kind: 'compra' })}
-                      className="key key-quiet h-9 w-9"
+                      className="key key-quiet h-11 w-11"
                       aria-label={`Añadir una unidad de ${l.name}`}
                     >
                       +
