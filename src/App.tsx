@@ -124,11 +124,18 @@ export function App(): React.ReactElement {
             <SyncChip />
             <button
               type="button"
-              onClick={() => void lock().then(() => setUnlocked(false))}
+              onClick={() => {
+                // Es la única forma de que la sesión termine: no caduca sola.
+                // Por eso se confirma — cerrarla sin querer obliga a teclear el
+                // PIN otra vez en mitad de una ronda.
+                if (confirm('¿Cerrar sesión? Tendrás que volver a introducir tu PIN.')) {
+                  void lock().then(() => setUnlocked(false))
+                }
+              }}
               className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-muted"
-              title="Pide el PIN de nuevo. Útil al prestar el dispositivo."
+              title="La sesión no caduca sola: solo termina aquí."
             >
-              Bloquear
+              Cerrar sesión
             </button>
           </div>
         </div>

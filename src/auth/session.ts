@@ -17,32 +17,31 @@ const SEALED_KEY = 'sealed-session'
 const ATTEMPTS_KEY = 'pin-attempts'
 
 /**
- * Cuánto puede estar la app inactiva antes de volver a pedir el PIN.
+ * Minutos de inactividad antes de volver a pedir el PIN.
  *
- * Por defecto una jornada completa. Quince minutos —lo que había antes— es un
- * ajuste de aplicación bancaria, no de trabajo de campo: un técnico que deja el
- * iPad para desmontar un proyector y vuelve a los veinte minutos se encontraba
- * la pantalla de bloqueo, varias veces al día.
+ * **0 = nunca**, y es el valor por defecto: la sesión dura hasta que alguien
+ * pulsa «Cerrar sesión». Es lo que se pidió expresamente, y para trabajo de
+ * campo tiene sentido — que la aplicación te eche mientras revisas aulas es una
+ * molestia diaria garantizada.
  *
- * El PIN protege un dispositivo perdido, y para eso sigue sirviendo: al cerrar
- * la pestaña o al terminar el turno vuelve a hacer falta.
+ * A cambio, conviene saber qué se pierde: con la sesión abierta, **quien coja
+ * el dispositivo entra directamente**. El PIN pasa a proteger solo a partir de
+ * que alguien cierra sesión a propósito. Si los iPads se comparten entre turnos
+ * o salen del campus, poner aquí 480 (una jornada) recupera esa protección sin
+ * estorbar durante el trabajo.
  */
-const LOCK_AFTER_MS =
-  Number(import.meta.env['VITE_LOCK_AFTER_MINUTES'] ?? 480) * 60 * 1000
+const LOCK_AFTER_MS = Number(import.meta.env['VITE_LOCK_AFTER_MINUTES'] ?? 0) * 60 * 1000
 
 /**
- * Sesión descifrada mientras la pestaña vive.
+ * Sesión activa del dispositivo.
  *
- * `sessionStorage` muere con la pestaña, así que sobrevive a recargas y a que
- * la app se quede abierta toda la mañana, pero no a cerrarla ni a reiniciar el
- * dispositivo. Hace falta porque el cliente de Supabase va con
- * `persistSession: false` —la sesión la custodiamos nosotros cifrada— y sin
- * esto `getSession()` devolvía null tras cada recarga: la app pedía el PIN una
- * y otra vez aunque acabaras de introducirlo.
+ * En `localStorage`, no en `sessionStorage`: tiene que sobrevivir a cerrar la
+ * pestaña, apagar el iPad y reiniciarlo. Solo desaparece cuando el usuario
+ * cierra sesión, o si falla el PIN cinco veces.
  *
- * Lo que se protege con el PIN es el dispositivo **en reposo**. Si el iPad se
- * pierde con la aplicación abierta y desbloqueada, quien lo encuentre ya tiene
- * acceso: el cifrado en IndexedDB no cambia eso, aquí ni en ningún diseño.
+ * El cliente de Supabase va con `persistSession: false` a propósito, para que
+ * la custodia sea nuestra y no suya: así «cerrar sesión» significa exactamente
+ * lo que dice y no queda ningún token suelto en otro sitio.
  */
 const TAB_SESSION_KEY = 'aulas.session'
 
@@ -53,7 +52,7 @@ interface TabSession {
 
 function cacheForTab(session: TabSession): void {
   try {
-    sessionStorage.setItem(TAB_SESSION_KEY, JSON.stringify(session))
+    localStorage.setItem(TAB_SESSION_KEY, JSON.stringify(session))
   } catch {
     // Safari en modo privado lanza al escribir. No es motivo para no entrar:
     // solo significa que una recarga volverá a pedir el PIN.
@@ -62,7 +61,7 @@ function cacheForTab(session: TabSession): void {
 
 function readTabCache(): TabSession | null {
   try {
-    const raw = sessionStorage.getItem(TAB_SESSION_KEY)
+    const raw = localStorage.getItem(TAB_SESSION_KEY)
     return raw ? (JSON.parse(raw) as TabSession) : null
   } catch {
     return null
@@ -71,7 +70,7 @@ function readTabCache(): TabSession | null {
 
 function clearTabCache(): void {
   try {
-    sessionStorage.removeItem(TAB_SESSION_KEY)
+    localStorage.removeItem(TAB_SESSION_KEY)
   } catch {
     /* nada que limpiar */
   }
@@ -241,18 +240,31 @@ export async function touch(): Promise<void> {
 }
 
 /** ¿Ha estado la app en segundo plano lo bastante como para volver a pedir el PIN? */
+/**
+ * ¿Toca volver a pedir el PIN por inactividad?
+ *
+ * Con `LOCK_AFTER_MS = 0` la respuesta es siempre no: la sesión solo termina
+ * cuando alguien la cierra.
+ */
 export async function shouldRelock(): Promise<boolean> {
+  if (LOCK_AFTER_MS <= 0) return false
   const last = (await db.meta.get('last-active'))?.value as number | undefined
   if (!last) return true
   return Date.now() - last > LOCK_AFTER_MS
 }
 
-/** Bloquea a propósito: al prestar el iPad o al terminar el turno. */
+/**
+ * Cierra la sesión a propósito. Es la única forma de que termine si no hay
+ * caducidad configurada.
+ *
+ * Borra la sesión activa pero **conserva la sesión sellada con el PIN**, así
+ * que para volver a entrar basta el PIN: no hace falta un código de alta nuevo.
+ */
 export async function lock(): Promise<void> {
   clearTabCache()
   await supabase.auth.signOut({ scope: 'local' })
   await db.meta.delete('last-active')
 }
 
-/** Minutos de inactividad configurados, para poder explicarlo en la interfaz. */
+/** Minutos de inactividad configurados. 0 significa que no caduca. */
 export const lockAfterMinutes = LOCK_AFTER_MS / 60_000

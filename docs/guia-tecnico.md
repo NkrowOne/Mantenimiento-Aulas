@@ -28,13 +28,15 @@ listo.
 
 ### ¿Se cierra sola?
 
-**No.** Puedes dejarla abierta toda la jornada y volver a ella cuando quieras,
-incluso si recargas la página. Solo vuelve a pedir el PIN si:
+**No, nunca.** Tecleas el PIN una vez y la sesión se queda. Puedes cerrar la
+pestaña, apagar el iPad, volver al día siguiente: sigues dentro.
 
-- Cierras la pestaña o el navegador.
-- Pasan **8 horas** sin usarla — normalmente, de un día para otro.
-- Pulsas **Bloquear** arriba a la derecha, que está para cuando prestas el
-  dispositivo a alguien.
+La única forma de salir es pulsar **Cerrar sesión**, arriba a la derecha. Te
+pedirá confirmación, porque después hay que volver a teclear el PIN.
+
+**Ciérrala cuando dejes de usar el dispositivo** —al acabar el turno, o si se
+lo pasas a otra persona—. Mientras esté abierta, cualquiera que coja el iPad
+entra sin PIN.
 
 ## Revisar un aula
 
@@ -101,8 +103,9 @@ compatible**. Es cosa del iPhone, no de la aplicación.
 Sí. Es para lo que está hecha. Revisa con normalidad y se subirá al salir.
 
 **¿Y si pierdo el iPad?**
-Sin tu PIN no se puede entrar. Avisa a administración para dar de baja el
-dispositivo.
+Avisa a administración cuanto antes para dar de baja el dispositivo. Si habías
+cerrado sesión, sin tu PIN no se puede entrar; si lo perdiste con la sesión
+abierta, quien lo encuentre puede usar la aplicación hasta que se dé de baja.
 
 **¿Puedo corregir una revisión ya guardada?**
 No. Una vez marcada como completa queda fija, que es lo que hace que valga como

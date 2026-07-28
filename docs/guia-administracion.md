@@ -91,12 +91,29 @@ lo que da valor a la trazabilidad.
 
 ### Un dispositivo perdido
 
+Con `VITE_LOCK_AFTER_MINUTES=0` la sesión no caduca, así que **si se perdió con
+la sesión abierta, quien lo encuentre puede usar la aplicación**. Actúa deprisa:
+
 ```sql
+-- 1. Cortar el acceso de esa persona a todo, ahora mismo
+update profiles set active = false where email = 'ana@x.es';
+
+-- 2. Dejar constancia del dispositivo
 update devices set revoked_at = now()
 where profile_id = (select id from profiles where email = 'ana@x.es');
 ```
 
-Sin el PIN no se puede entrar de todos modos, pero conviene dejar constancia.
+El paso 1 es el que corta de verdad: sin perfil activo el hook deja de dar rol y
+RLS no permite ver nada, en cuanto caduque el token de acceso (una hora como
+mucho). Después, para devolverle el acceso desde otro dispositivo:
+
+```bash
+npm run admin:user -- rol --email ana@x.es --rol tecnico   # reactivar
+npm run admin:user -- codigo --email ana@x.es              # código nuevo
+```
+
+Si el dispositivo se perdió **con la sesión cerrada**, no hay urgencia: sin el
+PIN los datos guardados son ilegibles.
 
 ## 3. Editar edificios, salas y equipamiento
 
@@ -176,7 +193,7 @@ porque se compilan dentro:
 
 | Variable | Por defecto | Qué hace |
 |---|---|---|
-| `VITE_LOCK_AFTER_MINUTES` | `480` (8 h) | Inactividad antes de volver a pedir el PIN. Una jornada. Bajarlo a 60 es razonable si los dispositivos se comparten |
+| `VITE_LOCK_AFTER_MINUTES` | `0` | Inactividad antes de volver a pedir el PIN. **0 = nunca**: la sesión dura hasta que el técnico pulsa «Cerrar sesión». Pon `480` (una jornada) si los dispositivos se comparten entre turnos o salen del campus |
 
 En base de datos, sin reconstruir nada:
 
