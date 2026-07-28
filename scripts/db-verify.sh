@@ -9,7 +9,16 @@
 # descubrir en producción que una política no bloquea lo que dice bloquear.
 set -euo pipefail
 
-XLSX="${1:-}"
+GESTIONADO=0
+ARGS=()
+for a in "$@"; do
+  case "$a" in
+    --gestionado) GESTIONADO=1 ;;
+    *) ARGS+=("$a") ;;
+  esac
+done
+export GESTIONADO
+XLSX="${ARGS[0]:-}"
 PGDATA="${PGDATA:-/var/tmp/pgdata-aulas}"
 PGSOCK="${PGSOCK:-/var/tmp}"
 PGPORT="${PGPORT:-5433}"
@@ -36,19 +45,79 @@ psql "$PGURL" -q -c "
   create schema public;
   drop schema if exists auth cascade;
   drop schema if exists storage cascade;" >/dev/null
+# `drop owned by` antes de `drop role`: los ALTER DEFAULT PRIVILEGES dejan
+# dependencias que, si no se retiran, impiden borrar el rol con un error que
+# no menciona en ningún momento los privilegios por defecto.
 psql "$PGURL" -q -c "
-  drop role if exists anon;
-  drop role if exists authenticated;
-  drop role if exists service_role;
-  drop role if exists supabase_auth_admin;" >/dev/null
+  do \$\$
+  declare r text;
+  begin
+    foreach r in array array['anon','authenticated','service_role',
+                             'authenticator','supabase_auth_admin',
+                             'supabase_storage_admin']
+    loop
+      if exists (select 1 from pg_roles where rolname = r) then
+        execute format('drop owned by %I cascade', r);
+        execute format('drop role %I', r);
+      end if;
+    end loop;
+  end \$\$;" >/dev/null
 
-echo "▸ Emulando el entorno Supabase"
-psql "$PGURL" -q -v ON_ERROR_STOP=1 -f supabase/test-harness.sql
+# Dos escenarios distintos, y conviene probar los dos:
+#
+#   (por defecto) imagen `supabase/postgres`: los roles y `auth.uid()` ya
+#                 existen, así que se emulan con el harness.
+#   --gestionado  Postgres a secas (Railway, Neon, RDS): no existe nada de eso
+#                 y tiene que crearlo la migración de arranque. Es el escenario
+#                 real cuando el Postgres lo da la plataforma.
+if [[ "${GESTIONADO:-}" == '1' ]]; then
+  echo "▸ Postgres desnudo: sin harness, arranca la migración de bootstrap"
+  psql "$PGURL" -q -c "create extension if not exists pgcrypto;" >/dev/null
+else
+  echo "▸ Emulando el entorno Supabase"
+  psql "$PGURL" -q -v ON_ERROR_STOP=1 -f supabase/test-harness.sql
+fi
 
 echo "▸ Aplicando migraciones"
 for f in supabase/migrations/*.sql; do
   printf '   %s\n' "$(basename "$f")"
   psql "$PGURL" -q -v ON_ERROR_STOP=1 -f "$f"
+
+  # En un Postgres gestionado, `auth.users` la crea GoTrue con sus propias
+  # migraciones, no nosotros. El orden real de despliegue es:
+  #   1) bootstrap de roles y esquemas   2) arrancar GoTrue   3) el resto
+  # Aquí se simula ese paso intermedio para que la prueba refleje la secuencia
+  # de verdad en lugar de una que nunca ocurre.
+  if [[ "${GESTIONADO:-}" == '1' && "$(basename "$f")" == 00000000000000_* ]]; then
+    printf '   (simulando el arranque de GoTrue y Storage)\n'
+    psql "$PGURL" -q -v ON_ERROR_STOP=1 -c "
+      create table if not exists auth.users (
+        id                 uuid primary key default gen_random_uuid(),
+        email              text unique,
+        raw_user_meta_data jsonb not null default '{}'::jsonb,
+        created_at         timestamptz not null default now()
+      );
+      grant select on auth.users to supabase_auth_admin;
+
+      create table if not exists storage.buckets (
+        id                 text primary key,
+        name               text not null,
+        public             boolean not null default false,
+        file_size_limit    bigint,
+        allowed_mime_types text[],
+        created_at         timestamptz not null default now()
+      );
+      create table if not exists storage.objects (
+        id         uuid primary key default gen_random_uuid(),
+        bucket_id  text references storage.buckets(id),
+        name       text not null,
+        owner      uuid,
+        metadata   jsonb,
+        created_at timestamptz not null default now()
+      );
+      alter table storage.objects enable row level security;
+      grant all on storage.buckets, storage.objects to authenticated, service_role;"
+  fi
 done
 
 if [ -n "$XLSX" ]; then

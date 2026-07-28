@@ -10,6 +10,18 @@
 -- por URL firmada de duración corta, nunca por enlace público permanente.
 -- =============================================================================
 
+-- `storage.buckets` la crea el servicio de Storage con sus propias migraciones.
+-- Si aún no existe, el error nativo de Postgres no dice nada útil sobre la
+-- causa, así que se sustituye por uno que sí explica qué hacer.
+do $$
+begin
+  if to_regclass('storage.buckets') is null then
+    raise exception
+      'El servicio de Storage aún no ha arrancado. Levántalo y vuelve a aplicar esta migración.'
+      using hint = 'Orden correcto: bootstrap → arrancar GoTrue y Storage → resto de migraciones.';
+  end if;
+end $$;
+
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values
   -- 5 MB por foto es holgado: el cliente las comprime a ~200 KB. El límite está

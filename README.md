@@ -112,6 +112,7 @@ exactamente las mismas filas.
 
 ```bash
 npm run db:verify -- ruta/al/Material_Aulas.xlsx
+npm run db:verify -- --gestionado    # sobre un Postgres desnudo, sin imagen de Supabase
 ```
 
 Levanta un Postgres desechable, emula lo mínimo de Supabase, aplica las
@@ -151,6 +152,7 @@ producción lo levanta `docker compose up reports-worker` y lo despierta
 | Buckets de Storage y sus políticas | ✅ 3 pruebas de RLS propias |
 | Despliegue: Compose, Caddy, claves, copias | ✅ |
 | Alta de usuarios y códigos | ✅ |
+| Despliegue sobre Postgres gestionado | ✅ verificado en Postgres desnudo |
 | Integración con ServiceNow | 🔌 puerto listo, falta la implementación |
 
 ## Decisiones que conviene conocer
