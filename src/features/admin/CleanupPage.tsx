@@ -185,7 +185,7 @@ export function CleanupPage(): React.ReactElement {
           ))}
         </ul>
 
-        {quarantine?.length === 0 && <p className="mt-4 text-sm text-muted">Vacía.</p>}
+        {quarantine?.length === 0 && <p className="mt-4 text-sm text-muted">Nada pendiente de revisar.</p>}
       </section>
     </div>
   )

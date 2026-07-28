@@ -135,7 +135,7 @@ export function StockPage(): React.ReactElement {
         </table>
       </div>
 
-      {rows.length === 0 && <p className="mt-6 text-sm text-muted">Sin resultados.</p>}
+      {rows.length === 0 && <p className="mt-6 text-sm text-muted">Ningún artículo coincide.</p>}
       {move.isError && (
         <p className="mt-4 text-sm text-crit">
           Solo un supervisor registra compras.

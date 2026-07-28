@@ -149,7 +149,7 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
           <textarea
             value={draft.inspection.notes ?? ''}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Observaciones"
+            placeholder="Observaciones (opcional)"
             rows={3}
             className="mt-3 w-full rounded-md border border-line bg-surface p-3 text-sm"
           />
@@ -165,8 +165,8 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
         <div className="mb-2 flex items-center justify-between text-xs text-muted">
           <span>
             {missing.length === 0
-              ? 'Completa'
-              : `Faltan ${missing.length}`}
+              ? 'Todo comprobado'
+              : `Faltan ${missing.length} comprobacion${missing.length === 1 ? '' : 'es'}`}
           </span>
           <span>{saving ? 'Guardando…' : 'Guardado'}</span>
         </div>

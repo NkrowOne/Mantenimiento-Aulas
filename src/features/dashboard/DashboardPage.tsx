@@ -146,7 +146,7 @@ export function DashboardPage(): React.ReactElement {
         <h3 className="font-semibold">Incidencias estancadas</h3>
         <p className="mb-3 text-xs text-muted">Más de 7 días abiertas</p>
 
-        {stale?.length === 0 && <p className="text-sm text-muted">Ninguna.</p>}
+        {stale?.length === 0 && <p className="text-sm text-muted">Ninguna estancada.</p>}
 
         <ul className="divide-y divide-line">
           {(stale ?? []).map((i) => (

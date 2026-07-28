@@ -48,7 +48,7 @@ export function RoomListPage({ building, onPick, onBack }: Props): React.ReactEl
           ← Edificios
         </button>
         <h1 className="mt-1 text-xl font-semibold">{building.name}</h1>
-        <p className="text-sm text-muted">{rooms?.length ?? 0} salas</p>
+        <p className="text-sm text-muted">{rooms?.length ?? 0} salas · las más antiguas primero</p>
       </header>
 
       <ul className="divide-y divide-line">
