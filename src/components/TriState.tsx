@@ -25,12 +25,12 @@ const OPTIONS: Array<{ value: CheckResult; label: string; symbol: string }> = [
 const SELECTED: Record<CheckResult, string> = {
   ok: 'bg-ok text-white border-ok',
   incidencia: 'bg-crit text-white border-crit',
-  na: 'bg-muted/20 text-muted border-muted/40',
+  na: 'bg-na-tint text-na border-na/40',
 }
 
 /** El estado tiñe la fila entera: se ve de un vistazo qué queda por tocar. */
 const ROW: Partial<Record<CheckResult, string>> = {
-  incidencia: 'bg-crit/5',
+  incidencia: 'bg-crit-tint',
   na: 'opacity-55',
 }
 
@@ -62,7 +62,7 @@ export function TriState({ value, onChange, label, hint }: Props): React.ReactEl
               aria-checked={selected}
               onClick={() => onChange(opt.value)}
               className={[
-                'flex h-11 w-[3.25rem] flex-col items-center justify-center rounded-md border',
+                'flex h-11 w-[3.25rem] flex-col items-center justify-center rounded-ctl border',
                 'text-[0.625rem] font-semibold leading-none transition-colors',
                 selected ? SELECTED[opt.value] : 'border-line bg-surface text-muted',
               ].join(' ')}

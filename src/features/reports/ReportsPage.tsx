@@ -72,7 +72,7 @@ export function ReportsPage(): React.ReactElement {
               type="date"
               value={from}
               onChange={(e) => setFrom(e.target.value)}
-              className="h-11 rounded-md border border-line bg-surface px-2"
+              className="h-11 rounded-ctl border border-line bg-surface px-2"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm">
@@ -81,14 +81,14 @@ export function ReportsPage(): React.ReactElement {
               type="date"
               value={to}
               onChange={(e) => setTo(e.target.value)}
-              className="h-11 rounded-md border border-line bg-surface px-2"
+              className="h-11 rounded-ctl border border-line bg-surface px-2"
             />
           </label>
           <button
             type="button"
             disabled={!from || !to || generate.isPending}
             onClick={() => generate.mutate({ kind: 'personalizado', from, to })}
-            className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-accent-ink disabled:opacity-40"
+            className="h-11 rounded-ctl bg-accent px-4 text-sm font-semibold text-accent-ink disabled:opacity-40"
           >
             {generate.isPending ? 'Generando…' : 'Generar'}
           </button>
@@ -114,7 +114,7 @@ export function ReportsPage(): React.ReactElement {
             <button
               type="button"
               onClick={() => void download(r.storage_path)}
-              className="rounded-md border border-line px-3 py-1.5 text-xs font-medium"
+              className="rounded-ctl border border-line px-3 py-1.5 text-xs font-medium"
             >
               Descargar
             </button>

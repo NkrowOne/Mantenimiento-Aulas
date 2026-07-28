@@ -55,7 +55,7 @@ export function DashboardPage(): React.ReactElement {
       </section>
 
       {(s.needsReview > 0 || s.quarantine > 0) && (
-        <section className="card border-warn/40 bg-warn/5 p-4">
+        <section className="card border-warn/40 bg-warn-tint p-4">
           <h2 className="font-semibold text-warn">Datos por revisar</h2>
           <p className="mt-1 text-sm text-muted">
             {[
@@ -151,7 +151,7 @@ export function DashboardPage(): React.ReactElement {
         <ul className="divide-y divide-line">
           {(stale ?? []).map((i) => (
             <li key={i.id} className="flex items-start gap-3 py-2 text-sm">
-              <span className="mt-1 shrink-0 rounded-full bg-crit/12 px-2 py-0.5 font-mono text-xs text-crit tabular">
+              <span className="mt-1 shrink-0 rounded-tag bg-crit-tint px-2 py-0.5 font-mono text-xs text-crit tabular">
                 {i.days_open} d
               </span>
               <span className="min-w-0 flex-1">

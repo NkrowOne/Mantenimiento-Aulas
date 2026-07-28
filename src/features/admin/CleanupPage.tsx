@@ -122,7 +122,7 @@ export function CleanupPage(): React.ReactElement {
                 <select
                   value={mergeInto[b.id] ?? ''}
                   onChange={(e) => setMergeInto((m) => ({ ...m, [b.id]: e.target.value }))}
-                  className="h-10 rounded-md border border-line bg-surface px-2 text-sm"
+                  className="h-10 rounded-ctl border border-line bg-surface px-2 text-sm"
                 >
                   <option value="">Fusionar con…</option>
                   {(known ?? []).map((k) => (
@@ -136,7 +136,7 @@ export function CleanupPage(): React.ReactElement {
                   type="button"
                   disabled={!mergeInto[b.id]}
                   onClick={() => merge.mutate({ fromId: b.id, intoId: mergeInto[b.id]! })}
-                  className="h-10 rounded-md bg-accent px-3 text-sm font-semibold text-accent-ink disabled:opacity-40"
+                  className="h-10 rounded-ctl bg-accent px-3 text-sm font-semibold text-accent-ink disabled:opacity-40"
                 >
                   Fusionar
                 </button>
@@ -144,7 +144,7 @@ export function CleanupPage(): React.ReactElement {
                 <button
                   type="button"
                   onClick={() => confirm.mutate(b.id)}
-                  className="h-10 rounded-md border border-line px-3 text-sm font-medium"
+                  className="h-10 rounded-ctl border border-line px-3 text-sm font-medium"
                 >
                   Es un edificio propio
                 </button>
@@ -177,7 +177,7 @@ export function CleanupPage(): React.ReactElement {
               <button
                 type="button"
                 onClick={() => dismiss.mutate(q.id)}
-                className="shrink-0 rounded-md border border-line px-2 py-1 text-xs"
+                className="shrink-0 rounded-ctl border border-line px-2 py-1 text-xs"
               >
                 Revisada
               </button>

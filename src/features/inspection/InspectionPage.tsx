@@ -71,7 +71,7 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
           <button
             type="button"
             onClick={markRestOk}
-            className="flex h-touch w-full items-center justify-center gap-2 rounded-lg bg-ok font-semibold text-white"
+            className="flex h-touch w-full items-center justify-center gap-2 rounded-ctl bg-ok font-semibold text-white"
           >
             <span aria-hidden className="text-lg">✓</span>
             {draft.checks.size === 0
@@ -96,7 +96,7 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
               />
 
               {check?.result === 'incidencia' && (
-                <div className="mb-4 rounded-lg border border-crit/30 bg-crit/5 p-3">
+                <div className="mb-4 rounded-ctl border border-crit/30 bg-crit-tint p-3">
                   <p className="eyebrow mb-2">Gravedad</p>
                   <div className="grid grid-cols-3 gap-2">
                     {SEVERITIES.map((s) => (
@@ -104,7 +104,7 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
                         key={s.value}
                         type="button"
                         onClick={() => setCheck(key, 'incidencia', { severity: s.value })}
-                        className={`rounded-md border px-2 py-2 text-xs font-medium ${
+                        className={`rounded-ctl border px-2 py-2 text-xs font-medium ${
                           check.severity === s.value
                             ? 'border-crit bg-crit text-white'
                             : 'border-line bg-surface text-muted'
@@ -120,7 +120,7 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
                     onChange={(e) => setCheck(key, 'incidencia', { note: e.target.value })}
                     placeholder="¿Qué has visto?"
                     rows={2}
-                    className="mt-3 w-full rounded-md border border-line bg-surface p-2 text-sm"
+                    className="mt-3 w-full rounded-ctl border border-line bg-surface p-2 text-sm"
                   />
                 </div>
               )}
@@ -138,7 +138,7 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
                         measure_unit: measure.unit,
                       })
                     }
-                    className="w-24 rounded-md border border-line bg-surface p-2 text-right font-mono tabular"
+                    className="w-24 rounded-ctl border border-line bg-surface p-2 text-right font-mono tabular"
                   />
                   <span className="text-muted">{measure.unit}</span>
                 </label>
@@ -160,7 +160,7 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
           <button
             type="button"
             onClick={() => fileInput.current?.click()}
-            className="h-touch w-full rounded-lg border-2 border-dashed border-line font-medium text-muted"
+            className="h-touch w-full rounded-ctl border-2 border-dashed border-line font-medium text-muted"
           >
             {photoCount > 0 ? `${photoCount} foto${photoCount === 1 ? '' : 's'} · añadir otra` : 'Añadir foto'}
           </button>
@@ -175,7 +175,7 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
             onChange={(e) => setNotes(e.target.value)}
             placeholder="Observaciones (opcional)"
             rows={3}
-            className="mt-3 w-full rounded-md border border-line bg-surface p-3 text-sm"
+            className="mt-3 w-full rounded-ctl border border-line bg-surface p-3 text-sm"
           />
         </div>
       </div>
@@ -200,7 +200,7 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
             type="button"
             disabled={missing.length > 0}
             onClick={() => void complete().then(() => onDone(false))}
-            className="h-touch flex-1 rounded-lg border border-line font-semibold disabled:opacity-40"
+            className="h-touch flex-1 rounded-ctl border border-line font-semibold disabled:opacity-40"
           >
             Guardar
           </button>
@@ -208,7 +208,7 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
             type="button"
             disabled={missing.length > 0}
             onClick={() => void complete().then(() => onDone(true))}
-            className="h-touch flex-[2] rounded-lg bg-accent font-semibold text-accent-ink disabled:opacity-40"
+            className="h-touch flex-[2] rounded-ctl bg-accent font-semibold text-accent-ink disabled:opacity-40"
           >
             Guardar y siguiente sala
           </button>

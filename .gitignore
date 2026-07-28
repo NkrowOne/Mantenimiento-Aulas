@@ -14,3 +14,6 @@ reports-worker/__pycache__/
 
 # Caché incremental de TypeScript: cambia en cada compilación.
 *.tsbuildinfo
+
+# Capturas de previsualización: se regeneran con `npm run preview`.
+dist/preview-*.png

@@ -1,80 +1,108 @@
 /*
- * Sistema de diseño — "instrumento", no "dashboard".
+ * Sistema de diseño — tomado del prototipo aprobado.
  *
- * Neutros con sesgo azul deliberado (no gris puro), acento azul instrumento,
- * y los tres colores de estado reservados: NUNCA se usan como serie de gráfico.
+ * Petróleo frío sobre un fondo gris verdoso, no el azul genérico de antes.
+ * Cada color de estado trae su tinte: el estado puede teñir una fila entera sin
+ * recurrir a opacidades, que sobre fondo oscuro se ensucian.
  *
- * Los tokens se definen aquí como triplete RGB sin envolver para que Tailwind
- * pueda aplicarles opacidad (`bg-accent/10`).
+ * Los tokens van como triplete RGB sin envolver para que Tailwind pueda
+ * aplicarles opacidad (`bg-accent/10`).
  */
 
 :root {
-  --ground: 246 247 249;
-  --surface: 255 255 255;
-  --raised: 241 243 246;
-  --ink: 18 23 28;
-  --muted: 92 104 117;
-  --line: 219 224 230;
+  --ground: 236 240 240;
+  --surface: 251 252 252;
+  --sunken: 227 233 233;
+  --line: 205 216 217;
+  --line-soft: 223 231 231;
 
-  --accent: 43 76 140;
-  --accent-ink: 255 255 255;
+  --ink: 16 24 25;
+  --ink-2: 65 83 87;
+  --muted: 100 122 127;
 
-  --ok: 46 125 79;
-  --warn: 180 116 26;
-  --crit: 179 38 30;
+  --accent: 4 106 120;
+  --mark: 0 140 158;
+  --accent-tint: 223 239 241;
+  --accent-ink: 251 252 252;
 
-  --shadow-card: 0 1px 2px rgb(18 23 28 / 0.06), 0 1px 3px rgb(18 23 28 / 0.04);
+  --ok: 19 122 71;
+  --ok-tint: 226 241 233;
+  --warn: 138 90 0;
+  --warn-tint: 248 239 220;
+  --crit: 176 35 24;
+  --crit-tint: 250 232 230;
+  --na: 95 112 120;
+  --na-tint: 231 236 237;
+
+  /*
+   * Radios. El prototipo los quería casi planos (3px); se suben porque las
+   * teclas pedían suavizarse, sin llegar a la píldora: esto sigue siendo un
+   * parte de trabajo, no una app de consumo.
+   */
+  --r-ctl: 8px;
+  --r-card: 6px;
+  --r-tag: 4px;
+
+  --lift: 0 1px 1px rgb(16 24 25 / 0.05), 0 18px 44px -26px rgb(16 24 25 / 0.4);
 }
 
-/* El tema oscuro se elige, no se invierte: los estados se aclaran para
-   mantener el contraste sobre fondo oscuro sin perder su identidad. */
+/* El tema oscuro se elige, no se invierte: los estados se aclaran para mantener
+   el contraste sobre fondo oscuro sin perder su identidad. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --ground: 14 18 22;
-    --surface: 23 28 34;
-    --raised: 31 37 44;
-    --ink: 230 234 238;
-    --muted: 147 160 173;
-    --line: 45 53 62;
+  :root:not([data-theme='light']) {
+    --ground: 10 16 18;
+    --surface: 20 28 30;
+    --sunken: 27 37 40;
+    --line: 44 57 60;
+    --line-soft: 34 45 48;
 
-    --accent: 122 160 224;
-    --accent-ink: 12 18 28;
+    --ink: 232 240 241;
+    --ink-2: 163 179 183;
+    --muted: 122 141 146;
 
-    --ok: 91 190 132;
-    --warn: 224 165 74;
-    --crit: 240 122 114;
+    --accent: 63 182 198;
+    --mark: 34 167 184;
+    --accent-tint: 12 39 44;
+    --accent-ink: 6 23 25;
 
-    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.3);
+    --ok: 79 194 134;
+    --ok-tint: 15 38 25;
+    --warn: 224 166 75;
+    --warn-tint: 42 32 19;
+    --crit: 242 130 122;
+    --crit-tint: 44 23 20;
+    --na: 139 154 161;
+    --na-tint: 27 37 40;
+
+    --lift: 0 1px 1px rgb(0 0 0 / 0.5), 0 18px 44px -26px rgb(0 0 0 / 0.9);
   }
 }
 
-/* El interruptor del usuario gana sobre la preferencia del sistema, en ambos sentidos. */
-:root[data-theme='light'] {
-  --ground: 246 247 249;
-  --surface: 255 255 255;
-  --raised: 241 243 246;
-  --ink: 18 23 28;
-  --muted: 92 104 117;
-  --line: 219 224 230;
-  --accent: 43 76 140;
-  --accent-ink: 255 255 255;
-  --ok: 46 125 79;
-  --warn: 180 116 26;
-  --crit: 179 38 30;
-  --shadow-card: 0 1px 2px rgb(18 23 28 / 0.06), 0 1px 3px rgb(18 23 28 / 0.04);
-}
-
+/* El interruptor del usuario gana sobre la preferencia del sistema. */
 :root[data-theme='dark'] {
-  --ground: 14 18 22;
-  --surface: 23 28 34;
-  --raised: 31 37 44;
-  --ink: 230 234 238;
-  --muted: 147 160 173;
-  --line: 45 53 62;
-  --accent: 122 160 224;
-  --accent-ink: 12 18 28;
-  --ok: 91 190 132;
-  --warn: 224 165 74;
-  --crit: 240 122 114;
-  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.3);
+  --ground: 10 16 18;
+  --surface: 20 28 30;
+  --sunken: 27 37 40;
+  --line: 44 57 60;
+  --line-soft: 34 45 48;
+
+  --ink: 232 240 241;
+  --ink-2: 163 179 183;
+  --muted: 122 141 146;
+
+  --accent: 63 182 198;
+  --mark: 34 167 184;
+  --accent-tint: 12 39 44;
+  --accent-ink: 6 23 25;
+
+  --ok: 79 194 134;
+  --ok-tint: 15 38 25;
+  --warn: 224 166 75;
+  --warn-tint: 42 32 19;
+  --crit: 242 130 122;
+  --crit-tint: 44 23 20;
+  --na: 139 154 161;
+  --na-tint: 27 37 40;
+
+  --lift: 0 1px 1px rgb(0 0 0 / 0.5), 0 18px 44px -26px rgb(0 0 0 / 0.9);
 }

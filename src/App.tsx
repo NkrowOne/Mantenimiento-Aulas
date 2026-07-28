@@ -132,13 +132,14 @@ export function App(): React.ReactElement {
   }
 
   const visibleTabs = TABS.filter((t) => RANK[role] >= RANK[t.minRole])
+  const inspecting = tab === 'revisar' && view.name === 'revision'
 
   return (
-    <div className="min-h-dvh pb-20">
+    <div className={`min-h-dvh ${inspecting ? '' : 'pb-20'}`}>
       <header className="sticky top-0 z-10 border-b border-line bg-ground/95 backdrop-blur">
-        <div className="flex items-center justify-between px-4 py-2">
-          <span className="eyebrow">Mantenimiento de aulas</span>
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between gap-2 px-4 py-2">
+          <span className="eyebrow truncate">Aulas</span>
+          <div className="flex shrink-0 items-center gap-2">
             <SyncChip />
             <button
               type="button"
@@ -173,7 +174,7 @@ export function App(): React.ReactElement {
                 </span>
                 <span className="flex-1">{b.name}</span>
                 {b.needs_review && (
-                  <span className="rounded-full bg-warn/12 px-2 py-0.5 text-xs text-warn">
+                  <span className="rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
                     Sin identificar
                   </span>
                 )}
@@ -217,7 +218,11 @@ export function App(): React.ReactElement {
       {tab === 'datos' && <CleanupPage />}
 
       {/* La navegación se queda abajo: es donde llega el pulgar sin recolocar
-          la mano, y respeta la zona de gestos del iPhone. */}
+          la mano, y respeta la zona de gestos del iPhone.
+          Se oculta durante la revisión, que tiene su propia barra de acción en
+          esa misma posición: con las dos, los botones de guardar quedaban
+          debajo y no se podían pulsar. */}
+      {!inspecting && (
       <nav
         className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-surface"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
@@ -241,6 +246,7 @@ export function App(): React.ReactElement {
           ))}
         </ul>
       </nav>
+      )}
 
       <UpdatePrompt />
     </div>

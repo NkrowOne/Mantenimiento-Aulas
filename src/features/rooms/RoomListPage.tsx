@@ -78,7 +78,7 @@ export function RoomListPage({ building, onPick, onBack }: Props): React.ReactEl
 
                 <span className="shrink-0 text-right text-xs">
                   {hasDraft && (
-                    <span className="mb-1 block rounded-full bg-accent/12 px-2 py-0.5 font-medium text-accent">
+                    <span className="mb-1 block rounded-tag bg-accent-tint px-2 py-0.5 font-medium text-accent">
                       A medias
                     </span>
                   )}

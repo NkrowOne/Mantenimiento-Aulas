@@ -84,7 +84,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
                   autoComplete="username"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="h-touch rounded-lg border border-line bg-surface px-3"
+                  className="h-touch rounded-ctl border border-line bg-surface px-3"
                   required
                 />
               </label>
@@ -96,7 +96,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
                   autoComplete="one-time-code"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
-                  className="h-touch rounded-lg border border-line bg-surface px-3 font-mono"
+                  className="h-touch rounded-ctl border border-line bg-surface px-3 font-mono"
                   required
                 />
               </label>
@@ -121,7 +121,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
                 value={sealed.hint.email}
                 readOnly
                 tabIndex={-1}
-                className="h-touch rounded-lg border border-line bg-raised px-3 text-muted"
+                className="h-touch rounded-ctl border border-line bg-raised px-3 text-muted"
               />
             </label>
           )}
@@ -141,7 +141,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
               maxLength={MAX_PIN_LENGTH}
               value={pin}
               onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-              className="h-touch rounded-lg border border-line bg-surface px-3 text-center font-mono text-2xl tracking-[0.5em]"
+              className="h-touch rounded-ctl border border-line bg-surface px-3 text-center font-mono text-2xl tracking-[0.5em]"
               required
               autoFocus={!enrolling}
             />
@@ -152,7 +152,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
           <button
             type="submit"
             disabled={busy || pin.length < MIN_PIN_LENGTH}
-            className="h-touch rounded-lg bg-accent font-semibold text-accent-ink disabled:opacity-40"
+            className="h-touch rounded-ctl bg-accent font-semibold text-accent-ink disabled:opacity-40"
           >
             {busy ? 'Un momento…' : enrolling ? 'Dar de alta' : 'Entrar'}
           </button>

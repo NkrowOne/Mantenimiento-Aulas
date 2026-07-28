@@ -16,9 +16,9 @@ interface IncidentRow {
 }
 
 const STATE_STYLE: Record<IncidentState, string> = {
-  abierta: 'bg-crit/12 text-crit',
-  en_curso: 'bg-warn/12 text-warn',
-  resuelta: 'bg-ok/12 text-ok',
+  abierta: 'bg-crit-tint text-crit',
+  en_curso: 'bg-warn-tint text-warn',
+  resuelta: 'bg-ok-tint text-ok',
 }
 
 const STATE_LABEL: Record<IncidentState, string> = {
@@ -101,7 +101,7 @@ export function IncidentsPage(): React.ReactElement {
                       <button
                         type="button"
                         onClick={() => advance.mutate({ id: i.id, state: 'en_curso' })}
-                        className="rounded-md border border-line px-2 py-1 text-xs font-medium"
+                        className="rounded-ctl border border-line px-2 py-1 text-xs font-medium"
                       >
                         Empezar
                       </button>
@@ -109,7 +109,7 @@ export function IncidentsPage(): React.ReactElement {
                     <button
                       type="button"
                       onClick={() => advance.mutate({ id: i.id, state: 'resuelta' })}
-                      className="rounded-md bg-accent px-2 py-1 text-xs font-medium text-accent-ink"
+                      className="rounded-ctl bg-accent px-2 py-1 text-xs font-medium text-accent-ink"
                     >
                       Resolver
                     </button>

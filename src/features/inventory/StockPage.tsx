@@ -65,7 +65,7 @@ export function StockPage(): React.ReactElement {
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Buscar artículo"
-          className="h-11 min-w-48 flex-1 rounded-lg border border-line bg-surface px-3 text-sm"
+          className="h-11 min-w-48 flex-1 rounded-ctl border border-line bg-surface px-3 text-sm"
         />
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={onlyLow} onChange={(e) => setOnlyLow(e.target.checked)} />
@@ -91,7 +91,7 @@ export function StockPage(): React.ReactElement {
                     {l.below_threshold && (
                       <span
                         aria-label="Bajo mínimo"
-                        className="rounded-full bg-crit/12 px-1.5 py-0.5 text-xs font-semibold text-crit"
+                        className="rounded-tag bg-crit-tint px-1.5 py-0.5 text-xs font-semibold text-crit"
                       >
                         !
                       </span>
@@ -114,7 +114,7 @@ export function StockPage(): React.ReactElement {
                     <button
                       type="button"
                       onClick={() => move.mutate({ itemId: l.stock_item_id, qty: -1, kind: 'consumo' })}
-                      className="h-9 w-9 rounded-md border border-line font-semibold"
+                      className="h-9 w-9 rounded-ctl border border-line font-semibold"
                       aria-label={`Consumir una unidad de ${l.name}`}
                     >
                       −
@@ -122,7 +122,7 @@ export function StockPage(): React.ReactElement {
                     <button
                       type="button"
                       onClick={() => move.mutate({ itemId: l.stock_item_id, qty: 1, kind: 'compra' })}
-                      className="h-9 w-9 rounded-md border border-line font-semibold"
+                      className="h-9 w-9 rounded-ctl border border-line font-semibold"
                       aria-label={`Añadir una unidad de ${l.name}`}
                     >
                       +

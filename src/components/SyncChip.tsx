@@ -38,10 +38,10 @@ export function SyncChip(): React.ReactElement {
               : { label: 'Guardado en servidor', tone: 'ok' as const }
 
   const toneClass = {
-    ok: 'bg-ok/12 text-ok border-ok/30',
-    warn: 'bg-warn/12 text-warn border-warn/30',
-    crit: 'bg-crit/12 text-crit border-crit/30',
-    accent: 'bg-accent/12 text-accent border-accent/30',
+    ok: 'bg-ok-tint text-ok border-ok/30',
+    warn: 'bg-warn-tint text-warn border-warn/30',
+    crit: 'bg-crit-tint text-crit border-crit/30',
+    accent: 'bg-accent-tint text-accent border-accent/30',
   }[tone]
 
   return (
@@ -85,7 +85,7 @@ export function SyncChip(): React.ReactElement {
             <button
               type="button"
               onClick={() => void flush()}
-              className="flex-1 rounded-md bg-accent px-3 py-2 text-xs font-semibold text-accent-ink"
+              className="flex-1 rounded-ctl bg-accent px-3 py-2 text-xs font-semibold text-accent-ink"
             >
               Sincronizar
             </button>
@@ -93,7 +93,7 @@ export function SyncChip(): React.ReactElement {
               <button
                 type="button"
                 onClick={() => void retryRejected()}
-                className="flex-1 rounded-md border border-line px-3 py-2 text-xs font-semibold"
+                className="flex-1 rounded-ctl border border-line px-3 py-2 text-xs font-semibold"
               >
                 Reintentar
               </button>

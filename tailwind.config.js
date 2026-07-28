@@ -1,27 +1,51 @@
 /** @type {import('tailwindcss').Config} */
+const token = (name) => `rgb(var(--${name}) / <alpha-value>)`
+
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
-        ground: 'rgb(var(--ground) / <alpha-value>)',
-        surface: 'rgb(var(--surface) / <alpha-value>)',
-        raised: 'rgb(var(--raised) / <alpha-value>)',
-        ink: 'rgb(var(--ink) / <alpha-value>)',
-        muted: 'rgb(var(--muted) / <alpha-value>)',
-        line: 'rgb(var(--line) / <alpha-value>)',
-        accent: 'rgb(var(--accent) / <alpha-value>)',
-        'accent-ink': 'rgb(var(--accent-ink) / <alpha-value>)',
-        ok: 'rgb(var(--ok) / <alpha-value>)',
-        warn: 'rgb(var(--warn) / <alpha-value>)',
-        crit: 'rgb(var(--crit) / <alpha-value>)',
+        ground: token('ground'),
+        surface: token('surface'),
+        sunken: token('sunken'),
+        line: token('line'),
+        'line-soft': token('line-soft'),
+
+        ink: token('ink'),
+        'ink-2': token('ink-2'),
+        muted: token('muted'),
+
+        accent: token('accent'),
+        mark: token('mark'),
+        'accent-tint': token('accent-tint'),
+        'accent-ink': token('accent-ink'),
+
+        // Los estados traen su tinte: teñir una fila entera con un color sólido
+        // suave sale mejor que con opacidad, que sobre fondo oscuro se ensucia.
+        ok: token('ok'),
+        'ok-tint': token('ok-tint'),
+        warn: token('warn'),
+        'warn-tint': token('warn-tint'),
+        crit: token('crit'),
+        'crit-tint': token('crit-tint'),
+        na: token('na'),
+        'na-tint': token('na-tint'),
       },
       fontFamily: {
-        sans: ['"IBM Plex Sans Variable"', 'system-ui', 'sans-serif'],
-        mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
+        sans: ['"Instrument Sans Variable"', 'system-ui', '-apple-system', 'sans-serif'],
+        mono: ['"IBM Plex Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+      },
+      borderRadius: {
+        ctl: 'var(--r-ctl)',
+        card: 'var(--r-card)',
+        tag: 'var(--r-tag)',
+      },
+      boxShadow: {
+        lift: 'var(--lift)',
       },
       spacing: {
-        // Objetivo táctil del control tri-estado: se toca con el pulgar, de pie, en un aula.
+        // Objetivo táctil: se toca con el pulgar, de pie, en un aula.
         touch: '3.5rem',
       },
     },

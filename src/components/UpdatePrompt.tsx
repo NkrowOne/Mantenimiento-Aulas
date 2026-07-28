@@ -31,7 +31,7 @@ export function UpdatePrompt(): React.ReactElement | null {
   return (
     <div
       role="status"
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-accent/30 bg-accent/10 backdrop-blur"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-accent/30 bg-accent-tint backdrop-blur"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
@@ -40,14 +40,14 @@ export function UpdatePrompt(): React.ReactElement | null {
         <button
           type="button"
           onClick={() => setNeedRefresh(false)}
-          className="rounded-md px-3 py-2 text-sm font-medium text-muted"
+          className="rounded-ctl px-3 py-2 text-sm font-medium text-muted"
         >
           Ahora no
         </button>
         <button
           type="button"
           onClick={() => void updateServiceWorker(true)}
-          className="rounded-md bg-accent px-3 py-2 text-sm font-semibold text-accent-ink"
+          className="rounded-ctl bg-accent px-3 py-2 text-sm font-semibold text-accent-ink"
         >
           Actualizar
         </button>
