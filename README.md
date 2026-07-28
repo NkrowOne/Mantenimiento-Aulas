@@ -47,6 +47,13 @@ de abrir incidencia.
 
 ### Sistema de diseño
 
+**Firma: la placa de puerta.** Cada aula del campus lleva una placa grabada. Es el objeto más
+característico de este oficio y encierra la tesis del proyecto: *la identidad vive en el
+código, no en el nombre*. Aparece a tres escalas — la placa del sistema en la cabecera, la del
+aula en su ficha, y un sello en el pie del informe — y en la cabecera recibe un único barrido
+de escaneo al cargar, que es literalmente la interacción central de la aplicación. Toda la
+audacia del diseño se gasta aquí; el resto se mantiene deliberadamente callado.
+
 **Tipografía.** Instrument Sans para prosa e interfaz; **IBM Plex Mono** para todo código,
 serie, cifra y etiqueta de estado. Plex se dibujó para contextos técnicos e industriales, que
 es exactamente este dominio: `5310306901678` es legible en monoespaciada y no lo es en

@@ -80,13 +80,64 @@ svg{display:block}
 .sec > header h3,.alertrow .c .m,.paper .pmeta,.paper h3,.pfoot,
 table.tbl th,table.tbl td.r,table.tbl th.r,.rail > h2{word-spacing:0}
 
+/* ═══ FIRMA · La placa de puerta ═══════════════════════════════
+   Cada aula del campus lleva una placa grabada. Es el objeto más
+   característico de este oficio y encierra la tesis del proyecto:
+   la identidad vive en el código, no en el nombre. Toda la audacia
+   del diseño se gasta aquí; el resto se mantiene callado.
+   Aluminio anodizado, grabado láser: precisión, no ilusión. */
+.plate{position:relative;display:flex;align-items:stretch;gap:0;overflow:hidden;
+       background:linear-gradient(176deg,var(--surface),var(--sunken));
+       border:1px solid var(--line);
+       box-shadow:inset 0 1px 0 rgba(255,255,255,.7), var(--lift)}
+:root[data-theme="dark"] .plate,
+:root:not([data-theme="light"]) .plate{box-shadow:inset 0 1px 0 rgba(255,255,255,.06), var(--lift)}
+.plate::before,.plate::after{content:"";position:absolute;width:5px;height:5px;border-radius:50%;
+  background:var(--sunken);box-shadow:inset 0 1px 1px rgba(0,0,0,.35);top:50%;margin-top:-2.5px}
+.plate::before{left:9px} .plate::after{right:9px}
+.plate-body{flex:1;min-width:0;padding:20px 26px 20px 26px;display:flex;flex-direction:column;
+            justify-content:center;gap:3px;border-right:1px solid var(--line)}
+.plate-eyebrow{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.19em;
+               text-transform:uppercase;color:var(--muted);word-spacing:0}
+.plate-title{font-size:31px;font-weight:700;letter-spacing:-.024em;line-height:1.05;
+             color:var(--ink);text-wrap:balance;
+             text-shadow:0 1px 0 rgba(255,255,255,.8)}
+:root[data-theme="dark"] .plate-title,
+:root:not([data-theme="light"]) .plate-title{text-shadow:0 -1px 0 rgba(0,0,0,.75)}
+.plate-sub{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;
+           color:var(--muted);word-spacing:0;margin-top:2px}
+/* Un identificador se transcribe tal cual: un UUID va en minúscula */
+.plate-sub--raw{text-transform:none;letter-spacing:.02em}
+.plate-tag{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;
+           gap:7px;padding:20px 22px;background:color-mix(in srgb,var(--sunken) 60%,transparent)}
+.plate-tag .code{color:var(--ink)}
+.plate-id{font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.11em;
+          color:var(--muted);word-spacing:0}
+/* Un solo momento: el barrido de escaneo, la interacción central de la app */
+.plate .sweep{position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(100deg,transparent 42%,
+    color-mix(in srgb,var(--mark) 26%,transparent) 50%,transparent 58%);
+  transform:translateX(-115%);animation:sweep 1.5s cubic-bezier(.4,0,.2,1) .35s 1 forwards}
+@keyframes sweep{to{transform:translateX(115%)}}
+@media (prefers-reduced-motion:reduce){.plate .sweep{display:none}}
+
+/* Escalas menores de la misma placa */
+.plate--sm .plate-body{padding:13px 16px}
+.plate--sm .plate-title{font-size:19px;text-shadow:none}
+.plate--sm .plate-tag{padding:13px 15px}
+.plate--xs{box-shadow:inset 0 1px 0 rgba(255,255,255,.6)}
+.plate--xs .plate-body{padding:9px 14px}
+.plate--xs .plate-title{font-size:14px;text-shadow:none;letter-spacing:-.01em}
+.plate--xs .plate-tag{padding:9px 11px}
+.plate--xs::before,.plate--xs::after{display:none}
+
 /* ═══ Armazón ═══ */
 .wrap{max-width:1400px;margin:0 auto;padding:34px 26px 90px}
-.masthead{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;
-          gap:22px;padding-bottom:18px;border-bottom:2px solid var(--rule)}
-.masthead h1{font-size:34px;line-height:1.08;margin:9px 0 0;font-weight:700;
-             letter-spacing:-.022em;text-wrap:balance}
-.masthead p{margin:10px 0 0;color:var(--ink-2);max-width:60ch;font-size:14px}
+.masthead{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:34px;
+          align-items:end;padding-bottom:20px;border-bottom:2px solid var(--rule)}
+@media (max-width:900px){.masthead{grid-template-columns:minmax(0,1fr);gap:20px}}
+.masthead .lede{margin:0;color:var(--ink-2);max-width:56ch;font-size:14px}
+.masthead .side{display:flex;flex-direction:column;align-items:flex-start;gap:13px}
 .tag{display:inline-flex;align-items:center;gap:7px;padding:5px 9px;border-radius:var(--r-tag);
      font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.04em;
      background:var(--warn-tint);color:var(--warn);
@@ -249,9 +300,6 @@ table.tbl th,table.tbl td.r,table.tbl th.r,.rail > h2{word-spacing:0}
 .finding .c .w{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:7px;
                text-transform:uppercase;letter-spacing:.06em}
 
-.idblock{display:flex;align-items:flex-start;gap:14px}
-.idblock .qr{width:76px;height:76px;flex:none;border:1px solid var(--line);background:var(--surface);
-             display:grid;place-items:center;color:var(--ink)}
 .rows{display:flex;flex-direction:column}
 .row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line-soft)}
 .row:last-child{border-bottom:none}
@@ -331,7 +379,7 @@ table.tbl td:last-child,table.tbl th:last-child{padding-right:0}
 .paper p{font-size:14px;line-height:1.7;color:var(--ink-2);margin:0 0 11px;max-width:64ch}
 .paper p strong{color:var(--ink)}
 .pfoot{margin-top:34px;padding-top:13px;border-top:1px solid var(--line);display:flex;
-       justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--muted)}
+       justify-content:space-between;align-items:flex-end;gap:20px;font-family:var(--mono);font-size:10px;color:var(--muted)}
 
 .key{display:flex;flex-wrap:wrap;gap:16px;margin-top:12px;font-family:var(--mono);
      font-size:10.5px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em}
@@ -350,12 +398,24 @@ svg .mark-hit:hover{opacity:.75}
 <div class="wrap">
 
   <header class="masthead">
-    <div>
-      <span class="lbl">Fase 0 · Prototipo de interfaz</span>
-      <h1>Mantenimiento de Aulas y Salas</h1>
-      <p>Cuatro pantallas navegables para validar la experiencia antes de escribir código de producción. Los controles funcionan: pulsa, marca fallos y observa cómo responde.</p>
+    <div class="plate" id="hero-plate">
+      <div class="plate-body">
+        <span class="plate-eyebrow">Servicios audiovisuales · Campus</span>
+        <h1 class="plate-title">Mantenimiento de Aulas y Salas</h1>
+        <span class="plate-sub">Fase 0 · Prototipo de interfaz</span>
+      </div>
+      <div class="plate-tag">
+        <span class="code" aria-hidden="true">
+          <svg width="52" height="52" viewBox="0 0 29 29"><g fill="currentColor" data-qr="11"></g></svg>
+        </span>
+        <span class="plate-id">SIS-0001</span>
+      </div>
+      <span class="sweep" aria-hidden="true"></span>
     </div>
-    <span class="tag">Datos de demostración · la base real arranca vacía</span>
+    <div class="side">
+      <p class="lede">Cuatro pantallas navegables para validar la experiencia antes de escribir código de producción. Los controles funcionan: pulsa, marca fallos y observa cómo responde.</p>
+      <span class="tag">Datos de demostración · la base real arranca vacía</span>
+    </div>
   </header>
 
   <nav class="tabs" role="tablist" aria-label="Pantallas del prototipo">
@@ -405,7 +465,7 @@ svg .mark-hit:hover{opacity:.75}
 
             <div class="actionbar">
               <button class="btn">Guardar borrador</button>
-              <button class="btn go" id="finish">Finalizar</button>
+              <button class="btn go" id="finish">Cerrar revisión</button>
             </div>
           </div>
         </div>
@@ -450,17 +510,21 @@ svg .mark-hit:hover{opacity:.75}
             </div>
 
             <div class="group">
-              <span class="lbl">Identidad</span>
-              <div class="idblock">
-                <div class="qr" aria-hidden="true">
-                  <svg width="60" height="60" viewBox="0 0 29 29" role="img" aria-label="Código QR de la sala">
-                    <g fill="currentColor" id="qrcells"></g></svg>
+              <span class="lbl">Placa de puerta</span>
+              <div class="plate plate--sm">
+                <div class="plate-body">
+                  <span class="plate-eyebrow">Edificio H · 1ª Planta</span>
+                  <span class="plate-title">Aula 1.7</span>
+                  <span class="plate-sub plate-sub--raw">0198f2c1-…-a47b</span>
                 </div>
-                <div style="min-width:0">
-                  <div style="font-size:12.5px;line-height:1.55;color:var(--ink-2)">La etiqueta de la puerta codifica el <strong style="color:var(--ink)">identificador interno</strong>, no el nombre. Renombrar la sala nunca invalida el QR impreso.</div>
-                  <div class="m" style="font-size:10.5px;color:var(--muted);margin-top:7px">0198f2c1-…-a47b</div>
+                <div class="plate-tag">
+                  <span class="code" aria-hidden="true">
+                    <svg width="44" height="44" viewBox="0 0 29 29"><g fill="currentColor" data-qr="7"></g></svg>
+                  </span>
+                  <span class="plate-id">SALA-000087</span>
                 </div>
               </div>
+              <p style="margin:0;font-size:12.5px;line-height:1.55;color:var(--ink-2)">La placa codifica el <strong style="color:var(--ink)">identificador interno</strong>, no el nombre. Renombrar la sala nunca invalida el QR ya impreso ni rompe su histórico.</p>
             </div>
 
             <div class="group">
@@ -615,7 +679,20 @@ svg .mark-hit:hover{opacity:.75}
         <h3>Incidencias abiertas por edificio</h3>
         <div id="chart-bar-report"></div>
 
-        <div class="pfoot"><span>Generado el 27 jul 2026 a las 06:00 · sistema</span><span>Página 1 de 4</span></div>
+        <div class="pfoot">
+          <div class="plate plate--xs">
+            <div class="plate-body">
+              <span class="plate-title">Servicios AV</span>
+              <span class="plate-sub">Generado el 27 jul 2026 · 06:00 · sistema</span>
+            </div>
+            <div class="plate-tag">
+              <span class="code" aria-hidden="true">
+                <svg width="26" height="26" viewBox="0 0 29 29"><g fill="currentColor" data-qr="23"></g></svg>
+              </span>
+            </div>
+          </div>
+          <span style="align-self:flex-end">Página 1 de 4</span>
+        </div>
       </div>
     </div>
 
@@ -772,10 +849,10 @@ svg .mark-hit:hover{opacity:.75}
   });
   document.getElementById("obs").addEventListener("input", touched);
 
-  /* ── QR decorativo, determinista ── */
-  const qr = document.getElementById("qrcells");
-  if (qr) {
-    let out = "", seed = 7;
+  /* ── Marca grabada de la placa: patrón determinista por semilla.
+        Es decorativa; no pretende ser un QR legible. ── */
+  document.querySelectorAll("[data-qr]").forEach(g => {
+    let out = "", seed = Number(g.dataset.qr) || 7;
     const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
     for (let y = 0; y < 29; y++) for (let x = 0; x < 29; x++) {
       const f = (x < 7 && y < 7) || (x > 21 && y < 7) || (x < 7 && y > 21);
@@ -783,8 +860,8 @@ svg .mark-hit:hover{opacity:.75}
                    !(x % 7 > 1 && x % 7 < 5 && y % 7 > 1 && y % 7 < 5));
       if (ring || (!f && rnd() > .55)) out += `<rect x="${x}" y="${y}" width="1" height="1"/>`;
     }
-    qr.innerHTML = out;
-  }
+    g.innerHTML = out;
+  });
 
   /* ── Gráficos ── */
   const tip = document.getElementById("tip");
