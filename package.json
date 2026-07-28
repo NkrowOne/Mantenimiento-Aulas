@@ -8,7 +8,6 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "lint": "eslint . --ext .ts,.tsx",
     "test": "vitest run",
     "test:watch": "vitest",
     "import:excel": "tsx scripts/import-excel.ts",
@@ -16,7 +15,9 @@
     "admin:user": "tsx scripts/admin-user.ts",
     "gen:keys": "tsx scripts/gen-keys.ts",
     "deploy": "bash scripts/deploy.sh",
-    "backup": "bash scripts/backup.sh"
+    "backup": "bash scripts/backup.sh",
+    "smoke": "tsx scripts/smoke.ts",
+    "verify:all": "npm test && npm run typecheck && npm run build && npm run smoke"
   },
   "dependencies": {
     "@fontsource-variable/ibm-plex-sans": "^5.2.5",
@@ -39,6 +40,7 @@
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.21",
     "fake-indexeddb": "^6.2.2",
+    "playwright": "^1.62.0",
     "postcss": "^8.5.6",
     "read-excel-file": "^5.8.8",
     "tailwindcss": "^3.4.18",
