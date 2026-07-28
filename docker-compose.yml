@@ -60,6 +60,22 @@ services:
       GOTRUE_EXTERNAL_EMAIL_ENABLED: 'true'
       GOTRUE_EXTERNAL_PHONE_ENABLED: 'false'
 
+      # ── Endurecimiento por estar expuesto a Internet ──────────────────
+      #
+      # Detrás de una VPN el login solo lo alcanzaba el personal. En Internet
+      # lo alcanza cualquiera, así que el endpoint de contraseña necesita
+      # freno: es la puerta por la que se canjean los códigos de alta.
+      GOTRUE_RATE_LIMIT_TOKEN_REFRESH: '30'
+      GOTRUE_RATE_LIMIT_VERIFY: '10'
+      GOTRUE_RATE_LIMIT_HEADER: X-Forwarded-For
+
+      # Rotación de refresh tokens con detección de reutilización. Si alguien
+      # clona la sesión de un iPad, el token robado y el legítimo entran en
+      # conflicto y GoTrue revoca la familia entera. Es la única defensa que
+      # queda si el dispositivo se pierde desbloqueado.
+      GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: 'true'
+      GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: '10'
+
       # ⚠️ El hook que mete el rol en el JWT. En self-hosted se activa AQUÍ, no
       # desde ningún panel: la documentación oficial está escrita para la nube y
       # no lo menciona. Sin esto, `auth_role()` devuelve 'none', RLS no deja

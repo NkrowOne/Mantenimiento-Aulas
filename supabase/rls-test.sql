@@ -218,3 +218,45 @@ begin;
   end $$;
   rollback to savepoint s;
 rollback;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Pruebas de exposición pública.
+--
+-- Con la API en Internet, RLS deja de ser una segunda capa y pasa a ser LA
+-- capa: cualquiera puede llamar a PostgREST. Estas dos comprueban que quien
+-- no ha iniciado sesión, o ha iniciado sesión pero no tiene rol, no ve
+-- absolutamente nada.
+-- ─────────────────────────────────────────────────────────────────────────
+
+\echo ''
+\echo '=== 12. Un anónimo de Internet no ve NADA ==='
+begin;
+  -- Así llega una petición sin token: rol anon y sin claims.
+  set local role anon;
+  select set_config('request.jwt.claims', '', true);
+
+  select case
+    when (select count(*) from rooms)      = 0
+     and (select count(*) from incidents)  = 0
+     and (select count(*) from profiles)   = 0
+     and (select count(*) from inspections) = 0
+    then 'OK: 0 salas, 0 incidencias, 0 perfiles, 0 revisiones'
+    else 'FALLO: un anónimo ve ' || (select count(*) from rooms) || ' salas y ' ||
+         (select count(*) from incidents) || ' incidencias'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 13. Un usuario autenticado SIN rol tampoco ve nada ==='
+begin;
+  -- Es el caso de una cuenta desactivada, o de alguien cuyo perfil no existe:
+  -- el hook le pone app_role = 'none'.
+  select test_as('99999999-9999-4999-8999-999999999999', 'none');
+
+  select case
+    when (select count(*) from rooms)     = 0
+     and (select count(*) from incidents) = 0
+    then 'OK: sin rol no se ve nada'
+    else 'FALLO: ve ' || (select count(*) from rooms) || ' salas'
+  end as resultado;
+rollback;

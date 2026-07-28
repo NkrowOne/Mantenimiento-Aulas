@@ -8,7 +8,7 @@ todo —Postgres incluido— en tu propia máquina. Aquí la base de datos es de
 proveedor y los servicios son piezas sueltas apuntando a ella.
 
 > **Verificado**: `npm run db:verify -- --gestionado` reproduce este escenario
-> sobre un Postgres desnudo, sin la imagen de Supabase, y ejecuta las 11 pruebas
+> sobre un Postgres desnudo, sin la imagen de Supabase, y ejecuta las 13 pruebas
 > de RLS. Los pasos de abajo son los que hacen que eso funcione.
 
 ---
@@ -259,3 +259,47 @@ Asegúrate de que ese volumen entra en la copia, y prueba una restauración:
 ```bash
 npm run backup -- --probar <fichero>
 ```
+
+---
+
+## Si el servicio queda expuesto a Internet
+
+Es lo habitual con una plataforma gestionada, y trae una ventaja grande: **te
+ahorras Caddy, el reto DNS-01 y el DNS split-horizon enteros**, y con ellos el
+riesgo más serio que tenía el proyecto. El certificado deja de ser tu problema.
+
+Además el modo offline pasa a ser lo que debería: una red de seguridad para
+sótanos y puntos muertos, no el modo de funcionamiento diario. Los técnicos
+sincronizan igual desde datos móviles que desde el wifi del campus.
+
+A cambio, **RLS deja de ser una segunda capa y pasa a ser LA capa**. Cualquiera
+en Internet puede llamar a PostgREST con la clave anónima, que es pública por
+diseño. Dos pruebas del proyecto cubren exactamente eso:
+
+```
+=== 12. Un anónimo de Internet no ve NADA ===
+ OK: 0 salas, 0 incidencias, 0 perfiles, 0 revisiones
+=== 13. Un usuario autenticado SIN rol tampoco ve nada ===
+ OK: sin rol no se ve nada
+```
+
+Merece la pena ejecutarlas contra la base **real** después de desplegar, no solo
+contra la de pruebas.
+
+### Lo que hay que apretar
+
+| Punto | Qué hacer |
+|---|---|
+| **Límite de intentos en el login** | `GOTRUE_RATE_LIMIT_VERIFY` y `GOTRUE_RATE_LIMIT_TOKEN_REFRESH`. El endpoint de contraseña es por donde se canjean los códigos de alta |
+| **Rotación de refresh tokens** | `GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=true` y `..._REUSE_INTERVAL=10`. Si alguien clona la sesión de un iPad, la familia de tokens se revoca sola |
+| **Registro cerrado** | `GOTRUE_DISABLE_SIGNUP=true`. Sin esto, cualquiera se crea una cuenta —aunque sin rol no vería nada, ver prueba 13 |
+| **Studio** | No lo publiques. Si la plataforma lo expone por defecto, quítalo o ponle autenticación delante |
+| **Worker de informes** | Sin puerto público. Solo lo llama `pg_cron` o el cron de la plataforma |
+| **`SERVICE_ROLE_KEY`** | Se salta RLS por completo. Solo en variables de entorno del servidor, jamás en el front ni en un commit |
+| **Buckets** | Ya son privados y se sirven con URL firmada de 60s. No los pongas públicos "para simplificar" |
+
+### Lo que NO cambia
+
+El diseño del PIN aguanta sin tocar nada: **nunca viaja al servidor**. Deriva
+una clave que descifra la sesión guardada en el dispositivo, así que estar en
+Internet no le añade superficie de ataque. Un iPad perdido sigue sin dar acceso.

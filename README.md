@@ -140,7 +140,7 @@ producción lo levanta `docker compose up reports-worker` y lo despierta
 | Área | Estado |
 |---|---|
 | Esquema append-only, vistas y alertas | ✅ verificado contra Postgres 16 |
-| RLS, roles y auditoría | ✅ 8 pruebas en verde |
+| RLS, roles y auditoría | ✅ 13 pruebas en verde, incluida exposición pública |
 | Importador del Excel | ✅ 276 salas, 283 incidencias, 669 equipos |
 | Núcleo offline (Dexie + cola de salida) | ✅ |
 | Login con PIN que cifra la sesión | ✅ lógica probada |
