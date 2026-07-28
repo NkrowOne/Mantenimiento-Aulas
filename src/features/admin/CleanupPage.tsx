@@ -107,10 +107,7 @@ export function CleanupPage(): React.ReactElement {
     <div className="mx-auto max-w-4xl space-y-8 p-4">
       <section>
         <h1 className="text-xl font-semibold">Edificios sin identificar</h1>
-        <p className="mt-1 text-sm text-muted">
-          Aparecen en el histórico de incidencias pero no en la hoja de estado. No se han
-          adivinado: decide tú qué son.
-        </p>
+        <p className="mt-1 text-sm text-muted">Están en el histórico pero no en el maestro.</p>
 
         <ul className="mt-4 space-y-3">
           {(provisional ?? []).map((b) => (
@@ -157,16 +154,13 @@ export function CleanupPage(): React.ReactElement {
         </ul>
 
         {provisional?.length === 0 && (
-          <p className="mt-4 text-sm text-muted">Todos los edificios están identificados.</p>
+          <p className="mt-4 text-sm text-muted">Ninguno pendiente.</p>
         )}
       </section>
 
       <section>
         <h2 className="text-xl font-semibold">Cuarentena de importación</h2>
-        <p className="mt-1 text-sm text-muted">
-          Filas del Excel que no se pudieron interpretar con confianza. Están aquí, con su texto
-          original, en vez de importadas a medias.
-        </p>
+        <p className="mt-1 text-sm text-muted">No se pudieron interpretar al importar.</p>
 
         <ul className="mt-4 divide-y divide-line">
           {(quarantine ?? []).map((q) => (
@@ -191,7 +185,7 @@ export function CleanupPage(): React.ReactElement {
           ))}
         </ul>
 
-        {quarantine?.length === 0 && <p className="mt-4 text-sm text-muted">Nada en cuarentena.</p>}
+        {quarantine?.length === 0 && <p className="mt-4 text-sm text-muted">Vacía.</p>}
       </section>
     </div>
   )

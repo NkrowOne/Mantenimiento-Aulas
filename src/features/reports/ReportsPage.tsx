@@ -61,9 +61,7 @@ export function ReportsPage(): React.ReactElement {
   return (
     <div className="mx-auto max-w-3xl p-4">
       <h1 className="text-xl font-semibold">Informes</h1>
-      <p className="mt-1 text-sm text-muted">
-        El diario se emite a las 07:00 y el semanal los lunes a las 07:30. Aquí quedan archivados.
-      </p>
+      <p className="mt-1 text-sm text-muted">Diario a las 07:00 · semanal los lunes</p>
 
       <section className="card mt-4 p-4">
         <h2 className="font-semibold">Informe a medida</h2>
@@ -98,13 +96,11 @@ export function ReportsPage(): React.ReactElement {
 
         {generate.isError && (
           <p className="mt-3 text-sm text-crit">
-            No se pudo lanzar el informe. Comprueba que el worker esté levantado.
+            No se pudo generar.
           </p>
         )}
         {generate.isSuccess && (
-          <p className="mt-3 text-sm text-muted">
-            Lanzado. Aparecerá abajo en unos segundos.
-          </p>
+          <p className="mt-3 text-sm text-muted">En marcha. Aparecerá abajo.</p>
         )}
       </section>
 
@@ -128,7 +124,7 @@ export function ReportsPage(): React.ReactElement {
 
       {reports?.length === 0 && (
         <p className="mt-6 text-sm text-muted">
-          Todavía no hay informes archivados. El primero saldrá mañana a las 07:00.
+          Aún no hay informes.
         </p>
       )}
     </div>

@@ -35,10 +35,7 @@ export function UpdatePrompt(): React.ReactElement | null {
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
-        <p className="flex-1 text-sm">
-          Hay una versión nueva.{' '}
-          <span className="text-muted">Puedes seguir y actualizar cuando termines.</span>
-        </p>
+        <p className="flex-1 text-sm">Hay una versión nueva.</p>
 
         <button
           type="button"

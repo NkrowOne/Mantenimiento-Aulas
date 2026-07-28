@@ -25,7 +25,7 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
   const fileInput = useRef<HTMLInputElement>(null)
 
   if (!draft) {
-    return <p className="p-6 text-muted">Preparando la revisión…</p>
+    return <p className="p-6 text-muted">Preparando…</p>
   }
 
   const applicable = checksForRoom(room)
@@ -143,15 +143,13 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
 
           {photoError && <p className="mt-2 text-sm text-crit">{photoError}</p>}
           {needsPhoto && (
-            <p className="mt-2 text-sm text-warn">
-              Has marcado una incidencia: una foto ayuda mucho a quien vaya a repararla.
-            </p>
+            <p className="mt-2 text-sm text-warn">Añade una foto de la incidencia.</p>
           )}
 
           <textarea
             value={draft.inspection.notes ?? ''}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Observaciones (opcional)"
+            placeholder="Observaciones"
             rows={3}
             className="mt-3 w-full rounded-md border border-line bg-surface p-3 text-sm"
           />
@@ -167,8 +165,8 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
         <div className="mb-2 flex items-center justify-between text-xs text-muted">
           <span>
             {missing.length === 0
-              ? 'Todo comprobado'
-              : `Faltan ${missing.length} comprobacion${missing.length === 1 ? '' : 'es'}`}
+              ? 'Completa'
+              : `Faltan ${missing.length}`}
           </span>
           <span>{saving ? 'Guardando…' : 'Guardado'}</span>
         </div>

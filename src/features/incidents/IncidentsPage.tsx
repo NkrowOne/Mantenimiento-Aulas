@@ -123,13 +123,13 @@ export function IncidentsPage(): React.ReactElement {
 
       {incidents?.length === 0 && (
         <p className="mt-6 text-sm text-muted">
-          {showResolved ? 'No hay incidencias.' : 'Ninguna incidencia abierta. Buen momento.'}
+          {showResolved ? 'No hay incidencias.' : 'Ninguna abierta.'}
         </p>
       )}
 
       {advance.isError && (
         <p className="mt-4 text-sm text-crit">
-          No se pudo actualizar. Cerrar incidencias es cosa de supervisores.
+          Solo un supervisor cierra incidencias.
         </p>
       )}
     </div>

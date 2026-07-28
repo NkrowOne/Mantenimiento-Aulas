@@ -64,9 +64,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
           {enrolling ? 'Dar de alta este dispositivo' : `Hola, ${sealed.hint.fullName}`}
         </h1>
         <p className="mt-2 text-sm text-muted">
-          {enrolling
-            ? 'Introduce tu email y el código que te ha dado administración. Solo hace falta una vez por dispositivo.'
-            : 'Introduce tu PIN. Funciona aunque no haya cobertura.'}
+          {enrolling ? 'Solo hace falta una vez por dispositivo.' : 'Funciona sin cobertura.'}
         </p>
 
         <form
@@ -160,13 +158,6 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
           </button>
         </form>
 
-        {!enrolling && (
-          <p className="mt-6 text-xs text-muted">
-            El PIN no se envía a ningún sitio: descifra la sesión guardada en este dispositivo.
-            Si lo fallas 5 veces habrá que pedir un código nuevo, pero tu trabajo ya registrado
-            está a salvo en el servidor.
-          </p>
-        )}
       </div>
     </div>
   )

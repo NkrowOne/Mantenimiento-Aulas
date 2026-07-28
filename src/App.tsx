@@ -128,7 +128,7 @@ export function App(): React.ReactElement {
                 // Es la única forma de que la sesión termine: no caduca sola.
                 // Por eso se confirma — cerrarla sin querer obliga a teclear el
                 // PIN otra vez en mitad de una ronda.
-                if (confirm('¿Cerrar sesión? Tendrás que volver a introducir tu PIN.')) {
+                if (confirm('¿Cerrar sesión?')) {
                   void lock().then(() => setUnlocked(false))
                 }
               }}
@@ -164,7 +164,7 @@ export function App(): React.ReactElement {
           ))}
           {buildings?.length === 0 && (
             <li className="p-6 text-sm text-muted">
-              Aún no hay datos en este dispositivo. Conéctate una vez para descargarlos.
+              Sin datos. Conéctate una vez para descargarlos.
             </li>
           )}
         </ul>

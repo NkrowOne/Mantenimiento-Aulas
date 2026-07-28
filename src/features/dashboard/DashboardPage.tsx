@@ -18,7 +18,7 @@ export function DashboardPage(): React.ReactElement {
   const { data: byMonth } = useIncidentsByMonth()
 
   if (isLoading || !s) {
-    return <p className="p-6 text-muted">Cargando el panel…</p>
+    return <p className="p-6 text-muted">Cargando…</p>
   }
 
   const pct = s.roomsTotal ? Math.round((s.inspectedThisMonth / s.roomsTotal) * 100) : 0
@@ -31,25 +31,24 @@ export function DashboardPage(): React.ReactElement {
           <StatTile
             label="Revisadas este mes"
             value={s.inspectedThisMonth}
-            detail={`${pct}% de ${s.roomsTotal} salas`}
+            detail={`${pct}% de ${s.roomsTotal}`}
             tone={pct >= 25 ? 'ok' : 'aviso'}
           />
           <StatTile
             label="Incidencias abiertas"
             value={s.openIncidents}
-            detail={s.staleIncidents > 0 ? `${s.staleIncidents} llevan más de 7 días` : 'ninguna estancada'}
+            detail={s.staleIncidents > 0 ? `${s.staleIncidents} estancadas` : undefined}
             tone={s.staleIncidents > 0 ? 'critico' : s.openIncidents > 0 ? 'aviso' : 'ok'}
           />
           <StatTile
             label="Salas con problemas"
             value={s.roomsWithProblems}
-            detail="con al menos una incidencia abierta"
             tone={s.roomsWithProblems > 0 ? 'aviso' : 'ok'}
           />
           <StatTile
-            label="Lámparas al límite"
+            label={`Lámparas < ${LAMP_ALERT_THRESHOLD * 100}%`}
             value={s.lampAlerts}
-            detail={`por debajo del ${LAMP_ALERT_THRESHOLD * 100}%`}
+            
             tone={s.lampAlerts > 0 ? 'critico' : 'ok'}
           />
         </div>
@@ -57,20 +56,14 @@ export function DashboardPage(): React.ReactElement {
 
       {(s.needsReview > 0 || s.quarantine > 0) && (
         <section className="card border-warn/40 bg-warn/5 p-4">
-          <h2 className="font-semibold text-warn">Datos importados pendientes de revisar</h2>
+          <h2 className="font-semibold text-warn">Datos por revisar</h2>
           <p className="mt-1 text-sm text-muted">
-            {s.needsReview > 0 && (
-              <>
-                {s.needsReview} edificio{s.needsReview === 1 ? '' : 's'} aparecen en el histórico
-                pero no en el maestro de salas.{' '}
-              </>
-            )}
-            {s.quarantine > 0 && (
-              <>
-                {s.quarantine} filas del Excel no se pudieron interpretar y están en cuarentena en
-                vez de importarse a medias.
-              </>
-            )}
+            {[
+              s.needsReview > 0 && `${s.needsReview} edificios sin identificar`,
+              s.quarantine > 0 && `${s.quarantine} filas en cuarentena`,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           </p>
         </section>
       )}
@@ -78,7 +71,7 @@ export function DashboardPage(): React.ReactElement {
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="card p-4">
           <h3 className="mb-1 font-semibold">Incidencias por edificio</h3>
-          <p className="mb-3 text-xs text-muted">Histórico completo, de mayor a menor</p>
+          <p className="mb-3 text-xs text-muted">Histórico</p>
           <ReactECharts
             style={{ height: 260 }}
             option={{
@@ -97,7 +90,7 @@ export function DashboardPage(): React.ReactElement {
 
         <div className="card p-4">
           <h3 className="mb-1 font-semibold">Incidencias abiertas por mes</h3>
-          <p className="mb-3 text-xs text-muted">Tendencia, no solo el total de hoy</p>
+          <p className="mb-3 text-xs text-muted">Últimos 12 meses</p>
           <ReactECharts
             style={{ height: 260 }}
             option={{
@@ -117,11 +110,8 @@ export function DashboardPage(): React.ReactElement {
 
       <section className="card p-4">
         <h3 className="font-semibold">Lámparas que van a fundirse</h3>
-        <p className="mb-3 text-xs text-muted">
-          Este dato ya estaba en vuestro Excel y hasta ahora no avisaba a nadie
-        </p>
-
-        {lamps?.length === 0 && <p className="text-sm text-muted">Ninguna por debajo del umbral.</p>}
+        
+        {lamps?.length === 0 && <p className="text-sm text-muted">Ninguna.</p>}
 
         <div className="scroll-x">
           <table className="w-full text-sm">
@@ -154,9 +144,9 @@ export function DashboardPage(): React.ReactElement {
 
       <section className="card p-4">
         <h3 className="font-semibold">Incidencias estancadas</h3>
-        <p className="mb-3 text-xs text-muted">Abiertas desde hace más de 7 días</p>
+        <p className="mb-3 text-xs text-muted">Más de 7 días abiertas</p>
 
-        {stale?.length === 0 && <p className="text-sm text-muted">Ninguna. Al día.</p>}
+        {stale?.length === 0 && <p className="text-sm text-muted">Ninguna.</p>}
 
         <ul className="divide-y divide-line">
           {(stale ?? []).map((i) => (

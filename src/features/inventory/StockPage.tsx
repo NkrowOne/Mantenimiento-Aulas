@@ -57,9 +57,7 @@ export function StockPage(): React.ReactElement {
   return (
     <div className="mx-auto max-w-4xl p-4">
       <h1 className="text-xl font-semibold">Almacén</h1>
-      <p className="mt-1 text-sm text-muted">
-        Las existencias son la suma de los movimientos. Para corregir un saldo, registra un ajuste.
-      </p>
+
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <input
@@ -137,10 +135,10 @@ export function StockPage(): React.ReactElement {
         </table>
       </div>
 
-      {rows.length === 0 && <p className="mt-6 text-sm text-muted">Nada que mostrar con ese filtro.</p>}
+      {rows.length === 0 && <p className="mt-6 text-sm text-muted">Sin resultados.</p>}
       {move.isError && (
         <p className="mt-4 text-sm text-crit">
-          No se pudo registrar el movimiento. Las compras las registra un supervisor.
+          Solo un supervisor registra compras.
         </p>
       )}
     </div>

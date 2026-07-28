@@ -65,23 +65,19 @@ export function SyncChip(): React.ReactElement {
         <div className="card absolute right-0 z-20 mt-2 w-72 p-4 text-sm">
           <p className="text-muted">
             {pending === 0 && rejected === 0
-              ? 'Todo lo que has registrado está guardado en el servidor.'
-              : `${pending} elemento${pending === 1 ? '' : 's'} esperando a subir${
-                  summary?.photos ? `, ${summary.photos} de ellos fotos` : ''
-                }.`}
+              ? 'Todo guardado.'
+              : `${pending} sin subir${summary?.photos ? ` · ${summary.photos} fotos` : ''}`}
           </p>
 
           {stuck && (
             <p className="mt-2 text-crit">
-              Llevan más de {Math.floor(stuckHours)} horas sin subir. Acércate a una zona con
-              cobertura o pulsa Reintentar.
+              {Math.floor(stuckHours)} h sin subir. Busca cobertura.
             </p>
           )}
 
           {rejected > 0 && (
             <p className="mt-2 text-crit">
-              {rejected} el servidor los rechazó. Reintentar no suele arreglarlo: avisa a
-              administración.
+              {rejected} rechazados. Avisa a administración.
             </p>
           )}
 
@@ -91,7 +87,7 @@ export function SyncChip(): React.ReactElement {
               onClick={() => void flush()}
               className="flex-1 rounded-md bg-accent px-3 py-2 text-xs font-semibold text-accent-ink"
             >
-              Sincronizar ahora
+              Sincronizar
             </button>
             {rejected > 0 && (
               <button
