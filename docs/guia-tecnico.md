@@ -26,6 +26,19 @@ el PIN se comprueba en el propio dispositivo.
 **No hace falta instalar nada.** Es una página web: guárdala en favoritos y
 listo.
 
+### Que el navegador recuerde el PIN
+
+La primera vez que entres, Safari o Chrome te ofrecerán guardarlo. Di que sí y
+a partir de entonces te lo rellenan solo: en el iPhone y el iPad basta con Face
+ID o el dedo.
+
+Si no te lo ofreció, ve a *Ajustes → Contraseñas* y añádelo a mano con la
+dirección de la aplicación y tu email.
+
+> Ojo con esto: si guardas el PIN y además dejas la sesión abierta, quien coja
+> el dispositivo entra sin nada. Compensa si el iPad es tuyo y no sale del
+> campus; si se comparte, mejor no guardarlo.
+
 ### ¿Se cierra sola?
 
 **No, nunca.** Tecleas el PIN una vez y la sesión se queda. Puedes cerrar la

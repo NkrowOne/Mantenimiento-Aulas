@@ -82,6 +82,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
                 <span className="text-muted">Email</span>
                 <input
                   type="email"
+                  name="email"
                   autoComplete="username"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -93,6 +94,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
                 <span className="text-muted">Código de alta</span>
                 <input
                   type="text"
+                  name="enrollment-code"
                   autoComplete="one-time-code"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
@@ -103,13 +105,39 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
             </>
           )}
 
+          {/*
+            Campo de usuario en la pantalla de desbloqueo.
+            Un gestor de contraseñas necesita saber a QUÉ cuenta pertenece la
+            credencial. Con solo el campo de PIN, Safari y Chrome no ofrecen
+            guardarlo, o lo guardan sin poder recuperarlo después. Va visible y
+            de solo lectura: además de hacer que el guardado funcione, confirma
+            de un vistazo con qué cuenta vas a entrar.
+          */}
+          {!enrolling && (
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-muted">Cuenta</span>
+              <input
+                type="text"
+                name="username"
+                autoComplete="username"
+                value={sealed.hint.email}
+                readOnly
+                tabIndex={-1}
+                className="h-touch rounded-lg border border-line bg-raised px-3 text-muted"
+              />
+            </label>
+          )}
+
           <label className="flex flex-col gap-1 text-sm">
             <span className="text-muted">
               {enrolling ? `Elige un PIN de ${MIN_PIN_LENGTH} a ${MAX_PIN_LENGTH} dígitos` : 'PIN'}
             </span>
             <input
               type="password"
+              name="pin"
               inputMode="numeric"
+              // `current-password` es lo que hace que el navegador ofrezca
+              // recordarlo y lo rellene solo la próxima vez.
               autoComplete={enrolling ? 'new-password' : 'current-password'}
               pattern="\d*"
               maxLength={MAX_PIN_LENGTH}

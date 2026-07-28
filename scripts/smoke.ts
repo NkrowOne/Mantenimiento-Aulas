@@ -105,6 +105,60 @@ async function main(): Promise<void> {
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
   )
 
+  console.log('\n▸ Guardado de contraseña en el alta')
+  await check('el PIN es un campo de contraseña', async () =>
+    (await page.locator('input[type="password"][name="pin"]').count()) > 0,
+  )
+  await check('el navegador puede ofrecer guardarlo (new-password)', async () =>
+    (await page.locator('input[autocomplete="new-password"]').count()) > 0,
+  )
+  await check('hay campo de usuario para asociar la credencial', async () =>
+    (await page.locator('input[autocomplete="username"]').count()) > 0,
+  )
+
+  console.log('\n▸ Pantalla de desbloqueo diario')
+  // Se inyecta una sesión sellada falsa para que la aplicación pinte la
+  // pantalla de PIN en vez de la de alta. Solo se comprueba el marcado: el
+  // descifrado real ya lo cubren las pruebas de `pin.test.ts`.
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve, reject) => {
+      const open = indexedDB.open('mantenimiento-aulas')
+      open.onsuccess = () => {
+        const dbh = open.result
+        const tx = dbh.transaction('meta', 'readwrite')
+        tx.objectStore('meta').put({
+          key: 'sealed-session',
+          value: {
+            salt: 'AAAA',
+            iv: 'BBBB',
+            ciphertext: 'CCCC',
+            hint: { email: 'ana@ejemplo.es', fullName: 'Ana Ruiz' },
+          },
+        })
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      }
+      open.onerror = () => reject(open.error)
+    })
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+
+  await check('saluda por el nombre en vez de pedir el alta', async () =>
+    (await page.getByText('Hola, Ana Ruiz').count()) > 0,
+  )
+  await check('muestra la cuenta, que es lo que asocia la credencial', async () =>
+    (await page.locator('input[name="username"][autocomplete="username"]').inputValue()) ===
+    'ana@ejemplo.es',
+  )
+  await check('el PIN pide autorrelleno (current-password)', async () =>
+    (await page.locator('input[name="pin"][autocomplete="current-password"]').count()) > 0,
+  )
+  await check('el campo de cuenta es de solo lectura', async () =>
+    await page.locator('input[name="username"]').evaluate((el) => (el as HTMLInputElement).readOnly),
+  )
+
+  await page.screenshot({ path: 'dist/smoke-pin.png' })
+
   console.log('\n▸ Tema oscuro')
   await page.emulateMedia({ colorScheme: 'dark' })
   await check('el fondo cambia con el tema del sistema', async () =>
