@@ -1,0 +1,49 @@
+{
+  "name": "mantenimiento-aulas",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit",
+    "lint": "eslint . --ext .ts,.tsx",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "import:excel": "tsx scripts/import-excel.ts",
+    "db:verify": "bash scripts/db-verify.sh"
+  },
+  "dependencies": {
+    "@fontsource-variable/ibm-plex-sans": "^5.2.5",
+    "@fontsource/ibm-plex-mono": "^5.2.5",
+    "@supabase/supabase-js": "^2.58.0",
+    "@tanstack/react-query": "^5.90.2",
+    "@tanstack/react-router": "^1.132.0",
+    "browser-image-compression": "^2.0.2",
+    "dexie": "^4.2.0",
+    "dexie-react-hooks": "^4.2.0",
+    "echarts": "^5.6.0",
+    "echarts-for-react": "^3.0.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@tanstack/router-plugin": "^1.132.0",
+    "@types/node": "^22.18.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.21",
+    "fake-indexeddb": "^6.2.2",
+    "postcss": "^8.5.6",
+    "read-excel-file": "^5.8.8",
+    "tailwindcss": "^3.4.18",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.0",
+    "vite-plugin-pwa": "^1.0.3",
+    "vitest": "^3.2.4"
+  }
+}

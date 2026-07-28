@@ -1,0 +1,60 @@
+@import '@fontsource-variable/ibm-plex-sans';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/600.css';
+@import './design/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    /* Sin rebote elástico en iOS: la barra de acción inferior debe quedarse quieta. */
+    overscroll-behavior-y: none;
+  }
+
+  body {
+    @apply bg-ground text-ink font-sans antialiased;
+    /* Área segura del iPhone: el notch y la barra de gestos se comen píxeles reales. */
+    padding-top: env(safe-area-inset-top);
+  }
+
+  /* Toda columna de dígitos alinea. Números de serie, horas de lámpara, cantidades. */
+  .tabular,
+  table td,
+  table th {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-ground;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface border border-line rounded-lg;
+    box-shadow: var(--shadow-card);
+  }
+
+  /* Etiqueta en versalitas: la usan las cabeceras de sección y los eyebrows. */
+  .eyebrow {
+    @apply text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-muted;
+  }
+
+  .scroll-x {
+    @apply overflow-x-auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}

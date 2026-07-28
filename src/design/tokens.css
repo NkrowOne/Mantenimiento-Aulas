@@ -1,0 +1,80 @@
+/*
+ * Sistema de diseño — "instrumento", no "dashboard".
+ *
+ * Neutros con sesgo azul deliberado (no gris puro), acento azul instrumento,
+ * y los tres colores de estado reservados: NUNCA se usan como serie de gráfico.
+ *
+ * Los tokens se definen aquí como triplete RGB sin envolver para que Tailwind
+ * pueda aplicarles opacidad (`bg-accent/10`).
+ */
+
+:root {
+  --ground: 246 247 249;
+  --surface: 255 255 255;
+  --raised: 241 243 246;
+  --ink: 18 23 28;
+  --muted: 92 104 117;
+  --line: 219 224 230;
+
+  --accent: 43 76 140;
+  --accent-ink: 255 255 255;
+
+  --ok: 46 125 79;
+  --warn: 180 116 26;
+  --crit: 179 38 30;
+
+  --shadow-card: 0 1px 2px rgb(18 23 28 / 0.06), 0 1px 3px rgb(18 23 28 / 0.04);
+}
+
+/* El tema oscuro se elige, no se invierte: los estados se aclaran para
+   mantener el contraste sobre fondo oscuro sin perder su identidad. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: 14 18 22;
+    --surface: 23 28 34;
+    --raised: 31 37 44;
+    --ink: 230 234 238;
+    --muted: 147 160 173;
+    --line: 45 53 62;
+
+    --accent: 122 160 224;
+    --accent-ink: 12 18 28;
+
+    --ok: 91 190 132;
+    --warn: 224 165 74;
+    --crit: 240 122 114;
+
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.3);
+  }
+}
+
+/* El interruptor del usuario gana sobre la preferencia del sistema, en ambos sentidos. */
+:root[data-theme='light'] {
+  --ground: 246 247 249;
+  --surface: 255 255 255;
+  --raised: 241 243 246;
+  --ink: 18 23 28;
+  --muted: 92 104 117;
+  --line: 219 224 230;
+  --accent: 43 76 140;
+  --accent-ink: 255 255 255;
+  --ok: 46 125 79;
+  --warn: 180 116 26;
+  --crit: 179 38 30;
+  --shadow-card: 0 1px 2px rgb(18 23 28 / 0.06), 0 1px 3px rgb(18 23 28 / 0.04);
+}
+
+:root[data-theme='dark'] {
+  --ground: 14 18 22;
+  --surface: 23 28 34;
+  --raised: 31 37 44;
+  --ink: 230 234 238;
+  --muted: 147 160 173;
+  --line: 45 53 62;
+  --accent: 122 160 224;
+  --accent-ink: 12 18 28;
+  --ok: 91 190 132;
+  --warn: 224 165 74;
+  --crit: 240 122 114;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.3);
+}
