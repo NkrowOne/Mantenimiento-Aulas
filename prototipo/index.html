@@ -292,6 +292,44 @@ table.tbl th,table.tbl td.r,table.tbl th.r,.rail > h2{word-spacing:0}
      background:var(--surface);color:var(--ink)}
 .btn.go{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 
+/* ═══ Inventario dentro de la revisión ═══════════════════════
+   Plegado por defecto, y no es negociable: cerrar una sala en
+   cinco segundos con "Todo correcto" no puede pagarlo una lista
+   de equipos que haya que sortear en cada revisión. */
+.invsec{margin:0 -16px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.invhead{width:100%;appearance:none;background:transparent;border:none;display:flex;align-items:center;
+  gap:10px;padding:14px 16px;cursor:pointer;text-align:left;font:inherit;color:var(--ink);min-height:52px}
+.invhead:hover{background:var(--sunken)}
+.invhead .t{font-size:15px;font-weight:700;letter-spacing:-.01em}
+.invhead .s{font-family:var(--mono);font-size:10.5px;color:var(--muted);word-spacing:0;margin-left:auto}
+.invhead .chev{flex:none;color:var(--muted);transition:transform .18s}
+.invsec[data-open="1"] .invhead .chev{transform:rotate(90deg)}
+.invbody{display:none;padding:2px 16px 16px;flex-direction:column;gap:15px}
+.invsec[data-open="1"] .invbody{display:flex}
+
+.invitem{border-bottom:1px solid var(--line-soft)}
+.invitem:last-child{border-bottom:none}
+.invitem[data-state="retirado"] .invrow .n{opacity:.5}
+.invrow{display:flex;align-items:center;gap:9px;padding:11px 0}
+.invrow .n{flex:1;min-width:0}
+.invrow .n .t{font-size:13.5px;font-weight:700;letter-spacing:-.005em}
+.invrow .n .sn{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:2px;word-spacing:0}
+.fixbar{display:none;gap:6px;flex-wrap:wrap;padding:0 0 12px}
+.invitem[data-fix="1"] .fixbar{display:flex}
+
+.invinput{width:100%;font-family:var(--mono);font-size:15px;padding:12px 13px;border:1px solid var(--line);
+  border-radius:var(--r-ctl);background:var(--surface);color:var(--ink);min-height:48px;word-spacing:0}
+.invsug{display:flex;flex-direction:column;border:1px solid var(--line);background:var(--surface);margin-top:-1px}
+.invsug:empty{display:none}
+.invsug button{appearance:none;border:none;border-top:1px solid var(--line-soft);background:transparent;
+  text-align:left;font:inherit;font-size:13.5px;font-weight:700;padding:12px 13px;cursor:pointer;
+  color:var(--ink);min-height:46px;display:flex;align-items:center;gap:9px}
+.invsug button:first-child{border-top:none}
+.invsug button:hover{background:var(--accent-tint)}
+.invsug .why{font-family:var(--mono);font-size:10px;font-weight:400;color:var(--muted);
+  margin-left:auto;word-spacing:0;text-align:right}
+.invsug button[data-new="1"]{color:var(--warn)}
+
 /* ═══ Alta manual ═══════════════════════════════════════════
    El registro proactivo no depende de que nada haya fallado.
    Guardar exige solo la sala; lo demás se completa después. */
@@ -511,6 +549,23 @@ svg .mark-hit:hover{opacity:.75}
               <div class="hint"><span id="savehint">Guardado en el dispositivo</span></div>
             </div>
 
+            <div class="invsec" id="invsec" data-open="0">
+              <button class="invhead" id="invtoggle" aria-expanded="false" aria-controls="invbody">
+                <span class="t">Inventario</span>
+                <span class="s"><span id="invcount">5</span> equipos · añadir o corregir</span>
+                <span class="chev" id="invchev"></span>
+              </button>
+              <div class="invbody" id="invbody">
+                <div id="invlist"></div>
+                <div>
+                  <label class="lbl" for="invq" style="display:block;margin-bottom:7px">Añadir equipo</label>
+                  <input class="invinput" id="invq" placeholder="mon · jab · proyector…" autocomplete="off">
+                  <div class="invsug" id="invsug"></div>
+                  <p class="regnote" id="invnote" style="margin-top:9px">Basta el tipo. Modelo y número de serie se completan después.</p>
+                </div>
+              </div>
+            </div>
+
             <div class="actionbar">
               <button class="btn">Guardar borrador</button>
               <button class="btn go" id="finish">Cerrar revisión</button>
@@ -527,6 +582,10 @@ svg .mark-hit:hover{opacity:.75}
       <div class="mark-note"><h3>Hoja de servicio, no tarjetas</h3><p>Los bloques son filas continuas separadas por filetes, con el estado tiñendo la fila entera. Se lee como un parte de trabajo, que es lo que es.</p></div>
       <div class="mark-note"><h3>Nunca solo color</h3><p>Cada estado lleva icono dibujado y texto además del color. Hay daltonismo en cualquier equipo y una pantalla con el proyector encendido lava los tonos.</p></div>
       <div class="mark-note"><h3>El estado del dato no se esconde</h3><p>La barra superior dice siempre cuántas revisiones faltan por enviar. Nunca un «sincronizando…» indefinido.</p></div>
+      <div class="mark-note"><h3>Inventario plegado, y no es negociable</h3><p>Solo muestra <strong>«5 equipos · añadir o corregir»</strong> hasta que lo abres. Cerrar una sala en cinco segundos no puede pagarlo una lista de equipos que haya que sortear en cada revisión.</p></div>
+      <div class="mark-note"><h3>Escribe y se autoselecciona</h3><p>Tecleas <strong>jab</strong> y aparece <em>Micrófono Jabra</em> por sus alias; <strong>cam</strong> encuentra <em>Cámara</em> aunque no pongas la tilde. Se reutiliza el tipo del catálogo. Solo lo realmente nuevo se crea <strong>pendiente de validar</strong> — es lo que impide repetir las ocho variantes de SÍ/NO del Excel.</p></div>
+      <div class="mark-note"><h3>El segundo se numera solo</h3><p>La sala ya tiene un Monitor: el siguiente nace como <strong>Monitor 2</strong> sin teclear el número, y la etiqueta se puede reescribir a «Monitor atril» cuando importe distinguirlos.</p></div>
+      <div class="mark-note"><h3>El inventario también se depura</h3><p>Corregir modelo o serie, marcar <strong>averiado</strong>, <strong>retirado</strong> o <strong>mover a otra sala</strong>. Sin la baja, un inventario solo crece y nunca refleja la realidad.</p></div>
     </aside>
   </div>
 
@@ -1020,6 +1079,122 @@ svg .mark-hit:hover{opacity:.75}
   });
 
   renderDrafts();
+
+  /* ── Inventario dentro de la revisión ──
+        El autocompletado corre contra el catálogo ya descargado al
+        dispositivo, así que funciona igual en un sótano sin cobertura. ── */
+  const norm = s => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+  const CATALOG = [
+    { t:"Proyector",              a:["proyector","epson","nec","np-m403","eb-fh54"] },
+    { t:"TV",                     a:["tv","televisor","bravia"] },
+    { t:"Monitor",                a:["monitor","pantalla","iiyama"] },
+    { t:"Monitor auxiliar",       a:["monitor auxiliar","auxiliar","atril"] },
+    { t:"Ordenador",              a:["ordenador","pc","tiny","m70q","thinkcentre"] },
+    { t:"Cámara",                 a:["camara","aver","520 pro"] },
+    { t:"Altavoces",              a:["altavoces","altavoz","sonido"] },
+    { t:"Micrófono Jabra",        a:["jabra","microfono","micro","panacast"] },
+    { t:"Botonera",               a:["botonera","control"] },
+    { t:"Screenbeam",             a:["screenbeam","inalambrico"] },
+    { t:"Barco ClickShare",       a:["barco","clickshare","cx10"] },
+    { t:"Pantalla de proyección", a:["pantalla de proyeccion","proyeccion","lienzo"] }
+  ];
+  const INV = [
+    { id:1, type:"Proyector", label:"Proyector", sn:"NP-M403 · 0340941RL",  state:"instalado", pend:false },
+    { id:2, type:"Altavoces", label:"Altavoces", sn:"Juego — sin S/N",       state:"instalado", pend:false },
+    { id:3, type:"Ordenador", label:"Ordenador", sn:"M70Q GEN3 · PC2KSLK3",  state:"instalado", pend:false },
+    { id:4, type:"Monitor",   label:"Monitor",   sn:"iiyama T2454MSC",       state:"instalado", pend:false },
+    { id:5, type:"Botonera",  label:"Botonera",  sn:"sin S/N",               state:"instalado", pend:false }
+  ];
+  let invId = 6;
+  const TAG = {
+    instalado:{ c:"ok",   ic:"ok",   x:"OK" },
+    averiado: { c:"crit", ic:"warn", x:"Averiado" },
+    retirado: { c:"na",   ic:"na",   x:"Retirado" },
+    movido:   { c:"na",   ic:"na",   x:"Movido" }
+  };
+
+  function renderInv() {
+    // Un equipo retirado o movido deja de contar como instalado en la sala
+    $("invcount").textContent = INV.filter(e => e.state === "instalado" || e.state === "averiado").length;
+    $("invlist").innerHTML = INV.map(e => {
+      const s = TAG[e.state];
+      return `<div class="invitem" data-id="${e.id}" data-state="${e.state}" data-fix="0">
+        <div class="invrow">
+          <div class="n"><div class="t">${esc(e.label)}</div>
+            <div class="sn">${esc(e.sn || "sin modelo ni serie")}</div></div>
+          ${e.pend ? '<span class="st warn" data-ic="warn">Pendiente</span>' : ""}
+          <span class="st ${s.c}" data-ic="${s.ic}">${s.x}</span>
+          <button class="mini" data-fixtoggle>Corregir</button>
+        </div>
+        <div class="fixbar">
+          <button class="mini" data-act="serie">Modelo / serie</button>
+          <button class="mini" data-act="averiado">Averiado</button>
+          <button class="mini" data-act="retirado">Retirado</button>
+          <button class="mini" data-act="movido">Mover</button>
+        </div>
+      </div>`;
+    }).join("");
+    $("invlist").querySelectorAll(".st[data-ic]").forEach(el => {
+      const k = el.dataset.ic;
+      el.insertAdjacentHTML("afterbegin", k === "warn" ? warnSvg() : svg(ICO[k] || ICO.na, 11, 2));
+    });
+  }
+
+  $("invchev").innerHTML = svg("M4.4 2.6 8 6 4.4 9.4", 13, 2);
+  $("invtoggle").addEventListener("click", () => {
+    const sec = $("invsec"), on = sec.dataset.open !== "1";
+    sec.dataset.open = on ? "1" : "0";
+    $("invtoggle").setAttribute("aria-expanded", String(on));
+  });
+
+  $("invlist").addEventListener("click", e => {
+    const item = e.target.closest(".invitem"); if (!item) return;
+    if (e.target.closest("[data-fixtoggle]")) {
+      item.dataset.fix = item.dataset.fix === "1" ? "0" : "1"; return;
+    }
+    const act = e.target.closest("[data-act]"); if (!act) return;
+    const rec = INV.find(x => x.id === Number(item.dataset.id)), a = act.dataset.act;
+    if (a === "serie")       rec.sn = "NP-M403 · 0340988RL · corregido hoy";
+    else if (a === "movido") { rec.state = "movido"; rec.sn = "trasladado a Aula 1.7 · 28 jul 2026"; }
+    else                     rec.state = rec.state === a ? "instalado" : a;
+    renderInv();
+  });
+
+  const invq = $("invq"), invsug = $("invsug"), invnote = $("invnote");
+  const HINT = "Basta el tipo. Modelo y número de serie se completan después.";
+  invq.addEventListener("input", () => {
+    const q = norm(invq.value);
+    if (!q) { invsug.innerHTML = ""; invnote.textContent = HINT; return; }
+    const hits = CATALOG.map(c => {
+      if (norm(c.t).includes(q)) return { c, why:"" };
+      const al = c.a.find(x => norm(x).includes(q));
+      return al ? { c, why:`alias «${al}»` } : null;
+    }).filter(Boolean).slice(0, 5);
+    if (hits.length) {
+      invsug.innerHTML = hits.map(h =>
+        `<button type="button" data-add="${esc(h.c.t)}">${esc(h.c.t)}<span class="why">${esc(h.why)}</span></button>`).join("");
+      invnote.textContent = "Se reutiliza el tipo del catálogo. Nada nuevo que validar.";
+    } else {
+      const raw = invq.value.trim();
+      invsug.innerHTML = `<button type="button" data-new="1" data-add="${esc(raw)}">Crear «${esc(raw)}»<span class="why">pendiente de validar</span></button>`;
+      invnote.textContent = "No está en el catálogo. Se creará marcado, y un admin lo confirmará o lo fusionará desde la bandeja.";
+    }
+  });
+
+  invsug.addEventListener("click", e => {
+    const b = e.target.closest("[data-add]"); if (!b) return;
+    const type = b.dataset.add, isNew = b.dataset.new === "1";
+    const n = INV.filter(x => x.type === type).length;      // numeración automática
+    const label = n ? `${type} ${n + 1}` : type;
+    INV.push({ id:invId++, type, label, sn:"", state:"instalado", pend:isNew });
+    invq.value = ""; invsug.innerHTML = "";
+    invnote.textContent = n
+      ? `Añadido como «${label}» sin teclear el número. La etiqueta se puede reescribir a «${type} atril».`
+      : `Añadido «${label}». Modelo y serie, cuando puedas.`;
+    renderInv();
+  });
+
+  renderInv();
 
   /* ── Marca grabada de la placa: patrón determinista por semilla.
         Es decorativa; no pretende ser un QR legible. ── */
