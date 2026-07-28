@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>*{margin:0;padding:0}</style>
+</head>
+<body>
+<title>Mantenimiento de Aulas — Prototipo de interfaz</title>
+
+<style>
+/* ─────────────────────────────────────────────────────────────
+   TOKENS
+   Neutros sesgados hacia el petrol del acento (no gris puro).
+   Acento validado con el validador de paleta: croma ≥ 0.10,
+   banda de luminosidad y contraste ≥ 3:1 en ambos modos.
+   ───────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light;
+  --ground:#F4F6F7; --surface:#FFFFFF; --surface-2:#EDF1F2; --surface-3:#E3E9EB;
+  --border:#DCE3E5; --border-strong:#C3CED2;
+  --ink:#0F1518; --ink-2:#48575E; --muted:#647A81;
+  --accent:#046A78; --accent-mark:#008C9E; --accent-tint:#E2F1F3;
+  --good:#137A47; --good-tint:#E4F2EA;
+  --warn:#8A5A00; --warn-tint:#FAF0DE;
+  --crit:#B02318; --crit-tint:#FBE9E7;
+  --na:#5F7078;   --na-tint:#EDF1F2;
+  --shadow:0 1px 2px rgba(15,21,24,.06), 0 8px 24px -12px rgba(15,21,24,.18);
+  --shadow-lg:0 2px 4px rgba(15,21,24,.06), 0 24px 56px -20px rgba(15,21,24,.28);
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono","Cascadia Mono","Roboto Mono",Menlo,Consolas,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground:#0D1215; --surface:#161E22; --surface-2:#1E282D; --surface-3:#263238;
+    --border:#2A363B; --border-strong:#3A4950;
+    --ink:#E9F0F2; --ink-2:#A2B1B8; --muted:#7A8B92;
+    --accent:#3FB6C6; --accent-mark:#22A7B8; --accent-tint:#0E2A30;
+    --good:#4FC286; --good-tint:#10281C;
+    --warn:#E0A64B; --warn-tint:#2B2114;
+    --crit:#F2827A; --crit-tint:#2E1815;
+    --na:#8B9AA1;   --na-tint:#1E282D;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+    --shadow-lg:0 2px 4px rgba(0,0,0,.4), 0 24px 56px -20px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground:#0D1215; --surface:#161E22; --surface-2:#1E282D; --surface-3:#263238;
+  --border:#2A363B; --border-strong:#3A4950;
+  --ink:#E9F0F2; --ink-2:#A2B1B8; --muted:#7A8B92;
+  --accent:#3FB6C6; --accent-mark:#22A7B8; --accent-tint:#0E2A30;
+  --good:#4FC286; --good-tint:#10281C;
+  --warn:#E0A64B; --warn-tint:#2B2114;
+  --crit:#F2827A; --crit-tint:#2E1815;
+  --na:#8B9AA1;   --na-tint:#1E282D;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  --shadow-lg:0 2px 4px rgba(0,0,0,.4), 0 24px 56px -20px rgba(0,0,0,.7);
+}
+
+* { box-sizing:border-box; }
+body { margin:0; background:var(--ground); color:var(--ink); font-family:var(--sans);
+       font-size:15px; line-height:1.5; -webkit-font-smoothing:antialiased; }
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+@media (prefers-reduced-motion: reduce) { * { animation:none !important; transition:none !important; } }
+
+.num { font-variant-numeric:tabular-nums; }
+.mono { font-family:var(--mono); font-variant-numeric:tabular-nums; letter-spacing:-.01em; }
+.eyebrow { font-size:11px; font-weight:650; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); }
+
+/* ── Shell ───────────────────────────────────────────────── */
+.pt-shell { max-width:1360px; margin:0 auto; padding:28px 24px 72px; }
+.pt-head { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:20px;
+           padding-bottom:20px; border-bottom:1px solid var(--border); }
+.pt-head h1 { font-size:26px; line-height:1.2; margin:6px 0 0; font-weight:680; letter-spacing:-.02em; text-wrap:balance; }
+.pt-head p { margin:8px 0 0; color:var(--ink-2); max-width:62ch; font-size:14px; }
+.pt-demo { display:inline-flex; align-items:center; gap:7px; padding:6px 11px; border-radius:999px;
+           background:var(--warn-tint); color:var(--warn); font-size:12px; font-weight:600;
+           border:1px solid color-mix(in srgb, var(--warn) 26%, transparent); }
+
+.pt-tabs { display:flex; flex-wrap:wrap; gap:6px; margin:22px 0 26px; }
+.pt-tab { appearance:none; border:1px solid var(--border); background:var(--surface); color:var(--ink-2);
+          font:inherit; font-size:13.5px; font-weight:560; padding:9px 15px; border-radius:999px; cursor:pointer;
+          transition:background .14s, color .14s, border-color .14s; }
+.pt-tab:hover { border-color:var(--border-strong); color:var(--ink); }
+.pt-tab[aria-selected="true"] { background:var(--accent); border-color:var(--accent); color:var(--surface); }
+
+.pt-stage { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:32px; align-items:start; }
+@media (max-width:1000px){ .pt-stage { grid-template-columns:minmax(0,1fr); } }
+.pt-panel[hidden] { display:none; }
+
+/* Annotation rail — the "why", so this doubles as design rationale */
+.pt-notes { position:sticky; top:20px; display:flex; flex-direction:column; gap:14px; }
+.pt-note { background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:14px 15px; }
+.pt-note h4 { margin:0 0 5px; font-size:12.5px; font-weight:650; letter-spacing:.01em; }
+.pt-note p { margin:0; font-size:12.5px; line-height:1.55; color:var(--ink-2); }
+.pt-note strong { color:var(--ink); font-weight:620; }
+
+/* ── Device frame ────────────────────────────────────────── */
+.pt-devwrap { display:flex; justify-content:center; }
+.pt-device { width:392px; max-width:100%; background:var(--surface); border:1px solid var(--border-strong);
+             border-radius:26px; box-shadow:var(--shadow-lg); overflow:hidden; display:flex; flex-direction:column;
+             position:relative; }
+/* Scroll affordance for screens without a sticky action bar */
+.pt-device[data-fade="1"]::after { content:""; position:absolute; left:1px; right:1px; bottom:1px; height:52px;
+  border-radius:0 0 25px 25px; pointer-events:none;
+  background:linear-gradient(to top, var(--surface) 18%, transparent); }
+.pt-status { display:flex; justify-content:space-between; align-items:center; padding:9px 18px 3px;
+             font-size:11.5px; color:var(--muted); font-weight:600; }
+.pt-screen { height:772px; overflow-y:auto; overscroll-behavior:contain; }
+.pt-screen::-webkit-scrollbar { width:8px; }
+.pt-screen::-webkit-scrollbar-thumb { background:var(--border-strong); border-radius:4px; }
+
+/* Sync bar — always visible, never ambiguous */
+.pt-sync { display:flex; align-items:center; gap:8px; padding:8px 16px; font-size:12.5px; font-weight:580;
+           background:var(--warn-tint); color:var(--warn); border-bottom:1px solid color-mix(in srgb,var(--warn) 22%,transparent); }
+.pt-sync[data-state="clean"] { background:var(--good-tint); color:var(--good); border-bottom-color:color-mix(in srgb,var(--good) 22%,transparent); }
+.pt-sync .dot { width:7px; height:7px; border-radius:50%; background:currentColor; flex:none; }
+.pt-sync .grow { margin-left:auto; font-weight:500; opacity:.85; font-size:11.5px; }
+
+.pt-topbar { display:flex; align-items:flex-start; gap:12px; padding:14px 16px 12px; border-bottom:1px solid var(--border); }
+.pt-topbar .back { flex:none; width:34px; height:34px; border-radius:9px; border:1px solid var(--border);
+                   background:var(--surface-2); color:var(--ink-2); display:grid; place-items:center; font-size:16px; }
+.pt-roomid h2 { margin:0; font-size:18px; font-weight:660; letter-spacing:-.01em; line-height:1.25; }
+.pt-roomid .path { font-size:12px; color:var(--muted); margin-top:3px; }
+.pt-roomid .ref { font-size:11px; margin-top:5px; color:var(--accent); }
+
+/* ── Primary action ──────────────────────────────────────── */
+.pt-body { padding:16px; display:flex; flex-direction:column; gap:14px; }
+.pt-allok { width:100%; border:none; border-radius:12px; padding:16px; font:inherit; font-size:16px; font-weight:640;
+            background:var(--good); color:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:9px;
+            box-shadow:0 1px 0 color-mix(in srgb,var(--good) 70%,#000); transition:transform .1s, filter .14s; }
+:root[data-theme="dark"] .pt-allok { color:#08160F; }
+.pt-allok:hover { filter:brightness(1.06); }
+.pt-allok:active { transform:translateY(1px); }
+.pt-allok[data-done="1"] { background:var(--good-tint); color:var(--good); box-shadow:none;
+                           border:1px solid color-mix(in srgb,var(--good) 34%,transparent); }
+
+/* ── Check blocks ────────────────────────────────────────── */
+.pt-blocks { display:flex; flex-direction:column; gap:9px; }
+.pt-block { border:1px solid var(--border); border-radius:var(--r); background:var(--surface); overflow:hidden;
+            transition:border-color .16s, background .16s; }
+.pt-block[data-r="ok"]  { border-color:color-mix(in srgb,var(--good) 40%,transparent); background:color-mix(in srgb,var(--good-tint) 55%,var(--surface)); }
+.pt-block[data-r="ko"]  { border-color:color-mix(in srgb,var(--crit) 48%,transparent); background:color-mix(in srgb,var(--crit-tint) 60%,var(--surface)); }
+.pt-block[data-r="na"]  { border-color:var(--border); background:var(--surface); opacity:.72; }
+.pt-brow { display:flex; align-items:center; gap:10px; padding:11px 12px; }
+.pt-bname { flex:1; min-width:0; }
+.pt-bname .t { font-size:14.5px; font-weight:600; line-height:1.3; }
+.pt-bname .s { font-size:11.5px; color:var(--muted); margin-top:1px; }
+
+/* Tri-state — one control language for all six blocks */
+.pt-tri { display:flex; gap:3px; padding:3px; background:var(--surface-2); border-radius:9px; flex:none;
+          border:1px solid var(--border); }
+.pt-tri button { appearance:none; border:none; background:transparent; font:inherit; font-size:11px; font-weight:660;
+                 letter-spacing:.02em; color:var(--muted); padding:7px 9px; min-width:44px; min-height:38px; border-radius:7px;
+                 cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
+                 transition:background .13s, color .13s; }
+.pt-tri button .ico { font-size:13px; line-height:1; }
+.pt-tri button:hover { color:var(--ink-2); }
+.pt-tri button[aria-pressed="true"][data-v="ok"] { background:var(--good); color:#fff; }
+.pt-tri button[aria-pressed="true"][data-v="ko"] { background:var(--crit); color:#fff; }
+.pt-tri button[aria-pressed="true"][data-v="na"] { background:var(--na); color:#fff; }
+:root[data-theme="dark"] .pt-tri button[aria-pressed="true"] { color:#0D1215; }
+
+.pt-bdetail { padding:0 12px 12px; display:none; flex-direction:column; gap:10px; }
+.pt-block[data-open="1"] .pt-bdetail { display:flex; }
+.pt-fail { display:flex; align-items:center; gap:9px; padding:10px 11px; border-radius:9px;
+           background:var(--surface); border:1px dashed color-mix(in srgb,var(--crit) 40%,transparent); }
+.pt-fail .msg { flex:1; font-size:12.5px; color:var(--ink-2); line-height:1.4; }
+.pt-inc { appearance:none; border:none; border-radius:8px; background:var(--crit); color:#fff; font:inherit;
+          font-size:12.5px; font-weight:620; padding:9px 12px; cursor:pointer; flex:none; min-height:38px; }
+:root[data-theme="dark"] .pt-inc { color:#180907; }
+.pt-inc[data-created="1"] { background:var(--surface-2); color:var(--good); border:1px solid color-mix(in srgb,var(--good) 40%,transparent); }
+
+.pt-fields { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+.pt-field label { display:block; font-size:11px; font-weight:620; letter-spacing:.05em; text-transform:uppercase;
+                  color:var(--muted); margin-bottom:4px; }
+.pt-field input { width:100%; font:inherit; font-family:var(--mono); font-size:15px; padding:10px 11px;
+                  border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--ink); min-height:42px; }
+.pt-lamp { display:flex; align-items:center; gap:9px; font-size:12px; }
+.pt-lampbar { flex:1; height:7px; border-radius:4px; background:var(--surface-3); overflow:hidden; }
+.pt-lampbar i { display:block; height:100%; border-radius:4px; background:var(--crit); }
+
+/* Photos + notes */
+.pt-card { border:1px solid var(--border); border-radius:var(--r); background:var(--surface); padding:12px; }
+.pt-card > .eyebrow { display:block; margin-bottom:9px; }
+.pt-photos { display:flex; gap:8px; flex-wrap:wrap; }
+.pt-photo { width:66px; height:66px; border-radius:9px; background:var(--surface-3); border:1px solid var(--border);
+            display:grid; place-items:center; font-size:10px; color:var(--muted); position:relative; overflow:hidden; text-align:center; }
+.pt-photo .kb { position:absolute; bottom:0; left:0; right:0; background:color-mix(in srgb,var(--ink) 74%,transparent);
+                color:var(--surface); font-size:9px; padding:1px 0; font-family:var(--mono); }
+:root[data-theme="dark"] .pt-photo .kb { color:var(--ink); background:color-mix(in srgb,#000 70%,transparent); }
+.pt-addphoto { width:66px; height:66px; border-radius:9px; border:1px dashed var(--border-strong); background:transparent;
+               color:var(--accent); font-size:22px; cursor:pointer; display:grid; place-items:center; }
+.pt-obs { width:100%; font:inherit; font-size:14px; min-height:64px; padding:10px 11px; resize:vertical;
+          border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--ink); }
+.pt-savehint { display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--muted); margin-top:7px; }
+
+.pt-finish { position:sticky; bottom:0; margin:4px -16px -16px; padding:12px 16px 16px;
+             background:var(--surface); border-top:1px solid var(--border);
+             box-shadow:0 -8px 20px -14px rgba(0,0,0,.55);
+             display:flex; gap:9px; }
+.pt-btn { flex:1; appearance:none; border-radius:11px; font:inherit; font-size:15px; font-weight:640; padding:14px;
+          cursor:pointer; min-height:50px; border:1px solid var(--border-strong); background:var(--surface-2); color:var(--ink); }
+.pt-btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+:root[data-theme="dark"] .pt-btn.primary { color:#06181B; }
+
+/* ── Room sheet ──────────────────────────────────────────── */
+.pt-score { display:flex; align-items:center; gap:14px; padding:13px; border-radius:var(--r);
+            background:var(--crit-tint); border:1px solid color-mix(in srgb,var(--crit) 30%,transparent); }
+.pt-score .big { font-size:32px; font-weight:700; color:var(--crit); line-height:1; }
+.pt-score .lbl { font-size:12.5px; color:var(--ink-2); line-height:1.4; }
+.pt-kv { display:flex; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--border); font-size:13px; }
+.pt-kv:last-child { border-bottom:none; }
+.pt-kv .k { color:var(--muted); }
+.pt-kv .v { text-align:right; }
+.pt-inv { display:flex; flex-direction:column; }
+.pt-invrow { display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--border); }
+.pt-invrow:last-child { border-bottom:none; }
+.pt-invrow .n { flex:1; min-width:0; }
+.pt-invrow .n .t { font-size:13.5px; font-weight:580; }
+.pt-invrow .n .sn { font-size:11.5px; color:var(--muted); margin-top:2px; }
+.pt-chip { font-size:10.5px; font-weight:650; padding:3px 8px; border-radius:999px; letter-spacing:.02em;
+           display:inline-flex; align-items:center; gap:4px; flex:none; }
+.pt-chip.ok   { background:var(--good-tint); color:var(--good); }
+.pt-chip.warn { background:var(--warn-tint); color:var(--warn); }
+.pt-chip.crit { background:var(--crit-tint); color:var(--crit); }
+.pt-chip.na   { background:var(--na-tint);   color:var(--na); }
+.pt-qr { display:flex; align-items:center; gap:12px; }
+.pt-qr .code { width:74px; height:74px; flex:none; border-radius:8px; border:1px solid var(--border);
+               background:var(--surface); display:grid; place-items:center; }
+.pt-hist { display:flex; flex-direction:column; gap:0; }
+.pt-hrow { display:flex; gap:11px; padding:9px 0; }
+.pt-hrow .rail { width:9px; flex:none; display:flex; flex-direction:column; align-items:center; }
+.pt-hrow .rail i { width:9px; height:9px; border-radius:50%; background:var(--good); flex:none; margin-top:5px; }
+.pt-hrow .rail s { flex:1; width:1px; background:var(--border); }
+.pt-hrow[data-k="ko"] .rail i { background:var(--crit); }
+.pt-hrow[data-k="name"] .rail i { background:var(--accent-mark); }
+.pt-hrow .c .t { font-size:13px; font-weight:560; }
+.pt-hrow .c .m { font-size:11.5px; color:var(--muted); margin-top:1px; }
+
+/* ── Desktop panels ──────────────────────────────────────── */
+.pt-desk { background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow);
+           overflow:hidden; }
+.pt-deskhead { display:flex; align-items:center; gap:12px; padding:15px 20px; border-bottom:1px solid var(--border);
+               background:var(--surface-2); }
+.pt-deskhead .t { font-size:15px; font-weight:650; }
+.pt-deskbody { padding:20px; display:flex; flex-direction:column; gap:20px; }
+
+.pt-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(168px,1fr)); gap:12px; }
+.pt-kpi { border:1px solid var(--border); border-radius:var(--r); padding:14px; background:var(--surface);
+          display:flex; flex-direction:column; gap:5px; position:relative; overflow:hidden; }
+.pt-kpi::before { content:""; position:absolute; inset:0 auto 0 0; width:3px; background:var(--border-strong); }
+.pt-kpi[data-s="crit"]::before { background:var(--crit); }
+.pt-kpi[data-s="warn"]::before { background:var(--warn); }
+.pt-kpi[data-s="good"]::before { background:var(--good); }
+.pt-kpi .v { font-size:29px; font-weight:680; line-height:1; letter-spacing:-.02em; }
+.pt-kpi .l { font-size:12.5px; color:var(--ink-2); line-height:1.35; }
+.pt-kpi .d { font-size:11.5px; color:var(--muted); }
+
+.pt-grid2 { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+@media (max-width:820px){ .pt-grid2 { grid-template-columns:1fr; } }
+.pt-box { border:1px solid var(--border); border-radius:var(--r); padding:15px; background:var(--surface); }
+.pt-box > header { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:4px; }
+.pt-box h3 { margin:0; font-size:14px; font-weight:640; }
+.pt-box .sub { font-size:11.5px; color:var(--muted); margin:0 0 12px; }
+
+.pt-alerts { display:flex; flex-direction:column; }
+.pt-alert { display:flex; align-items:center; gap:11px; padding:11px 0; border-bottom:1px solid var(--border); }
+.pt-alert:last-child { border-bottom:none; }
+.pt-alert .sev { width:3px; align-self:stretch; border-radius:2px; flex:none; background:var(--muted); }
+.pt-alert[data-s="crit"] .sev { background:var(--crit); }
+.pt-alert[data-s="warn"] .sev { background:var(--warn); }
+.pt-alert .c { flex:1; min-width:0; }
+.pt-alert .c .t { font-size:13.5px; font-weight:570; }
+.pt-alert .c .m { font-size:11.5px; color:var(--muted); margin-top:2px; }
+
+.pt-rec { display:flex; gap:12px; padding:13px; border-radius:var(--r); background:var(--accent-tint);
+          border:1px solid color-mix(in srgb,var(--accent-mark) 30%,transparent); }
+.pt-rec .ico { flex:none; width:26px; height:26px; border-radius:7px; background:var(--accent); color:var(--surface);
+               display:grid; place-items:center; font-size:14px; font-weight:700; }
+:root[data-theme="dark"] .pt-rec .ico { color:#06181B; }
+.pt-rec .c .t { font-size:13.5px; font-weight:620; line-height:1.35; }
+.pt-rec .c .m { font-size:12.5px; color:var(--ink-2); margin-top:4px; line-height:1.5; }
+.pt-rec .c .w { font-size:11.5px; color:var(--muted); margin-top:6px; }
+
+table.pt-tbl { width:100%; border-collapse:collapse; font-size:13px; }
+table.pt-tbl th { text-align:left; font-size:11px; font-weight:650; letter-spacing:.06em; text-transform:uppercase;
+                  color:var(--muted); padding:0 10px 8px 0; border-bottom:1px solid var(--border); white-space:nowrap; }
+table.pt-tbl td { padding:9px 10px 9px 0; border-bottom:1px solid var(--border); vertical-align:top; }
+table.pt-tbl tr:last-child td { border-bottom:none; }
+table.pt-tbl td.r, table.pt-tbl th.r { text-align:right; padding-right:18px; }
+table.pt-tbl td.r:last-child, table.pt-tbl th.r:last-child { padding-right:0; }
+.pt-scroll { overflow-x:auto; }
+
+/* Report paper */
+.pt-paper { background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:38px 40px;
+            max-width:820px; margin:0 auto; box-shadow:var(--shadow-lg); }
+.pt-paper .ph { display:flex; justify-content:space-between; align-items:flex-start; gap:20px;
+                padding-bottom:16px; border-bottom:2px solid var(--ink); }
+.pt-paper h2 { margin:4px 0 0; font-size:23px; font-weight:680; letter-spacing:-.02em; }
+.pt-paper .pmeta { font-size:11.5px; color:var(--muted); text-align:right; line-height:1.7; }
+.pt-paper h3 { font-size:12px; font-weight:650; letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
+               margin:26px 0 11px; padding-bottom:6px; border-bottom:1px solid var(--border); }
+.pt-paper p { font-size:13.5px; line-height:1.65; color:var(--ink-2); margin:0 0 10px; max-width:66ch; }
+.pt-pfoot { margin-top:28px; padding-top:12px; border-top:1px solid var(--border); display:flex;
+            justify-content:space-between; font-size:10.5px; color:var(--muted); }
+
+/* Chart bits */
+.pt-legend { display:flex; flex-wrap:wrap; gap:14px; margin-top:10px; font-size:11.5px; color:var(--ink-2); }
+.pt-legend span { display:inline-flex; align-items:center; gap:6px; }
+.pt-legend i { width:10px; height:10px; border-radius:3px; flex:none; }
+.pt-tip { position:fixed; z-index:60; pointer-events:none; background:var(--ink); color:var(--ground);
+          padding:7px 10px; border-radius:7px; font-size:12px; line-height:1.4; box-shadow:var(--shadow-lg);
+          opacity:0; transition:opacity .1s; white-space:nowrap; }
+.pt-tip[data-on="1"] { opacity:1; }
+.pt-tip b { font-weight:650; }
+svg .mark { transition:opacity .12s; }
+svg .mark:hover { opacity:.78; }
+</style>
+
+<div class="pt-shell">
+
+  <header class="pt-head">
+    <div>
+      <span class="eyebrow">Fase 0 · Prototipo de interfaz</span>
+      <h1>Mantenimiento de Aulas y Salas</h1>
+      <p>Cuatro pantallas navegables para validar la experiencia antes de escribir código de producción. Los controles funcionan de verdad: pulsa, marca fallos y observa cómo responde.</p>
+    </div>
+    <span class="pt-demo">◈ Datos de demostración — la base real arranca vacía</span>
+  </header>
+
+  <nav class="pt-tabs" role="tablist" aria-label="Pantallas del prototipo">
+    <button class="pt-tab" role="tab" aria-selected="true"  data-p="rev">Revisión de sala</button>
+    <button class="pt-tab" role="tab" aria-selected="false" data-p="sala">Ficha de sala</button>
+    <button class="pt-tab" role="tab" aria-selected="false" data-p="cm">Cuadro de mando</button>
+    <button class="pt-tab" role="tab" aria-selected="false" data-p="inf">Informe</button>
+  </nav>
+
+  <!-- ══════════════ 1 · REVISIÓN ══════════════ -->
+  <div class="pt-stage pt-panel" data-panel="rev">
+    <div class="pt-devwrap">
+      <div class="pt-device">
+        <div class="pt-status"><span class="mono">9:41</span><span>▮▮▮ ✦ 󰁹</span></div>
+
+        <div class="pt-sync" id="syncbar" data-state="dirty">
+          <span class="dot"></span>
+          <span id="syncmsg">3 revisiones pendientes de enviar</span>
+          <span class="grow">Sin conexión</span>
+        </div>
+
+        <div class="pt-topbar">
+          <div class="back" aria-hidden="true">‹</div>
+          <div class="pt-roomid">
+            <h2>LAB CRIMINOLOGÍA</h2>
+            <div class="path">Edificio H · Planta −2</div>
+            <div class="ref mono">SALA-000142 · escaneada en puerta</div>
+          </div>
+        </div>
+
+        <div class="pt-screen">
+          <div class="pt-body">
+
+            <button class="pt-allok" id="allok">
+              <span aria-hidden="true">✓</span> Todo correcto
+            </button>
+
+            <div class="pt-blocks" id="blocks"></div>
+
+            <div class="pt-card">
+              <span class="eyebrow">Fotos</span>
+              <div class="pt-photos" id="photos">
+                <div class="pt-photo">Proyector<span class="kb">148 KB</span></div>
+                <div class="pt-photo">Rack<span class="kb">171 KB</span></div>
+                <button class="pt-addphoto" id="addphoto" aria-label="Añadir foto">+</button>
+              </div>
+              <div class="pt-savehint"><span aria-hidden="true">◆</span> <span id="photohint">WebP · 2 fotos · 319 KB en cola</span></div>
+            </div>
+
+            <div class="pt-card">
+              <span class="eyebrow">Observaciones</span>
+              <textarea class="pt-obs" id="obs" placeholder="Lo que no encaja en los seis bloques…"></textarea>
+              <div class="pt-savehint"><span aria-hidden="true">✓</span> <span id="savehint">Guardado en el dispositivo</span></div>
+            </div>
+
+            <div class="pt-finish">
+              <button class="pt-btn">Guardar borrador</button>
+              <button class="pt-btn primary" id="finish">Finalizar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="pt-notes">
+      <div class="pt-note">
+        <h4>Revisión por excepción</h4>
+        <p><strong>Todo correcto</strong> cierra una sala sin incidencias en unos 5 segundos. Solo se despliega el bloque que falla. Es la diferencia entre revisar 30 salas en una mañana o en un día.</p>
+      </div>
+      <div class="pt-note">
+        <h4>Un solo lenguaje de control</h4>
+        <p>Los seis bloques usan el mismo triestado <strong>OK / FALLA / N/A</strong>. Objetivos de 44 px, mitad inferior de la pantalla, nada depende de pasar el ratón. El «no aplica» que pediste para el micrófono vale para todos.</p>
+      </div>
+      <div class="pt-note">
+        <h4>Nunca solo color</h4>
+        <p>Cada estado lleva icono y texto además del color. Hay daltonismo en cualquier equipo, y una pantalla con el proyector encendido lava los tonos.</p>
+      </div>
+      <div class="pt-note">
+        <h4>Abrir incidencia desde el fallo</h4>
+        <p>Marca <strong>FALLA</strong> en cualquier bloque y aparece el botón. Precarga sala, bloque, fecha y técnico: solo queda pegar el código del ticket externo.</p>
+      </div>
+      <div class="pt-note">
+        <h4>El estado del dato no se esconde</h4>
+        <p>La barra superior dice siempre cuántas revisiones faltan por enviar. Nunca un «sincronizando…» indefinido.</p>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ══════════════ 2 · FICHA DE SALA ══════════════ -->
+  <div class="pt-stage pt-panel" data-panel="sala" hidden>
+    <div class="pt-devwrap">
+      <div class="pt-device" data-fade="1">
+        <div class="pt-status"><span class="mono">9:41</span><span>▮▮▮ ✦ 󰁹</span></div>
+        <div class="pt-sync" data-state="clean"><span class="dot"></span><span>Todo enviado y verificado</span><span class="grow">hace 2 min</span></div>
+        <div class="pt-topbar">
+          <div class="back" aria-hidden="true">‹</div>
+          <div class="pt-roomid">
+            <h2>1.7</h2>
+            <div class="path">Edificio H · 1ª Planta</div>
+            <div class="ref mono">SALA-000087</div>
+          </div>
+        </div>
+        <div class="pt-screen">
+          <div class="pt-body">
+
+            <div class="pt-score">
+              <div class="big num">38</div>
+              <div class="lbl"><strong>Índice de fiabilidad</strong><br>Entre las 5 peores del campus</div>
+            </div>
+
+            <div class="pt-rec">
+              <div class="ico" aria-hidden="true">!</div>
+              <div class="c">
+                <div class="t">Reincidencia detectada: HDMI</div>
+                <div class="m">4 sustituciones de cable HDMI en 6 meses. Sustituir de nuevo no resuelve la causa: revisar canalización, rosetas o longitud del tirado.</div>
+                <div class="w">Basado en 4 incidencias · ver registros</div>
+              </div>
+            </div>
+
+            <div class="pt-card">
+              <span class="eyebrow">Identidad</span>
+              <div class="pt-qr">
+                <div class="code" aria-hidden="true">
+                  <svg width="58" height="58" viewBox="0 0 29 29" role="img" aria-label="Código QR de la sala">
+                    <rect width="29" height="29" fill="none"/>
+                    <g fill="currentColor" id="qrcells"></g>
+                  </svg>
+                </div>
+                <div style="min-width:0">
+                  <div style="font-size:12.5px;line-height:1.5;color:var(--ink-2)">La etiqueta de la puerta codifica el <strong>identificador interno</strong>, no el nombre. Renombrar la sala nunca invalida el QR impreso.</div>
+                  <div class="mono" style="font-size:10.5px;color:var(--muted);margin-top:6px">0198f2c1-…-a47b</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="pt-card">
+              <span class="eyebrow">Inventario instalado</span>
+              <div class="pt-inv">
+                <div class="pt-invrow"><div class="n"><div class="t">Proyector</div><div class="sn mono">NP-M403 · 0340941RL</div></div><span class="pt-chip warn">⚠ Lámpara 12 %</span></div>
+                <div class="pt-invrow"><div class="n"><div class="t">Altavoces</div><div class="sn mono">Juego — sin S/N</div></div><span class="pt-chip ok">✓ OK</span></div>
+                <div class="pt-invrow"><div class="n"><div class="t">Cámara</div><div class="sn mono">520 PRO · 5310306901678</div></div><span class="pt-chip ok">✓ OK</span></div>
+                <div class="pt-invrow"><div class="n"><div class="t">Ordenador</div><div class="sn mono">M70Q GEN3 · PC2KSLK3</div></div><span class="pt-chip ok">✓ OK</span></div>
+                <div class="pt-invrow"><div class="n"><div class="t">Micrófono Jabra</div><div class="sn mono">No instalado</div></div><span class="pt-chip na">— N/A</span></div>
+              </div>
+            </div>
+
+            <div class="pt-card">
+              <span class="eyebrow">Historial</span>
+              <div class="pt-hist">
+                <div class="pt-hrow" data-k="ko"><div class="rail"><i></i><s></s></div><div class="c"><div class="t">Revisión con incidencia — Pantallas</div><div class="m">18 jul 2026 · Marta R. · ticket I260718_0031</div></div></div>
+                <div class="pt-hrow" data-k="name"><div class="rail"><i></i><s></s></div><div class="c"><div class="t">Renombrada: «1.7 H» → «1.7»</div><div class="m">2 jul 2026 · Javier L. · el histórico se mantiene intacto</div></div></div>
+                <div class="pt-hrow"><div class="rail"><i></i><s></s></div><div class="c"><div class="t">Revisión completa sin incidencias</div><div class="m">11 jun 2026 · Marta R.</div></div></div>
+                <div class="pt-hrow" data-k="ko"><div class="rail"><i></i></div><div class="c"><div class="t">Sustitución de cable HDMI</div><div class="m">6 mar 2026 · ticket I260306_0029</div></div></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="pt-notes">
+      <div class="pt-note">
+        <h4>El nombre no es la identidad</h4>
+        <p>El historial muestra el renombrado de <strong>«1.7 H» a «1.7»</strong> como un evento más. Revisiones, incidencias, fotos e informes anteriores siguen enlazados: lo que los une es el identificador, no el texto.</p>
+      </div>
+      <div class="pt-note">
+        <h4>Series en monoespaciada</h4>
+        <p>Los números de serie y códigos de ticket van en monoespaciada con cifras tabulares. <strong>5310306901678</strong> es legible; en tipografía proporcional no lo es. Es el idioma de las etiquetas de los equipos.</p>
+      </div>
+      <div class="pt-note">
+        <h4>La recomendación se justifica</h4>
+        <p>Nunca aparece un aviso sin decir de cuántos registros sale y sin poder abrirlos. Si no se puede explicar, no se muestra.</p>
+      </div>
+      <div class="pt-note">
+        <h4>Estado en la forma, no solo en el número</h4>
+        <p>Lámpara al 12 % lleva pastilla ámbar con icono. Lo que exige atención se ve de un vistazo, sin leer cifras.</p>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ══════════════ 3 · CUADRO DE MANDO ══════════════ -->
+  <div class="pt-stage pt-panel" data-panel="cm" hidden>
+    <div>
+      <div class="pt-desk">
+        <div class="pt-deskhead">
+          <span class="t">Cuadro de mando</span>
+          <span class="pt-chip ok" style="margin-left:auto">✓ Datos verificados</span>
+          <span class="eyebrow">Semana 30 · 2026</span>
+        </div>
+        <div class="pt-deskbody">
+
+          <div class="pt-kpis">
+            <div class="pt-kpi" data-s="warn"><div class="v num">41</div><div class="l">Salas sin revisar</div><div class="d">más de 30 días</div></div>
+            <div class="pt-kpi" data-s="crit"><div class="v num">7</div><div class="l">Incidencias abiertas</div><div class="d">3 con más de 10 días</div></div>
+            <div class="pt-kpi" data-s="crit"><div class="v num">5</div><div class="l">Lámparas críticas</div><div class="d">por debajo del 15 %</div></div>
+            <div class="pt-kpi" data-s="warn"><div class="v num">3</div><div class="l">Artículos bajo mínimo</div><div class="d">1 agotado</div></div>
+            <div class="pt-kpi" data-s="good"><div class="v num">62</div><div class="l">Revisiones este mes</div><div class="d">+18 % vs. mes anterior</div></div>
+          </div>
+
+          <div class="pt-grid2">
+            <div class="pt-box">
+              <header><h3>Incidencias abiertas por edificio</h3></header>
+              <p class="sub">Pasa el cursor por cada barra para el detalle</p>
+              <div id="chart-bar"></div>
+            </div>
+            <div class="pt-box">
+              <header><h3>Revisiones completadas por semana</h3></header>
+              <p class="sub">Últimas 12 semanas · último punto destacado</p>
+              <div id="chart-area"></div>
+            </div>
+          </div>
+
+          <div class="pt-box">
+            <header><h3>Estado de las lámparas de proyector</h3></header>
+            <p class="sub">96 proyectores con lectura registrada · el color codifica estado, no identidad</p>
+            <div id="chart-lamp"></div>
+            <div class="pt-legend">
+              <span><i style="background:var(--crit)"></i> Crítico — menos del 15 %</span>
+              <span><i style="background:var(--warn)"></i> Aviso — 15 a 40 %</span>
+              <span><i style="background:var(--good)"></i> Correcto — más del 40 %</span>
+            </div>
+          </div>
+
+          <div class="pt-grid2">
+            <div class="pt-box">
+              <header><h3>Alertas</h3></header>
+              <p class="sub">Ordenadas por urgencia real, no por fecha</p>
+              <div class="pt-alerts">
+                <div class="pt-alert" data-s="crit"><span class="sev"></span><div class="c"><div class="t">2.9 P — lámpara al 9 %</div><div class="m">Se agota en ~2 semanas al ritmo actual</div></div><span class="pt-chip crit">Crítico</span></div>
+                <div class="pt-alert" data-s="crit"><span class="sev"></span><div class="c"><div class="t">Cable HDMI Fibra 15 m — 4 unidades</div><div class="m">Rotura prevista en ~5 semanas</div></div><span class="pt-chip crit">Stock</span></div>
+                <div class="pt-alert" data-s="warn"><span class="sev"></span><div class="c"><div class="t">Edificio CRAI — 14 salas sin revisar</div><div class="m">La más antigua, 96 días</div></div><span class="pt-chip warn">30 días</span></div>
+                <div class="pt-alert" data-s="warn"><span class="sev"></span><div class="c"><div class="t">I260718_0031 abierta hace 11 días</div><div class="m">1.7 H · sin resolución registrada</div></div><span class="pt-chip warn">Abierta</span></div>
+              </div>
+            </div>
+
+            <div class="pt-box">
+              <header><h3>Recomendaciones</h3></header>
+              <p class="sub">Calculadas con SQL · toda cifra es trazable</p>
+              <div style="display:flex;flex-direction:column;gap:11px">
+                <div class="pt-rec">
+                  <div class="ico" aria-hidden="true">!</div>
+                  <div class="c">
+                    <div class="t">1.7 H repite el mismo fallo</div>
+                    <div class="m">4 sustituciones de HDMI en 6 meses. La causa no es el cable: revisar canalización y rosetas.</div>
+                    <div class="w">4 incidencias · ver registros</div>
+                  </div>
+                </div>
+                <div class="pt-rec">
+                  <div class="ico" aria-hidden="true">◈</div>
+                  <div class="c">
+                    <div class="t">Agrupa la visita al Edificio H</div>
+                    <div class="m">5 salas con lámpara por debajo del 20 % en la misma planta. Un desplazamiento en lugar de cinco.</div>
+                    <div class="w">Ruta sugerida: −2 → 0 → 1</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <aside class="pt-notes">
+      <div class="pt-note">
+        <h4>Resumen antes que detalle</h4>
+        <p>Un cuadro de mando se opera, no se lee de arriba abajo. Primero las cifras que obligan a actuar; el detalle, debajo.</p>
+      </div>
+      <div class="pt-note">
+        <h4>Series únicas, sin paleta categórica</h4>
+        <p>Cada gráfico muestra <strong>una sola serie</strong>, así que no hace falta leyenda de identidad ni arriesgar parejas de color indistinguibles. Donde hay color con significado —las lámparas— codifica <strong>estado</strong>, y va con etiqueta.</p>
+      </div>
+      <div class="pt-note">
+        <h4>El color se calculó, no se eligió a ojo</h4>
+        <p>El acento pasó el validador de paleta: croma ≥ 0,10, banda de luminosidad y contraste ≥ 3:1 en claro y oscuro. La primera pareja que probé <strong>falló</strong> —indistinguible para protanopía— y se descartó.</p>
+      </div>
+      <div class="pt-note">
+        <h4>Aviso honesto</h4>
+        <p>Estas cifras son de demostración. Arrancando con la base limpia, las predicciones no dicen nada útil hasta acumular <strong>2-3 meses</strong> de revisiones reales; hasta entonces mostrarán «datos insuficientes».</p>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ══════════════ 4 · INFORME ══════════════ -->
+  <div class="pt-stage pt-panel" data-panel="inf" hidden>
+    <div>
+      <div class="pt-paper">
+        <div class="ph">
+          <div>
+            <span class="eyebrow">Informe semanal</span>
+            <h2>Mantenimiento de aulas y salas</h2>
+          </div>
+          <div class="pmeta">
+            Semana 30 · 2026<br>
+            20 – 26 de julio<br>
+            <span class="mono">INF-S-2026-30</span>
+          </div>
+        </div>
+
+        <h3>Resumen</h3>
+        <p>Se completaron <strong>62 revisiones</strong> sobre 41 salas pendientes al inicio del periodo, con 7 incidencias abiertas al cierre. El grueso de la actividad se concentró en el Edificio H, donde cinco proyectores entraron en umbral crítico de lámpara en la misma semana.</p>
+        <p>La reincidencia de fallos de HDMI en el aula 1.7 se mantiene: cuarta sustitución en seis meses. Se recomienda inspección de canalización antes de volver a sustituir material.</p>
+
+        <h3>Indicadores</h3>
+        <div class="pt-kpis" style="margin-bottom:6px">
+          <div class="pt-kpi" data-s="good"><div class="v num">62</div><div class="l">Revisiones</div><div class="d">+18 % semana anterior</div></div>
+          <div class="pt-kpi" data-s="crit"><div class="v num">7</div><div class="l">Incidencias abiertas</div><div class="d">media 4,2 días</div></div>
+          <div class="pt-kpi" data-s="warn"><div class="v num">41</div><div class="l">Salas vencidas</div><div class="d">más de 30 días</div></div>
+        </div>
+
+        <h3>Consumo de material</h3>
+        <div class="pt-scroll">
+          <table class="pt-tbl">
+            <thead><tr><th>Artículo</th><th class="r">Consumido</th><th class="r">Stock</th><th class="r">Mínimo</th><th>Estado</th></tr></thead>
+            <tbody>
+              <tr><td>Cable HDMI Fibra 15 m</td><td class="r num">6</td><td class="r num">4</td><td class="r num">10</td><td><span class="pt-chip crit">⚠ Bajo mínimo</span></td></tr>
+              <tr><td>Cable HDMI Fibra 10 m</td><td class="r num">4</td><td class="r num">24</td><td class="r num">10</td><td><span class="pt-chip ok">✓ Correcto</span></td></tr>
+              <tr><td>Lámpara Proyector NP44</td><td class="r num">3</td><td class="r num">0</td><td class="r num">4</td><td><span class="pt-chip crit">⚠ Agotado</span></td></tr>
+              <tr><td>Ratón</td><td class="r num">2</td><td class="r num">28</td><td class="r num">6</td><td><span class="pt-chip ok">✓ Correcto</span></td></tr>
+              <tr><td>Hub de USB</td><td class="r num">2</td><td class="r num">0</td><td class="r num">5</td><td><span class="pt-chip crit">⚠ Agotado</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Incidencias abiertas por edificio</h3>
+        <div id="chart-bar-report"></div>
+
+        <div class="pt-pfoot">
+          <span>Generado el 27 jul 2026 a las 06:00 · sistema</span>
+          <span class="mono">Página 1 de 4</span>
+        </div>
+      </div>
+    </div>
+
+    <aside class="pt-notes">
+      <div class="pt-note">
+        <h4>Formato de documento, no de pantalla</h4>
+        <p>El informe se compone como papel: márgenes anchos, medida de línea corta, jerarquía por reglas y no por cajas de color. Es lo que se archiva y se enseña en una reunión de dirección.</p>
+      </div>
+      <div class="pt-note">
+        <h4>Los nombres quedan congelados</h4>
+        <p>Un PDF emitido conserva el nombre que tenía la sala ese día. Renombrar en septiembre <strong>no reescribe</strong> el informe de julio: sería invalidar un documento ya emitido.</p>
+      </div>
+      <div class="pt-note">
+        <h4>El texto lo redacta la IA, las cifras no</h4>
+        <p>El resumen narrativo se escribe sobre números ya cerrados por SQL. A la IA nunca se le pide contar ni sumar.</p>
+      </div>
+      <div class="pt-note">
+        <h4>Cifras alineadas</h4>
+        <p>Toda columna numérica va con cifras tabulares y alineada a la derecha, para poder comparar magnitudes leyendo en vertical.</p>
+      </div>
+    </aside>
+  </div>
+
+</div>
+
+<div class="pt-tip" id="tip" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  /* ── Tabs ─────────────────────────────────────────────── */
+  const tabs = [...document.querySelectorAll(".pt-tab")];
+  const panels = [...document.querySelectorAll(".pt-panel")];
+  tabs.forEach(t => t.addEventListener("click", () => {
+    tabs.forEach(x => x.setAttribute("aria-selected", String(x === t)));
+    panels.forEach(p => { p.hidden = p.dataset.panel !== t.dataset.p; });
+    if (t.dataset.p === "cm" || t.dataset.p === "inf") drawCharts();
+  }));
+
+  /* ── Six check blocks ─────────────────────────────────── */
+  const BLOCKS = [
+    { id:"pantallas", t:"Pantallas",  s:"Proyector, TV y monitor auxiliar" },
+    { id:"microfono", t:"Micrófono",  s:"Captación y nivel" },
+    { id:"red",       t:"Red",        s:"Conectividad del puesto" },
+    { id:"sonido",    t:"Sonido",     s:"Altavoces y balance" },
+    { id:"proyector", t:"Proyector",  s:"Horas y estado de lámpara" },
+    { id:"botonera",  t:"Botonera",   s:"Control de sala" }
+  ];
+  const STATES = [
+    { v:"ok", ico:"✓", lbl:"OK"  },
+    { v:"ko", ico:"✕", lbl:"FALLA" },
+    { v:"na", ico:"—", lbl:"N/A" }
+  ];
+
+  const host = document.getElementById("blocks");
+  host.innerHTML = BLOCKS.map(b => `
+    <div class="pt-block" data-b="${b.id}" data-r="" data-open="0">
+      <div class="pt-brow">
+        <div class="pt-bname"><div class="t">${b.t}</div><div class="s">${b.s}</div></div>
+        <div class="pt-tri" role="group" aria-label="Resultado de ${b.t}">
+          ${STATES.map(s => `<button type="button" data-v="${s.v}" aria-pressed="false">
+              <span class="ico" aria-hidden="true">${s.ico}</span>${s.lbl}</button>`).join("")}
+        </div>
+      </div>
+      <div class="pt-bdetail">
+        ${b.id === "proyector" ? `
+          <div class="pt-fields">
+            <div class="pt-field"><label for="f-horas">Horas</label><input id="f-horas" class="num" value="3452" inputmode="numeric"></div>
+            <div class="pt-field"><label for="f-lampara">% Lámpara</label><input id="f-lampara" class="num" value="12" inputmode="numeric"></div>
+          </div>
+          <div class="pt-lamp"><span style="color:var(--crit);font-weight:640">Crítico</span>
+            <span class="pt-lampbar"><i style="width:12%"></i></span>
+            <span class="mono" style="color:var(--muted)">~2 semanas</span></div>` : ""}
+        <div class="pt-fail">
+          <span class="msg">Fallo registrado. ¿Abrimos incidencia con el ticket externo?</span>
+          <button type="button" class="pt-inc">Abrir incidencia</button>
+        </div>
+      </div>
+    </div>`).join("");
+
+  const results = {};
+  const allok = document.getElementById("allok");
+  const syncbar = document.getElementById("syncbar");
+  const syncmsg = document.getElementById("syncmsg");
+  const savehint = document.getElementById("savehint");
+  let pending = 3;
+
+  function paint(blockEl) {
+    const v = results[blockEl.dataset.b] || "";
+    blockEl.dataset.r = v;
+    // Projector detail stays open when OK too — hours/lamp are always recorded.
+    const wantOpen = v === "ko" || (v === "ok" && blockEl.dataset.b === "proyector");
+    blockEl.dataset.open = wantOpen ? "1" : "0";
+    const fail = blockEl.querySelector(".pt-fail");
+    if (fail) fail.style.display = v === "ko" ? "flex" : "none";
+    blockEl.querySelectorAll(".pt-tri button").forEach(btn =>
+      btn.setAttribute("aria-pressed", String(btn.dataset.v === v)));
+  }
+
+  function touched() {
+    savehint.textContent = "Guardado en el dispositivo · " +
+      new Date().toLocaleTimeString("es-ES", { hour:"2-digit", minute:"2-digit", second:"2-digit" });
+    const done = BLOCKS.every(b => results[b.id]);
+    allok.dataset.done = done ? "1" : "0";
+    allok.innerHTML = done
+      ? '<span aria-hidden="true">✓</span> Seis bloques registrados'
+      : '<span aria-hidden="true">✓</span> Todo correcto';
+  }
+
+  host.addEventListener("click", e => {
+    const btn = e.target.closest(".pt-tri button");
+    if (btn) {
+      const blockEl = btn.closest(".pt-block");
+      results[blockEl.dataset.b] = btn.dataset.v;
+      paint(blockEl); touched();
+      return;
+    }
+    const inc = e.target.closest(".pt-inc");
+    if (inc && inc.dataset.created !== "1") {
+      inc.dataset.created = "1";
+      inc.textContent = "✓ Incidencia creada";
+      inc.closest(".pt-fail").querySelector(".msg").textContent =
+        "Incidencia en borrador. Pega el código del ticket al finalizar.";
+    }
+  });
+
+  allok.addEventListener("click", () => {
+    BLOCKS.forEach((b, i) => setTimeout(() => {
+      results[b.id] = "ok";
+      paint(host.querySelector(`[data-b="${b.id}"]`));
+      touched();
+    }, i * 55));
+  });
+
+  document.getElementById("finish").addEventListener("click", () => {
+    pending++;
+    syncbar.dataset.state = "dirty";
+    syncmsg.textContent = `${pending} revisiones pendientes de enviar`;
+    savehint.textContent = "Revisión cerrada · en cola de envío";
+  });
+
+  let photoCount = 2, photoKb = 319;
+  document.getElementById("addphoto").addEventListener("click", () => {
+    if (photoCount >= 6) return;
+    const kb = 140 + Math.round(Math.random() * 70);
+    photoCount++; photoKb += kb;
+    const el = document.createElement("div");
+    el.className = "pt-photo";
+    el.innerHTML = `Foto ${photoCount}<span class="kb">${kb} KB</span>`;
+    document.getElementById("photos").insertBefore(el, document.getElementById("addphoto"));
+    document.getElementById("photohint").textContent =
+      `WebP · ${photoCount} fotos · ${photoKb} KB en cola`;
+  });
+
+  document.getElementById("obs").addEventListener("input", touched);
+
+  /* ── Decorative QR (deterministic, not a real code) ───── */
+  const qr = document.getElementById("qrcells");
+  if (qr) {
+    let cells = "", seed = 7;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    for (let y = 0; y < 29; y++) for (let x = 0; x < 29; x++) {
+      const finder = (x < 7 && y < 7) || (x > 21 && y < 7) || (x < 7 && y > 21);
+      const ring = finder && !((x % 7 > 0 && x % 7 < 6 && y % 7 > 0 && y % 7 < 6) &&
+                   !(x % 7 > 1 && x % 7 < 5 && y % 7 > 1 && y % 7 < 5));
+      if (ring || (!finder && rnd() > 0.55)) cells += `<rect x="${x}" y="${y}" width="1" height="1"/>`;
+    }
+    qr.innerHTML = cells;
+  }
+
+  /* ── Charts ───────────────────────────────────────────── */
+  const tip = document.getElementById("tip");
+  const showTip = (e, html) => {
+    tip.innerHTML = html; tip.dataset.on = "1";
+    tip.style.left = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 10) + "px";
+    tip.style.top = (e.clientY - tip.offsetHeight - 12) + "px";
+  };
+  const hideTip = () => { tip.dataset.on = "0"; };
+
+  const BAR = [
+    { k:"Edificio H", v:3 }, { k:"Edificio CRAI", v:2 }, { k:"Edificio P", v:1 },
+    { k:"Edificio O", v:1 }, { k:"Edificio CENTRAL", v:0 }, { k:"Edificio EPS", v:0 }
+  ];
+  const AREA = [9, 14, 11, 18, 22, 16, 24, 19, 27, 21, 29, 34];
+  const LAMP = [ { k:"Crítico", v:5, c:"var(--crit)" }, { k:"Aviso", v:23, c:"var(--warn)" }, { k:"Correcto", v:68, c:"var(--good)" } ];
+
+  function barChart(el) {
+    if (!el) return;
+    const W = el.clientWidth || 420, rowH = 30, padL = 128, padR = 34, H = BAR.length * rowH + 8;
+    const max = Math.max(...BAR.map(d => d.v), 1);
+    const scale = v => (W - padL - padR) * (v / max);
+    el.innerHTML = `<svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="Incidencias abiertas por edificio">
+      ${BAR.map((d, i) => {
+        const y = i * rowH + 4, w = scale(d.v);
+        return `<g class="mark" data-k="${d.k}" data-v="${d.v}">
+          <text x="${padL - 10}" y="${y + 15}" text-anchor="end" font-size="12"
+            fill="var(--ink-2)" font-family="var(--sans)">${d.k}</text>
+          <rect x="${padL}" y="${y + 4}" width="${Math.max(w, 2)}" height="16" rx="4"
+            fill="${d.v ? "var(--accent-mark)" : "var(--border)"}"/>
+          <text x="${padL + Math.max(w, 2) + 8}" y="${y + 16}" font-size="12" font-weight="620"
+            fill="var(--ink)" font-family="var(--mono)">${d.v}</text>
+          <rect x="0" y="${y}" width="${W}" height="${rowH}" fill="transparent"/>
+        </g>`; }).join("")}
+    </svg>`;
+    el.querySelectorAll(".mark").forEach(g => {
+      g.addEventListener("mousemove", e => showTip(e,
+        `<b>${g.dataset.k}</b><br>${g.dataset.v} incidencia${g.dataset.v === "1" ? "" : "s"} abierta${g.dataset.v === "1" ? "" : "s"}`));
+      g.addEventListener("mouseleave", hideTip);
+    });
+  }
+
+  function areaChart(el) {
+    if (!el) return;
+    const W = el.clientWidth || 420, H = 168, pad = { t:14, r:14, b:26, l:30 };
+    const max = Math.max(...AREA) * 1.15;
+    const x = i => pad.l + (W - pad.l - pad.r) * (i / (AREA.length - 1));
+    const y = v => pad.t + (H - pad.t - pad.b) * (1 - v / max);
+    const line = AREA.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+    const area = `${line}L${x(AREA.length - 1).toFixed(1)},${H - pad.b}L${x(0).toFixed(1)},${H - pad.b}Z`;
+    const grid = [0, .5, 1].map(f => {
+      const gy = pad.t + (H - pad.t - pad.b) * f;
+      return `<line x1="${pad.l}" y1="${gy}" x2="${W - pad.r}" y2="${gy}" stroke="var(--border)" stroke-width="1"/>
+              <text x="${pad.l - 7}" y="${gy + 4}" text-anchor="end" font-size="10" fill="var(--muted)"
+                font-family="var(--mono)">${Math.round(max * (1 - f))}</text>`; }).join("");
+    el.innerHTML = `<svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="Revisiones completadas por semana, últimas 12 semanas">
+      <defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="var(--accent-mark)" stop-opacity=".26"/>
+        <stop offset="100%" stop-color="var(--accent-mark)" stop-opacity="0"/>
+      </linearGradient></defs>
+      ${grid}
+      <path d="${area}" fill="url(#ag)"/>
+      <path d="${line}" fill="none" stroke="var(--accent-mark)" stroke-width="2"
+        stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${x(AREA.length - 1)}" cy="${y(AREA[AREA.length - 1])}" r="5"
+        fill="var(--accent-mark)" stroke="var(--surface)" stroke-width="2"/>
+      <text x="${x(AREA.length - 1)}" y="${y(AREA[AREA.length - 1]) - 12}" text-anchor="end"
+        font-size="12" font-weight="650" fill="var(--ink)" font-family="var(--mono)">34</text>
+      <text x="${pad.l}" y="${H - 8}" font-size="10" fill="var(--muted)" font-family="var(--sans)">S19</text>
+      <text x="${W - pad.r}" y="${H - 8}" text-anchor="end" font-size="10" fill="var(--muted)"
+        font-family="var(--sans)">S30</text>
+      ${AREA.map((v, i) => `<rect class="mark" data-i="${i}" data-v="${v}" x="${x(i) - 12}" y="${pad.t}"
+        width="24" height="${H - pad.t - pad.b}" fill="transparent"/>`).join("")}
+    </svg>`;
+    el.querySelectorAll(".mark").forEach(r => {
+      r.addEventListener("mousemove", e => showTip(e,
+        `<b>Semana ${19 + Number(r.dataset.i)}</b><br>${r.dataset.v} revisiones`));
+      r.addEventListener("mouseleave", hideTip);
+    });
+  }
+
+  function lampChart(el) {
+    if (!el) return;
+    const W = el.clientWidth || 420, H = 46, total = LAMP.reduce((s, d) => s + d.v, 0), gap = 2;
+    let cx = 0;
+    const segs = LAMP.map(d => {
+      const w = (W - gap * (LAMP.length - 1)) * (d.v / total);
+      const g = `<g class="mark" data-k="${d.k}" data-v="${d.v}">
+        <rect x="${cx}" y="0" width="${w}" height="22" rx="4" fill="${d.c}"/>
+        <text x="${cx + 4}" y="38" font-size="12" font-weight="640" fill="var(--ink)"
+          font-family="var(--mono)">${d.v}</text></g>`;
+      cx += w + gap; return g;
+    }).join("");
+    el.innerHTML = `<svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="Distribución del estado de lámparas: 5 críticas, 23 en aviso, 68 correctas">${segs}</svg>`;
+    el.querySelectorAll(".mark").forEach(g => {
+      g.addEventListener("mousemove", e => showTip(e,
+        `<b>${g.dataset.k}</b><br>${g.dataset.v} de ${total} proyectores`));
+      g.addEventListener("mouseleave", hideTip);
+    });
+  }
+
+  let raf;
+  function drawCharts() {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      barChart(document.getElementById("chart-bar"));
+      barChart(document.getElementById("chart-bar-report"));
+      areaChart(document.getElementById("chart-area"));
+      lampChart(document.getElementById("chart-lamp"));
+    });
+  }
+  addEventListener("resize", drawCharts);
+  drawCharts();
+})();
+</script>
+
+</body>
+</html>

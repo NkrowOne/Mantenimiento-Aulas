@@ -1,0 +1,236 @@
+# Plan — PWA de Mantenimiento de Aulas y Salas
+
+## Contexto
+
+Hoy el mantenimiento AV del campus se gestiona con un único Excel de 5 hojas. Del análisis del fichero que has enviado (`Material_Aulas__Salas_de_reuniones.xlsx`) salen los problemas concretos que esta app tiene que resolver:
+
+| Hoja | Contenido | Problema detectado |
+|---|---|---|
+| `Estado Aulas y Salas de reunion` | 295 salas, 23 edificios, equipamiento + fechas de revisión | Columnas SÍ/NO con **8 variantes** (`si`, `SI`, `Si`, `SÍ`, `NO`, `no`, `No`, vacío). Typos consolidados: `Actaulizada`, `EDIFICO E`. La columna `Microfono Jabra` mezcla booleanos, marcas (`Sennheiser`) y nºs de serie (`294150186`) |
+| `Material Instalado 2026` | 96 incidencias | Fechas rotas guardadas como texto: `29-01-026`, `27-03-296`, `1902-26`. Material usado en texto libre: `1 lampar`, `2 cables Hdmi 10mts Fibra` |
+| `Material Instalado 2025` | 186 incidencias | Tiene una columna `Observación` que 2026 no tiene → las hojas ya divergieron |
+| `Bolsa 2026` | 43 artículos de almacén | **`Total Instalado` = 0 en todos los artículos**, con 96 incidencias que sí consumieron material. El stock no se descuenta |
+| `Bolsa 2025` | 39 artículos | `Pantalla proyección 2,40x2,40` tiene **stock −2**. Nombres distintos a los de 2026 (`Cable HDMI Fibra 7,5 metros` vs `Cable HDMI 7,5 mts`) |
+
+Las hojas de registro de mantenimiento (`Material Instalado 2025/2026`) además referencian salas que ni siquiera existen en la hoja de inventario, con nomenclaturas propias e incompatibles. **No se importan ni se usan como fuente**: son precisamente el motivo de arrancar limpio. La referencia es la hoja de inventario y nada más. Y sobre todo, hoy no hay trazabilidad: es imposible saber quién revisó qué ni cuándo cambió un dato.
+
+El objetivo es una PWA instalable que funcione sin cobertura en sótanos y pasillos (`PLANTA -2`, `LAB CRIMINOLOGÍA`), guarde sola, sincronice al recuperar red, y deje registro de quién hizo cada cosa.
+
+## Decisiones ya cerradas contigo
+
+| Decisión | Elección |
+|---|---|
+| Backend | Next.js + Postgres, arquitectura ligera (no los 12 servicios de Supabase) |
+| Despliegue | **Skyway (vuestro Docker) en producción**; Railway como entorno de pruebas desde GitHub |
+| Dispositivos | Android + iPhone/iPad + Windows |
+| Login | Email + contraseña, y **PIN de 4 dígitos** para reabrir en campo |
+| Roles | `operador` (todos hacen de todo) + `lector` (solo lectura) |
+| Datos iniciales | **Base limpia.** Del Excel se toma solo el *esquema* de la hoja de inventario, más 2-3 salas recientes de ejemplo. Las hojas de registro de mantenimiento **no se importan**: ni sus salas, ni sus edificios, ni su histórico |
+| Catálogo de almacén | Se siembran los **nombres** de artículo como catálogo editable, **con existencias a cero**. Empezar limpio significa sin saldos históricos, no volver a teclear 43 artículos. Si prefieres el catálogo también vacío, se quita |
+| Fotos | **WebP** a calidad 0,8, máx. 1600 px, comprimidas en el dispositivo antes de encolar |
+| Incidencias | Código de ticket externo (`I260102_0002`) **introducido a mano**, sin numeración propia |
+| Checklist | **6 bloques fijos + botón "Todo correcto"**. Revisión por excepción |
+| Informes | Archivo histórico descargable en la app + constructor de informes bajo demanda. **Sin email** |
+| IA (Gemini) | OCR de nºs de serie · normalización de material a línea de stock · resumen narrativo semanal |
+| Identidad | **UUID v7 generado en cliente** para todo. Nombres de salas y edificios **editables**, sin romper histórico |
+| Aviso de revisión | Salas sin revisar **más de 1 mes** (umbral configurable) |
+| Inteligencia | Índice de fiabilidad por sala, detección de reincidencia, predicción de lámpara y stock, rutas y anomalías |
+| Integridad | Confirmación por operación, hashes, reconciliación, panel de estado del dato y copias verificadas |
+
+**Fuera de alcance** (no lo marcaste, lo dejo anotado por si lo quieres luego): envío automático por email (necesitaría SMTP), exportación al formato Excel actual, y OCR de horas/% de lámpara.
+
+---
+
+## Arquitectura
+
+```
+┌─ PWA (navegador, instalable) ──────────────────┐
+│  React 19 · Dexie/IndexedDB · Service Worker   │
+│  Autoguardado local → cola de salida (outbox)  │
+└───────────────┬────────────────────────────────┘
+                │ HTTPS · push/pull idempotente
+┌───────────────▼────────────────────────────────┐
+│  Next.js 15 (App Router) — un solo contenedor  │
+│  Auth · API sync · informes PDF · Gemini       │
+└──────┬──────────────────────────┬──────────────┘
+       │                          │
+  ┌────▼─────┐            ┌───────▼────────┐
+  │ Postgres │            │  Almacenamiento │
+  │    16    │            │  S3 o volumen   │
+  └──────────┘            └─────────────────┘
+```
+
+**Stack:** Next.js 15 · TypeScript · Tailwind v4 + shadcn/ui (Radix, accesible) · Drizzle ORM · Auth.js v5 + argon2 · Dexie 4 · Serwist (service worker) · `@react-pdf/renderer` (PDF sin Chromium — mantiene la imagen Docker pequeña y evita el mayor foco de fallos en contenedores) · Recharts · Zod · `@google/genai`.
+
+### Despliegue
+
+- **`Dockerfile`** multi-etapa con `output: 'standalone'` de Next.js. Sirve tanto para Skyway como para Railway.
+- **`docker-compose.yml`** para Skyway: `app` + `postgres` + `minio` + volúmenes nombrados y healthchecks.
+- **`railway.json`** para el entorno de pruebas, con auto-deploy desde GitHub.
+- **GitHub Actions**: lint → typecheck → tests → build de imagen → push a GHCR. Skyway hace pull de la etiqueta.
+- **Migraciones** con Drizzle, ejecutadas en el arranque del contenedor (`drizzle-kit migrate` antes de `next start`), idempotentes.
+- **Almacenamiento de fotos**: interfaz `StorageDriver` con dos implementaciones — `s3` (MinIO/Garage/Ceph, vía `@aws-sdk/client-s3`) y `fs` (volumen montado). Se elige con `STORAGE_DRIVER`. Así conectas Skyway sin tocar código de aplicación.
+
+---
+
+## Modelo de datos
+
+Tablas principales (`src/db/schema/`):
+
+- **`buildings`** — code, name, orden. Se dan de alta desde la app, editables. La hoja de inventario sirve solo como referencia de nomenclatura.
+- **`zones`** — planta/módulo/área por edificio. Tabla propia, no texto suelto: es justo lo que hoy produce `1ª PLANTA` vs `1ª  PLANTA` en el Excel.
+- **`rooms`** — building_id, zone_id, code, nombre, tipo (aula/sala_reunion/laboratorio/despacho), estado. Único por (building, code) y con `code_normalized` para que `1.4 O` y `1.4O` no se dupliquen.
+- **`equipment_types`** — catálogo derivado de las columnas del Excel: proyector, tv, monitor, monitor_aux, ordenador, camara, altavoces, microfono, botonera, screenbeam, barco, panacast, pantalla_proyeccion.
+- **`room_equipment`** — *inventario instalado*: room_id, type_id, modelo, nº serie, fecha alta/baja, estado. Sustituye a las 12 columnas de serie de la hoja `Estado Aulas`.
+- **`stock_items`** — *almacén*: nombre, categoría, unidad, **umbral mínimo**, `aliases text[]` (alimenta el matcher de IA con las variantes reales del Excel).
+- **`stock_movements`** — **kardex append-only**: item, cantidad ±, motivo (compra/consumo/ajuste), incident_id, revision_id, usuario, fecha. El stock disponible es una **vista `SUM()`, nunca un contador guardado**. Esto es lo que hoy está roto (`Total Instalado = 0` con 96 consumos) y es imposible que vuelva a descuadrar.
+- **`revisions`** — room_id, usuario, estado (borrador/completada), inicio/fin, `client_uuid` (idempotencia), device_id, resultado global, observaciones.
+- **`revision_checks`** — un registro por bloque: `bloque` (pantallas/microfono/red/sonido/proyector/botonera), `resultado` (ok/ko/na), `detalle jsonb`, nota. En `proyector` el detalle guarda horas y % de lámpara → serie histórica por sala.
+- **`revision_photos`** — clave de almacenamiento, miniatura, dimensiones, bytes, subida (bool).
+- **`incidents`** — room_id, `codigo_externo` (tecleado), tipo (incidencia/solicitud), apertura/resolución, problema, resolución, estado, prioridad, asignado, y `revision_id` opcional para enlazar la incidencia con la revisión que la detectó.
+- **`users`** — email, `password_hash` (argon2id), `pin_hash`, nombre, rol, activo.
+- **`audit_log`** — tabla, registro, acción, usuario, fecha, `diff jsonb`, origen (app/sync/import).
+
+**La auditoría se implementa con triggers de Postgres, no en código de aplicación.** Es la única forma de que también capture las escrituras que llegan por sincronización y las correcciones manuales en base de datos. Cubre el requisito de "quién ha actualizado o modificado" sin que se pueda escapar nada.
+
+---
+
+## Identidad estable y nombres editables
+
+Regla que atraviesa todo el sistema: **el nombre es una etiqueta, nunca la identidad.**
+
+- **Toda entidad lleva UUID v7 como clave primaria**, generado **en el cliente**. Esto no es un detalle: si el ID lo asignara el servidor, una revisión creada sin cobertura tendría un ID provisional que habría que remapear al sincronizar, y todas sus fotos e incidencias asociadas apuntarían a un ID que deja de existir. Es el fallo clásico de las apps offline. Con UUID v7 el registro nace con su identidad definitiva, sin red. (v7 y no v4 porque es ordenable por tiempo, lo que mantiene los índices de Postgres eficientes.)
+- **Renombrar un edificio o una sala es una edición normal**, disponible para el rol `operador` desde la ficha. Cambiar `EDIFICIO P` a otro nombre, o `1.4` a `1.4 bis`, no rompe absolutamente nada: ni el histórico de revisiones, ni las incidencias, ni el consumo de material, ni los informes ya emitidos.
+- **El cambio de nombre queda auditado** con valor anterior y nuevo, autor y fecha. La ficha de cada sala muestra su historial de nombres, así que un informe antiguo que hable de `1.4` sigue siendo rastreable.
+- **Los informes archivados congelan el nombre del momento de su generación.** Un PDF de enero no puede cambiar en junio porque alguien renombrara una sala: eso invalidaría un documento ya emitido.
+- **Referencia legible aparte del UUID**: cada sala tiene además un código corto estable (`SALA-000142`) para hablar por teléfono o imprimir. Es inmutable aunque el nombre cambie.
+- **Etiquetas QR en la puerta.** El QR codifica el UUID, así que sobrevive a cualquier renombrado. El técnico escanea al entrar y la revisión se abre directamente en esa sala, sin seleccionar edificio ni planta. Es el camino más corto posible entre llegar a la puerta y empezar a trabajar. La app genera las hojas de etiquetas imprimibles.
+- Fusionar dos salas duplicadas o dar de baja una es una operación explícita con reasignación de histórico, nunca un borrado.
+
+---
+
+## Sincronización offline
+
+El punto crítico: **iOS no soporta Background Sync** y limita la cuota de caché (~50 MB). Como usáis iPad e iPhone, la sincronización **no puede depender de él**. Diseño:
+
+1. **Autoguardado local primero.** Cada cambio de campo escribe en IndexedDB con *debounce* de 300 ms. No hay botón de "guardar" para el borrador; si se cierra la app a mitad de una revisión, al volver está todo.
+2. **Cola de salida (outbox).** Cada operación lleva `client_uuid`. El servidor hace *upsert* por esa clave → reenviar la misma operación 5 veces no duplica nada.
+3. **Disparadores de sincronización** (todos, no solo uno): evento `online`, `visibilitychange` a visible, foco de ventana, temporizador de 60 s con red, y botón manual. Background Sync se registra **solo como mejora** donde exista (Android/Chrome).
+4. **Descarga incremental.** `GET /api/sync/pull?since=<seq>` contra un `change_log` con secuencia monótona. Devuelve cambios + cursor nuevo.
+5. **Conflictos.** Las revisiones tienen un único dueño → última escritura gana. Los movimientos de stock son *append-only* → no pueden entrar en conflicto por diseño. Las incidencias sí son editables por varios: última escritura gana **por campo**, y si la versión del servidor cambió respecto a la base del cliente, se muestra un aviso de conflicto con ambas versiones antes de sobrescribir.
+6. **Fotos en WebP.** Se comprimen **en el cliente antes de encolar**: máx. 1600 px, **WebP a calidad 0,8**, vía `createImageBitmap` + `canvas.toBlob('image/webp')`. Frente a JPEG equivalente pesan un 25-35 % menos, lo que es determinante con la cuota de iOS y con conexiones malas en sótanos. Salida típica ~150-200 KB por foto. Se mantiene una reserva automática a JPEG si el navegador no sabe **codificar** WebP (Safari solo lo hace desde iOS 16.4; decodificar lo hace desde iOS 14). Se guardan como Blob en IndexedDB y se suben en una cola aparte de los JSON, con reintentos y barra de progreso. Se pide `navigator.storage.persist()` y se avisa si la cuota disponible baja del umbral.
+
+---
+
+## Persistencia y garantía de que el dato llega bien
+
+No basta con enviar: hay que **demostrar** que llegó íntegro. Un `HTTP 200` solo dice que el servidor recibió la petición, no que la haya guardado.
+
+1. **Confirmación por operación, no por petición.** El servidor responde con el estado individual de cada operación del lote, emitido **después** de confirmar la transacción en Postgres. Una operación sale de la cola local únicamente con esa confirmación. Si el envío se corta a mitad, lo no confirmado se reintenta.
+2. **Huella de integridad.** El cliente calcula un hash SHA-256 del contenido de la revisión. El servidor lo recalcula sobre lo que ha guardado y lo devuelve. Si no coincide, la operación se marca como fallida y se reenvía — protege contra truncamientos y corrupciones silenciosas en tránsito.
+3. **Reconciliación periódica.** En cada sincronización el cliente pregunta `POST /api/sync/verify` con la lista de IDs y hashes que cree tener enviados. El servidor responde qué falta o difiere. Detecta el caso peligroso: el cliente cree que envió, el servidor no lo tiene.
+4. **Panel de estado del dato**, visible y honesto: *pendientes · enviadas · confirmadas · con error*, cada una con su detalle, el mensaje de error real y un botón de reintento manual. Nada de estados ambiguos tipo "sincronizando…" indefinido.
+5. **Retención local tras confirmar.** Lo sincronizado **no se borra del dispositivo inmediatamente**: se conserva 30 días. Durante ese tiempo el móvil actúa como copia de seguridad si algo fallara en servidor.
+6. **Fotos verificadas.** Tras subir se comprueba tamaño y hash contra el original. Una foto no se marca como subida hasta que el servidor confirma que la almacenó completa.
+7. **Copias de seguridad en servidor.** `pg_dump` diario automático con retención de 30 días, más las fotos. **La restauración se prueba y se documenta** — una copia que nunca se ha restaurado no es una copia. Incluye un comando de verificación de integridad que contrasta contadores entre tablas relacionadas.
+8. **Salvaguarda de exportación.** Cualquier vista o informe se puede volcar a CSV/Excel en cualquier momento, para que los datos nunca queden atrapados dentro de la aplicación.
+
+---
+
+## Diseño de interfaz
+
+Principio rector: **el técnico está de pie, en un pasillo, con una mano ocupada y quizá sin cobertura.** Todo se subordina a eso.
+
+- **Revisión en 3 toques.** Edificio (recuerda el último) → Sala (ordenadas por *más tiempo sin revisar* primero) → **"Todo correcto"**. Una revisión sin incidencias se cierra en unos 5 segundos. Solo despliegas y detallas el bloque que falla.
+- **Un único lenguaje de control.** Los 6 bloques usan exactamente el mismo control de tres estados: **OK / FALLA / N/A**. Objetivos de 48 px mínimo, zona pulgar en la mitad inferior. Nada depende de `hover`.
+- **Nunca solo color.** Verde/ámbar/rojo/gris siempre acompañados de icono y texto — hay daltonismo en cualquier equipo y las pantallas se ven mal con proyector encendido.
+- **Estado de conexión siempre visible y explícito.** Una barra fina permanente: `3 revisiones pendientes de enviar`. Nunca ocultar que hay datos sin sincronizar.
+- **Modo oscuro real**, no un filtro: se trabaja en aulas a oscuras.
+- **Botón "Abrir incidencia" dentro del bloque que falla** — el que pediste. Precarga sala, bloque, fecha y usuario; solo queda pegar el código de ticket y describir.
+- **Cuadro de mando**: KPIs (salas revisadas este mes, incidencias abiertas, salas con problemas, artículos bajo mínimo) + gráficos de incidencias por edificio, evolución mensual y distribución del % de lámpara. Se construye con la skill `dataviz` para que la paleta sea consistente y accesible en claro y oscuro.
+- **Alertas**, ordenadas por urgencia real, no por fecha de creación:
+  - **Salas sin revisar más de 1 mes** (umbral configurable global y por sala; 30 días por defecto). Aviso honesto: con vuestra cadencia actual —2-3 revisiones al año— el primer día se marcarán casi todas. Por eso la lista se ordena por *días de retraso* y el primer ciclo se puede escalonar por edificios, en vez de mostrar 295 alertas rojas a la vez.
+  - Incidencias abiertas más de N días.
+  - Stock por debajo del mínimo.
+  - Lámparas por debajo del 15 % (en el Excel actual hay salas al 2 %, 5 %, 7 % y 9 %).
+  - Salas marcadas como problemáticas por el motor de recomendaciones.
+
+Antes de escribir la aplicación entregaré un **prototipo HTML interactivo navegable** (usando las skills `artifact-design` y `dataviz`) con las cuatro pantallas clave — revisión, sala, cuadro de mando e informe — para que valides la experiencia antes de que exista código de producción.
+
+---
+
+## Informes
+
+- **Generación automática diaria y semanal** mediante un job programado dentro del contenedor (`node-cron`), no del programador del proveedor. Motivo: los cron de plataforma pueden dejar de dispararse en silencio; el job es **idempotente y con recuperación**, así que al arrancar detecta y genera los informes que falten.
+- **Archivo histórico** en la app: tabla `reports` con el PDF renderizado en almacenamiento, filtrable por fecha y tipo, descargable.
+- **Constructor bajo demanda**: edificios, rango de fechas, tipo de incidencia, estado y material → PDF al momento.
+- PDF con `@react-pdf/renderer`, gráficos incrustados como SVG generado en servidor. Portada, cabecera con logo, numeración de páginas y pie con fecha de generación y autor.
+
+## Inteligencia: salas problemáticas y recomendaciones automáticas
+
+Todo lo que sigue se calcula **con SQL, de forma determinista y auditable**. Cualquier cifra se puede pinchar y ver de qué registros sale. La IA solo interviene, si acaso, para redactar el texto encima de números ya cerrados.
+
+**Aviso honesto sobre los plazos:** como arrancamos con la base limpia, estas funciones se construyen desde el principio pero **no dan resultados útiles hasta acumular unos 2-3 meses de revisiones e incidencias reales**. Hasta entonces muestran su estado de forma explícita —*"datos insuficientes, faltan N revisiones"*— en lugar de inventar conclusiones sobre dos registros. Los ejemplos que cito abajo salen de vuestros Excel actuales y sirven para ilustrar qué detectará el sistema, no son datos que vayan a estar cargados el primer día.
+
+**Índice de fiabilidad por sala.** Puntuación 0-100 a partir de: número de incidencias por periodo, gravedad, reincidencia del mismo tipo de fallo, tiempo medio de resolución y consumo de material. Se pondera por antigüedad, para que un mal semestre de hace dos años no marque una sala para siempre. Ranking de peores salas y peores edificios en el cuadro de mando.
+
+**Detección de reincidencia — el hallazgo más rentable de vuestros datos.** El problema `No duplica la imagen del Pc del usuario en el monitor principal del aula` aparece decenas de veces en 2025 y 2026, y la resolución es casi siempre *sustituir el cable HDMI*. Cuando una misma sala repite el mismo tipo de fallo, sustituir la pieza otra vez no es la respuesta. La app lo detecta y lo dice:
+
+> **1.7 H** — 4 sustituciones de HDMI en 6 meses. Sustituir de nuevo no resuelve la causa: revisar canalización, conectores de rosetas o longitud del tirado.
+
+**Predicción de agotamiento de lámpara.** Con el histórico de horas y % que ya recogéis, se estiman las semanas restantes por proyector y se avisa **antes** de que la clase se quede sin imagen. Vuestro Excel tiene salas al 2 % y al 5 %: hoy eso se detecta cuando falla; con esto, tres semanas antes.
+
+**Predicción de rotura de stock.** Sobre el kardex se proyecta el consumo y se avisa: *"al ritmo actual te quedas sin Cable HDMI Fibra 15 m en ~5 semanas"*. Vuestros datos de 2025 muestran 42 unidades consumidas de ese cable en un año, con 32 en stock ahora — es exactamente el caso.
+
+**Agrupación de trabajo y ruta sugerida.** Las salas pendientes se agrupan por edificio y planta en una ruta eficiente, en vez de una lista plana que obliga a ir y volver. Y se detectan lotes: *"5 salas de EDIFICIO H con lámpara <20 % → una sola visita, un solo desplazamiento"*.
+
+**Anomalías.** Saltos anómalos de horas de proyector entre revisiones (equipo que se queda encendido), salas con inventario incoherente respecto a otras equivalentes, y equipos con número de serie duplicado en dos salas.
+
+Todo esto alimenta un bloque de **Recomendaciones** en el cuadro de mando y en el informe semanal, cada una con su justificación y el enlace a los registros que la sustentan. Ninguna recomendación aparece sin poder explicar por qué.
+
+## IA (Gemini) — las tres funciones que elegiste
+
+Todas se ejecutan **en servidor**, nunca con la clave en el cliente, y **siempre con confirmación humana** antes de escribir en base de datos.
+
+1. **OCR de números de serie.** El técnico enfoca la etiqueta y la app rellena el campo. Es donde más errores hay hoy (`5310306901742`, `XDU95X00398`). Se valida contra el patrón conocido del fabricante antes de proponerlo.
+2. **Normalización de material a línea de stock.** Convierte `2 cables Hdmi 10mts Fibra` o `1 lampar` en artículo del catálogo + cantidad, usando los `aliases` como contexto. Resuelve el descuadre entre incidencias y `Bolsa`. Si la confianza es baja, pide elegir en lugar de adivinar.
+3. **Resumen narrativo semanal.** Un párrafo de contexto sobre el PDF. **Los números los calcula SQL; la IA solo redacta el texto sobre cifras ya cerradas** — no se le pide que cuente ni que sume nada.
+
+Si falta `GEMINI_API_KEY`, las tres funciones se ocultan y la app funciona igual.
+
+---
+
+## Fases de entrega
+
+| Fase | Contenido |
+|---|---|
+| **0** | Prototipo HTML interactivo de las 4 pantallas clave para validar UX |
+| **1** | Esqueleto: repo, Dockerfile, docker-compose, Actions, Drizzle, migraciones, healthcheck |
+| **2** | Auth (email+contraseña, PIN, roles `operador`/`lector`) + triggers de auditoría |
+| **3** | Maestro editable: edificios, zonas, salas, inventario. UUID v7, renombrado auditado, QR de puerta. Semilla con 2-3 salas de ejemplo |
+| **4** | **Revisiones offline**: los 6 bloques, "Todo correcto", fotos, autoguardado, outbox, sync |
+| **5** | **Garantía de entrega**: confirmación por operación, hashes, reconciliación, panel de estado del dato, copias de seguridad |
+| **6** | Incidencias (código externo) + botón desde el bloque que falla + alertas (30 días) |
+| **7** | Almacén: catálogo, kardex, mínimos, consumo enlazado a incidencias |
+| **8** | Cuadro de mando + informes automáticos + constructor + archivo |
+| **9** | **Inteligencia**: fiabilidad por sala, reincidencia, predicción de lámpara y stock, rutas, anomalías |
+| **10** | Gemini: OCR de series, normalización de material, resumen semanal |
+| **11** | Endurecimiento: tests E2E offline, presupuesto de rendimiento, docs |
+
+## Documentación (`docs/`)
+
+`ARQUITECTURA.md` · `MODELO-DATOS.md` (con diagrama) · `SINCRONIZACION.md` (protocolo, matriz de conflictos y garantía de entrega) · `IDENTIDAD-Y-NOMBRES.md` (por qué UUID v7 en cliente y cómo funciona el renombrado) · `INTELIGENCIA.md` (fórmulas de fiabilidad y predicción, con su SQL) · `COPIAS-Y-RESTAURACION.md` (procedimiento probado) · `DESPLIEGUE-SKYWAY.md` · `DESPLIEGUE-RAILWAY.md` · `MANUAL-TECNICO.md` (guía de campo, con capturas) · `MANUAL-ADMIN.md` · `IA-GEMINI.md` (prompts y límites) · `DECISIONES.md` (registro de decisiones de arquitectura).
+
+## Verificación
+
+- **Offline de verdad**: Playwright con `context.setOffline(true)` — completar una revisión con 3 fotos sin red, cerrar la pestaña, reabrir, restaurar red y comprobar que llega íntegra al servidor.
+- **Idempotencia**: enviar la misma operación 5 veces y verificar que solo existe un registro.
+- **Entrega verificada**: cortar la conexión a mitad del envío y comprobar que lo no confirmado se reintenta y que el hash del servidor coincide con el del cliente. Simular una respuesta 200 que no persiste y verificar que la reconciliación lo detecta.
+- **Renombrado sin daño**: renombrar edificio y sala con revisiones, incidencias, fotos e informes ya emitidos; nada debe romperse y el PDF archivado debe conservar el nombre antiguo.
+- **Auditoría**: modificar una incidencia por API y por SQL directo; el trigger debe registrar ambas, incluidos los cambios de nombre.
+- **Stock**: propiedad invariante — `SUM(movimientos)` siempre igual al stock mostrado, con movimientos concurrentes.
+- **Recomendaciones**: sobre un conjunto de datos sintético con un patrón de reincidencia conocido, el motor debe señalar exactamente esa sala y no otras; toda cifra mostrada debe cuadrar con su consulta SQL.
+- **Restauración**: restaurar una copia de seguridad en limpio y verificar contadores por tabla frente al origen.
+- **Dispositivos reales**: recorrido completo en Safari/iOS (el caso restrictivo), Chrome/Android y Edge/Windows.
+- **Accesibilidad**: axe sin violaciones críticas, contraste AA en claro y oscuro, navegación completa por teclado.
+- **Arranque en limpio**: `docker compose up` sobre volumen vacío debe dejar la app usable con el usuario administrador inicial.
