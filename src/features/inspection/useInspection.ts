@@ -167,6 +167,39 @@ export function useInspection(room: Room | null, userId: string | null) {
     [scheduleSave],
   )
 
+  /**
+   * Marca OK todo lo que sigue sin tocar. Es la «revisión por excepción»: la
+   * mayoría de las salas están bien, y obligar a pulsar siete veces para decir
+   * eso es la diferencia entre revisar treinta salas en una mañana o en un día.
+   *
+   * No pisa lo ya marcado: si el técnico registró una incidencia y luego pulsa
+   * «Todo correcto», la incidencia se respeta.
+   */
+  const markRestOk = useCallback(() => {
+    setDraft((prev) => {
+      if (!prev || !room) return prev
+      const checks = new Map(prev.checks)
+
+      for (const { key } of checksForRoom(room)) {
+        if (checks.has(key)) continue
+        checks.set(key, {
+          id: uuidv7(),
+          inspection_id: prev.inspection.id,
+          check_key: key,
+          result: 'ok',
+          severity: null,
+          measure: null,
+          measure_unit: null,
+          note: null,
+        })
+      }
+
+      const next = { ...prev, checks }
+      scheduleSave(next)
+      return next
+    })
+  }, [room, scheduleSave])
+
   const setNotes = useCallback(
     (notes: string) => {
       setDraft((prev) => {
@@ -207,7 +240,7 @@ export function useInspection(room: Room | null, userId: string | null) {
     return inspection
   }, [draft])
 
-  return { draft, saving, setCheck, setNotes, complete }
+  return { draft, saving, setCheck, setNotes, markRestOk, complete }
 }
 
 export type { Severity }

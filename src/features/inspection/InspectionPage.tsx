@@ -1,7 +1,14 @@
 import { useRef, useState } from 'react'
 import { TriState } from '@/components/TriState'
 import { PHOTO_ACCEPT, capturePhoto } from '@/lib/photos'
-import { CHECK_LABELS, CHECK_MEASURE, type CheckKey, type Room, type Severity } from '@/domain/types'
+import {
+  CHECK_HINTS,
+  CHECK_LABELS,
+  CHECK_MEASURE,
+  type CheckKey,
+  type Room,
+  type Severity,
+} from '@/domain/types'
 import { checksForRoom, useInspection } from './useInspection'
 
 interface Props {
@@ -19,7 +26,7 @@ const SEVERITIES: Array<{ value: Severity; label: string }> = [
 ]
 
 export function InspectionPage({ room, userId, buildingName, onDone, onBack }: Props): React.ReactElement {
-  const { draft, saving, setCheck, setNotes, complete } = useInspection(room, userId)
+  const { draft, saving, setCheck, setNotes, markRestOk, complete } = useInspection(room, userId)
   const [photoError, setPhotoError] = useState<string | null>(null)
   const [photoCount, setPhotoCount] = useState(0)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -57,6 +64,23 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
         {room.name !== room.code && <p className="text-sm text-muted">{room.name}</p>}
       </header>
 
+      {/* Revisión por excepción: primero la vía rápida, y solo se baja al
+          detalle quien tenga algo que reportar. */}
+      {missing.length > 0 && (
+        <div className="px-4 pt-4">
+          <button
+            type="button"
+            onClick={markRestOk}
+            className="flex h-touch w-full items-center justify-center gap-2 rounded-lg bg-ok font-semibold text-white"
+          >
+            <span aria-hidden className="text-lg">✓</span>
+            {draft.checks.size === 0
+              ? 'Todo correcto'
+              : `Marcar OK las ${missing.length} restantes`}
+          </button>
+        </div>
+      )}
+
       <div className="divide-y divide-line px-4">
         {applicable.map(({ key, applicable: isApplicable }) => {
           const check = draft.checks.get(key)
@@ -66,9 +90,9 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
             <div key={key}>
               <TriState
                 label={CHECK_LABELS[key]}
+                hint={isApplicable ? CHECK_HINTS[key] : 'La sala no lo tiene'}
                 value={check?.result ?? null}
                 onChange={(result) => setCheck(key, result)}
-                {...(!isApplicable ? { disabledReason: 'La sala no lo tiene' } : {})}
               />
 
               {check?.result === 'incidencia' && (

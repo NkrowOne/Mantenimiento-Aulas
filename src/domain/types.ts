@@ -25,6 +25,23 @@ export const CHECK_LABELS: Record<CheckKey, string> = {
 }
 
 /**
+ * Qué hay que mirar en cada comprobación.
+ *
+ * Idea tomada del prototipo aprobado: sin esto, «Sonido» es ambiguo y cada
+ * técnico comprueba una cosa distinta. Con el subtítulo, la revisión es
+ * repetible entre personas.
+ */
+export const CHECK_HINTS: Record<CheckKey, string> = {
+  pantallas: 'Proyector · TV · monitor auxiliar',
+  proyector: 'Horas y estado de lámpara',
+  microfono: 'Captación y nivel',
+  red: 'Conectividad del puesto',
+  sonido: 'Altavoces y balance',
+  camara: 'Encuadre y enfoque',
+  botonera: 'Control de sala',
+}
+
+/**
  * Qué comprobación exige qué equipamiento. Si la sala no lo tiene, el check
  * nace en 'na' y plegado: el técnico solo toca lo que existe de verdad.
  */
