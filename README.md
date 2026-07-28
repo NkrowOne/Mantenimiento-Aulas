@@ -38,27 +38,51 @@ El plan completo, con modelo de datos, protocolo de sincronización y fases de e
 
 ## Prototipo de interfaz
 
-`prototipo/index.html` es un prototipo navegable y autocontenido — sin dependencias, sin red.
-Ábrelo en cualquier navegador.
+`prototipo/index.html` es un prototipo navegable y autocontenido — sin dependencias, sin red,
+sin CDN. Ábrelo en cualquier navegador.
 
 Cuatro pantallas: **revisión de sala**, **ficha de sala**, **cuadro de mando** e **informe**.
 Los controles funcionan: pulsa «Todo correcto», marca un fallo y observa cómo aparece el botón
 de abrir incidencia.
 
-Notas de diseño que el prototipo demuestra:
+### Sistema de diseño
 
-- **Revisión por excepción.** Una sala sin incidencias se cierra en unos 5 segundos; solo se
-  despliega el bloque que falla.
-- **Un único lenguaje de control.** Los seis bloques usan el mismo triestado OK / FALLA / N/A,
-  con objetivos de 44 px y sin depender de pasar el ratón.
-- **Nunca solo color.** Cada estado lleva icono y texto, para daltonismo y para pantallas
-  lavadas por el proyector.
-- **La paleta se validó, no se eligió a ojo.** La primera pareja de color candidata falló por
-  ser indistinguible bajo protanopía y se descartó.
+**Tipografía.** Instrument Sans para prosa e interfaz; **IBM Plex Mono** para todo código,
+serie, cifra y etiqueta de estado. Plex se dibujó para contextos técnicos e industriales, que
+es exactamente este dominio: `5310306901678` es legible en monoespaciada y no lo es en
+proporcional. Ambas van incrustadas como subconjunto latino — 38 KB las cuatro variantes.
+
+**Formas.** Escala de radios en lugar de un radio único: plano en superficies y regiones de
+datos, 3 px solo en lo que se pulsa. Los indicadores son una tira dividida por filetes, no
+tarjetas flotantes con raíl de color. Las secciones son etiquetas colgadas de una regla, sin
+cajas anidadas. Los seis bloques de revisión son filas continuas de una hoja de servicio.
+
+**Color.** Acento petrol `#008C9E` en claro, `#22A7B8` en oscuro, validado por script: croma
+≥ 0,10, banda de luminosidad y contraste ≥ 3:1 en ambos modos. La primera pareja candidata
+**falló** —ΔE 1,0 bajo protanopía, indistinguible— y se descartó. Los colores de estado son
+reservados y siempre van con icono y texto: nunca color solo.
+
+**Interacción.** Revisión por excepción — una sala sin incidencias se cierra en unos
+5 segundos. Un único triestado OK / FALLA / N/A para los seis bloques, con objetivos de 44 px
+en la mitad inferior de la pantalla y sin depender de pasar el ratón.
+
+### Regenerar
+
+```bash
+python3 prototipo/build.py                    # incrusta las fuentes → index.html
+python3 prototipo/subset.py /ruta/a/los/ttf   # regenera los subconjuntos (necesita fonttools)
+```
 
 ## Estructura
 
 ```
-docs/PLAN.md          Plan aprobado: contexto, arquitectura, modelo de datos, fases
-prototipo/index.html  Prototipo de interfaz autocontenido
+docs/PLAN.md              Plan aprobado: contexto, arquitectura, modelo de datos, fases
+prototipo/index.html      Prototipo autocontenido (generado)
+prototipo/index.src.html  Fuente del prototipo, con marcadores de fuente
+prototipo/build.py        Incrusta las fuentes y compone index.html
+prototipo/subset.py       Regenera los subconjuntos de fuente
+prototipo/fuentes/        Subconjuntos woff2 + licencias OFL
 ```
+
+Instrument Sans e IBM Plex Mono se distribuyen bajo SIL Open Font License; las licencias
+están en `prototipo/fuentes/`.
