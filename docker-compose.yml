@@ -1,0 +1,29 @@
+# Servicios propios que acompañan al stack de Supabase self-hosted.
+#
+# Se conecta a la misma red que el compose oficial de Supabase, para que
+# `pg_cron` pueda alcanzar al worker por nombre de servicio. Llamarlo por
+# localhost no funcionaría: desde el contenedor de la base de datos, localhost
+# es la propia base de datos.
+
+services:
+  reports-worker:
+    build: ./reports-worker
+    container_name: reports-worker
+    restart: unless-stopped
+    environment:
+      # Dentro de la red de Compose el host de la base de datos es `db`.
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      WORKER_TOKEN: ${REPORTS_WORKER_TOKEN}
+      PORT: 8080
+    networks:
+      - supabase
+    # Sin puertos publicados: solo lo llama pg_cron desde dentro de la red.
+    expose:
+      - '8080'
+
+networks:
+  supabase:
+    external: true
+    name: supabase_default

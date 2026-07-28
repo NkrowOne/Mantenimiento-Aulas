@@ -64,6 +64,17 @@ npm run typecheck
 npm run build
 ```
 
+### Generar un informe
+
+```bash
+cd reports-worker && npm install
+DATABASE_URL=postgresql://... npm run render -- semanal informe.pdf
+```
+
+Acepta `.html` como salida para iterar la plantilla sin WeasyPrint. En
+producción lo levanta `docker compose up reports-worker` y lo despierta
+`pg_cron`.
+
 ## Qué está construido
 
 | Área | Estado |
@@ -75,9 +86,10 @@ npm run build
 | Login con PIN que cifra la sesión | ✅ lógica probada |
 | Flujo de revisión de salas | ✅ |
 | Fotos con compresión | ✅ |
-| **Dashboard, inventario y stock (UI)** | ⛔ pendiente |
-| **Worker de informes PDF** | ⛔ pendiente |
-| **Integración con ServiceNow** | ⛔ futuro, con el puerto ya previsto |
+| Panel con alertas y gráficos | ✅ paleta validada en claro y oscuro |
+| Incidencias, almacén y depuración de datos | ✅ |
+| Worker de informes PDF | ✅ PDF real generado y revisado |
+| Integración con ServiceNow | 🔌 puerto listo, falta la implementación |
 
 ## Decisiones que conviene conocer
 
@@ -114,6 +126,20 @@ que la app existe para dar.
   hostname real (no una IP: Let's Encrypt no emite certificados de IP por
   DNS-01) con DNS split-horizon, o bien Tailscale.
 
+## Informes
+
+La cadena es **Postgres → ECharts SSR a SVG → HTML → WeasyPrint → Storage**, sin
+Chromium en ningún punto. Como los gráficos salen ya vectorizados, la plantilla
+no necesita ejecutar JavaScript, y eso permite usar WeasyPrint: unos 300 MB de
+imagen en lugar de 1,5 GB y ningún proceso de navegador que vigilar. Si algún
+día una plantilla necesitara JavaScript de verdad, el reemplazo es Gotenberg 8,
+no un contenedor de Playwright a mano.
+
+Los gráficos usan una paleta **validada**, no elegida a ojo: pasa las seis
+comprobaciones de contraste, croma y separación bajo daltonismo en ambos temas.
+Los colores de estado (ok / aviso / crítico) están reservados y nunca se
+reutilizan como serie.
+
 ## Estructura
 
 ```
@@ -123,5 +149,7 @@ src/sync/         descarga del maestro y motor de subida
 src/auth/         PIN, cifrado de sesión y alta de dispositivo
 src/features/     pantallas por área funcional
 supabase/         migraciones, harness de pruebas y seed generado
+src/integrations/ puerto de tickets externos (ServiceNow en el futuro)
 scripts/          importador del Excel y verificación de base de datos
+reports-worker/   generador de informes PDF, con su Dockerfile
 ```
