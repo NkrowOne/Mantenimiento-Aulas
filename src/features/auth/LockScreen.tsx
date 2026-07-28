@@ -63,9 +63,11 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
         <h1 className="mt-1 text-2xl font-semibold">
           {enrolling ? 'Dar de alta este dispositivo' : `Hola, ${sealed.hint.fullName}`}
         </h1>
-        <p className="mt-2 text-sm text-muted">
-          {enrolling ? 'Solo hace falta una vez por dispositivo.' : 'Funciona sin cobertura.'}
-        </p>
+        {/* Solo en el alta. En el desbloqueo diario, el saludo con el nombre y
+            los dos campos ya lo dicen todo. */}
+        {enrolling && (
+          <p className="mt-2 text-sm text-muted">Solo hace falta una vez por dispositivo.</p>
+        )}
 
         <form
           className="mt-8 flex flex-col gap-4"
