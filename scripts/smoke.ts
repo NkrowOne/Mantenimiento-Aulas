@@ -74,6 +74,9 @@ async function main(): Promise<void> {
   }
 
   console.log('\n▸ Arranque')
+  await check('no falta configuración en el build', async () =>
+    (await page.getByText('Configuración incompleta').count()) === 0,
+  )
   await check('la pantalla de alta aparece', async () =>
     (await page.getByText('Dar de alta este dispositivo').count()) > 0,
   )

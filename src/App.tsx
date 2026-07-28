@@ -14,7 +14,7 @@ import { getSealed, lock, resumeSession, touch } from '@/auth/session'
 import { db, requestPersistentStorage } from '@/db/dexie'
 import { pullMaster } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
-import { supabase } from '@/lib/supabase'
+import { configError, supabase } from '@/lib/supabase'
 import type { SealedSession } from '@/auth/pin'
 import type { Building, Role, Room } from '@/domain/types'
 
@@ -95,6 +95,24 @@ export function App(): React.ReactElement {
       document.removeEventListener('visibilitychange', onActivity)
     }
   }, [unlocked])
+
+  // Sin configuración no hay nada que hacer, y decirlo es infinitamente mejor
+  // que una página en blanco: quien despliega sabe al instante qué falta.
+  if (configError) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center p-8">
+        <div className="card max-w-md p-6">
+          <h1 className="font-semibold text-crit">Configuración incompleta</h1>
+          <p className="mt-2 text-sm text-muted">{configError}</p>
+          <p className="mt-3 text-sm text-muted">
+            Estas variables se compilan dentro de la aplicación: añádelas al
+            <span className="font-mono"> .env</span> y vuelve a construirla con
+            <span className="font-mono"> npm run build</span>.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   if (sealed === undefined) return <div className="p-8 text-muted">Cargando…</div>
 
