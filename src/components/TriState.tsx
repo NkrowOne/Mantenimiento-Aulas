@@ -28,9 +28,12 @@ const SELECTED: Record<CheckResult, string> = {
   na: 'bg-na-tint text-na border-na/40',
 }
 
-/** El estado tiñe la fila entera: se ve de un vistazo qué queda por tocar. */
+/**
+ * «No aplica» se atenúa para que la vista salte a lo que sí hay que mirar.
+ * La incidencia NO se tiñe aquí: de eso se encarga el panel que envuelve fila y
+ * detalle, para que sean una sola forma con un solo borde.
+ */
 const ROW: Partial<Record<CheckResult, string>> = {
-  incidencia: 'bg-crit-tint',
   na: 'opacity-55',
 }
 

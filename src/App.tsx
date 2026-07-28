@@ -53,6 +53,15 @@ export function App(): React.ReactElement {
 
   const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [])
 
+  // La planta de la sala en revisión. Va en la cabecera porque un código como
+  // `-2.1` leído sin ella parece un sótano cualquiera.
+  const zoneName =
+    useLiveQuery(
+      async () =>
+        view.name === 'revision' ? (await db.zones.get(view.room.zone_id))?.name : undefined,
+      [view],
+    ) ?? ''
+
   useEffect(() => {
     void (async () => {
       setSealed(await getSealed())
@@ -202,6 +211,7 @@ export function App(): React.ReactElement {
           room={view.room}
           userId={userId}
           buildingName={view.building.name}
+          zoneName={zoneName}
           onBack={() => setView({ name: 'salas', building: view.building })}
           onDone={() => setView({ name: 'salas', building: view.building })}
         />

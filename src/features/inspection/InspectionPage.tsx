@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { RoomPlate } from '@/components/RoomPlate'
 import { TriState } from '@/components/TriState'
 import { PHOTO_ACCEPT, capturePhoto } from '@/lib/photos'
 import {
@@ -15,6 +16,8 @@ interface Props {
   room: Room
   userId: string | null
   buildingName: string
+  /** Nombre de la planta o módulo. Sin esto, «-2.1» se lee como un sótano. */
+  zoneName: string
   onDone: (nextRoom: boolean) => void
   onBack: () => void
 }
@@ -25,7 +28,14 @@ const SEVERITIES: Array<{ value: Severity; label: string }> = [
   { value: 'alta', label: 'Impide la clase' },
 ]
 
-export function InspectionPage({ room, userId, buildingName, onDone, onBack }: Props): React.ReactElement {
+export function InspectionPage({
+  room,
+  userId,
+  buildingName,
+  zoneName,
+  onDone,
+  onBack,
+}: Props): React.ReactElement {
   const { draft, saving, setCheck, setNotes, markRestOk, complete } = useInspection(room, userId)
   const [photoError, setPhotoError] = useState<string | null>(null)
   const [photoCount, setPhotoCount] = useState(0)
@@ -56,13 +66,13 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
 
   return (
     <div className="pb-32">
-      <header className="border-b border-line bg-surface px-4 py-3">
-        <button type="button" onClick={onBack} className="text-sm text-accent">
-          ← {buildingName}
-        </button>
-        <h1 className="mt-1 font-mono text-2xl font-semibold">{room.code}</h1>
-        {room.name !== room.code && <p className="text-sm text-muted">{room.name}</p>}
-      </header>
+      <RoomPlate
+        building={buildingName}
+        zone={zoneName}
+        title={room.name === room.code ? `Sala ${room.code}` : room.name}
+        code={room.code}
+        onBack={onBack}
+      />
 
       {/* Revisión por excepción: primero la vía rápida, y solo se baja al
           detalle quien tenga algo que reportar. */}
@@ -87,7 +97,19 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
           const measure = CHECK_MEASURE[key]
 
           return (
-            <div key={key}>
+            <div
+              key={key}
+              /*
+                Cuando hay incidencia, la fila y su detalle son UN panel con un
+                borde y un radio. Antes eran dos formas apiladas —fila teñida
+                cuadrada y caja redondeada encima— y el marco cojeaba.
+              */
+              className={
+                check?.result === 'incidencia'
+                  ? '-mx-1 my-2 rounded-ctl border border-crit/25 bg-crit-tint px-3'
+                  : ''
+              }
+            >
               <TriState
                 label={CHECK_LABELS[key]}
                 hint={isApplicable ? CHECK_HINTS[key] : 'La sala no lo tiene'}
@@ -96,7 +118,7 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
               />
 
               {check?.result === 'incidencia' && (
-                <div className="mb-4 rounded-ctl border border-crit/30 bg-crit-tint p-3">
+                <div className="pb-3">
                   <p className="eyebrow mb-2">Gravedad</p>
                   <div className="grid grid-cols-3 gap-2">
                     {SEVERITIES.map((s) => (
@@ -120,7 +142,7 @@ export function InspectionPage({ room, userId, buildingName, onDone, onBack }: P
                     onChange={(e) => setCheck(key, 'incidencia', { note: e.target.value })}
                     placeholder="¿Qué has visto?"
                     rows={2}
-                    className="mt-3 w-full rounded-ctl border border-line bg-surface p-2 text-sm"
+                    className="mt-2 w-full rounded-ctl border border-crit/25 bg-surface p-2 text-sm"
                   />
                 </div>
               )}

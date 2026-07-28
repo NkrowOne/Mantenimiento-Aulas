@@ -96,7 +96,7 @@ async function main(): Promise<void> {
           tx.objectStore('buildings').put({
             id: 'b1', code: 'H', name: 'EDIFICIO H', sort_order: 1, needs_review: false,
           })
-          tx.objectStore('zones').put({ id: 'z1', building_id: 'b1', name: '1ª PLANTA', sort_order: 1 })
+          tx.objectStore('zones').put({ id: 'z1', building_id: 'b1', name: 'PLANTA −2', sort_order: 1 })
           ;(rooms as Array<Record<string, unknown>>).forEach((r, i) => {
             tx.objectStore('rooms').put({
               id: `r${i}`, zone_id: 'z1', code: r['code'], name: r['name'],
