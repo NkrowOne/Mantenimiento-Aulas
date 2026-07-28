@@ -284,6 +284,45 @@ table.tbl th,table.tbl td.r,table.tbl th.r,.rail > h2{word-spacing:0}
      background:var(--surface);color:var(--ink)}
 .btn.go{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 
+/* ═══ Alta manual ═══════════════════════════════════════════
+   El registro proactivo no depende de que nada haya fallado.
+   Guardar exige solo la sala; lo demás se completa después. */
+.regpanel{display:none;flex-direction:column;gap:11px;padding:15px 16px;margin:0 -16px;
+          background:var(--sunken);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.regpanel[data-open="1"]{display:flex}
+.typepick{display:flex;border:1px solid var(--line);border-radius:var(--r-ctl);overflow:hidden;
+          background:var(--surface)}
+.typepick button{flex:1;appearance:none;border:none;border-left:1px solid var(--line);
+  background:transparent;font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--muted);padding:11px 6px;min-height:46px;cursor:pointer;
+  word-spacing:0;transition:background .12s,color .12s}
+.typepick button:first-child{border-left:none}
+.typepick button:hover{background:var(--sunken);color:var(--ink-2)}
+.typepick button[aria-pressed="true"]{background:var(--accent);color:var(--on-accent)}
+.regnote{margin:0;font-family:var(--mono);font-size:10.5px;color:var(--muted);line-height:1.65;word-spacing:0}
+.regrow{display:flex;gap:8px}
+.codefield{border:1px solid var(--line);background:var(--surface);padding:9px 11px}
+.codefield input{width:100%;font-family:var(--mono);font-size:14px;font-weight:700;border:none;
+  background:transparent;color:var(--ink);padding:0;min-height:26px}
+
+/* Contador de pendientes en la pestaña: lo aplazado tiene que verse */
+.tab .count{display:inline-flex;align-items:center;justify-content:center;min-width:19px;height:19px;
+  margin-left:8px;padding:0 5px;border-radius:10px;background:var(--warn);color:var(--on-accent);
+  font-family:var(--mono);font-size:10px;font-weight:700;word-spacing:0}
+
+.draftrow{display:flex;align-items:center;gap:14px;padding:13px 0;border-bottom:1px solid var(--line-soft)}
+.draftrow:last-child{border-bottom:none}
+.draftrow .c{flex:1;min-width:0}
+.draftrow .c .t{font-size:14px;font-weight:700;letter-spacing:-.005em}
+.draftrow .c .m{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:3px;word-spacing:0}
+.draftrow .age{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--warn);
+               word-spacing:0;flex:none;text-align:right}
+.mini{appearance:none;border:1px solid var(--line);background:var(--surface);color:var(--ink);
+  border-radius:var(--r-ctl);font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;padding:10px 13px;cursor:pointer;flex:none;word-spacing:0;min-height:40px}
+.mini:hover{background:var(--sunken)}
+.empty{padding:30px 0;text-align:center;color:var(--muted);font-size:13.5px}
+
 /* ═══ Ficha de sala ═══ */
 .verdict{display:flex;align-items:center;gap:16px;padding:14px 16px;margin:0 -16px;
          background:var(--crit-tint);border-top:1px solid color-mix(in srgb,var(--crit) 30%,transparent);
@@ -421,6 +460,7 @@ svg .mark-hit:hover{opacity:.75}
   <nav class="tabs" role="tablist" aria-label="Pantallas del prototipo">
     <button class="tab" role="tab" aria-selected="true"  data-p="rev">Revisión de sala</button>
     <button class="tab" role="tab" aria-selected="false" data-p="sala">Ficha de sala</button>
+    <button class="tab" role="tab" aria-selected="false" data-p="bor">Borradores<span class="count" id="tabcount">0</span></button>
     <button class="tab" role="tab" aria-selected="false" data-p="cm">Cuadro de mando</button>
     <button class="tab" role="tab" aria-selected="false" data-p="inf">Informe</button>
   </nav>
@@ -485,7 +525,7 @@ svg .mark-hit:hover{opacity:.75}
   <!-- ══ 2 · FICHA DE SALA ══ -->
   <div class="stage panel" data-panel="sala" hidden>
     <div class="devwrap">
-      <div class="device" data-fade="1">
+      <div class="device">
         <div class="statusbar"><span>9:41</span><span>WIFI · 84%</span></div>
         <div class="sync" data-state="clean"><span class="pip"></span><span>Todo enviado y verificado</span><span class="far">hace 2 min</span></div>
         <div class="roomhead">
@@ -547,6 +587,29 @@ svg .mark-hit:hover{opacity:.75}
                 <div class="trailrow" data-k="ko"><div class="spine"><i></i></div><div class="c"><div class="t">Sustitución de cable HDMI</div><div class="m">6 mar 2026 · I260306_0029</div></div></div>
               </div>
             </div>
+
+            <div class="regpanel" id="regpanel" data-open="0">
+              <span class="lbl">Registrar en Aula 1.7</span>
+              <div class="typepick" id="typepick" role="group" aria-label="Tipo de registro">
+                <button type="button" data-t="incidencia" aria-pressed="true">Incidencia</button>
+                <button type="button" data-t="solicitud"  aria-pressed="false">Solicitud</button>
+                <button type="button" data-t="observacion" aria-pressed="false">Observación</button>
+              </div>
+              <textarea class="obs" id="regtext" placeholder="¿Qué ocurre? Opcional — se puede rellenar luego."></textarea>
+              <div class="codefield" id="codewrap">
+                <label class="lbl" for="regcode">Código de ticket externo</label>
+                <input id="regcode" placeholder="I260728_0001" autocomplete="off">
+              </div>
+              <p class="regnote" id="regnote">Basta la sala para guardar. Lo demás se completa después, desde la bandeja de borradores.</p>
+              <div class="regrow">
+                <button class="btn" id="regcancel">Cancelar</button>
+                <button class="btn go" id="regsave">Guardar borrador</button>
+              </div>
+            </div>
+
+            <div class="actionbar" id="salabar">
+              <button class="btn go" id="regopen">Registrar incidencia</button>
+            </div>
           </div>
         </div>
       </div>
@@ -558,6 +621,34 @@ svg .mark-hit:hover{opacity:.75}
       <div class="mark-note"><h3>IBM Plex Mono para los códigos</h3><p>Series, tickets y cifras van en una monoespaciada dibujada para contextos técnicos. <strong>5310306901678</strong> es legible; en proporcional no lo es. Es el idioma de las etiquetas de los equipos.</p></div>
       <div class="mark-note"><h3>La recomendación se justifica</h3><p>Nunca aparece un aviso sin decir de cuántos registros sale y sin poder abrirlos. Si no se puede explicar, no se muestra.</p></div>
       <div class="mark-note"><h3>Estado en la forma</h3><p>Las etiquetas de estado son cuadradas, como marcado de cable, con icono y texto. Lo que exige atención se ve sin leer cifras.</p></div>
+      <div class="mark-note"><h3>Registrar sin que nada falle</h3><p><strong>Registrar incidencia</strong> está siempre disponible aquí, no solo cuando un bloque falla. Es donde va lo que hoy acaba en la columna de observaciones y se pierde: un soporte flojo, una pizarra abombada, una lámpara al 12 % que aún funciona.</p></div>
+      <div class="mark-note"><h3>Guardar con solo la sala</h3><p>Un toque deja el borrador creado y sincronizable. Ni descripción ni código de ticket son obligatorios: nada te obliga a teclear de pie en un pasillo.</p></div>
+    </aside>
+  </div>
+
+  <!-- ══ 3 · BANDEJA DE BORRADORES ══ -->
+  <div class="stage panel" data-panel="bor" hidden>
+    <div>
+      <div class="board">
+        <div class="boardhead">
+          <span class="t">Bandeja de borradores</span>
+          <span class="st warn" data-ic="warn" style="margin-left:auto"><span id="borchip">0 sin completar</span></span>
+        </div>
+        <div class="boardbody">
+          <section class="sec">
+            <header><h3>Pendientes de completar</h3><span class="note">las más antiguas primero</span></header>
+            <div id="draftlist"></div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <aside class="rail">
+      <h2>Notas de diseño</h2>
+      <div class="mark-note"><h3>Lo aplazado necesita un sitio</h3><p>Permitir guardar con un solo campo obliga a que exista un lugar evidente donde se acumula lo aplazado. Sin esta bandeja, «lo relleno luego» acaba siendo «no se rellenó nunca» — que es justo el problema del Excel actual.</p></div>
+      <div class="mark-note"><h3>El número va en la pestaña</h3><p>Descartaste el contador en el cuadro de mando y el bloqueo al cerrar la revisión. La cifra viaja en la pestaña para que al menos asome desde la navegación, sin interrumpir a nadie.</p></div>
+      <div class="mark-note"><h3>Un borrador puede no decir nada</h3><p>El de <strong>2.3 P</strong> se guardó solo con la sala, que es exactamente lo permitido. Por eso la bandeja muestra la antigüedad en grande: es la única señal de que algo lleva demasiado tiempo sin explicarse.</p></div>
+      <div class="mark-note"><h3>Los tipos no pesan igual</h3><p>Una <strong>solicitud</strong> no es un fallo de la sala y no penaliza su índice de fiabilidad; una <strong>observación</strong> pesa mucho menos que una avería. Si contaran igual, las salas mejor atendidas saldrían como las peores.</p></div>
     </aside>
   </div>
 
@@ -848,6 +939,79 @@ svg .mark-hit:hover{opacity:.75}
     document.getElementById("shothint").textContent = `WebP · ${nShots} fotos · ${kbShots} KB en cola`;
   });
   document.getElementById("obs").addEventListener("input", touched);
+
+  /* ── Alta manual desde la ficha de sala y bandeja de borradores ──
+        Solo la sala es obligatoria; el resto se completa después. ── */
+  const $ = id => document.getElementById(id);
+  const esc = s => s.replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+  const TYPES = { incidencia:"Incidencia", solicitud:"Solicitud", observacion:"Observación" };
+  const DRAFTS = [
+    { id:1, room:"0.4 M", type:"observacion", text:"Soporte de altavoz izquierdo flojo. Pizarra abombada.", days:6, by:"Marta R." },
+    { id:2, room:"2.3 P", type:"incidencia",  text:"", days:2, by:"Javier L." }
+  ];
+  let nextId = 3, regType = "incidencia";
+
+  function renderDrafts() {
+    const n = DRAFTS.length;
+    const count = $("tabcount");
+    count.textContent = n;
+    count.style.display = n ? "" : "none";
+    $("borchip").textContent = `${n} sin completar`;
+    $("draftlist").innerHTML = n
+      ? DRAFTS.slice().sort((a, b) => b.days - a.days).map(d => `
+        <div class="draftrow">
+          <div class="c">
+            <div class="t">${esc(d.room)} — ${TYPES[d.type]}</div>
+            <div class="m">${d.text ? esc(d.text) : "sin descripción · guardado solo con la sala"} · ${esc(d.by)}</div>
+          </div>
+          <div class="age">${d.days === 0 ? "hoy" : d.days + " días"}</div>
+          <button class="mini" data-id="${d.id}">Completar</button>
+        </div>`).join("")
+      : `<p class="empty">No queda nada pendiente de completar.</p>`;
+  }
+
+  $("draftlist").addEventListener("click", e => {
+    const b = e.target.closest(".mini");
+    if (!b) return;
+    const i = DRAFTS.findIndex(d => d.id === Number(b.dataset.id));
+    if (i > -1) { DRAFTS.splice(i, 1); renderDrafts(); }
+  });
+
+  const panel = $("regpanel"), regopen = $("regopen"), salabar = $("salabar");
+  // Con el panel abierto, la barra se retira: el panel ya tiene su propio Cancelar.
+  // Dos formas de cerrar lo mismo es una de más.
+  const setOpen = on => {
+    panel.dataset.open = on ? "1" : "0";
+    salabar.style.display = on ? "none" : "flex";
+    if (on) panel.scrollIntoView({ block:"nearest", behavior:"smooth" });
+  };
+  regopen.addEventListener("click", () => setOpen(true));
+  $("regcancel").addEventListener("click", () => setOpen(false));
+
+  $("typepick").addEventListener("click", e => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    regType = b.dataset.t;
+    [...e.currentTarget.children].forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+    // Una observación no genera ticket externo: el campo desaparece en vez de quedar inerte
+    const isObs = regType === "observacion";
+    $("codewrap").style.display = isObs ? "none" : "";
+    $("regnote").textContent = isObs
+      ? "Una observación no genera ticket externo. Queda con responsable y fecha, y se puede promover a incidencia si el asunto crece."
+      : "Basta la sala para guardar. Lo demás se completa después, desde la bandeja de borradores.";
+  });
+
+  $("regsave").addEventListener("click", () => {
+    DRAFTS.push({ id:nextId++, room:"Aula 1.7", type:regType, days:0, by:"Marta R.",
+                  text:$("regtext").value.trim() });
+    $("regtext").value = ""; $("regcode").value = "";
+    renderDrafts();
+    setOpen(false);
+    regopen.textContent = "Guardado en borradores";
+    setTimeout(() => { if (panel.dataset.open !== "1") regopen.textContent = "Registrar incidencia"; }, 2200);
+  });
+
+  renderDrafts();
 
   /* ── Marca grabada de la placa: patrón determinista por semilla.
         Es decorativa; no pretende ser un QR legible. ── */

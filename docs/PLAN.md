@@ -29,6 +29,8 @@ El objetivo es una PWA instalable que funcione sin cobertura en sótanos y pasil
 | Catálogo de almacén | Se siembran los **nombres** de artículo como catálogo editable, **con existencias a cero**. Empezar limpio significa sin saldos históricos, no volver a teclear 43 artículos. Si prefieres el catálogo también vacío, se quita |
 | Fotos | **WebP** a calidad 0,8, máx. 1600 px, comprimidas en el dispositivo antes de encolar |
 | Incidencias | Código de ticket externo (`I260102_0002`) **introducido a mano**, sin numeración propia |
+| Alta manual | **Desde la ficha de la sala**, sin necesidad de revisión ni de que nada haya fallado. Tres tipos: incidencia · solicitud · observación |
+| Borradores | Basta **la sala** para guardar; todo lo demás se rellena después. Se completan desde una **bandeja de borradores** propia |
 | Checklist | **6 bloques fijos + botón "Todo correcto"**. Revisión por excepción |
 | Informes | Archivo histórico descargable en la app + constructor de informes bajo demanda. **Sin email** |
 | IA (Gemini) | OCR de nºs de serie · normalización de material a línea de stock · resumen narrativo semanal |
@@ -87,7 +89,10 @@ Tablas principales (`src/db/schema/`):
 - **`revisions`** — room_id, usuario, estado (borrador/completada), inicio/fin, `client_uuid` (idempotencia), device_id, resultado global, observaciones.
 - **`revision_checks`** — un registro por bloque: `bloque` (pantallas/microfono/red/sonido/proyector/botonera), `resultado` (ok/ko/na), `detalle jsonb`, nota. En `proyector` el detalle guarda horas y % de lámpara → serie histórica por sala.
 - **`revision_photos`** — clave de almacenamiento, miniatura, dimensiones, bytes, subida (bool).
-- **`incidents`** — room_id, `codigo_externo` (tecleado), tipo (incidencia/solicitud), apertura/resolución, problema, resolución, estado, prioridad, asignado, y `revision_id` opcional para enlazar la incidencia con la revisión que la detectó.
+- **`incidents`** — room_id, `codigo_externo` (tecleado, **anulable**), `tipo` (incidencia/solicitud/**observación**), `origen` (revisión/manual), apertura/resolución, problema, resolución, `estado` (**borrador**/abierta/en_curso/resuelta/cerrada), prioridad, asignado, y `revision_id` opcional para enlazar con la revisión que la detectó.
+  - **Solo `room_id` es obligatorio.** Todo lo demás puede quedar vacío mientras el estado sea `borrador`: es lo que permite registrar en el pasillo y completar luego, cuando llegue el código de ticket.
+  - Para salir de `borrador` sí se exige descripción; el `codigo_externo` sigue siendo opcional, porque una **observación** no genera ticket externo.
+  - El tipo **observación** es la pieza que hoy os falta: en el Excel actual, notas como `soporte altavoz izq flojo` o `Pizarra abombada` viven en una columna de texto libre y no se les sigue la pista. Aquí son registros con estado, responsable y fecha, y se pueden **promover a incidencia** si el asunto crece, conservando su historia.
 - **`users`** — email, `password_hash` (argon2id), `pin_hash`, nombre, rol, activo.
 - **`audit_log`** — tabla, registro, acción, usuario, fecha, `diff jsonb`, origen (app/sync/import).
 
@@ -146,7 +151,11 @@ Principio rector: **el técnico está de pie, en un pasillo, con una mano ocupad
 - **Nunca solo color.** Verde/ámbar/rojo/gris siempre acompañados de icono y texto — hay daltonismo en cualquier equipo y las pantallas se ven mal con proyector encendido.
 - **Estado de conexión siempre visible y explícito.** Una barra fina permanente: `3 revisiones pendientes de enviar`. Nunca ocultar que hay datos sin sincronizar.
 - **Modo oscuro real**, no un filtro: se trabaja en aulas a oscuras.
-- **Botón "Abrir incidencia" dentro del bloque que falla** — el que pediste. Precarga sala, bloque, fecha y usuario; solo queda pegar el código de ticket y describir.
+- **Botón "Abrir incidencia" dentro del bloque que falla** — el reactivo. Precarga sala, bloque, fecha y usuario; solo queda pegar el código de ticket y describir.
+- **Alta manual desde la ficha de la sala** — el proactivo, que no depende de que nada falle. Sirve para lo que hoy acaba en la columna de observaciones y se pierde: una pizarra abombada, un soporte flojo, una lámpara al 12 % que aún funciona, o una solicitud de material. La revisión no se ensucia con un botón más: su cabecera de sala lleva a la ficha de un toque, así que también se puede registrar a mitad de revisión.
+- **Guardar con solo la sala.** Un toque deja el borrador creado y sincronizable; el resto se rellena cuando haya tiempo o llegue el código de ticket. Nada obliga a teclear en el pasillo.
+- **Bandeja de borradores** — pantalla propia con las incidencias sin completar, ordenadas por antigüedad, pensada para despacharlas en lote desde el escritorio. Es la contrapartida honesta de permitir guardar con un solo campo: si se puede aplazar, tiene que haber un sitio evidente donde se acumula lo aplazado.
+  - Descartaste el contador en el cuadro de mando, el aviso al cerrar la revisión y el bloqueo. Lo dejo así, pero conviene saber el riesgo: **los borradores solo se ven si alguien entra en la bandeja**. Si dentro de unos meses se acumulan sin completar, añadir el contador al cuadro de mando es un cambio de una tarde. La pestaña llevará el número de pendientes para que al menos se vea desde la navegación.
 - **Cuadro de mando**: KPIs (salas revisadas este mes, incidencias abiertas, salas con problemas, artículos bajo mínimo) + gráficos de incidencias por edificio, evolución mensual y distribución del % de lámpara. Se construye con la skill `dataviz` para que la paleta sea consistente y accesible en claro y oscuro.
 - **Alertas**, ordenadas por urgencia real, no por fecha de creación:
   - **Salas sin revisar más de 1 mes** (umbral configurable global y por sala; 30 días por defecto). Aviso honesto: con vuestra cadencia actual —2-3 revisiones al año— el primer día se marcarán casi todas. Por eso la lista se ordena por *días de retraso* y el primer ciclo se puede escalonar por edificios, en vez de mostrar 295 alertas rojas a la vez.
@@ -173,6 +182,8 @@ Todo lo que sigue se calcula **con SQL, de forma determinista y auditable**. Cua
 **Aviso honesto sobre los plazos:** como arrancamos con la base limpia, estas funciones se construyen desde el principio pero **no dan resultados útiles hasta acumular unos 2-3 meses de revisiones e incidencias reales**. Hasta entonces muestran su estado de forma explícita —*"datos insuficientes, faltan N revisiones"*— en lugar de inventar conclusiones sobre dos registros. Los ejemplos que cito abajo salen de vuestros Excel actuales y sirven para ilustrar qué detectará el sistema, no son datos que vayan a estar cargados el primer día.
 
 **Índice de fiabilidad por sala.** Puntuación 0-100 a partir de: número de incidencias por periodo, gravedad, reincidencia del mismo tipo de fallo, tiempo medio de resolución y consumo de material. Se pondera por antigüedad, para que un mal semestre de hace dos años no marque una sala para siempre. Ranking de peores salas y peores edificios en el cuadro de mando.
+
+**Los tres tipos no pesan igual, y esto importa.** Una **incidencia** penaliza la fiabilidad; una **observación** pesa mucho menos —es una nota de seguimiento, no una avería— y una **solicitud** (`Solicita instalar cámara y micrófono`) **no penaliza en absoluto**: es trabajo pedido, no un fallo de la sala. Si contaran igual, las salas más vigiladas saldrían como las peores solo por estar bien atendidas, y el ranking premiaría no registrar nada. Los borradores no puntúan hasta completarse.
 
 **Detección de reincidencia — el hallazgo más rentable de vuestros datos.** El problema `No duplica la imagen del Pc del usuario en el monitor principal del aula` aparece decenas de veces en 2025 y 2026, y la resolución es casi siempre *sustituir el cable HDMI*. Cuando una misma sala repite el mismo tipo de fallo, sustituir la pieza otra vez no es la respuesta. La app lo detecta y lo dice:
 
@@ -210,7 +221,7 @@ Si falta `GEMINI_API_KEY`, las tres funciones se ocultan y la app funciona igual
 | **3** | Maestro editable: edificios, zonas, salas, inventario. UUID v7, renombrado auditado, QR de puerta. Semilla con 2-3 salas de ejemplo |
 | **4** | **Revisiones offline**: los 6 bloques, "Todo correcto", fotos, autoguardado, outbox, sync |
 | **5** | **Garantía de entrega**: confirmación por operación, hashes, reconciliación, panel de estado del dato, copias de seguridad |
-| **6** | Incidencias (código externo) + botón desde el bloque que falla + alertas (30 días) |
+| **6** | Incidencias: los tres tipos, alta reactiva desde el bloque que falla, **alta manual desde la ficha de sala**, borradores con solo la sala, **bandeja de borradores** y alertas (30 días) |
 | **7** | Almacén: catálogo, kardex, mínimos, consumo enlazado a incidencias |
 | **8** | Cuadro de mando + informes automáticos + constructor + archivo |
 | **9** | **Inteligencia**: fiabilidad por sala, reincidencia, predicción de lámpara y stock, rutas, anomalías |
@@ -229,6 +240,8 @@ Si falta `GEMINI_API_KEY`, las tres funciones se ocultan y la app funciona igual
 - **Renombrado sin daño**: renombrar edificio y sala con revisiones, incidencias, fotos e informes ya emitidos; nada debe romperse y el PDF archivado debe conservar el nombre antiguo.
 - **Auditoría**: modificar una incidencia por API y por SQL directo; el trigger debe registrar ambas, incluidos los cambios de nombre.
 - **Stock**: propiedad invariante — `SUM(movimientos)` siempre igual al stock mostrado, con movimientos concurrentes.
+- **Borrador mínimo**: crear una incidencia sin red aportando **solo la sala**, cerrar la app, reabrir, recuperar cobertura y comprobar que llega íntegra, aparece en la bandeja de borradores y se puede completar meses después sin perder autor ni fecha original.
+- **Los tipos no se confunden**: una solicitud y una observación no deben empeorar el índice de fiabilidad de la sala; una incidencia sí. Un borrador no puntúa hasta completarse.
 - **Recomendaciones**: sobre un conjunto de datos sintético con un patrón de reincidencia conocido, el motor debe señalar exactamente esa sala y no otras; toda cifra mostrada debe cuadrar con su consulta SQL.
 - **Restauración**: restaurar una copia de seguridad en limpio y verificar contadores por tabla frente al origen.
 - **Dispositivos reales**: recorrido completo en Safari/iOS (el caso restrictivo), Chrome/Android y Edge/Windows.
