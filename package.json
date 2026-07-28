@@ -12,7 +12,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "import:excel": "tsx scripts/import-excel.ts",
-    "db:verify": "bash scripts/db-verify.sh"
+    "db:verify": "bash scripts/db-verify.sh",
+    "admin:user": "tsx scripts/admin-user.ts",
+    "gen:keys": "tsx scripts/gen-keys.ts",
+    "deploy": "bash scripts/deploy.sh",
+    "backup": "bash scripts/backup.sh"
   },
   "dependencies": {
     "@fontsource-variable/ibm-plex-sans": "^5.2.5",

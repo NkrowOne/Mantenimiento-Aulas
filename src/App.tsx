@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { SyncChip } from '@/components/SyncChip'
+import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { LockScreen } from '@/features/auth/LockScreen'
 import { InspectionPage } from '@/features/inspection/InspectionPage'
 import { RoomListPage } from '@/features/rooms/RoomListPage'
@@ -203,6 +204,8 @@ export function App(): React.ReactElement {
           ))}
         </ul>
       </nav>
+
+      <UpdatePrompt />
     </div>
   )
 }

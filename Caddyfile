@@ -1,0 +1,74 @@
+# Caddy: TLS, PWA y proxy de API en un solo origen.
+#
+# El certificado se emite por reto DNS-01 contra Cloudflare. Eso permite tener
+# un certificado válido de Let's Encrypt para un servidor que NO está expuesto
+# a Internet: en DNS-01, Let's Encrypt solo comprueba un registro TXT en
+# `_acme-challenge` y nunca intenta conectar aquí.
+#
+# Importante: el registro A de este nombre debe existir SOLO en el resolver
+# interno o el DNS de la VPN. Publicarlo en Cloudflare apuntando a una IP
+# privada filtra topología de red y, sobre todo, muchos routers y resolvers
+# descartan respuestas públicas que contienen direcciones RFC1918 —protección
+# anti DNS-rebinding— dejando iPhones que sencillamente no resuelven el nombre.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	tls {
+		dns cloudflare {$CLOUDFLARE_API_TOKEN}
+	}
+
+	encode zstd gzip
+
+	# ── API de Supabase ────────────────────────────────────────────────
+	# Mismo origen que la PWA, así que no hay CORS que configurar ni
+	# preflights que fallen. Una pieza menos que puede romperse en un iPad.
+	handle /rest/* {
+		reverse_proxy kong:8000
+	}
+	handle /auth/* {
+		reverse_proxy kong:8000
+	}
+	handle /storage/* {
+		reverse_proxy kong:8000
+	}
+	handle /realtime/* {
+		reverse_proxy kong:8000
+	}
+
+	# ── PWA ────────────────────────────────────────────────────────────
+	handle {
+		root * /srv/dist
+		try_files {path} /index.html
+		file_server
+
+		# Los assets llevan hash en el nombre, así que son inmutables.
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+
+		# index.html y el service worker NO se cachean: son los que anuncian
+		# que hay versión nueva. Si se cachean, un despliegue puede tardar
+		# días en llegar a un iPad que nunca cierra la pestaña.
+		@nocache path /index.html / /sw.js /manifest.webmanifest
+		header @nocache Cache-Control "no-cache, must-revalidate"
+
+		header {
+			X-Content-Type-Options nosniff
+			X-Frame-Options DENY
+			Referrer-Policy strict-origin-when-cross-origin
+			# HSTS solo tras confirmar que todo va por HTTPS: activarlo antes
+			# de tiempo deja los navegadores clavados en un nombre que quizá
+			# aún no sirve bien.
+			# Strict-Transport-Security "max-age=31536000"
+		}
+	}
+
+	log {
+		output file /var/log/caddy/aulas.log {
+			roll_size 10MB
+			roll_keep 10
+		}
+	}
+}

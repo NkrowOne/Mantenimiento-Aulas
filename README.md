@@ -29,11 +29,70 @@ nunca ediciones:
 Consecuencia directa: **la sincronización offline no tiene conflictos que
 resolver**, y la auditoría de "quién hizo qué" sale del propio historial.
 
-## Puesta en marcha
+## Despliegue
+
+Un solo host, un `docker compose`, un nombre DNS. Caddy termina el TLS, sirve la
+PWA y hace de proxy a Supabase **en el mismo origen**, así que no hay CORS que
+configurar.
+
+```bash
+cp .env.example .env
+npm run gen:keys                 # secretos y claves; pégalos en .env
+npm run import:excel -- <xlsx>   # genera supabase/seed.sql
+npm run deploy -- --con-seed
+npm run admin:user -- crear --email tu@correo.es --nombre "Tu nombre" --primer-admin
+```
+
+`deploy.sh` valida la configuración **antes** de levantar nada: un despliegue
+que arranca a medias y falla en el tercer servicio cuesta mucho más de
+diagnosticar que uno que se niega a empezar diciendo qué falta.
+
+### El certificado, que es lo que decide si hay modo offline
+
+Sin HTTPS válido no hay service worker, y sin service worker no hay modo
+offline. El certificado se emite por **reto DNS-01 contra Cloudflare**, que no
+necesita que el servidor sea alcanzable desde Internet: Let's Encrypt solo
+comprueba un TXT en `_acme-challenge` y nunca conecta aquí.
+
+**El registro A debe existir solo en el resolver interno o el DNS de la VPN.**
+Publicarlo en el DNS público apuntando a una IP privada filtra topología de red
+y, sobre todo, muchos routers y resolvers descartan respuestas públicas que
+contienen direcciones RFC1918 —protección anti DNS-rebinding— dejando iPhones
+que sencillamente no resuelven el nombre.
+
+### Usuarios
+
+No hay registro abierto ni SMTP. Un administrador da de alta a cada técnico y le
+entrega un código de un solo uso que caduca en 24 horas:
+
+```bash
+npm run admin:user -- crear  --email ana@x.es --nombre "Ana" --rol tecnico
+npm run admin:user -- codigo --email ana@x.es      # si se pierde
+npm run admin:user -- rol    --email ana@x.es --rol supervisor
+npm run admin:user -- listar
+```
+
+El código **es** la contraseña temporal. Al usarlo, la app la rota
+inmediatamente a una aleatoria fuerte que no se guarda en ningún sitio, así que
+el código deja de valer y la única llave del dispositivo pasa a ser el refresh
+token cifrado con el PIN.
+
+### Copias de seguridad
+
+```bash
+npm run backup                       # en cron, de madrugada
+npm run backup -- --probar <fichero> # restaurar en una base desechable
+```
+
+Copia Postgres **y** el volumen de Storage: las fotos no están en la base de
+datos, y un volcado solo de Postgres dejaría las incidencias sin sus pruebas.
+`--probar` existe porque una copia que nunca se ha restaurado no es una copia.
+
+## Desarrollo
 
 ```bash
 npm install
-cp .env.example .env          # apunta a tu Supabase self-hosted
+cp .env.example .env
 npm run dev
 ```
 
@@ -89,6 +148,9 @@ producción lo levanta `docker compose up reports-worker` y lo despierta
 | Panel con alertas y gráficos | ✅ paleta validada en claro y oscuro |
 | Incidencias, almacén y depuración de datos | ✅ |
 | Worker de informes PDF | ✅ PDF real generado y revisado |
+| Buckets de Storage y sus políticas | ✅ 3 pruebas de RLS propias |
+| Despliegue: Compose, Caddy, claves, copias | ✅ |
+| Alta de usuarios y códigos | ✅ |
 | Integración con ServiceNow | 🔌 puerto listo, falta la implementación |
 
 ## Decisiones que conviene conocer
@@ -121,10 +183,10 @@ que la app existe para dar.
   (`Monitor 86" (edificio BC)`) pero no en la hoja de estado. Está importado como
   edificio provisional marcado `needs_review`, junto a `CEFF`, `TM`, `S`, `G` y
   `CC`. La pantalla de administración permitirá fusionarlo o confirmarlo.
-- **El certificado HTTPS.** Con red interna + VPN, sin HTTPS válido no hay
-  service worker y sin service worker no hay modo offline. Hace falta un
-  hostname real (no una IP: Let's Encrypt no emite certificados de IP por
-  DNS-01) con DNS split-horizon, o bien Tailscale.
+- **El dominio real.** El `.env.example` trae `aulas.tudominio.es` como
+  marcador. Cámbialo por el vuestro en `DOMAIN` y `VITE_SUPABASE_URL`;
+  `deploy.sh` comprueba que ambos coincidan, porque cambiar uno y olvidar el
+  otro deja la app hablando con el host anterior.
 
 ## Informes
 
@@ -152,4 +214,6 @@ supabase/         migraciones, harness de pruebas y seed generado
 src/integrations/ puerto de tickets externos (ServiceNow en el futuro)
 scripts/          importador del Excel y verificación de base de datos
 reports-worker/   generador de informes PDF, con su Dockerfile
+Caddyfile         TLS por DNS-01, PWA y proxy de API en un solo origen
+docker-compose.yml  Supabase self-hosted, Caddy y worker
 ```

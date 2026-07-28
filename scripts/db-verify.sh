@@ -29,7 +29,13 @@ if ! pg_isready -h "$PGSOCK" -p "$PGPORT" >/dev/null 2>&1; then
 fi
 
 echo "▸ Reiniciando el esquema"
-psql "$PGURL" -q -c "drop schema if exists public cascade; create schema public; drop schema if exists auth cascade;" >/dev/null
+# El esquema `storage` también se borra: si queda, sus permisos siguen
+# dependiendo de los roles y estos no se pueden recrear.
+psql "$PGURL" -q -c "
+  drop schema if exists public cascade;
+  create schema public;
+  drop schema if exists auth cascade;
+  drop schema if exists storage cascade;" >/dev/null
 psql "$PGURL" -q -c "
   drop role if exists anon;
   drop role if exists authenticated;

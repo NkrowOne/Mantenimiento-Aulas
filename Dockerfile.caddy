@@ -1,0 +1,10 @@
+# Caddy con el módulo de DNS de Cloudflare.
+#
+# La imagen oficial no lo trae, y sin él el reto DNS-01 no puede crear el
+# registro TXT: el certificado nunca se emite y la app se queda sin HTTPS,
+# es decir, sin service worker y sin modo offline.
+FROM caddy:2-builder AS builder
+RUN xcaddy build --with github.com/caddy-dns/cloudflare
+
+FROM caddy:2-alpine
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy

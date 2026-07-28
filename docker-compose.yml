@@ -1,29 +1,175 @@
-# Servicios propios que acompañan al stack de Supabase self-hosted.
+# Despliegue completo: Supabase self-hosted, Caddy, worker de informes y copias.
 #
-# Se conecta a la misma red que el compose oficial de Supabase, para que
-# `pg_cron` pueda alcanzar al worker por nombre de servicio. Llamarlo por
-# localhost no funcionaría: desde el contenedor de la base de datos, localhost
-# es la propia base de datos.
+#   cp .env.example .env
+#   npx tsx scripts/gen-keys.ts   # y pega el resultado en .env
+#   ./scripts/deploy.sh
+#
+# Todo vive en una red interna. Lo único publicado es el 443 de Caddy, y aun
+# así el nombre solo resuelve dentro de la red o de la VPN.
 
 services:
-  reports-worker:
-    build: ./reports-worker
-    container_name: reports-worker
+  # ── Base de datos ────────────────────────────────────────────────────
+  db:
+    image: supabase/postgres:15.8.1.060
+    container_name: aulas-db
     restart: unless-stopped
     environment:
-      # Dentro de la red de Compose el host de la base de datos es `db`.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET}
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements,pg_cron
+      - -c
+      - cron.database_name=postgres
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d postgres']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [interna]
+
+  # ── Autenticación ────────────────────────────────────────────────────
+  auth:
+    image: supabase/gotrue:v2.177.0
+    container_name: aulas-auth
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: https://${DOMAIN:?falta DOMAIN}
+      GOTRUE_SITE_URL: https://${DOMAIN}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+
+      # El alta la hace un administrador con `npm run admin:user`. Dejar el
+      # registro abierto permitiría a cualquiera crearse una cuenta.
+      GOTRUE_DISABLE_SIGNUP: 'true'
+
+      # Sin SMTP: los informes son de descarga y las altas se entregan en mano,
+      # así que no hay ningún correo que enviar.
+      GOTRUE_MAILER_AUTOCONFIRM: 'true'
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: 'true'
+      GOTRUE_EXTERNAL_PHONE_ENABLED: 'false'
+
+      # ⚠️ El hook que mete el rol en el JWT. En self-hosted se activa AQUÍ, no
+      # desde ningún panel: la documentación oficial está escrita para la nube y
+      # no lo menciona. Sin esto, `auth_role()` devuelve 'none', RLS no deja
+      # hacer nada y el fallo no da ningún mensaje útil.
+      GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED: 'true'
+      GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI: pg-functions://postgres/public/custom_access_token_hook
+    networks: [interna]
+
+  # ── API REST sobre las tablas ────────────────────────────────────────
+  rest:
+    image: postgrest/postgrest:v12.2.12
+    container_name: aulas-rest
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:5432/postgres
+      PGRST_DB_SCHEMAS: public,storage
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: 'false'
+    networks: [interna]
+
+  # ── Ficheros ─────────────────────────────────────────────────────────
+  storage:
+    image: supabase/storage-api:v1.19.3
+    container_name: aulas-storage
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      ANON_KEY: ${ANON_KEY:?falta ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY:?falta SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: aulas
+      REGION: local
+      GLOBAL_S3_BUCKET: aulas
+    volumes:
+      - storage-data:/var/lib/storage
+    networks: [interna]
+
+  # ── Puerta de entrada a la API ───────────────────────────────────────
+  kong:
+    image: kong:3.9
+    container_name: aulas-kong
+    restart: unless-stopped
+    depends_on: [auth, rest, storage]
+    environment:
+      KONG_DATABASE: 'off'
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth
+    volumes:
+      - ./supabase/kong.yml:/home/kong/kong.yml:ro
+    networks: [interna]
+
+  # ── TLS y servicio de la PWA ─────────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: aulas-caddy
+    restart: unless-stopped
+    depends_on: [kong]
+    # La imagen base no trae el módulo de Cloudflare; se construye con él.
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?falta ACME_EMAIL}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:?falta CLOUDFLARE_API_TOKEN}
+    ports:
+      - '443:443'
+      - '80:80'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./dist:/srv/dist:ro
+      - caddy-data:/data
+      - caddy-config:/config
+      - caddy-logs:/var/log/caddy
+    networks: [interna]
+
+  # ── Informes ─────────────────────────────────────────────────────────
+  reports-worker:
+    build: ./reports-worker
+    container_name: aulas-reports
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
-      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_URL: https://${DOMAIN}
       SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
-      WORKER_TOKEN: ${REPORTS_WORKER_TOKEN}
+      WORKER_TOKEN: ${REPORTS_WORKER_TOKEN:?falta REPORTS_WORKER_TOKEN}
       PORT: 8080
-    networks:
-      - supabase
     # Sin puertos publicados: solo lo llama pg_cron desde dentro de la red.
-    expose:
-      - '8080'
+    expose: ['8080']
+    networks: [interna]
+
+volumes:
+  db-data:
+  storage-data:
+  caddy-data:
+  caddy-config:
+  caddy-logs:
 
 networks:
-  supabase:
-    external: true
-    name: supabase_default
+  interna:
+    driver: bridge

@@ -168,3 +168,53 @@ select case
   else 'ATENCIÓN: ' || count(*) || ' artículos en negativo'
 end as resultado
 from stock_levels where on_hand < 0;
+
+\echo ''
+\echo '=== 9. Los buckets existen y son privados ==='
+select case
+  when count(*) = 2 and bool_and(not public) then 'OK: fotos y reports, ambos privados'
+  else 'FALLO: ' || count(*) || ' buckets, públicos: ' ||
+       coalesce((select string_agg(id, ',') from storage.buckets where public), 'ninguno')
+end as resultado
+from storage.buckets where id in ('fotos', 'reports');
+
+\echo ''
+\echo '=== 10. Un técnico puede subir una foto pero NO borrarla ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  insert into storage.objects (bucket_id, name, owner)
+  values ('fotos', 'inspection/x/y.jpg', '11111111-1111-4111-8111-111111111111');
+  select 'OK: la subida se permite' as resultado;
+
+  -- Sin política de DELETE, RLS filtra la fila: no borra nada y no lanza error.
+  -- Es justo lo que queremos: una foto de incidencia es prueba, no un borrador.
+  savepoint s;
+  do $$
+  declare n int;
+  begin
+    delete from storage.objects where bucket_id = 'fotos';
+    get diagnostics n = row_count;
+    if n > 0 then raise exception 'FALLO: se borraron % fotos', n; end if;
+    raise notice 'OK: RLS impide borrar fotos';
+  exception when insufficient_privilege then
+    raise notice 'OK: RLS bloqueó el borrado';
+  end $$;
+  rollback to savepoint s;
+rollback;
+
+\echo ''
+\echo '=== 11. Un técnico NO puede escribir en el bucket de informes ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  savepoint s;
+  do $$
+  begin
+    insert into storage.objects (bucket_id, name, owner)
+    values ('reports', 'diario/falso.pdf', '11111111-1111-4111-8111-111111111111');
+    raise exception 'FALLO: un técnico escribió un informe';
+  exception when insufficient_privilege then
+    raise notice 'OK: RLS reservó los informes al worker';
+  end $$;
+  rollback to savepoint s;
+rollback;

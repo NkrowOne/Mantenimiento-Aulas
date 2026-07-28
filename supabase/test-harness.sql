@@ -30,6 +30,38 @@ language sql stable as $$
   select coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb, '{}'::jsonb);
 $$;
 
+-- -----------------------------------------------------------------------------
+-- Storage
+--
+-- Solo lo que tocan nuestras migraciones y pruebas. Sirve para verificar de
+-- verdad que las políticas de buckets deniegan lo que dicen denegar, en vez de
+-- dar por buena una migración que nadie ha ejecutado nunca.
+-- -----------------------------------------------------------------------------
+create schema if not exists storage;
+
+create table storage.buckets (
+  id                 text primary key,
+  name               text not null,
+  public             boolean not null default false,
+  file_size_limit    bigint,
+  allowed_mime_types text[],
+  created_at         timestamptz not null default now()
+);
+
+create table storage.objects (
+  id         uuid primary key default gen_random_uuid(),
+  bucket_id  text references storage.buckets(id),
+  name       text not null,
+  owner      uuid,
+  metadata   jsonb,
+  created_at timestamptz not null default now()
+);
+
+alter table storage.objects enable row level security;
+
+grant usage on schema storage to anon, authenticated, service_role;
+grant all on storage.buckets, storage.objects to authenticated, service_role;
+
 -- Supabase concede estos permisos de serie a los roles de PostgREST; RLS es
 -- quien restringe después. Sin ellos, `authenticated` ni siquiera ve las tablas
 -- y las pruebas fallarían por el motivo equivocado.
