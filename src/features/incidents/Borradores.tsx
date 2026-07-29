@@ -1,18 +1,27 @@
 /**
- * Bandeja de borradores.
+ * Borradores sin completar.
  *
  * Existe por una razón muy concreta: la ficha de sala deja guardar aportando
  * **solo la sala**, y permitir aplazar sin dar un sitio evidente donde se
  * acumule lo aplazado convierte «lo relleno luego» en «no se rellenó nunca».
  * Que es, literalmente, el problema del Excel del que se venía huyendo.
  *
- * Ordenada por antigüedad y no por fecha de creación descendente: las de arriba
- * son las que llevan más tiempo sin completarse, o sea las que corren peligro de
+ * Pero eso no justifica una pestaña propia, y tenerla era un error.
+ *
+ * Un borrador es una incidencia a medio escribir: la misma tabla, la misma
+ * pantalla, otro estado. Sacarla a la barra de navegación ponía un destino
+ * permanente —visible en las seis pantallas, todo el día, para los 276 usuarios—
+ * a algo que casi siempre está vacío. Una pestaña que la mayor parte del tiempo
+ * lleva a «nada pendiente» enseña a no pulsarla, y el día que sí tenga algo ya
+ * nadie la mira.
+ *
+ * Así que vive DENTRO de Incidencias, arriba, y **no se dibuja cuando no hay
+ * ninguno**: sin borradores, esto no ocupa un píxel ni deja un hueco.
+ *
+ * Ordenados por antigüedad y no por fecha de creación descendente: los de arriba
+ * son los que llevan más tiempo sin completarse, o sea los que corren peligro de
  * no completarse jamás. Un orden que enseñe primero lo recién creado esconde
  * exactamente lo que hay que despachar.
- *
- * Pensada para el escritorio, no para el pasillo: registrar es de pie, completar
- * es sentado.
  */
 
 import { useState } from 'react'
@@ -33,13 +42,37 @@ interface Borrador {
   opened_at: string
 }
 
-export function DraftsPage(): React.ReactElement {
+/**
+ * Silencio absoluto cuando no hay nada.
+ *
+ * Ni cabecera, ni «ninguno pendiente», ni un hueco donde estaba: no hay noticia,
+ * así que no hay nada que decir. Un aviso que informa de que no pasa nada es
+ * exactamente el ruido que hay que quitar de una pantalla que se mira todos los
+ * días — y es la razón de que esto ya no sea una pestaña.
+ *
+ * Tampoco se dice nada mientras carga ni si falla: esto es un añadido a la
+ * pantalla de incidencias, y un tropiezo suyo no debe ensuciar la lista que el
+ * usuario venía a ver. La lista de abajo ya avisa si el servidor no responde.
+ *
+ * Va aparte del componente para poder probarlo: es la regla que mantiene la
+ * pantalla limpia, y una regla que se puede romper sin que salte nada acaba
+ * rota.
+ */
+export function hayQueMostrar(estado: {
+  cargando: boolean
+  fallo: boolean
+  cuantos: number
+}): boolean {
+  return !estado.cargando && !estado.fallo && estado.cuantos > 0
+}
+
+export function Borradores(): React.ReactElement | null {
   const qc = useQueryClient()
   const [editando, setEditando] = useState<string | null>(null)
   const [titulo, setTitulo] = useState('')
   const [ref, setRef] = useState('')
 
-  // El nombre de cada sala, del espejo local: la bandeja trae `room_id` y sin
+  // El nombre de cada sala, del espejo local: la consulta trae `room_id` y sin
   // resolverlo diría qué pasa pero no dónde, que es la mitad del dato.
   const salas = useLiveQuery(async () => {
     const [rooms, zones, buildings] = await Promise.all([
@@ -58,7 +91,7 @@ export function DraftsPage(): React.ReactElement {
     )
   }, [])
 
-  const { data: borradores, isPending, isError, refetch } = useQuery({
+  const { data: borradores, isPending, isError } = useQuery({
     queryKey: ['borradores'],
     queryFn: async (): Promise<Borrador[]> => {
       const { data, error } = await supabase
@@ -93,46 +126,26 @@ export function DraftsPage(): React.ReactElement {
 
   const pendientes = borradores ?? []
 
+  if (!hayQueMostrar({ cargando: isPending, fallo: isError, cuantos: pendientes.length })) {
+    return null
+  }
+
   return (
-    <div className="mx-auto max-w-3xl p-4">
-      <header className="mb-6">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <h1 className="text-xl font-semibold tracking-tight">Borradores</h1>
-          {pendientes.length > 0 && (
-            <span className="rounded-tag bg-warn-tint px-2 py-0.5 text-xs font-semibold text-warn">
-              {pendientes.length} sin completar
-            </span>
-          )}
-        </div>
-        <p className="mt-1.5 max-w-prose text-sm leading-relaxed text-muted">
-          Lo que se guardó en el pasillo con solo la sala. Las más antiguas, primero: son las que
-          corren peligro de no completarse nunca.
-        </p>
-      </header>
+    <section aria-labelledby="sec-borradores" className="section-tail mt-6">
+      <div className="section-head">
+        <h2 id="sec-borradores" className="eyebrow">
+          Sin completar
+        </h2>
+        <span className="rounded-tag bg-warn-tint px-2 py-0.5 text-xs font-semibold text-warn">
+          {pendientes.length}
+        </span>
+      </div>
 
-      {isPending && <p className="mt-6 text-sm text-muted">Cargando…</p>}
+      <p className="mb-3 max-w-prose text-sm leading-relaxed text-muted">
+        Se guardaron en el pasillo con solo la sala. Los más antiguos, primero.
+      </p>
 
-      {isError && (
-        <div className="card mt-6 p-4">
-          <p className="text-sm text-crit">No se han podido leer los borradores.</p>
-          <p className="mt-1 text-sm text-muted">Esta pantalla necesita conexión.</p>
-          <button
-            type="button"
-            onClick={() => void refetch()}
-            className="key key-quiet mt-3 min-h-11 px-3 text-sm"
-          >
-            Reintentar
-          </button>
-        </div>
-      )}
-
-      {!isPending && !isError && pendientes.length === 0 && (
-        <p className="mt-6 text-sm text-muted">
-          Nada pendiente de completar. Es exactamente donde hay que estar.
-        </p>
-      )}
-
-      <ul className="divide-y divide-line border-t border-line">
+      <ul className="divide-y divide-line-soft border-y border-line bg-surface px-4">
         {pendientes.map((b) => (
           <li key={b.id} className="py-4">
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
@@ -218,6 +231,6 @@ export function DraftsPage(): React.ReactElement {
           </li>
         ))}
       </ul>
-    </div>
+    </section>
   )
 }
