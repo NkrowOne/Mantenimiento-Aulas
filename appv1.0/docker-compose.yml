@@ -54,6 +54,10 @@ services:
       # DATABASE_URL de .env (ese apunta a "localhost" para herramientas
       # que corren en el host, ver comentario en .env.example).
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # Rol de mínimo privilegio (app_runtime): sin permiso de escritura
+      # sobre audit_log. src/db/migrate.ts sincroniza su contraseña con
+      # POSTGRES_APP_PASSWORD en cada arranque. Ver docs/AUDITORIA.md.
+      APP_DATABASE_URL: postgresql://app_runtime:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB}
       STORAGE_DRIVER: ${STORAGE_DRIVER}
       S3_ENDPOINT: ${S3_ENDPOINT}
       S3_REGION: ${S3_REGION}

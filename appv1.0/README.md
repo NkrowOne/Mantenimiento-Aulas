@@ -25,11 +25,12 @@ npm install
 | `npm run start` | Sirve la build de producción |
 | `npm run lint` | Ejecuta ESLint |
 | `npm run typecheck` | Comprueba los tipos con `tsc --noEmit` |
-| `npm run test` | Ejecuta los tests unitarios/integración con Vitest |
+| `npm run test` | Ejecuta los tests unitarios con Vitest (no requieren Docker) |
 | `npm run test:watch` | Ejecuta Vitest en modo observador |
+| `npm run test:integration` | Tests de integración contra Postgres real (triggers de auditoría incluidos) |
 | `npm run test:e2e` | Ejecuta los tests end-to-end con Playwright |
 | `npm run db:generate` | Genera SQL de migración a partir del esquema Drizzle |
-| `npm run db:migrate` | Aplica las migraciones pendientes contra `DATABASE_URL` |
+| `npm run db:migrate` | Aplica las migraciones pendientes y sincroniza el rol `app_runtime` |
 | `npm run db:studio` | Abre Drizzle Studio contra la base configurada |
 | `npm run db:seed` | Siembra datos iniciales (idempotente, ver más abajo) |
 
@@ -59,8 +60,10 @@ Variables mínimas (ver `.env.example`):
 
 | Variable | Descripción |
 |---|---|
-| `DATABASE_URL` | Cadena de conexión a PostgreSQL usada por la app |
+| `DATABASE_URL` | Conexión de PostgreSQL con el rol migrador (superusuario): migraciones, `drizzle-kit` |
+| `APP_DATABASE_URL` | Conexión con `app_runtime` (mínimo privilegio): la usa la app y el seed, ver `docs/AUDITORIA.md` |
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Credenciales de PostgreSQL (solo para el contenedor `postgres`) |
+| `POSTGRES_APP_PASSWORD` | Contraseña del rol `app_runtime`; se sincroniza en cada `db:migrate` |
 | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | Credenciales del usuario root de MinIO (solo para el contenedor `minio`) |
 | `S3_ENDPOINT` / `S3_REGION` / `S3_BUCKET` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` | Configuración del cliente S3 contra MinIO |
 | `STORAGE_DRIVER` | Driver de almacenamiento de fotos/ficheros (`s3` para MinIO) |
@@ -101,9 +104,11 @@ npm run db:seed       # siembra datos iniciales (idempotente)
 npm run db:studio     # explorador visual de la base
 ```
 
-`db:generate`/`db:migrate`/`db:seed` usan el `DATABASE_URL` de `.env`, que apunta a `localhost:5432` (el puerto que Docker Compose publica en el host). **Dentro** del contenedor `app`, `docker-compose.yml` compone su propia `DATABASE_URL` con el host de red interno `postgres` a partir de `POSTGRES_DB`/`USER`/`PASSWORD` — son dos valores distintos a propósito, ver el comentario en `.env.example`.
+`db:generate`/`db:migrate` usan el `DATABASE_URL` de `.env` (rol migrador, superusuario), que apunta a `localhost:5432` (el puerto que Docker Compose publica en el host). `db:seed` y la propia app usan `APP_DATABASE_URL`: un segundo rol de PostgreSQL, `app_runtime`, sin privilegios de superusuario y sin permiso de escritura sobre `audit_log` — ver [`docs/AUDITORIA.md`](../docs/AUDITORIA.md). **Dentro** del contenedor `app`, `docker-compose.yml` compone sus propias `DATABASE_URL`/`APP_DATABASE_URL` con el host de red interno `postgres` a partir de `POSTGRES_DB`/`USER`/`PASSWORD` y `POSTGRES_APP_PASSWORD` — son valores distintos a propósito, ver el comentario en `.env.example`.
 
-Las migraciones **se aplican solas** al arrancar el contenedor: `src/instrumentation.ts` las ejecuta con el runtime de Drizzle (no el CLI de `drizzle-kit`, que es una herramienta de desarrollo) antes de servir peticiones. Es idempotente, así que `docker compose down -v && docker compose up` deja el sistema operativo sin pasos manuales. El seed sigue siendo manual (`npm run db:seed`) porque crea un usuario administrador con una contraseña conocida — no algo que quieras repetir sin querer en cada reinicio.
+Las migraciones **se aplican solas** al arrancar el contenedor: `src/instrumentation.ts` las ejecuta con el runtime de Drizzle (no el CLI de `drizzle-kit`, que es una herramienta de desarrollo) y sincroniza la contraseña de `app_runtime`, antes de servir peticiones. Es idempotente, así que `docker compose down -v && docker compose up` deja el sistema operativo sin pasos manuales. El seed sigue siendo manual (`npm run db:seed`) porque crea un usuario administrador con una contraseña conocida — no algo que quieras repetir sin querer en cada reinicio.
+
+Toda escritura sobre las tablas de negocio queda auditada automáticamente por un trigger de PostgreSQL — API, sincronización o SQL directo por igual — y `audit_log` no puede alterarse desde el rol con el que se conecta la aplicación. Detalle completo, con los tests que lo verifican, en [`docs/AUDITORIA.md`](../docs/AUDITORIA.md) (`npm run test:integration`).
 
 ## Variables de entorno (src/lib/env.ts)
 
@@ -128,6 +133,7 @@ Si falta una variable obligatoria, **la aplicación falla al arrancar** con un m
 Dockerfile              # Build multi-stage (deps/builder/runner), output standalone
 docker-compose.yml      # app + postgres + minio, volúmenes y healthchecks
 drizzle.config.ts       # Configuración de drizzle-kit (generate/migrate/studio)
+vitest.integration.config.ts # Tests contra Postgres real (npm run test:integration)
 .dockerignore
 .env.example            # Plantilla de variables de entorno
 
@@ -151,9 +157,12 @@ src/
 │   └── feedback/     # Estados de carga, error, vacío...
 ├── db/
 │   ├── schema/       # 16 tablas + vista stock_levels (Drizzle)
-│   ├── migrations/   # SQL generado por drizzle-kit
-│   ├── index.ts      # Cliente Drizzle (drizzle-orm/postgres-js)
-│   ├── migrate.ts    # Migrador en runtime, usado por instrumentation.ts
+│   ├── migrations/   # SQL generado por drizzle-kit + trigger de auditoría
+│   ├── index.ts      # Cliente Drizzle, rol app_runtime (drizzle-orm/postgres-js)
+│   ├── migrate.ts    # Migrador en runtime + sincroniza el rol app_runtime
+│   ├── migrate-cli.ts # Entrada de `npm run db:migrate`
+│   ├── audit-context.ts # withAuditContext(): usuario/origen para el trigger
+│   ├── audit.integration.test.ts # Tests del trigger (npm run test:integration)
 │   └── seed.ts        # Semilla idempotente (npm run db:seed)
 ├── lib/
 │   ├── env.ts        # Validación centralizada de variables de entorno (Zod)

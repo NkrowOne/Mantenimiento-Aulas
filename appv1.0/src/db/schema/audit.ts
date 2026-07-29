@@ -7,20 +7,29 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { users } from "./users";
 import { auditOriginEnum, dbOperationEnum } from "./enums";
 
 /**
- * Auditoría genérica: qué fila de qué tabla cambió, quién y cómo.
- * docs/PLAN.md exige que esto se alimente con triggers de PostgreSQL (para
- * cubrir también escrituras por sync o SQL directo), no solo desde código
- * de aplicación; los triggers son una pieza pendiente de una fase
- * posterior — esta tabla ya deja el destino listo para recibirlos.
+ * Auditoría genérica: qué fila de qué tabla cambió, quién y cómo. Se
+ * alimenta EXCLUSIVAMENTE mediante un trigger de PostgreSQL (ver
+ * `src/db/migrations/0001_audit_triggers.sql` y docs/AUDITORIA.md), nunca
+ * escrita directamente desde código de aplicación — así cubre también las
+ * escrituras por sincronización o SQL directo, y el rol de la app en
+ * tiempo de ejecución (`app_runtime`) no tiene privilegio para alterarla.
+ *
+ * `id` usa `gen_random_uuid()` como default (en vez del UUID v7 generado
+ * en cliente que usan las entidades de negocio): esta fila la crea el
+ * propio trigger dentro de la base de datos, no hay "cliente" que la
+ * origine.
  */
 export const auditLog = pgTable(
   "audit_log",
   {
-    id: uuid("id").primaryKey(),
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
     tableName: text("table_name").notNull(),
     recordId: uuid("record_id").notNull(),
     action: dbOperationEnum("action").notNull(),
@@ -28,6 +37,11 @@ export const auditLog = pgTable(
     occurredAt: timestamp("occurred_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /** Fila completa antes del cambio (NULL en INSERT). */
+    oldValues: jsonb("old_values"),
+    /** Fila completa después del cambio (NULL en DELETE). */
+    newValues: jsonb("new_values"),
+    /** Solo las claves que cambiaron, cada una con `{anterior, nuevo}`. */
     diff: jsonb("diff"),
     origin: auditOriginEnum("origin").notNull().default("app"),
   },

@@ -9,6 +9,7 @@ import {
 const validServerEnv = {
   NODE_ENV: "production",
   DATABASE_URL: "postgresql://user:pass@postgres:5432/db",
+  APP_DATABASE_URL: "postgresql://app_runtime:pass@postgres:5432/db",
   STORAGE_DRIVER: "s3",
   S3_ENDPOINT: "http://minio:9000",
   S3_REGION: "us-east-1",
@@ -70,6 +71,12 @@ describe("parseServerEnv", () => {
     expect(() =>
       parseServerEnv({ ...validServerEnv, DATABASE_URL: "no-es-una-url" }),
     ).toThrowError(/DATABASE_URL/);
+  });
+
+  it("falla cuando falta APP_DATABASE_URL (el rol de mínimo privilegio de la app)", () => {
+    const input: Record<string, string | undefined> = { ...validServerEnv };
+    delete input.APP_DATABASE_URL;
+    expect(() => parseServerEnv(input)).toThrowError(/APP_DATABASE_URL/);
   });
 
   it("falla cuando STORAGE_DRIVER tiene un valor no soportado", () => {

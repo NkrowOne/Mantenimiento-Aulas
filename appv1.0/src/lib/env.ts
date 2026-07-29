@@ -23,12 +23,20 @@ export const serverEnvSchema = z.object({
     .enum(["development", "production", "test"])
     .default("development"),
 
-  // PostgreSQL: la app solo necesita la cadena de conexión ya compuesta.
+  // PostgreSQL. Dos roles, dos cadenas de conexión distintas a propósito
+  // (ver docs/AUDITORIA.md): DATABASE_URL es el rol migrador/superusuario
+  // (drizzle-kit, migraciones); APP_DATABASE_URL es "app_runtime", sin
+  // privilegios de superusuario y sin permiso de escritura sobre
+  // audit_log, que es la conexión que usa la app en tiempo de ejecución.
   // Las credenciales sueltas (POSTGRES_USER/PASSWORD/DB) las consume
   // únicamente el contenedor de postgres, nunca el proceso de Next.js.
   DATABASE_URL: requiredUrl(
     "DATABASE_URL es obligatoria",
     "DATABASE_URL debe ser una cadena de conexión válida",
+  ),
+  APP_DATABASE_URL: requiredUrl(
+    "APP_DATABASE_URL es obligatoria",
+    "APP_DATABASE_URL debe ser una cadena de conexión válida",
   ),
 
   // Almacenamiento S3 compatible (MinIO). MINIO_ROOT_USER/PASSWORD
