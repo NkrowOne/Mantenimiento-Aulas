@@ -9,7 +9,7 @@ import { RoomListPage } from '@/features/rooms/RoomListPage'
 import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
 import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
 
-import { getSealed, lock, resumeSession, touch } from '@/auth/session'
+import { getSealed, lock, resumeSession, touch, watchSession } from '@/auth/session'
 import { db, purgeSyncedInspections, requestPersistentStorage } from '@/db/dexie'
 import { pullMaster, type ResultadoPull } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
@@ -160,6 +160,15 @@ export function App(): React.ReactElement {
       zones: new Map(zones.map((z) => [z.id, z])),
     }
   }, [buildingId])
+
+  /*
+   * La custodia se engancha ANTES de restaurar nada, y fuera del efecto que
+   * depende de `unlocked`: la primera renovación del token puede ocurrir dentro
+   * del propio `setSession()` de la reanudación, o sea antes de que la
+   * aplicación se considere desbloqueada. Engancharla después es perderse justo
+   * el token que había que guardar.
+   */
+  useEffect(() => watchSession(), [])
 
   useEffect(() => {
     void (async () => {
