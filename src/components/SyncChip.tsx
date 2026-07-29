@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { pendingSummary } from '@/db/dexie'
 import { flush, onSyncState, retryRejected, type SyncState } from '@/sync/outbox'
+import { pullMaster } from '@/sync/pull'
 
 /**
  * La lámpara de estado.
@@ -27,9 +28,39 @@ import { flush, onSyncState, retryRejected, type SyncState } from '@/sync/outbox
 export function SyncChip(): React.ReactElement {
   const [state, setState] = useState<SyncState>('inactivo')
   const [open, setOpen] = useState(false)
+  const [bajando, setBajando] = useState(false)
+  const [resultado, setResultado] = useState<string | null>(null)
+  const raiz = useRef<HTMLDivElement>(null)
   const summary = useLiveQuery(() => pendingSummary(), [], null)
 
   useEffect(() => onSyncState(setState), [])
+
+  /*
+   * Cerrar tocando fuera, y con Escape.
+   *
+   * Antes la única salida era volver a pulsar la lámpara —un cuadrado de 8 px
+   * que el propio panel tapa en cuanto se abre—, así que en un móvil el panel
+   * se quedaba clavado en pantalla y no había forma de quitarlo sin recargar.
+   * Un popover que no se cierra tocando fuera no es un popover, es un modal
+   * sin botón de cerrar.
+   */
+  useEffect(() => {
+    if (!open) return
+
+    const fuera = (e: PointerEvent): void => {
+      if (!raiz.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const escape = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+
+    document.addEventListener('pointerdown', fuera)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('pointerdown', fuera)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [open])
 
   const pending = summary?.total ?? 0
   const rejected = summary?.rejected ?? 0
@@ -96,13 +127,41 @@ export function SyncChip(): React.ReactElement {
             </p>
           )}
 
+          {resultado && <p className="mt-2 text-muted">{resultado}</p>}
+
           <div className="mt-3 flex gap-2">
+            {/*
+              «Sincronizar» sincroniza en los dos sentidos.
+              Antes solo llamaba a `flush()`, que vacía la cola de SALIDA: con la
+              cola vacía —el caso normal— no hacía absolutamente nada, ni siquiera
+              decirlo. Quien lo pulsa quiere lo contrario, traerse lo que hay en el
+              servidor, así que ahora sube y luego baja, y cuenta cómo ha ido.
+            */}
             <button
               type="button"
-              onClick={() => void flush()}
+              disabled={bajando}
+              onClick={() => {
+                setBajando(true)
+                setResultado(null)
+                void (async () => {
+                  try {
+                    await flush()
+                    const bajado = await pullMaster()
+                    setResultado(
+                      bajado.ok
+                        ? `Al día: ${bajado.filas} filas del servidor.`
+                        : `No se ha podido descargar: ${bajado.error}`,
+                    )
+                  } catch (err) {
+                    setResultado(err instanceof Error ? err.message : String(err))
+                  } finally {
+                    setBajando(false)
+                  }
+                })()
+              }}
               className="key key-accent flex-1 px-3 py-2 text-xs"
             >
-              Sincronizar
+              {bajando ? 'Sincronizando…' : 'Sincronizar'}
             </button>
             {rejected > 0 && (
               <button

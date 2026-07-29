@@ -74,6 +74,30 @@ Comprueba **antes de tocar nada** que GoTrue y Storage ya hayan arrancado
 que falte llevando registro en `schema_migrations`, alinea el token del worker y
 verifica al final que el hook del rol es ejecutable. Repetirlo no duplica nada.
 
+#### El hook del rol hay que activarlo en el servicio de auth
+
+Es la variable que más caro sale olvidar, así que va aparte. En el servicio de
+GoTrue de la plataforma:
+
+```
+GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true
+GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI=pg-functions://postgres/public/custom_access_token_hook
+```
+
+Están escritas en `docker-compose.yml`, pero sobre una plataforma ese fichero no
+se usa: hay que copiarlas al servicio a mano. Sin ellas el token sale **sin el
+claim `app_role`**, y ese fallo no se parece a un fallo — PostgREST no distingue
+«no tienes permiso» de «no hay nada», así que responde `200 []` a todas las
+lecturas. La aplicación arranca perfecta, acepta el PIN, no da un solo error y no
+enseña ni una fila: idéntico a una base vacía.
+
+Desde la migración `20260729000100_rol_sin_hook.sql` esto ya no deja la
+aplicación muerta —si el claim no viene, `auth_role()` mira el perfil—, pero
+activar el hook sigue siendo lo correcto: es el camino rápido y el que evita una
+consulta extra por sentencia. Para saber en cuál de los dos estás, la propia
+aplicación lo dice: el botón **«Ver diagnóstico del servidor»**, que sale junto
+al aviso de que no hay datos, enseña si el claim llega y qué rol tiene tu perfil.
+
 El `Dockerfile` de la raíz construye la PWA y la sirve con `Caddyfile.skyway`,
 que además hace de proxy de `/rest`, `/auth` y `/storage` hacia Kong: **la API
 va por el mismo origen que la PWA**, que es lo que permite que `kong.yml` no
