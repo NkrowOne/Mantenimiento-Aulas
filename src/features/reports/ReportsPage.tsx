@@ -43,7 +43,13 @@ export function ReportsPage(): React.ReactElement {
 
   const generate = useMutation({
     mutationFn: async (input: { kind: string; from?: string; to?: string }) => {
-      const { error } = await supabase.rpc('request_report', { kind: input.kind })
+      // Las fechas se envían de verdad. Antes se recogían aquí arriba y se
+      // perdían: el informe «a medida» salía siempre con los datos de ayer.
+      const { error } = await supabase.rpc('request_report', {
+        kind: input.kind,
+        p_start: input.from ?? null,
+        p_end: input.to ?? null,
+      })
       if (error) throw error
     },
     onSuccess: () => {

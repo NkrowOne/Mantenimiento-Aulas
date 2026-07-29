@@ -121,8 +121,18 @@ export async function loadReportData(
   }
 }
 
-/** Rango de fechas de cada tipo de informe. */
+/**
+ * Rango de fechas de cada tipo de informe.
+ *
+ * `personalizado` no tiene rango propio: sus fechas llegan en la petición. Si
+ * llega aquí es que no llegaron, y devolver calladamente el día de ayer produce
+ * un PDF con datos que nadie ha pedido y una etiqueta que dice otra cosa.
+ */
 export function periodFor(kind: string, today = new Date()): { start: string; end: string } {
+  if (kind === 'personalizado') {
+    throw new Error('Un informe a medida necesita fecha de inicio y de fin')
+  }
+
   const iso = (d: Date): string => d.toISOString().slice(0, 10)
 
   if (kind === 'semanal') {

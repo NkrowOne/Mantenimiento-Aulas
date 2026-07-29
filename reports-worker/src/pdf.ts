@@ -14,6 +14,16 @@ import { spawn } from 'node:child_process'
 
 export class PdfError extends Error {}
 
+/**
+ * Tope de tiempo. Un WeasyPrint colgado no termina nunca, y sin esto la promesa
+ * tampoco: la petición HTTP se quedaba abierta para siempre y el worker perdía
+ * una de sus dos conexiones a la base. `restart: unless-stopped` no rescata de
+ * esto, porque el proceso no se cae — se queda quieto.
+ *
+ * Un informe real se renderiza en segundos; medio minuto es margen de sobra.
+ */
+const TIMEOUT_MS = Number(process.env['PDF_TIMEOUT_MS'] ?? 30_000)
+
 export function htmlToPdf(html: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     // `-` como entrada y salida: todo por tuberías, sin ficheros temporales
@@ -24,28 +34,57 @@ export function htmlToPdf(html: string): Promise<Buffer> {
 
     const out: Buffer[] = []
     const err: string[] = []
+    let resuelto = false
+
+    const terminar = (fn: () => void): void => {
+      if (resuelto) return
+      resuelto = true
+      clearTimeout(reloj)
+      fn()
+    }
+
+    const reloj = setTimeout(() => {
+      proc.kill('SIGKILL')
+      terminar(() =>
+        reject(new PdfError(`weasyprint no terminó en ${TIMEOUT_MS} ms; proceso terminado`)),
+      )
+    }, TIMEOUT_MS)
 
     proc.stdout.on('data', (c: Buffer) => out.push(c))
     proc.stderr.on('data', (c: Buffer) => err.push(c.toString()))
 
     proc.on('error', (e) => {
-      reject(new PdfError(`No se pudo ejecutar weasyprint: ${e.message}`))
+      terminar(() => reject(new PdfError(`No se pudo ejecutar weasyprint: ${e.message}`)))
+    })
+
+    /*
+     * El HTML de un informe con veinte filas y dos SVG no cabe en el búfer de la
+     * tubería, así que la escritura es parcial y asíncrona. Si weasyprint muere
+     * antes de leerlo todo —plantilla mal formada, falta de memoria—, el `write`
+     * emite EPIPE en `stdin`. Ese flujo es su propio emisor de eventos: el
+     * `proc.on('error')` de arriba NO lo cubre, y un 'error' sin manejador
+     * derriba el proceso entero de Node. El worker se caía por un informe malo.
+     */
+    proc.stdin.on('error', (e: NodeJS.ErrnoException) => {
+      if (e.code === 'EPIPE') return // se informa por el código de salida
+      terminar(() => reject(new PdfError(`Fallo escribiendo a weasyprint: ${e.message}`)))
     })
 
     proc.on('close', (code) => {
-      if (code !== 0) {
-        reject(new PdfError(`weasyprint terminó con código ${code}: ${err.join('')}`))
-        return
-      }
-      const buf = Buffer.concat(out)
-      if (buf.length === 0) {
-        reject(new PdfError('weasyprint devolvió un PDF vacío'))
-        return
-      }
-      resolve(buf)
+      terminar(() => {
+        if (code !== 0) {
+          reject(new PdfError(`weasyprint terminó con código ${code}: ${err.join('')}`))
+          return
+        }
+        const buf = Buffer.concat(out)
+        if (buf.length === 0) {
+          reject(new PdfError('weasyprint devolvió un PDF vacío'))
+          return
+        }
+        resolve(buf)
+      })
     })
 
-    proc.stdin.write(html)
-    proc.stdin.end()
+    proc.stdin.end(html)
   })
 }

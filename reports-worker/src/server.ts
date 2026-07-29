@@ -14,7 +14,7 @@ import postgres from 'postgres'
 import { loadReportData, periodFor } from './data.js'
 import { renderReport } from './template.js'
 import { htmlToPdf } from './pdf.js'
-import { createHash } from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 
 const PORT = Number(process.env['PORT'] ?? 8080)
 const TOKEN = process.env['WORKER_TOKEN'] ?? ''
@@ -22,7 +22,40 @@ const DATABASE_URL = process.env['DATABASE_URL'] ?? ''
 const SUPABASE_URL = process.env['SUPABASE_URL'] ?? ''
 const SERVICE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? ''
 
+/** Cuerpo máximo de una petición. Nadie manda más que `{kind, start, end}`. */
+const MAX_BODY = 8 * 1024
+
 if (!DATABASE_URL) throw new Error('Falta DATABASE_URL')
+
+/*
+ * Sin token no se arranca.
+ *
+ * Antes la comprobación era `if (TOKEN && …)`: con `WORKER_TOKEN` vacío el
+ * `if` no entraba nunca y el endpoint quedaba abierto a cualquiera que
+ * alcanzase el contenedor. Un fallo de autenticación que se abre en vez de
+ * cerrarse es peor que no tenerla, porque nadie se entera.
+ *
+ * El compose ya exige que la variable exista, pero exigir que exista no es lo
+ * mismo que exigir que valga algo.
+ */
+if (process.env['NODE_ENV'] !== 'test' && TOKEN.length < 16) {
+  throw new Error('Falta WORKER_TOKEN, o es demasiado corto (mínimo 16 caracteres)')
+}
+
+/**
+ * Comparación en tiempo constante.
+ *
+ * Un `!==` sobre cadenas sale en cuanto encuentra el primer byte distinto, así
+ * que el tiempo de respuesta filtra cuántos caracteres del token se han
+ * acertado. Es un secreto de larga vida en una red donde ya hay varios
+ * contenedores: no cuesta nada compararlo bien.
+ */
+function tokenValido(cabecera: string | undefined): boolean {
+  const esperado = Buffer.from(`Bearer ${TOKEN}`)
+  const recibido = Buffer.from(cabecera ?? '')
+  if (esperado.length !== recibido.length) return false
+  return timingSafeEqual(esperado, recibido)
+}
 
 const sql = postgres(DATABASE_URL, { max: 2 })
 const storage =
@@ -62,18 +95,34 @@ export async function generate(
 
 const server = createServer((req, res) => {
   void (async () => {
+    // Sin token: solo dice que el proceso responde, nada más.
+    if (req.method === 'GET' && req.url?.startsWith('/salud')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}')
+      return
+    }
+
     if (req.method !== 'POST' || !req.url?.startsWith('/generate')) {
       res.writeHead(404).end('No encontrado')
       return
     }
 
-    if (TOKEN && req.headers.authorization !== `Bearer ${TOKEN}`) {
+    if (!tokenValido(req.headers.authorization)) {
       res.writeHead(401).end('No autorizado')
       return
     }
 
+    // Con tope: `for await` sin límite acumula en memoria lo que le manden.
     const chunks: Buffer[] = []
-    for await (const chunk of req) chunks.push(chunk as Buffer)
+    let bytes = 0
+    for await (const chunk of req) {
+      bytes += (chunk as Buffer).length
+      if (bytes > MAX_BODY) {
+        res.writeHead(413).end('Cuerpo demasiado grande')
+        req.destroy()
+        return
+      }
+      chunks.push(chunk as Buffer)
+    }
 
     let body: { kind?: string; start?: string; end?: string } = {}
     try {
@@ -84,6 +133,19 @@ const server = createServer((req, res) => {
     }
 
     const kind = body.kind ?? 'diario'
+    if (!['diario', 'semanal', 'personalizado'].includes(kind)) {
+      res.writeHead(400).end('Tipo de informe no válido')
+      return
+    }
+
+    // Las fechas van a un `::date` en SQL: sin comprobarlas aquí, un texto
+    // cualquiera se convierte en un 500 con la traza de Postgres dentro.
+    const FECHA = /^\d{4}-\d{2}-\d{2}$/
+    if ((body.start && !FECHA.test(body.start)) || (body.end && !FECHA.test(body.end))) {
+      res.writeHead(400).end('Las fechas deben ir en formato AAAA-MM-DD')
+      return
+    }
+
     try {
       const result = await generate(
         kind,
@@ -94,7 +156,9 @@ const server = createServer((req, res) => {
     } catch (err) {
       console.error('Fallo generando el informe:', err)
       res.writeHead(500, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ ok: false, error: String(err) }))
+      // Sin la traza: el que llama es pg_cron y no la lee, y devolverla expone
+      // nombres de tabla y de fichero a quien acierte el token.
+      res.end(JSON.stringify({ ok: false, error: 'No se pudo generar el informe' }))
     }
   })()
 })

@@ -177,6 +177,14 @@ services:
       PORT: 8080
     # Sin puertos publicados: solo lo llama pg_cron desde dentro de la red.
     expose: ['8080']
+    # Un weasyprint colgado no tumba el proceso, así que `restart: unless-stopped`
+    # por sí solo no rescata: hace falta que algo pregunte si sigue respondiendo.
+    healthcheck:
+      test: ['CMD', 'node', '-e', "require('http').get('http://127.0.0.1:8080/salud',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     networks: [interna]
 
 volumes:

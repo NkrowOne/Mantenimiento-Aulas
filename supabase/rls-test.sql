@@ -244,6 +244,25 @@ begin;
     else 'FALLO: un anónimo ve ' || (select count(*) from rooms) || ' salas y ' ||
          (select count(*) from incidents) || ' incidencias'
   end as resultado;
+
+  -- Y POR LAS VISTAS, que es por donde se escapaba.
+  --
+  -- Esta comprobación no existía y por eso la de arriba daba falsa confianza:
+  -- una vista sin `security_invoker` se ejecuta con los privilegios de su
+  -- propietario, así que la RLS de las tablas de debajo no se aplicaba. Un
+  -- anónimo leía las 276 salas y el almacén entero por `/rest/v1/room_overview`.
+  select case
+    when (select count(*) from room_overview)          = 0
+     and (select count(*) from stock_levels)           = 0
+     and (select count(*) from alerts_lamp_low)        = 0
+     and (select count(*) from alerts_stale_incidents) = 0
+     and (select count(*) from alerts_overdue_rooms)   = 0
+     and (select count(*) from incidents_by_building)  = 0
+    then 'OK: tampoco por las vistas'
+    else 'FALLO: fuga por vistas — ' ||
+         (select count(*) from room_overview) || ' salas en room_overview, ' ||
+         (select count(*) from stock_levels) || ' artículos en stock_levels'
+  end as resultado;
 rollback;
 
 \echo ''
@@ -416,4 +435,173 @@ begin;
     then 'OK: no se robó el alias; «Canon» sigue siendo Proyector'
     else 'FALLO: «Canon» quedó apuntando a dos tipos'
   end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 20. Un anónimo no puede disparar el worker de informes ==='
+begin;
+  set local role anon;
+  select set_config('request.jwt.claims', '', true);
+  savepoint s;
+
+  -- `request_report` es `security definer` y el `alter default privileges` del
+  -- bootstrap concede execute a anon en TODA función nueva. Sin comprobación de
+  -- rol dentro, cualquiera desde Internet generaba informes en bucle.
+  do $$
+  begin
+    perform public.request_report('diario');
+    raise exception 'FALLO: un anónimo ha disparado request_report';
+  exception when insufficient_privilege then
+    raise notice 'OK: request_report rechazó al anónimo';
+  end $$;
+  rollback to savepoint s;
+
+  do $$
+  begin
+    perform public.link_tickets_by_ref();
+    raise exception 'FALLO: un anónimo ha ejecutado link_tickets_by_ref';
+  exception when insufficient_privilege then
+    raise notice 'OK: link_tickets_by_ref rechazó al anónimo';
+  end $$;
+  rollback to savepoint s;
+rollback;
+
+\echo ''
+\echo '=== 21. Un técnico tampoco pide informes ni enlaza tickets ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  savepoint s;
+
+  do $$
+  begin
+    perform public.request_report('diario');
+    raise exception 'FALLO: un técnico ha disparado request_report';
+  exception when insufficient_privilege then
+    raise notice 'OK: pedir informes es cosa del supervisor';
+  end $$;
+  rollback to savepoint s;
+rollback;
+
+\echo ''
+\echo '=== 22. Renombrar o fusionar un tipo de equipo queda auditado ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  insert into asset_types (id, name) values
+    ('ffffffff-1111-4111-8111-ffffffffffff', 'Trasto de prueba');
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  select public.rename_asset_type('ffffffff-1111-4111-8111-ffffffffffff', 'Trasto corregido');
+
+  -- Es la única decisión con consecuencias sobre el inventario —fusionar
+  -- repunta equipos— que no dejaba rastro de autor.
+  select case
+    when exists (
+      select 1 from audit_log
+       where table_name = 'asset_types'
+         and row_id = 'ffffffff-1111-4111-8111-ffffffffffff'
+         and op = 'UPDATE'
+         and by_user = '22222222-2222-4222-8222-222222222222'
+    )
+    then 'OK: el renombrado queda auditado con autor'
+    else 'FALLO: el catálogo se modifica sin dejar rastro'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 23. Un informe emitido dos veces no duplica la fila ==='
+begin;
+  -- El worker inserta con `on conflict do nothing`, pero no había ninguna
+  -- restricción única con la que chocar: cada ejecución añadía una fila más
+  -- apuntando al mismo PDF.
+  insert into reports (kind, period_start, period_end, storage_path, content_hash)
+  values ('diario', '2026-07-28', '2026-07-28', 'diario/x.pdf', 'abc123')
+  on conflict do nothing;
+
+  insert into reports (kind, period_start, period_end, storage_path, content_hash)
+  values ('diario', '2026-07-28', '2026-07-28', 'diario/x.pdf', 'abc123')
+  on conflict do nothing;
+
+  select case
+    when (select count(*) from reports
+           where kind='diario' and period_start='2026-07-28' and content_hash='abc123') = 1
+    then 'OK: la segunda emisión no duplica'
+    else 'FALLO: ' || (select count(*) from reports
+                        where kind='diario' and content_hash='abc123') || ' filas iguales'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 24. Un consumo de almacén no puede ser positivo ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  savepoint s;
+
+  -- `material_consumption_ranking` calcula sum(-qty): un consumo positivo
+  -- habría producido consumos negativos en el informe.
+  do $$
+  begin
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user)
+    select gen_random_uuid(), id, 5, 'consumo', now(),
+           '11111111-1111-4111-8111-111111111111'
+      from stock_items limit 1;
+    raise exception 'FALLO: se ha registrado un consumo positivo';
+  exception when check_violation then
+    raise notice 'OK: la restricción impide un consumo positivo';
+  end $$;
+  rollback to savepoint s;
+rollback;
+
+\echo ''
+\echo '=== 25. …pero el técnico SÍ sigue viendo las vistas ==='
+begin;
+  -- La cara opuesta de la 12. Poner `security_invoker` en las vistas cierra la
+  -- fuga, y también podría haber cerrado la aplicación: el panel y la lista de
+  -- salas leen de `room_overview` y de `stock_levels`.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  select case
+    when (select count(*) from room_overview) > 0
+     and (select count(*) from stock_levels) > 0
+     and (select count(*) from alerts_overdue_rooms) > 0
+    then 'OK: el personal sigue leyendo las vistas con normalidad'
+    else 'FALLO: security_invoker ha dejado sin datos a la aplicación — ' ||
+         (select count(*) from room_overview) || ' salas, ' ||
+         (select count(*) from stock_levels) || ' artículos'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 26. El informe a medida exige y valida su rango de fechas ==='
+begin;
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  savepoint s;
+
+  -- La pantalla recogía «Desde» y «Hasta» y los tiraba: la función solo tenía
+  -- `kind`. Se pedía marzo y llegaba un PDF con los datos de ayer.
+  do $$
+  begin
+    perform public.request_report('personalizado');
+    raise exception 'FALLO: un informe a medida sin fechas ha pasado';
+  exception when invalid_parameter_value then
+    raise notice 'OK: un informe a medida sin fechas se rechaza';
+  end $$;
+  rollback to savepoint s;
+
+  do $$
+  begin
+    perform public.request_report('personalizado', '2026-03-31', '2026-03-01');
+    raise exception 'FALLO: se ha aceptado un rango al revés';
+  exception when invalid_parameter_value then
+    raise notice 'OK: la fecha final anterior a la inicial se rechaza';
+  end $$;
+  rollback to savepoint s;
+
+  do $$
+  begin
+    perform public.request_report('personalizado', '2020-01-01', '2026-01-01');
+    raise exception 'FALLO: se ha aceptado un rango de seis años';
+  exception when invalid_parameter_value then
+    raise notice 'OK: un periodo mayor de un año se rechaza';
+  end $$;
+  rollback to savepoint s;
 rollback;
