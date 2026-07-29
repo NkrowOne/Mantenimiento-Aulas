@@ -40,6 +40,12 @@ campo() {
 }
 
 version=$(campo version)
+# Qué código está en el aire. `version` no lo dice —nada la sube, así que todos
+# los despliegues anuncian el mismo `0.1.0`— y sin esto la única forma de
+# responder «¿está desplegado el arreglo?» era descargarse el bundle y buscar
+# cadenas dentro.
+commit=$(campo commit)
+[ -n "$commit" ] || commit='"desconocido"'
 clave_anonima=$(campo clave_anonima)
 url_api=$(campo url_api)
 bloqueo_min=$(campo bloqueo_min)
@@ -127,6 +133,42 @@ case "${SUPABASE_UPSTREAM:-}" in
 		;;
 esac
 
+# El hook que mete el rol en el JWT.
+#
+# Es la variable cuya ausencia sale más cara de todo el despliegue, y hasta
+# ahora este informe no la miraba: por eso `/salud.json` decía `"faltan":[]` con
+# la aplicación sin enseñar ni una fila. Sin el hook, el token sale sin el claim
+# `app_role`, `public.is_staff()` es falso y PostgREST responde `200 []` a TODAS
+# las lecturas — un despliegue indistinguible de una base vacía.
+#
+# Se declara en el servicio de auth, no en este, así que verlo aquí no prueba
+# nada y no verlo tampoco: por eso una es aviso y la otra falta. Lo que sí zanja
+# la pregunta es el botón «Ver diagnóstico del servidor» de la propia
+# aplicación, que lee el claim del token de verdad.
+case "${GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED:-}" in
+	true|TRUE|1)
+		hook_rol='"activo"'
+		;;
+	'')
+		hook_rol='"sin declarar aqui"'
+		aviso 'GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED no esta en este servicio: si tampoco esta en el de auth, el token sale sin app_role y RLS devuelve 200 [] en todo'
+		;;
+	*)
+		hook_rol='"desactivado"'
+		falta 'GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED'
+		;;
+esac
+
+# Si las migraciones fallaron, `arranque.sh` deja esta señal. Sin ella el
+# informe decía «ok» sobre una base que no tiene las tablas que la aplicación va
+# a pedir, y el fallo solo aparecía en el registro del arranque, que es donde
+# nadie mira una semana después.
+migraciones='"al dia"'
+if [ -f /srv/dist/.migraciones-fallidas ]; then
+	migraciones='"fallidas"'
+	falta 'MIGRACIONES'
+fi
+
 # Presencia, nunca el valor. Su ausencia NO es un fallo del despliegue: la PWA
 # funciona entera sin ella; lo único que no se podrá hacer es dar de alta
 # usuarios desde la terminal del panel con `alta`.
@@ -157,11 +199,11 @@ fi
 json() {
 	# `ok` es `true` siempre y a propósito: dice que el servidor sirve, no que
 	# esté bien configurado. Eso lo dice `estado`.
-	printf '{"ok":true,"estado":%s,"version":%s,"configurada":%s,"revisado":"arranque","instante":"%s","despliegue":%s,"construccion":{"clave_anonima":%s,"url_api":%s,"bloqueo_min":%s},"ejecucion":{"upstream":%s,"puerto":%s,"clave_de_servicio":%s},"faltan":[%s],"avisos":[%s]}\n' \
-		"$estado" "$version" "$clave_anonima" \
+	printf '{"ok":true,"estado":%s,"version":%s,"commit":%s,"configurada":%s,"revisado":"arranque","instante":"%s","despliegue":%s,"construccion":{"clave_anonima":%s,"url_api":%s,"bloqueo_min":%s},"ejecucion":{"upstream":%s,"puerto":%s,"clave_de_servicio":%s,"hook_rol":%s,"migraciones":%s},"faltan":[%s],"avisos":[%s]}\n' \
+		"$estado" "$version" "$commit" "$clave_anonima" \
 		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$despliegue" \
 		"$clave_anonima" "$url_api" "$bloqueo_min" \
-		"$upstream" "$puerto" "$clave_de_servicio" \
+		"$upstream" "$puerto" "$clave_de_servicio" "$hook_rol" "$migraciones" \
 		"$faltan" "$avisos"
 }
 
@@ -176,7 +218,7 @@ linea() { printf '[salud] %s\n' "$1"; }
 
 texto() {
 	linea '─── configuración del despliegue ───────────────────────────'
-	cabecera="version $(printf '%s' "$version" | tr -d '"') · puerto $puerto"
+	cabecera="version $(printf '%s' "$version" | tr -d '"') · commit $(printf '%s' "$commit" | tr -d '"') · puerto $puerto"
 	if [ -n "$faltan" ]; then
 		linea "FALTA CONFIGURACIÓN · $cabecera"
 	elif [ -n "$avisos" ]; then
@@ -207,6 +249,21 @@ texto() {
 		'"ausente"')
 			linea '  Sin SUPABASE_UPSTREAM la PWA carga pero /rest, /auth y /storage'
 			linea '  responden 503. Es host:puerto de Kong en la red privada.'
+			;;
+	esac
+	case "$hook_rol" in
+		'"sin declarar aqui"'|'"desactivado"')
+			linea '  El hook del rol se declara en el servicio de AUTH, no en este.'
+			linea '  Sin él el token sale sin app_role y RLS devuelve 200 [] en todo:'
+			linea '  la aplicación entra, no da un error y no enseña ni una fila.'
+			linea '  Para saber si llega de verdad: botón «Ver diagnóstico del servidor».'
+			;;
+	esac
+	case "$migraciones" in
+		'"fallidas"')
+			linea '  Las migraciones no se han podido aplicar: la base puede no tener'
+			linea '  las tablas ni las funciones que la aplicación va a pedir.'
+			linea '  Relánzalas desde la terminal de este servicio con: migrar'
 			;;
 	esac
 	if [ -n "$faltan" ] || [ -n "$avisos" ]; then

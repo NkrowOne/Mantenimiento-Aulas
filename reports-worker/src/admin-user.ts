@@ -358,6 +358,17 @@ async function crear(): Promise<void> {
         process.exit(1)
       }
       console.log(`\n  ${email} tenía cuenta pero no perfil; se lo he creado.`)
+      // Este es el camino por el que se pierde un administrador sin enterarse:
+      // se llega aquí repitiendo `crear <email>` a secas —que es justo lo que
+      // aconseja el mensaje de más abajo cuando el perfil no se pudo crear— y el
+      // perfil nace `tecnico`. La aplicación entonces esconde Informes y Datos,
+      // y desde fuera parece que la que está rota es ella.
+      if (!rolPedido) {
+        console.warn(
+          `  ⚠ No has escrito ningún rol, así que queda como TECNICO.\n` +
+            `    Si debía ser administrador:  ${CLI} rol ${email} admin`,
+        )
+      }
     }
 
     await nuevoCodigo(existente.id, email, true)
@@ -405,7 +416,13 @@ async function crear(): Promise<void> {
       // callando: sin perfil no hay rol, y sin rol RLS no le deja hacer nada.
       console.error(`Usuario creado, pero su perfil no: ${errorPerfil.message}`)
       explicarEsquema(errorPerfil.message)
-      console.error(`Cuando lo arregles, repite el mismo comando: ${CLI} crear ${email}`)
+      // CON el rol, y no «el mismo comando». Repetirlo pelado cae en la rama de
+      // «cuenta sin perfil», que lo crea como `tecnico`: el consejo se llevaba
+      // por delante justo el privilegio que se estaba intentando dar.
+      console.error(
+        `Cuando lo arregles, repítelo CON el rol o se pierde:\n` +
+          `  ${CLI} crear ${email} "${nombre}" ${role}`,
+      )
       process.exit(1)
     }
   }

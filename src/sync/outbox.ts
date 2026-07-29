@@ -38,6 +38,13 @@ const ORDER: Record<OutboxEntry['entity'], number> = {
 
 export type SyncState = 'inactivo' | 'sincronizando' | 'sin-conexion' | 'error'
 
+/** Lo último que hizo reventar a `flush()`, para poder enseñarlo. */
+let ultimoErrorSync: string | null = null
+
+export function getUltimoErrorSync(): string | null {
+  return ultimoErrorSync
+}
+
 type Listener = (state: SyncState) => void
 const listeners = new Set<Listener>()
 let current: SyncState = 'inactivo'
@@ -176,18 +183,23 @@ export async function flush(): Promise<void> {
     return
   }
 
-  const { data } = await supabase.auth.getSession()
-  if (!data.session) {
-    // Sin sesión no se puede subir nada, pero tampoco es un error que mostrar:
-    // el usuario simplemente aún no ha introducido su PIN.
-    setState('inactivo')
-    return
-  }
-
   running = true
   setState('sincronizando')
 
   try {
+    // `getSession()` va DENTRO del try: puede rechazar —renovar el token es una
+    // petición de red— y a `flush()` se la llama con `void` y sin `.catch()`
+    // desde cuatro sitios, así que ese rechazo se convertía en un unhandled
+    // rejection y dejaba `running` en true para siempre: la sincronización no
+    // volvía a arrancar en toda la sesión.
+    const { data } = await supabase.auth.getSession()
+    if (!data.session) {
+      // Sin sesión no se puede subir nada, pero tampoco es un error que mostrar:
+      // el usuario simplemente aún no ha introducido su PIN.
+      setState('inactivo')
+      return
+    }
+
     const now = Date.now()
     const due = (await db.outbox.toArray())
       .filter((e) => e.status === 'pendiente' && e.nextAttemptAt <= now)
@@ -206,7 +218,12 @@ export async function flush(): Promise<void> {
 
     const remaining = await db.outbox.where('status').equals('rechazado').count()
     setState(remaining > 0 ? 'error' : 'inactivo')
-  } catch {
+  } catch (err) {
+    // El `catch` no ligaba la variable, así que el motivo se evaporaba: quedaba
+    // un estado 'error' que la lámpara ni siquiera sabía pintar, sin una sola
+    // pista de qué había fallado ni dónde mirarla.
+    ultimoErrorSync = err instanceof Error ? err.message : String(err)
+    console.error('flush', err)
     setState('error')
   } finally {
     running = false

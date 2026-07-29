@@ -60,6 +60,10 @@ function saludJson(construccion: Construccion): Plugin {
           ok: true,
           estado: construccion.clave_anonima ? 'ok' : 'desconfigurado',
           version,
+          // Qué commit se compiló. `version` no distingue dos despliegues —nada
+          // la sube—, así que sin esto averiguar si el arreglo está en el aire
+          // obliga a descargar el bundle y buscar cadenas dentro.
+          commit: process.env['VITE_COMMIT'] ?? 'desconocido',
           // `configurada` conserva el significado que tuvo siempre —la clave
           // anónima estaba al compilar— porque el campo ya existía.
           configurada: construccion.clave_anonima,

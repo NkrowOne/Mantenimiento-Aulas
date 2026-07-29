@@ -107,6 +107,19 @@ lleve plugin de CORS. Necesita `SUPABASE_UPSTREAM` en tiempo de ejecución y
 Esa imagen lleva además la orden de altas de usuario (`alta`, ver *Usuarios*),
 que es lo único que necesita `SUPABASE_SERVICE_ROLE_KEY` en el servicio.
 
+Conviene pasarle también `VITE_COMMIT`, que no cambia nada de la aplicación pero
+publica en `/salud.json` **qué código está en el aire**. Sin eso, responder
+«¿está desplegado ya el arreglo?» obliga a descargarse el bundle y buscar
+cadenas dentro, porque `version` no la sube nadie y todos los despliegues
+anuncian el mismo `0.1.0`:
+
+```bash
+docker build --build-arg VITE_SUPABASE_ANON_KEY=<anon> \
+             --build-arg VITE_COMMIT="$(git rev-parse --short HEAD)" .
+
+curl -s https://tu-dominio/salud.json | jq '.commit, .ejecucion'
+```
+
 Y **se pone la base al día ella sola**: al arrancar aplica las migraciones que
 falten (`migrar`, el mismo SQL de `supabase/migrations` y el mismo registro en
 `public.schema_migrations` que lleva `init-plataforma.sh`, así que da igual cuál

@@ -1,4 +1,5 @@
-import { useRegisterSW } from 'virtual:pwa-register/react'
+import { useEffect, useState } from 'react'
+import { aplicarActualizacion, onVersionNueva, posponerActualizacion } from '@/sw'
 
 /**
  * Aviso de versión nueva.
@@ -12,19 +13,16 @@ import { useRegisterSW } from 'virtual:pwa-register/react'
  * página bajo los pies de alguien que está rellenando una revisión en un aula
  * es peor que esperar a que termine. El borrador sobreviviría —está en Dexie y
  * respaldado en el servidor— pero perdería el sitio donde iba.
+ *
+ * El **registro** ya no vive aquí (está en `@/sw`, y lo arranca `main.tsx`).
+ * Estaba dentro de este componente, que se monta detrás del candado: un
+ * dispositivo que no consigue entrar no podía recibir nunca el arreglo que le
+ * dejaría entrar.
  */
 export function UpdatePrompt(): React.ReactElement | null {
-  const {
-    needRefresh: [needRefresh, setNeedRefresh],
-    updateServiceWorker,
-  } = useRegisterSW({
-    onRegisterError(error) {
-      // Sin service worker no hay modo offline, así que conviene que se vea en
-      // la consola en lugar de fallar en silencio. La causa casi siempre es un
-      // certificado que el dispositivo no acepta.
-      console.error('No se pudo registrar el service worker:', error)
-    },
-  })
+  const [needRefresh, setNeedRefresh] = useState(false)
+
+  useEffect(() => onVersionNueva(setNeedRefresh), [])
 
   if (!needRefresh) return null
 
@@ -42,14 +40,14 @@ export function UpdatePrompt(): React.ReactElement | null {
 
         <button
           type="button"
-          onClick={() => setNeedRefresh(false)}
+          onClick={() => posponerActualizacion()}
           className="key key-quiet min-h-11 px-3 text-sm font-medium text-muted"
         >
           Ahora no
         </button>
         <button
           type="button"
-          onClick={() => void updateServiceWorker(true)}
+          onClick={() => void aplicarActualizacion()}
           className="key key-accent px-3 py-2 text-sm"
         >
           Actualizar

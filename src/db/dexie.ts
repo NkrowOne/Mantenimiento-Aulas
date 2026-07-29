@@ -162,6 +162,8 @@ export interface PendingSummary {
   rejected: number
   photos: number
   oldestAt: number | null
+  /** Por qué se rechazó lo último que se rechazó. */
+  ultimoMotivo: string | null
 }
 
 /**
@@ -196,11 +198,20 @@ export async function pendingSummary(): Promise<PendingSummary> {
   const oldest =
     colaViva > 0 ? ((await db.outbox.orderBy('createdAt').first())?.createdAt ?? null) : null
 
+  // Igual que la fecha del más antiguo: solo se busca si hay algo rechazado,
+  // que es la excepción. «N rechazados. Avisa a administración» sin decir de qué
+  // obliga a administración a adivinarlo, y el motivo ya estaba guardado.
+  const ultimoMotivo =
+    rechazadosCola > 0
+      ? ((await db.outbox.where('status').equals('rechazado').last())?.lastError ?? null)
+      : null
+
   return {
     total: colaViva + fotosVivas,
     rejected: rechazadosCola + fotosRech,
     photos: fotosVivas,
     oldestAt: oldest,
+    ultimoMotivo,
   }
 }
 

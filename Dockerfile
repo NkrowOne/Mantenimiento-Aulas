@@ -34,9 +34,14 @@ COPY . .
 ARG VITE_SUPABASE_ANON_KEY
 ARG VITE_SUPABASE_URL
 ARG VITE_LOCK_AFTER_MINUTES=0
+# Qué commit se está compilando, para que `/salud.json` pueda decirlo. Sin esto,
+# saber si lo desplegado incluye un arreglo concreto obliga a descargarse el
+# bundle y buscar cadenas dentro.
+ARG VITE_COMMIT=desconocido
 ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY \
     VITE_SUPABASE_URL=$VITE_SUPABASE_URL \
-    VITE_LOCK_AFTER_MINUTES=$VITE_LOCK_AFTER_MINUTES
+    VITE_LOCK_AFTER_MINUTES=$VITE_LOCK_AFTER_MINUTES \
+    VITE_COMMIT=$VITE_COMMIT
 
 RUN npm run build
 

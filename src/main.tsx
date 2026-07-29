@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from './App'
+import { registrarServiceWorker } from './sw'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -35,6 +36,13 @@ const queryClient = new QueryClient({
 for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
   document.addEventListener(type, (e) => e.preventDefault(), { passive: false })
 }
+
+/*
+ * Antes de pintar nada, y en particular antes del candado: si lo que impide
+ * entrar es un fallo de la versión instalada, el registro tiene que ocurrir de
+ * todos modos para que la versión que lo arregla pueda llegar.
+ */
+registrarServiceWorker()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
