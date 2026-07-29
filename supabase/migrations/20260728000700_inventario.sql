@@ -379,6 +379,19 @@ begin
 end;
 $$;
 
+-- El bucle que instala la auditoría (auth_rls.sql) lista siete tablas y esta
+-- nace después, así que hay que añadirla aquí. Importa más que ninguna otra:
+-- es donde el coordinador confirma, renombra y FUSIONA, y fusionar repunta los
+-- equipos de un tipo a otro. Sería el único sitio del sistema donde una
+-- decisión con consecuencias sobre el inventario no dejaría autor.
+create trigger asset_types_audit
+  after insert or update or delete on asset_types
+  for each row execute function public.audit_trigger();
+
+-- `backfill_room_assets` inserta inventario en masa. No es `security definer`
+-- —la RLS lo frena— pero no hay motivo para que lo llame nadie desde la app.
+revoke execute on function public.backfill_room_assets() from public, anon, authenticated;
+
 comment on function public.backfill_room_assets() is
   'Convierte rooms.capabilities en elementos de inventario. Idempotente: llámala tras cargar datos.';
 

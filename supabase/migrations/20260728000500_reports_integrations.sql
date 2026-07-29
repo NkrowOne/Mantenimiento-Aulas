@@ -21,12 +21,14 @@ order by count(*) desc;
 
 create view incidents_by_month as
 select
-  to_char(date_trunc('month', opened_at), 'YYYY-MM') as month,
+  -- En hora de Madrid: una incidencia abierta a las 00:30 del 1 de marzo son
+  -- las 23:30 del 28 de febrero en UTC, y se contaba en febrero.
+  to_char(date_trunc('month', opened_at at time zone 'Europe/Madrid'), 'YYYY-MM') as month,
   count(*)::int as total,
   count(*) filter (where state <> 'resuelta')::int as open_total
 from incidents
-group by date_trunc('month', opened_at)
-order by date_trunc('month', opened_at);
+group by date_trunc('month', opened_at at time zone 'Europe/Madrid')
+order by date_trunc('month', opened_at at time zone 'Europe/Madrid');
 
 -- Cuánto material se gasta de cada cosa: sustituye a las doce columnas
 -- Enero..Diciembre que hoy se rellenan a mano en la hoja Bolsa.
@@ -40,6 +42,18 @@ join stock_items si on si.id = sm.stock_item_id
 where sm.kind = 'consumo'
 group by si.name
 order by sum(-sm.qty) desc;
+
+-- Las tres vistas de arriba aplican la RLS de quien pregunta, por lo mismo que
+-- las de `views.sql`: sin esto se leen desde Internet sin ningún token.
+do $$
+declare v text;
+begin
+  foreach v in array array[
+    'incidents_by_building', 'incidents_by_month', 'material_consumption_ranking'
+  ] loop
+    execute format('alter view public.%I set (security_invoker = on)', v);
+  end loop;
+end $$;
 
 -- -----------------------------------------------------------------------------
 -- Informes programados
@@ -83,7 +97,24 @@ create policy "admin gestiona configuración" on app_config
   for all to authenticated
   using (public.is_admin()) with check (public.is_admin());
 
-create or replace function public.request_report(kind text)
+-- `alter default privileges … grant execute on functions to anon, authenticated`
+-- (bootstrap_roles.sql) hace que TODA función nazca ejecutable por anónimos. Sin
+-- la comprobación de rol de dentro, un `POST /rest/v1/rpc/request_report` sin
+-- autenticar generaba un PDF — y en bucle, tumbaba el worker y llenaba el
+-- bucket. Se protege por partida doble, permiso y comprobación, porque el
+-- `alter default privileges` volverá a conceder execute a la próxima función que
+-- alguien escriba y entonces solo quedará lo de dentro.
+--
+-- Las fechas son parámetros de verdad: la pantalla de Informes recoge «Desde» y
+-- «Hasta», y si no llegaran hasta aquí el worker calcularía su periodo por
+-- defecto. Un supervisor pediría marzo y recibiría un PDF con los datos de ayer,
+-- etiquetado «personalizado» — un documento equivocado que parece legítimo, que
+-- es peor que un error, porque se archiva y se cita.
+create or replace function public.request_report(
+  kind    text,
+  p_start date default null,
+  p_end   date default null
+)
 returns bigint
 language plpgsql
 security definer
@@ -93,21 +124,59 @@ declare
   worker_url text;
   worker_tok text;
   request_id bigint;
+  cuerpo     jsonb;
 begin
+  if not public.is_supervisor() then
+    raise exception 'Solo un supervisor puede pedir un informe'
+      using errcode = 'insufficient_privilege';
+  end if;
+
+  if kind not in ('diario', 'semanal', 'personalizado') then
+    raise exception 'Tipo de informe no válido: %', kind
+      using errcode = 'invalid_parameter_value';
+  end if;
+
+  if kind = 'personalizado' and (p_start is null or p_end is null) then
+    raise exception 'Un informe a medida necesita fecha de inicio y de fin'
+      using errcode = 'invalid_parameter_value';
+  end if;
+
+  if p_start is not null and p_end is not null then
+    if p_end < p_start then
+      raise exception 'La fecha final es anterior a la inicial'
+        using errcode = 'invalid_parameter_value';
+    end if;
+    -- Un rango de años haría que el worker cargase el histórico entero.
+    if p_end - p_start > 366 then
+      raise exception 'El periodo no puede superar un año'
+        using errcode = 'invalid_parameter_value';
+    end if;
+  end if;
+
   select value into worker_url from app_config where key = 'reports_worker_url';
   select value into worker_tok from app_config where key = 'reports_worker_token';
+
+  cuerpo := jsonb_build_object('kind', kind);
+  if p_start is not null then
+    cuerpo := cuerpo || jsonb_build_object('start', p_start::text, 'end', p_end::text);
+  end if;
 
   select net.http_post(
     url     := worker_url,
     headers := jsonb_build_object(
                  'Content-Type', 'application/json',
                  'Authorization', 'Bearer ' || worker_tok),
-    body    := jsonb_build_object('kind', kind)
+    body    := cuerpo
   ) into request_id;
 
   return request_id;
 end;
 $$;
+
+-- El cron corre como `postgres`, superusuario: sigue pudiendo llamarla aunque se
+-- le quite el permiso a todo el mundo.
+revoke execute on function public.request_report(text, date, date) from public, anon;
+grant execute on function public.request_report(text, date, date) to authenticated;
 
 -- Diario a las 07:00 y semanal los lunes a las 07:30, hora del servidor.
 do $$
@@ -152,12 +221,21 @@ create policy "supervisor enlaza tickets" on external_tickets
 
 -- El histórico ya trae las referencias `I260203_0051`, así que en cuanto haya
 -- conexión con ServiceNow el enlace se puede reconstruir por esa clave.
+-- Con comprobación de rol por lo mismo que `request_report`, y con más motivo:
+-- esta escribe. Sin ella, un anónimo la ejecutaba entera.
 create or replace function public.link_tickets_by_ref()
 returns int
-language sql
+language plpgsql
 security definer
 set search_path = public
 as $$
+declare n int;
+begin
+  if not public.is_supervisor() then
+    raise exception 'Solo un supervisor puede enlazar tickets'
+      using errcode = 'insufficient_privilege';
+  end if;
+
   with linked as (
     update external_tickets et
     set linked_incident_id = i.id
@@ -167,8 +245,14 @@ as $$
       and i.external_ref = et.external_id
     returning 1
   )
-  select count(*)::int from linked;
+  select count(*)::int into n from linked;
+
+  return n;
+end;
 $$;
+
+revoke execute on function public.link_tickets_by_ref() from public, anon;
+grant execute on function public.link_tickets_by_ref() to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- Fusión de edificios provisionales

@@ -8,9 +8,20 @@ de seguridad se **ejecutó contra un Postgres real** con el rol correspondiente,
 el comportamiento del worker se comprobó levantándolo y haciéndole peticiones.
 Los números que aparecen son los que devolvió la base.
 
-Todo lo de aquí está **corregido** en `20260729000100_endurecer_backend.sql` y en
-`reports-worker/`, con pruebas que fallan si vuelve a ocurrir (`npm run db:verify`
-pruebas 12 y 20–26, y `npm run worker:test`).
+Todo lo de aquí está **corregido**, con pruebas que fallan si vuelve a ocurrir:
+`npm run db:verify` (28 pruebas, 41 afirmaciones), `npm run worker:test` y
+`npm run worker:periodos`.
+
+**Los arreglos están plegados en las migraciones originales, no en migraciones
+correctivas encima.** Se pudo hacer porque el sistema aún no estaba desplegado, y
+era la última oportunidad: en cuanto haya una base en producción, el historial de
+migraciones se congela. La ventaja es que quien lea `views.sql` ve la decisión de
+seguridad **ahí**, junto a la vista, y no tres ficheros más adelante; y que el
+esquema es correcto desde el primer `apply` en vez de tener una ventana —por
+corta que sea— en la que las vistas filtran.
+
+Este documento conserva el *por qué*, que es lo que no cabe en un comentario de
+SQL.
 
 ---
 

@@ -102,6 +102,10 @@ create table assets (
 );
 
 create index assets_room_idx on assets(room_id);
+-- `merge_asset_type` recorre todos los equipos de un tipo, y la bandeja del
+-- coordinador cuenta cuántos hay de cada uno: sin índice son barridos completos
+-- de las 1.094 filas.
+create index assets_type_idx on assets(asset_type_id);
 create unique index assets_serial_idx on assets(serial) where serial is not null;
 
 create type asset_event_kind as enum ('alta', 'baja', 'sustitucion', 'traslado', 'averia');
@@ -117,6 +121,8 @@ create table asset_events (
   meta       jsonb not null default '{}'::jsonb
 );
 
+create index asset_events_asset_idx on asset_events(asset_id);
+
 -- -----------------------------------------------------------------------------
 -- Stock de almacén — la cantidad actual es una suma, nunca un campo editable.
 -- Así es imposible el descuadre que hoy produce stock negativo en la Bolsa.
@@ -129,6 +135,9 @@ create table stock_items (
   asset_type_id uuid references asset_types(id),
   active        boolean not null default true
 );
+
+create index stock_items_type_idx on stock_items(asset_type_id)
+  where asset_type_id is not null;
 
 create type stock_movement_kind as enum ('compra', 'consumo', 'ajuste', 'devolucion');
 
@@ -146,7 +155,19 @@ create table stock_movements (
   note          text
 );
 
+-- El signo tiene que corresponderse con el tipo: `material_consumption_ranking`
+-- calcula `sum(-qty) where kind = 'consumo'`, así que un consumo positivo habría
+-- producido consumos negativos en el informe sin que nadie entendiera por qué.
+alter table stock_movements
+  add constraint stock_movements_signo_check check (
+    (kind = 'consumo' and qty < 0) or
+    (kind = 'compra'  and qty > 0) or
+    (kind in ('ajuste', 'devolucion'))
+  );
+
 create index stock_movements_item_idx on stock_movements(stock_item_id);
+create index stock_movements_incidencia_idx on stock_movements(incident_id)
+  where incident_id is not null;
 create index stock_movements_occurred_idx on stock_movements(occurred_at desc);
 
 -- -----------------------------------------------------------------------------
@@ -263,6 +284,13 @@ create table reports (
 );
 
 create index reports_period_idx on reports(kind, period_start desc);
+
+-- El worker inserta con `on conflict do nothing` porque un informe ya emitido no
+-- se regenera. Sin esta restricción no habría con qué chocar —la clave primaria
+-- es un uuid nuevo cada vez— y cada ejecución añadiría una fila más apuntando al
+-- mismo PDF. El hash del contenido es la identidad real del documento.
+create unique index reports_unico_idx
+  on reports (kind, period_start, period_end, content_hash);
 
 -- -----------------------------------------------------------------------------
 -- Auditoría — solo para lo mutable. Las tablas append-only ya son su historial.

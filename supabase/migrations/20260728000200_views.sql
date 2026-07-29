@@ -5,6 +5,53 @@
 -- Por eso no puede volver a haber stock negativo por descuido.
 -- =============================================================================
 
+-- -----------------------------------------------------------------------------
+-- La hora es la de Madrid
+--
+-- Los instantes se guardan en UTC —`timestamptz` siempre lo hace, y es lo
+-- correcto—. Lo que necesita zona es **interpretarlos**: en qué día cayó una
+-- revisión, en qué mes una incidencia.
+--
+-- La zona va escrita aquí y no se hereda de la sesión. Si dependiera del huso
+-- de quien pregunta, la misma vista daría números distintos desde la
+-- aplicación, desde `psql` y desde cualquier herramienta que se conecte mañana.
+-- Un informe tiene que dar lo mismo lo pregunte quien lo pregunte.
+--
+-- `stable` y no `immutable` porque las definiciones de zona horaria cambian
+-- —los gobiernos mueven los cambios de hora—. Como `stable`, el planificador
+-- las evalúa una vez por consulta, que es lo que hace falta para que un rango
+-- de fechas siga usando el índice.
+-- -----------------------------------------------------------------------------
+
+create function public.dia_local(t timestamptz)
+returns date language sql stable strict parallel safe
+as $$ select (t at time zone 'Europe/Madrid')::date $$;
+
+comment on function public.dia_local(timestamptz) is
+  'En qué día de Madrid ocurrió un instante. Una revisión de las 00:30 pertenece a ese día, no al anterior.';
+
+create function public.inicio_del_dia(d date)
+returns timestamptz language sql stable strict parallel safe
+as $$ select (d::timestamp at time zone 'Europe/Madrid') $$;
+
+comment on function public.inicio_del_dia(date) is
+  'La medianoche de Madrid de ese día, como instante. Sigue el cambio de hora: el domingo de marzo dura 23 horas.';
+
+-- Y la zona por defecto de la base. Con las consultas ya explícitas esto no
+-- cambia ningún número; sirve para que `now()`, los registros y cualquier
+-- consulta a mano se lean en hora local en vez de obligar a restar dos horas.
+--
+-- En el despliegue con Docker el compose ya lo pasa como parámetro de arranque
+-- (`-c timezone=…`, junto a `cron.timezone`, que es donde tiene que ir porque
+-- pg_cron lo lee al arrancar). Esto cubre el otro escenario, el del Postgres
+-- gestionado, donde no hay compose que valga.
+do $$
+begin
+  execute format('alter database %I set timezone to ''Europe/Madrid''', current_database());
+exception when insufficient_privilege then
+  raise notice 'Sin permiso para fijar la zona de la base; ponla en el postgresql.conf';
+end $$;
+
 -- Se declaran ahora porque `incidents` e `inspections` se crean después de
 -- `stock_movements` en el fichero anterior.
 alter table stock_movements
@@ -40,12 +87,15 @@ create view stock_monthly_consumption as
 select
   sm.stock_item_id,
   si.name,
-  date_trunc('month', sm.occurred_at)::date as month,
-  sum(-sm.qty)::int                          as consumed
+  -- En hora de Madrid: un consumo del 1 de marzo a las 00:30 son las 23:30 del
+  -- 28 de febrero en UTC, y se habría contado en el mes anterior.
+  date_trunc('month', sm.occurred_at at time zone 'Europe/Madrid')::date as month,
+  sum(-sm.qty)::int                                                       as consumed
 from stock_movements sm
 join stock_items si on si.id = sm.stock_item_id
 where sm.kind = 'consumo'
-group by sm.stock_item_id, si.name, date_trunc('month', sm.occurred_at);
+group by sm.stock_item_id, si.name,
+         date_trunc('month', sm.occurred_at at time zone 'Europe/Madrid');
 
 -- -----------------------------------------------------------------------------
 -- Salas con su contexto: es la consulta que alimenta la lista de revisión
@@ -132,3 +182,32 @@ join room_overview ro on ro.room_id = r1.room_id
 where r1.rn = 1
   and r1.overall = 'con_incidencias'
   and r2.overall = 'con_incidencias';
+
+-- -----------------------------------------------------------------------------
+-- Las vistas aplican la RLS de quien pregunta
+--
+-- Una vista se ejecuta por defecto con los privilegios de SU PROPIETARIO. Aquí
+-- el propietario es `postgres`, que tiene BYPASSRLS: sin esto, toda la RLS de
+-- las tablas de debajo queda anulada al leer por una vista, y PostgREST publica
+-- las vistas igual que las tablas.
+--
+-- Medido con rol `anon` sobre estas mismas vistas antes de ponerlo: 276 salas,
+-- 111 artículos de almacén y las incidencias abiertas con su título, legibles
+-- desde Internet sin ningún token. La prueba «un anónimo no ve NADA» pasaba
+-- porque solo consultaba las tablas base.
+--
+-- Va al final del fichero y en bucle a propósito: cada vista nueva que alguien
+-- añada arriba entra aquí, y olvidarse es abrir la fuga otra vez.
+-- -----------------------------------------------------------------------------
+
+do $$
+declare v text;
+begin
+  foreach v in array array[
+    'stock_levels', 'stock_monthly_consumption', 'room_overview',
+    'alerts_lamp_low', 'alerts_stale_incidents', 'alerts_overdue_rooms',
+    'alerts_repeat_offenders'
+  ] loop
+    execute format('alter view public.%I set (security_invoker = on)', v);
+  end loop;
+end $$;
