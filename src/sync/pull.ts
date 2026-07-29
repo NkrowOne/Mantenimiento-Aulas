@@ -165,6 +165,7 @@ export async function pullMaster(): Promise<ResultadoPull> {
       lamp_pct: (r['lamp_pct'] as number | null) ?? null,
       last_inspection_at: (r['last_inspection_at'] as string | null) ?? null,
       active: true,
+      short_ref: (r['short_ref'] as string | null) ?? null,
     }))
     await db.rooms.bulkPut(mapped)
     filas += mapped.length
@@ -183,10 +184,79 @@ export async function pullMaster(): Promise<ResultadoPull> {
 
   if (filas > 0) await db.meta.put({ key: 'last-pull', value: Date.now() })
 
+  // Cualquier descarga cuenta para el freno del refresco automático, también la
+  // que se pide a mano desde el panel: si no, pulsar «Sincronizar» y cambiar de
+  // aplicación volvería a bajarlo todo un segundo después.
+  ultimoIntento = Date.now()
+
   return parte({ ok: error === null, filas, error, fallos, vacias, at: Date.now() })
 }
 
 /** El parte de la última descarga, para pintarlo donde haga falta. */
 export async function ultimoPull(): Promise<ResultadoPull | null> {
   return ((await db.meta.get(DIAGNOSTICO_PULL))?.value as ResultadoPull | undefined) ?? null
+}
+
+/**
+ * Cada cuánto, como mucho, se vuelve a bajar el maestro.
+ *
+ * La descarga trae 276 salas, 23 edificios y un centenar de artículos: cabe de
+ * sobra en el dispositivo, pero no es gratis pedirla. Sin este freno, cada
+ * cambio de aplicación y vuelta —que en un iPad de campo son decenas al día—
+ * dispararía siete consultas.
+ *
+ * Dos minutos es el punto donde deja de notarse la espera y todavía no se nota
+ * el gasto: el trabajo de un compañero tarda como mucho eso en aparecer.
+ */
+const REFRESCO_MIN_MS = 2 * 60 * 1000
+
+let ultimoIntento = 0
+
+/**
+ * Los disparadores de la BAJADA.
+ *
+ * Existían los cuatro de la subida —arranque, vuelta de la conexión, vuelta a
+ * primer plano y temporizador— y ninguno de la bajada: `pullMaster()` solo
+ * corría al desbloquear y al pulsar «Sincronizar» a mano.
+ *
+ * La asimetría se notaba en el trabajo diario y no en las pruebas: lo que
+ * escribe este dispositivo sube en segundos, pero una sala que da de alta un
+ * compañero, o una incidencia que cierra el supervisor, no llegaban hasta la
+ * siguiente recarga de la aplicación. En un iPad que no cierra nunca la
+ * pestaña, eso son días.
+ *
+ * Volver a primer plano es el disparador que más importa: es exactamente el
+ * gesto de «llego al edificio y saco el iPad».
+ */
+export function startPull(alTerminar?: (r: ResultadoPull) => void): () => void {
+  const intentar = (): void => {
+    if (!navigator.onLine) return
+    const ahora = Date.now()
+    if (ahora - ultimoIntento < REFRESCO_MIN_MS) return
+    ultimoIntento = ahora
+    void pullMaster().then((r) => alTerminar?.(r))
+  }
+
+  const alVolverLaRed = (): void => {
+    // Recuperar cobertura sí merece saltarse el freno: es el momento exacto en
+    // que lo que hay en el dispositivo puede llevar horas obsoleto.
+    ultimoIntento = 0
+    intentar()
+  }
+  const alVolverAlFrente = (): void => {
+    if (document.visibilityState === 'visible') intentar()
+  }
+
+  window.addEventListener('online', alVolverLaRed)
+  document.addEventListener('visibilitychange', alVolverAlFrente)
+
+  // La red de seguridad, para el iPad que se queda abierto toda la mañana sin
+  // que nadie cambie de aplicación.
+  const timer = setInterval(intentar, REFRESCO_MIN_MS)
+
+  return () => {
+    window.removeEventListener('online', alVolverLaRed)
+    document.removeEventListener('visibilitychange', alVolverAlFrente)
+    clearInterval(timer)
+  }
 }

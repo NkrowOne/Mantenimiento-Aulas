@@ -41,10 +41,22 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
       } else {
         const result = await unlockWithPin(pin)
         if (!result.ok) {
+          /*
+           * «Te quedan undefined intentos.»
+           *
+           * El contador solo existe cuando el fallo ES del PIN. Cuando no lo es
+           * —el servidor rechaza la sesión, por ejemplo— no hay intentos que
+           * contar, y la frase se pegaba igual con un `undefined` dentro. Un
+           * mensaje de error que enseña un `undefined` destruye la confianza en
+           * todo lo demás que diga la pantalla.
+           */
           setError(
-            result.wiped
-              ? result.error ?? 'Sesión borrada.'
-              : `${result.error} Te quedan ${result.attemptsLeft} intentos.`,
+            [
+              result.error ?? 'No se ha podido desbloquear.',
+              result.attemptsLeft !== undefined && `Te quedan ${result.attemptsLeft} intentos.`,
+            ]
+              .filter(Boolean)
+              .join(' '),
           )
           setPin('')
           return

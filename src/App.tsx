@@ -1,5 +1,6 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { useQuery } from '@tanstack/react-query'
 import { SyncChip } from '@/components/SyncChip'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { LockScreen } from '@/features/auth/LockScreen'
@@ -11,11 +12,12 @@ import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
 
 import { getSealed, lock, resumeSession, touch, watchSession } from '@/auth/session'
 import { db, purgeSyncedInspections, requestPersistentStorage } from '@/db/dexie'
-import { pullMaster, type ResultadoPull } from '@/sync/pull'
+import { pullMaster, startPull, type ResultadoPull } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
 import { configError, supabase } from '@/lib/supabase'
+import { PARAM_SALA, salaDeLaUrl } from '@/lib/enlace-sala'
 import type { SealedSession } from '@/auth/pin'
-import type { Building, Role, Room } from '@/domain/types'
+import { OVERDUE_INSPECTION_DAYS, type Building, type Role, type Room } from '@/domain/types'
 
 /*
  * Todo lo que no es revisar un aula se carga aparte.
@@ -39,21 +41,47 @@ const StockPage = lazy(() =>
 const CleanupPage = lazy(() =>
   import('@/features/admin/CleanupPage').then((m) => ({ default: m.CleanupPage })),
 )
+const DraftsPage = lazy(() =>
+  import('@/features/incidents/DraftsPage').then((m) => ({ default: m.DraftsPage })),
+)
+const RoomSheet = lazy(() =>
+  import('@/features/rooms/RoomSheet').then((m) => ({ default: m.RoomSheet })),
+)
+/* La hoja de placas arrastra el codificador de QR, y solo se abre para imprimir
+   etiquetas: una o dos veces en la vida del despliegue. No tiene por qué viajar
+   en el arranque, que ocurre justo con la peor cobertura. */
+const PlateSheet = lazy(() =>
+  import('@/features/rooms/PlateSheet').then((m) => ({ default: m.PlateSheet })),
+)
 const ReportsPage = lazy(() =>
   import('@/features/reports/ReportsPage').then((m) => ({ default: m.ReportsPage })),
 )
 
-type Tab = 'revisar' | 'panel' | 'incidencias' | 'almacen' | 'informes' | 'datos'
+type Tab = 'revisar' | 'panel' | 'incidencias' | 'borradores' | 'almacen' | 'informes' | 'datos'
 
 type RoomView =
   | { name: 'edificios' }
   | { name: 'salas'; building: Building }
   | { name: 'revision'; building: Building; room: Room }
+  /*
+   * La ficha de la sala. No está en el camino de la revisión a propósito: el
+   * prototipo promete edificio → sala → «Todo correcto», y meter una pantalla
+   * intermedia costaría un toque en cada una de las 276 salas de la ronda.
+   * Se llega desde la placa de la cabecera, que ya identifica la sala.
+   */
+  | { name: 'ficha'; building: Building; room: Room }
+  /* La hoja de placas del edificio. Vive aquí y no en «Datos» porque se imprime
+     desde donde se está trabajando: se decide etiquetar un edificio cuando se
+     está recorriendo ese edificio. */
+  | { name: 'placas'; building: Building }
 
 const TABS: Array<{ id: Tab; label: string; minRole: Role }> = [
   { id: 'revisar', label: 'Revisar', minRole: 'tecnico' },
   { id: 'panel', label: 'Panel', minRole: 'tecnico' },
   { id: 'incidencias', label: 'Incidencias', minRole: 'tecnico' },
+  // Con su cuenta: si permitir aplazar no deja rastro visible desde la
+  // navegación, lo aplazado no se completa nunca.
+  { id: 'borradores', label: 'Borradores', minRole: 'tecnico' },
   { id: 'almacen', label: 'Almacén', minRole: 'tecnico' },
   { id: 'informes', label: 'Informes', minRole: 'supervisor' },
   { id: 'datos', label: 'Datos', minRole: 'admin' },
@@ -124,7 +152,34 @@ export function App(): React.ReactElement {
    * cuenta: no hay consola donde mirar.
    */
   const [rolError, setRolError] = useState<string | null>(null)
+  /** Se escaneó una placa cuya sala no está en este dispositivo. */
+  const [escaneoFallido, setEscaneoFallido] = useState<string | null>(null)
   const [diagnostico, setDiagnostico] = useState<ResultadoPull | null>(null)
+
+  /*
+   * Cuántos borradores esperan.
+   *
+   * Va en la pestaña porque es el único sitio desde el que asoma sin
+   * interrumpir. Permitir guardar con solo la sala y no dejar rastro de lo
+   * guardado a medias es la receta exacta para que no se complete nunca — que
+   * es el problema del Excel del que venimos.
+   *
+   * `count: 'exact', head: true` no trae ni una fila: solo el número.
+   */
+  const { data: borradores = 0 } = useQuery({
+    queryKey: ['borradores', 'cuenta'],
+    enabled: unlocked,
+    queryFn: async (): Promise<number> => {
+      const { count, error } = await supabase
+        .from('incidents')
+        .select('id', { count: 'exact', head: true })
+        .eq('state', 'borrador')
+      // Sin conexión no es un cero: es «no lo sé». Decir cero escondería
+      // trabajo pendiente, así que se conserva lo último que se supo.
+      if (error) throw error
+      return count ?? 0
+    },
+  })
   const [tab, setTab] = useState<Tab>('revisar')
   const [view, setView] = useState<RoomView>({ name: 'edificios' })
   const [roomOrder, setRoomOrder] = useState<RoomOrder>('antiguedad')
@@ -134,12 +189,48 @@ export function App(): React.ReactElement {
 
   const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [])
 
+  /*
+   * Cuántas salas tiene cada edificio y cuántas van con retraso.
+   *
+   * La lista de edificios eran veintitrés filas con un código y un nombre: la
+   * misma altura, el mismo peso y ni un dato. Monótona, sí, pero sobre todo
+   * MUDA — hay que entrar en cada una para saber cuál toca, que es justo lo que
+   * la lista debería ahorrar.
+   *
+   * Con el recuento y el retraso, cada fila dice algo distinto y la vista se
+   * ordena sola ante los ojos. La variedad sale de los datos, que es la única
+   * que no cansa a la tercera semana.
+   *
+   * Se calcula en local, de una sola pasada sobre las tres tablas, y lo
+   * recalcula Dexie cuando cambian.
+   */
+  const porEdificio = useLiveQuery(async () => {
+    const [zones, rooms] = await Promise.all([db.zones.toArray(), db.rooms.toArray()])
+    const edificioDeZona = new Map(zones.map((z) => [z.id, z.building_id]))
+
+    const acc = new Map<string, { total: number; pendientes: number }>()
+    const limite = Date.now() - OVERDUE_INSPECTION_DAYS * 86_400_000
+
+    for (const r of rooms) {
+      const edificio = edificioDeZona.get(r.zone_id)
+      if (!edificio) continue
+      const fila = acc.get(edificio) ?? { total: 0, pendientes: 0 }
+      fila.total++
+      const revisada = r.last_inspection_at ? new Date(r.last_inspection_at).getTime() : 0
+      if (revisada < limite) fila.pendientes++
+      acc.set(edificio, fila)
+    }
+    return acc
+  }, [])
+
   // La planta de la sala en revisión. Va en la cabecera porque un código como
   // `-2.1` leído sin ella parece un sótano cualquiera.
   const zoneName =
     useLiveQuery(
       async () =>
-        view.name === 'revision' ? (await db.zones.get(view.room.zone_id))?.name : undefined,
+        view.name === 'revision' || view.name === 'ficha'
+          ? (await db.zones.get(view.room.zone_id))?.name
+          : undefined,
       [view],
     ) ?? ''
 
@@ -201,6 +292,42 @@ export function App(): React.ReactElement {
 
     void (async () => {
       try {
+        /*
+         * Si se ha llegado escaneando la placa de la puerta, manda eso.
+         *
+         * Es el camino más corto que existe entre llegar al aula y empezar a
+         * trabajar: sin esto, el técnico elige edificio, busca la sala en una
+         * lista de hasta 39 y la abre — dos toques y dos rastreos visuales, de
+         * pie, en cada una de las 276 salas de la ronda.
+         *
+         * Va ANTES de restaurar la última vista, y por eso: quien acaba de
+         * escanear una puerta quiere esa puerta, no donde estaba ayer.
+         */
+        const escaneada = salaDeLaUrl(window.location.search)
+        if (escaneada) {
+          // La URL se limpia siempre, haya funcionado o no: si se queda, cada
+          // recarga vuelve a arrastrar al técnico a la misma sala y no hay forma
+          // de salir de ella salvo editando la barra de direcciones.
+          const limpia = new URL(window.location.href)
+          limpia.searchParams.delete(PARAM_SALA)
+          window.history.replaceState({}, '', limpia.pathname + limpia.search)
+
+          const room = await db.rooms.get(escaneada)
+          const zone = room ? await db.zones.get(room.zone_id) : undefined
+          const building = zone ? await db.buildings.get(zone.building_id) : undefined
+
+          if (room && building) {
+            setTab('revisar')
+            setView({ name: 'revision', building, room })
+            return
+          }
+
+          // La placa apunta a una sala que este dispositivo no tiene todavía.
+          // Decirlo es mejor que dejarlo en la lista de edificios como si no se
+          // hubiera escaneado nada: el técnico está delante de la puerta.
+          setEscaneoFallido(escaneada)
+        }
+
         const guardado = (await db.meta.get('ultima-vista'))?.value as
           | { tab?: Tab; buildingId?: string; roomId?: string }
           | undefined
@@ -270,12 +397,16 @@ export function App(): React.ReactElement {
     })()
 
     const stop = startSync()
+    // Y los de la bajada, que no existían: lo que escribe este dispositivo subía
+    // en segundos, pero lo que escribían los demás no llegaba hasta recargar.
+    const stopPull = startPull(setDiagnostico)
     const onActivity = (): void => void touch()
     window.addEventListener('pointerdown', onActivity)
     document.addEventListener('visibilitychange', onActivity)
 
     return () => {
       stop()
+      stopPull()
       window.removeEventListener('pointerdown', onActivity)
       document.removeEventListener('visibilitychange', onActivity)
     }
@@ -352,6 +483,22 @@ export function App(): React.ReactElement {
         </div>
       </header>
 
+      {escaneoFallido && (
+        <div className="border-b border-line bg-warn-tint px-4 py-3">
+          <p className="text-sm text-warn">
+            Has escaneado una placa, pero esa sala no está descargada en este dispositivo todavía.
+            Sincroniza y vuelve a escanear.
+          </p>
+          <button
+            type="button"
+            onClick={() => setEscaneoFallido(null)}
+            className="key key-quiet mt-2 min-h-11 px-3 text-sm"
+          >
+            Entendido
+          </button>
+        </div>
+      )}
+
       {rolError && (
         <div className="border-b border-line px-4 py-3">
           <p className="text-sm text-crit">{rolError}</p>
@@ -364,26 +511,67 @@ export function App(): React.ReactElement {
           <BuscadorGlobal
             onPick={(building, room) => setView({ name: 'revision', building, room })}
           />
-        <ul className="divide-y divide-line">
-          {(buildings ?? []).map((b) => (
-            <li key={b.id}>
-              <button
-                type="button"
-                onClick={() => setView({ name: 'salas', building: b })}
-                className="flex w-full items-center gap-3 px-4 py-4 text-left transition-colors duration-100 active:bg-raised"
-              >
-                <span className="w-14 shrink-0 font-mono text-sm font-semibold text-accent">
-                  {b.code}
-                </span>
-                <span className="flex-1">{b.name}</span>
-                {b.needs_review && (
-                  <span className="rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
-                    Sin identificar
+        {/* Misma regla que la lista de salas: el contenido va sobre papel. */}
+        <ul className="divide-y divide-line-soft border-b border-line bg-surface">
+          {(buildings ?? []).map((b) => {
+            const cuenta = porEdificio?.get(b.id)
+            const total = cuenta?.total ?? 0
+            const pendientes = cuenta?.pendientes ?? 0
+            const hechas = total - pendientes
+
+            return (
+              <li key={b.id}>
+                <button
+                  type="button"
+                  onClick={() => setView({ name: 'salas', building: b })}
+                  className="flex w-full items-center gap-3.5 px-4 py-3.5 text-left transition-colors duration-100 active:bg-raised"
+                >
+                  {/*
+                    El código, en una chapa.
+                    Suelto competía con el nombre a la misma altura y el ojo no
+                    sabía cuál de los dos era la entrada. Metido en su recuadro
+                    monoespaciado se lee como lo que es: una matrícula.
+                  */}
+                  <span className="w-12 shrink-0 rounded-tag bg-raised py-1 text-center font-mono text-xs font-semibold text-accent">
+                    {b.code}
                   </span>
-                )}
-              </button>
-            </li>
-          ))}
+
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{b.name}</span>
+                    {total > 0 && (
+                      <span className="mt-1 flex items-center gap-2">
+                        {/*
+                          El avance del edificio, recto y sin animar.
+                          Es una medida, no una barra de carga: animarla obligaría
+                          a esperar para poder leerla, y aquí se lee de pasada.
+                        */}
+                        <span
+                          aria-hidden
+                          className="h-1 w-16 shrink-0 overflow-hidden rounded-full bg-line"
+                        >
+                          <span
+                            className={`block h-full ${pendientes === 0 ? 'bg-ok' : 'bg-warn'}`}
+                            style={{ width: `${total ? (hechas / total) * 100 : 0}%` }}
+                          />
+                        </span>
+                        <span className="truncate text-xs text-muted">
+                          {pendientes === 0
+                            ? `${total} salas al día`
+                            : `${pendientes} de ${total} por revisar`}
+                        </span>
+                      </span>
+                    )}
+                  </span>
+
+                  {b.needs_review && (
+                    <span className="shrink-0 rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
+                      Sin identificar
+                    </span>
+                  )}
+                </button>
+              </li>
+            )
+          })}
           {buildings?.length === 0 && (
             <li className="p-4">
               <SinDatos
@@ -402,6 +590,7 @@ export function App(): React.ReactElement {
           order={roomOrder}
           onOrderChange={setRoomOrder}
           onBack={() => setView({ name: 'edificios' })}
+          onPlacas={() => setView({ name: 'placas', building: view.building })}
           onPick={(room) => setView({ name: 'revision', building: view.building, room })}
         />
       )}
@@ -423,6 +612,7 @@ export function App(): React.ReactElement {
             local, así que con el orden por antigüedad la recién terminada cae al
             final y la primera del resto es la que toca.
           */
+          onFicha={() => setView({ name: 'ficha', building: view.building, room: view.room })}
           onDone={(encadenar) => {
             const siguiente =
               encadenar && rondaActual
@@ -438,13 +628,50 @@ export function App(): React.ReactElement {
         />
       )}
 
+      {tab === 'revisar' && view.name === 'ficha' && (
+        <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
+          <RoomSheet
+            room={view.room}
+            buildingName={view.building.name}
+            zoneName={zoneName}
+            userId={userId}
+            onBack={() => setView({ name: 'revision', building: view.building, room: view.room })}
+            onRevisar={() =>
+              setView({ name: 'revision', building: view.building, room: view.room })
+            }
+            onImprimir={() => setView({ name: 'placas', building: view.building })}
+          />
+        </Suspense>
+      )}
+
+      {tab === 'revisar' && view.name === 'placas' && (
+        <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
+          <PlateSheet
+            building={view.building}
+            onBack={() => setView({ name: 'salas', building: view.building })}
+          />
+        </Suspense>
+      )}
+
       {tab !== 'revisar' && (
         <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
-          {tab === 'panel' && <DashboardPage />}
+          {tab === 'panel' && (
+            <DashboardPage
+              ir={{
+                revisar: () => {
+                  setTab('revisar')
+                  setView({ name: 'edificios' })
+                },
+                incidencias: () => setTab('incidencias'),
+                datos: () => setTab('datos'),
+              }}
+            />
+          )}
           {tab === 'incidencias' && <IncidentsPage />}
+          {tab === 'borradores' && <DraftsPage />}
           {tab === 'almacen' && <StockPage role={role} />}
           {tab === 'informes' && <ReportsPage />}
-          {tab === 'datos' && <CleanupPage />}
+          {tab === 'datos' && <CleanupPage yo={userId} />}
         </Suspense>
       )}
 
@@ -472,6 +699,11 @@ export function App(): React.ReactElement {
                 }`}
               >
                 {t.label}
+                {t.id === 'borradores' && borradores > 0 && (
+                  <span className="ml-1.5 rounded-tag bg-warn-tint px-1.5 py-0.5 text-[0.625rem] font-semibold text-warn">
+                    {borradores}
+                  </span>
+                )}
               </button>
             </li>
           ))}

@@ -73,7 +73,7 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
 
       <div className="collapse-y" data-open={open} inert={!open}>
         <div>
-          <div className="px-4 pb-4">
+          <div className="section-tail px-4 pb-4">
             {/* Alta. Buscar antes de crear es lo que impide que el catálogo se
                 llene de sinónimos: quien escribe «jab» encuentra el micrófono
                 que ya existe y nunca llega a la opción de crear. */}

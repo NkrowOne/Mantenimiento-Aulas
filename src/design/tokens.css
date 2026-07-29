@@ -21,13 +21,37 @@
  * aplicarles opacidad (`bg-accent/10`).
  */
 
+/*
+ * DOS TEMPERATURAS DE NEUTRO, y aquí está casi toda la variedad.
+ *
+ * Antes había una sola familia gris-verdosa para todo, y el resultado era una
+ * pantalla que se leía como una sola superficie continua: la cabecera, la lista
+ * y las tarjetas caían dentro de quince puntos RGB y ninguna se separaba de las
+ * otras. Eso es lo que hace que una interfaz seria parezca además monótona — no
+ * la falta de color, la falta de MATERIALES.
+ *
+ * Ahora hay dos, y cada una tiene un trabajo:
+ *
+ *   CROMO (frío, verdoso)   Lo que es la aplicación: fondo, cabecera,
+ *                           navegación, separadores. Se aparta y no compite.
+ *   PAPEL (cálido, hueso)   Lo que es el CONTENIDO: tarjetas, placas, filas,
+ *                           formularios. Es donde vive el trabajo.
+ *
+ * La diferencia son cuatro o cinco puntos hacia el rojo y el amarillo: no se
+ * nombra al mirarla, pero hace que una tarjeta se despegue del fondo sin
+ * necesidad de más sombra ni de más borde, y que la pantalla tenga dos planos en
+ * vez de uno. Sigue sin haber un solo color saturado en la estructura.
+ */
 :root {
-  --ground: 236 240 240;
-  --surface: 251 252 252;
-  --raised: 234 238 238;
-  --sunken: 227 233 233;
-  --line: 205 216 217;
-  --line-soft: 223 231 231;
+  /* Cromo: el fondo de la aplicación, frío. */
+  --ground: 233 237 238;
+  --raised: 224 230 231;
+  --sunken: 216 224 225;
+  --line: 199 211 213;
+  --line-soft: 219 227 228;
+
+  /* Papel: el plano del contenido, un punto cálido y claramente por encima. */
+  --surface: 252 252 251;
 
   --ink: 16 24 25;
   --ink-2: 65 83 87;
@@ -110,12 +134,19 @@
  */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --ground: 20 22 24;
-    --surface: 28 31 33;
-    --raised: 37 42 44;
-    --sunken: 16 18 19;
-    --line: 52 57 60;
+    /*
+     * Las mismas dos familias en oscuro, y aquí la separación importa aún más:
+     * sobre grafito, dos superficies a ocho puntos de distancia son la misma
+     * superficie. La tarjeta sube y se templa; el fondo baja y se enfría.
+     */
+    --ground: 18 20 22;
+    --raised: 40 44 47;
+    --sunken: 13 15 16;
+    --line: 55 60 63;
     --line-soft: 38 42 45;
+
+    /* Papel en oscuro: grafito con un punto de calidez, no gris azulado. */
+    --surface: 32 33 34;
 
     --ink: 226 231 232;
     --ink-2: 156 166 169;

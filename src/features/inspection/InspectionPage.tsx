@@ -17,6 +17,8 @@ interface Props {
   zoneName: string
   onDone: (nextRoom: boolean) => void
   onBack: () => void
+  /** Abrir la ficha de la sala desde la placa, sin salir del flujo. */
+  onFicha: () => void
 }
 
 const SEVERITIES: Array<{ value: Severity; label: string }> = [
@@ -32,6 +34,7 @@ export function InspectionPage({
   zoneName,
   onDone,
   onBack,
+  onFicha,
 }: Props): React.ReactElement {
   const { draft, rows, assets, types, typesById, saving, setCheck, setNotes, markRestOk, complete } =
     useInspection(room, userId)
@@ -88,6 +91,7 @@ export function InspectionPage({
         title={room.name === room.code ? `Sala ${displayRoomCode(room.code)}` : room.name}
         code={displayRoomCode(room.code)}
         onBack={onBack}
+        onFicha={onFicha}
       />
 
       {/* Revisión por excepción: primero la vía rápida, y solo se baja al
@@ -127,7 +131,15 @@ export function InspectionPage({
         </div>
       </div>
 
-      <div ref={filas} tabIndex={-1} className="divide-y divide-line px-4 outline-none">
+      {/* Las comprobaciones son el trabajo, así que van sobre PAPEL. Misma regla
+          que la lista de salas: el cromo se queda para el fondo, la cabecera y la
+          navegación. Sin esto, la hoja de la revisión y el fondo de la aplicación
+          eran la misma superficie y la pantalla se leía como un solo campo. */}
+      <div
+        ref={filas}
+        tabIndex={-1}
+        className="section-tail divide-y divide-line-soft border-y border-line bg-surface px-4 outline-none"
+      >
         {rows.map((row) => {
           const key = row.key
           const check = draft.checks.get(key)
@@ -239,7 +251,7 @@ export function InspectionPage({
       />
 
       <div className="border-t border-line px-4">
-        <div className="py-4">
+        <div className="section-tail py-4">
           <p className="eyebrow mb-2">Fotos y observaciones</p>
 
           <input

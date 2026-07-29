@@ -130,6 +130,15 @@ export interface Room {
   lamp_pct: number | null
   last_inspection_at: string | null
   active: boolean
+  /**
+   * `SALA-000087`: la referencia corta y **estable**.
+   *
+   * El nombre cambia y el código de sala también —los dos son etiquetas—, así
+   * que ninguno sirve para dictar por teléfono ni para grabar en una placa. Esta
+   * no cambia nunca. Anulable porque un dispositivo con el espejo de antes de la
+   * migración todavía no la tiene.
+   */
+  short_ref: string | null
 }
 
 export interface Inspection {
@@ -203,7 +212,27 @@ export const ASSET_STATUS_LABELS: Record<AssetStatus, string> = {
   retirado: 'Retirado',
 }
 
-export type IncidentState = 'abierta' | 'en_curso' | 'resuelta'
+export type IncidentState = 'borrador' | 'abierta' | 'en_curso' | 'resuelta'
+
+/**
+ * Qué se está registrando.
+ *
+ * Los tres no pesan igual, y esa es toda la razón de que existan por separado:
+ * una **solicitud** («instalar cámara y micrófono») es trabajo pedido, no un
+ * fallo de la sala, y una **observación** («pizarra abombada») es una nota de
+ * seguimiento. Meterlas en el mismo saco que una avería haría que las salas
+ * mejor atendidas salieran como las peores solo por estar bien atendidas.
+ *
+ * La observación es además la pieza que hoy falta del todo: en el Excel vive en
+ * una columna de texto libre y no se le sigue la pista a ninguna.
+ */
+export type IncidentKind = 'incidencia' | 'solicitud' | 'observacion'
+
+export const INCIDENT_KIND_LABELS: Record<IncidentKind, string> = {
+  incidencia: 'Incidencia',
+  solicitud: 'Solicitud',
+  observacion: 'Observación',
+}
 
 export interface Incident {
   id: string
@@ -212,10 +241,12 @@ export interface Incident {
   opened_from_inspection_id: string | null
   /** El `I260203_0051` que ya usáis hoy en el Excel y en ServiceNow. */
   external_ref: string | null
-  title: string
+  /** Nulo mientras sea borrador: para guardar basta la sala. */
+  title: string | null
   description: string | null
   severity: Severity
   state: IncidentState
+  kind: IncidentKind
   opened_at: string
   opened_by: string | null
   resolved_at: string | null
