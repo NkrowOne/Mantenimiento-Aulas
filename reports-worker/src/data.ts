@@ -48,19 +48,27 @@ export async function loadReportData(
   >`
     select
       (select count(*) from rooms where active)                                  as rooms_total,
+      -- Los límites del periodo son medianoche DE MADRID, no de UTC. Comparar
+      -- un timestamptz con una cadena de fecha lo convertía usando la zona de
+      -- la sesión, así que una revisión de las 00:30 caía en el informe del día
+      -- anterior. inicio_del_dia lo hace explícito y aguanta el cambio de hora.
       (select count(*) from inspections
          where status = 'completa'
-           and occurred_at >= ${periodStart} and occurred_at < ${periodEnd}::date + 1)
+           and occurred_at >= public.inicio_del_dia(${periodStart}::date)
+           and occurred_at <  public.inicio_del_dia(${periodEnd}::date + 1))
                                                                                  as inspections,
       (select count(distinct room_id) from inspections
          where status = 'completa'
-           and occurred_at >= ${periodStart} and occurred_at < ${periodEnd}::date + 1)
+           and occurred_at >= public.inicio_del_dia(${periodStart}::date)
+           and occurred_at <  public.inicio_del_dia(${periodEnd}::date + 1))
                                                                                  as rooms_inspected,
       (select count(*) from incidents
-         where opened_at >= ${periodStart} and opened_at < ${periodEnd}::date + 1)
+         where opened_at >= public.inicio_del_dia(${periodStart}::date)
+           and opened_at <  public.inicio_del_dia(${periodEnd}::date + 1))
                                                                                  as incidents_opened,
       (select count(*) from incidents
-         where resolved_at >= ${periodStart} and resolved_at < ${periodEnd}::date + 1)
+         where resolved_at >= public.inicio_del_dia(${periodStart}::date)
+           and resolved_at <  public.inicio_del_dia(${periodEnd}::date + 1))
                                                                                  as incidents_resolved,
       (select count(*) from incidents where state <> 'resuelta')                 as incidents_open,
       (select count(*) from alerts_lamp_low)                                     as lamp_alerts,
@@ -121,6 +129,9 @@ export async function loadReportData(
   }
 }
 
+/** La zona en la que trabaja el equipo. Los instantes se guardan en UTC. */
+export const ZONA = 'Europe/Madrid'
+
 /**
  * Rango de fechas de cada tipo de informe.
  *
@@ -133,19 +144,29 @@ export function periodFor(kind: string, today = new Date()): { start: string; en
     throw new Error('Un informe a medida necesita fecha de inicio y de fin')
   }
 
-  const iso = (d: Date): string => d.toISOString().slice(0, 10)
+  /*
+   * La fecha del calendario **de Madrid**, no la de UTC.
+   *
+   * `toISOString()` devuelve la fecha UTC: en verano, a partir de las 22:00 hora
+   * peninsular ya es el día siguiente en UTC, así que «ayer» se corría un día y
+   * el informe diario cubría el día equivocado.
+   *
+   * El truco del formato `sv-SE` es que su fecha corta ya es `AAAA-MM-DD`, así
+   * que no hay que recomponerla a mano a partir de las partes.
+   */
+  const iso = (d: Date): string =>
+    new Intl.DateTimeFormat('sv-SE', { timeZone: ZONA, dateStyle: 'short' }).format(d)
+
+  // Restar días sobre el instante y formatear después en Madrid: así el cálculo
+  // no depende de la hora local del proceso que ejecuta el worker.
+  const menosDias = (d: Date, n: number): Date => new Date(d.getTime() - n * 86_400_000)
 
   if (kind === 'semanal') {
-    const end = new Date(today)
-    end.setDate(end.getDate() - 1)
-    const start = new Date(end)
-    start.setDate(start.getDate() - 6)
-    return { start: iso(start), end: iso(end) }
+    return { start: iso(menosDias(today, 7)), end: iso(menosDias(today, 1)) }
   }
 
   // El informe diario cubre la jornada anterior: emitido a las 07:00, hablar
   // de "hoy" sería hablar de una hora de actividad.
-  const day = new Date(today)
-  day.setDate(day.getDate() - 1)
-  return { start: iso(day), end: iso(day) }
+  const ayer = iso(menosDias(today, 1))
+  return { start: ayer, end: ayer }
 }

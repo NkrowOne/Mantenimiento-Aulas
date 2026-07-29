@@ -5,6 +5,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { inicioDeMes } from '@/domain/fechas'
 
 export interface Summary {
   roomsTotal: number
@@ -23,9 +24,10 @@ export function useSummary() {
   return useQuery({
     queryKey: ['summary'],
     queryFn: async (): Promise<Summary> => {
-      const monthStart = new Date()
-      monthStart.setDate(1)
-      monthStart.setHours(0, 0, 0, 0)
+      // El mes empieza a medianoche de Madrid, no del huso del aparato que
+      // pregunta: este número aparece también en el PDF, calculado en el
+      // servidor, y tienen que coincidir.
+      const monthStart = inicioDeMes()
 
       const head = { count: 'exact' as const, head: true }
 

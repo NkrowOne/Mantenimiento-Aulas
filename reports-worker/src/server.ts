@@ -11,7 +11,7 @@
 import { createServer } from 'node:http'
 import { createClient } from '@supabase/supabase-js'
 import postgres from 'postgres'
-import { loadReportData, periodFor } from './data.js'
+import { ZONA, loadReportData, periodFor } from './data.js'
 import { renderReport } from './template.js'
 import { htmlToPdf } from './pdf.js'
 import { createHash, timingSafeEqual } from 'node:crypto'
@@ -57,7 +57,12 @@ function tokenValido(cabecera: string | undefined): boolean {
   return timingSafeEqual(esperado, recibido)
 }
 
-const sql = postgres(DATABASE_URL, { max: 2 })
+const sql = postgres(DATABASE_URL, {
+  max: 2,
+  // Con las consultas ya explícitas esto no cambia ningún número, pero deja la
+  // sesión en hora local para lo que se escriba aquí mañana y para los registros.
+  connection: { timezone: 'Europe/Madrid' },
+})
 const storage =
   SUPABASE_URL && SERVICE_KEY ? createClient(SUPABASE_URL, SERVICE_KEY) : null
 
@@ -68,7 +73,13 @@ export async function generate(
   const period = range ?? periodFor(kind)
   const data = await loadReportData(sql, kind, period.start, period.end)
 
-  const generatedAt = new Date().toISOString().slice(0, 16).replace('T', ' ')
+  // El pie del informe daba la hora UTC sin decirlo: un PDF emitido a las 09:00
+  // de Madrid ponía «07:00», y quien lo archivara lo fecharía mal.
+  const generatedAt = new Intl.DateTimeFormat('es-ES', {
+    timeZone: ZONA,
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(new Date())
   const html = renderReport(data, generatedAt)
   const pdf = await htmlToPdf(html)
 

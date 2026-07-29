@@ -17,12 +17,21 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD}
       POSTGRES_DB: postgres
       JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET}
+      TZ: Europe/Madrid
     command:
       - postgres
       - -c
       - shared_preload_libraries=pg_stat_statements,pg_cron
       - -c
       - cron.database_name=postgres
+      # `pg_cron` interpreta sus horarios en `cron.timezone`, que por defecto es
+      # GMT: «diario a las 07:00» disparaba a las 09:00 de Madrid en verano y a
+      # las 08:00 en invierno, cambiando solo dos veces al año. Va aquí y no en
+      # una migración porque es un parámetro de arranque, no de sesión.
+      - -c
+      - cron.timezone=Europe/Madrid
+      - -c
+      - timezone=Europe/Madrid
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
@@ -175,6 +184,9 @@ services:
       SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
       WORKER_TOKEN: ${REPORTS_WORKER_TOKEN:?falta REPORTS_WORKER_TOKEN}
       PORT: 8080
+      # Los instantes se guardan en UTC; esto solo hace que los registros del
+      # contenedor y la hora local de Node coincidan con la del equipo.
+      TZ: Europe/Madrid
     # Sin puertos publicados: solo lo llama pg_cron desde dentro de la red.
     expose: ['8080']
     # Un weasyprint colgado no tumba el proceso, así que `restart: unless-stopped`

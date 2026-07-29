@@ -186,12 +186,7 @@ también cuesta.
 
 ## Anotado, sin arreglar
 
-- **Zona horaria.** No hay `TZ` en ningún contenedor, así que Postgres va en UTC:
-  el cron «diario a las 07:00» dispara a las 09:00 hora peninsular en verano, y
-  los límites del periodo se calculan en UTC. Para trabajo de día no cambia
-  ningún número, pero una revisión hecha a la 01:00 cae en el informe del día
-  anterior. Arreglarlo bien es fijar `TZ=Europe/Madrid` en la base y volver a
-  comprobar los periodos; no es un cambio para hacer a ciegas.
+- ~~**Zona horaria.**~~ **Hecho** — ver «La hora es la de Madrid» más abajo.
 - **`app_config` guarda el token del worker en claro** y su valor sembrado es
   `cambiame-en-produccion`. `deploy.sh` lo sustituye; si alguien despliega a mano
   y se lo salta, ahora al menos el worker no arranca con un token corto.
@@ -199,3 +194,86 @@ también cuesta.
   el servidor. Es una decisión consciente —un saldo no admite conflictos— pero
   significa que sin cobertura no se puede registrar consumo. La pantalla ya lo
   dice desde la auditoría anterior.
+
+
+---
+
+## La hora es la de Madrid
+
+Estaba anotado como pendiente y se ha hecho. Los instantes se siguen guardando
+en UTC, que es lo correcto: `timestamptz` almacena UTC siempre. Lo que cambia es
+**cómo se interpretan** al agrupar y al comparar con fechas.
+
+### Lo que estaba mal
+
+Ningún contenedor fijaba `TZ`, así que Postgres corría en UTC y `pg_cron`
+también. Tres consecuencias, de más a menos visible:
+
+1. **El informe diario cubría el día equivocado en dos franjas del día.** El
+   worker calculaba «ayer» con `toISOString()`, que da la fecha UTC. En verano,
+   a partir de las 22:00 de Madrid ya es el día siguiente en UTC.
+2. **Las comparaciones de rango usaban la zona de la sesión.** `occurred_at >=
+   '2026-07-28'` convierte la cadena a instante con la zona de quien pregunta:
+   una revisión de las 00:30 caía en el informe del día anterior.
+3. **Los truncados a mes, igual.** Una incidencia abierta a las 00:30 del 1 de
+   marzo se contaba en febrero, en `incidents_by_month` y en
+   `stock_monthly_consumption`.
+
+Y el cron «diario a las 07:00» disparaba a las 09:00 peninsulares en verano y a
+las 08:00 en invierno — cambiando solo dos veces al año, sin que nadie tocara
+nada.
+
+### Cómo se ha arreglado
+
+**La zona va escrita en la consulta, no heredada de la sesión.** Es la decisión
+que ordena todo lo demás: si dependiera del huso del cliente, la misma vista
+daría números distintos desde la aplicación, desde `psql` y desde cualquier
+herramienta que se conecte mañana. Un informe tiene que dar lo mismo lo pregunte
+quien lo pregunte.
+
+Dos funciones concentran la zona en un sitio:
+
+- `public.dia_local(timestamptz) → date` — en qué día de Madrid ocurrió algo.
+- `public.inicio_del_dia(date) → timestamptz` — la medianoche de Madrid de ese
+  día. Son `stable`, no `immutable`, porque las definiciones de zona horaria
+  cambian; como `stable`, el planificador las evalúa una vez por consulta y los
+  rangos siguen usando el índice de `occurred_at`.
+
+En el worker, `periodFor` formatea con `Intl` en `Europe/Madrid` y resta días
+sobre el instante, de modo que no depende de la hora local del proceso. El pie
+del PDF también: antes decía la hora UTC sin avisar, así que un informe emitido
+a las 09:00 ponía «07:00».
+
+En el cliente, `src/domain/fechas.ts` hace lo mismo para el «revisadas este mes»
+del panel. Ese número aparece **también** en el PDF, calculado en el servidor: si
+cada uno usara su zona dirían cifras distintas del mismo mes y nadie sabría cuál
+creer.
+
+`cron.timezone` se fija en el arranque del contenedor de la base, que es donde
+va —es un parámetro de arranque, no de sesión—; la migración lo intenta también
+con `alter system` por si el despliegue es sobre un Postgres gestionado, y avisa
+en vez de romper si no puede.
+
+### Lo que NO se ha tocado, y por qué
+
+`alerts_stale_incidents` y `alerts_overdue_rooms` calculan `now() - opened_at`.
+Eso es un **intervalo**: la distancia entre dos instantes, que no depende de
+ninguna zona. Tocarlos habría sido ruido, y ruido en una migración es lo que
+hace que la siguiente persona no se fíe de ninguna línea.
+
+Igual en el cliente: `daysSince()` mide tiempo transcurrido, y
+`new Date().toISOString()` al registrar una revisión guarda un instante. Los dos
+eran correctos.
+
+### Verificación
+
+Pruebas 27 y 28 de `npm run db:verify`, y `npm run worker:periodos`. Las que de
+verdad importan no son las del caso normal:
+
+- El **domingo del cambio de hora de marzo dura 23 horas**. Si el rango de un día
+  fuera «+24 horas» en vez de «hasta la medianoche siguiente», ese día se
+  solaparía con el siguiente. La prueba lo comprueba explícitamente.
+- La **semana que contiene el cambio de hora** sigue teniendo siete fechas.
+- Una incidencia de **las 00:30 del 1 de marzo** cuenta en marzo.
+- A las **00:30 de Madrid**, el diario ya cubre el día que acaba de terminar y no
+  el anterior.

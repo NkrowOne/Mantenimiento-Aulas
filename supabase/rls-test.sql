@@ -605,3 +605,64 @@ begin;
   end $$;
   rollback to savepoint s;
 rollback;
+
+\echo ''
+\echo '=== 27. Los límites del día son medianoche de Madrid, no de UTC ==='
+begin;
+  -- El caso que motivó todo esto. En verano Madrid va dos horas por delante de
+  -- UTC: una revisión de las 00:30 del 15 de julio son las 22:30 del 14 en UTC.
+  -- Comparando contra la zona de la sesión caía en el informe del día anterior.
+  select case
+    when public.dia_local('2026-07-15 00:30:00+02'::timestamptz) = date '2026-07-15'
+     and public.dia_local('2026-07-15 23:30:00+02'::timestamptz) = date '2026-07-15'
+    then 'OK: la madrugada y la noche del 15 pertenecen al 15'
+    else 'FALLO: ' || public.dia_local('2026-07-15 00:30:00+02'::timestamptz)
+  end as resultado;
+
+  -- Y el cambio de hora: en enero el desfase es de una hora, no de dos.
+  select case
+    when public.inicio_del_dia(date '2026-07-15') = '2026-07-14 22:00:00+00'::timestamptz
+     and public.inicio_del_dia(date '2026-01-15') = '2026-01-14 23:00:00+00'::timestamptz
+    then 'OK: el desfase sigue al horario de verano y de invierno'
+    else 'FALLO: verano ' || public.inicio_del_dia(date '2026-07-15')
+                || ' / invierno ' || public.inicio_del_dia(date '2026-01-15')
+  end as resultado;
+
+  -- El rango completo de un día, tal y como lo usa el worker.
+  select case
+    when public.inicio_del_dia(date '2026-07-16') - public.inicio_del_dia(date '2026-07-15')
+         = interval '24 hours'
+    then 'OK: un día normal dura 24 horas'
+    else 'FALLO: el día mide ' ||
+         (public.inicio_del_dia(date '2026-07-16') - public.inicio_del_dia(date '2026-07-15'))
+  end as resultado;
+
+  -- El domingo del cambio de hora de marzo dura 23. Si esto diera 24, el rango
+  -- se solaparía con el día siguiente.
+  select case
+    when public.inicio_del_dia(date '2026-03-30') - public.inicio_del_dia(date '2026-03-29')
+         = interval '23 hours'
+    then 'OK: el domingo del cambio de hora dura 23'
+    else 'FALLO: mide ' ||
+         (public.inicio_del_dia(date '2026-03-30') - public.inicio_del_dia(date '2026-03-29'))
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 28. Una incidencia de madrugada cuenta en su mes de Madrid ==='
+begin;
+  -- `date_trunc` sobre un timestamptz trunca en la zona de la sesión: el 1 de
+  -- marzo a las 00:30 de Madrid son las 23:30 del 28 de febrero en UTC, y la
+  -- incidencia se contaba en febrero.
+  insert into incidents (id, title, severity, state, opened_at, source)
+  values ('aaaaaaaa-2222-4222-8222-aaaaaaaaaaaa', 'Prueba de mes',
+          'media', 'abierta', '2026-03-01 00:30:00+01', 'app');
+
+  select case
+    when exists (select 1 from incidents_by_month
+                  where month = '2026-03'
+                    and total >= 1)
+    then 'OK: la incidencia de las 00:30 del 1 de marzo cuenta en marzo'
+    else 'FALLO: se ha contado en otro mes'
+  end as resultado;
+rollback;
