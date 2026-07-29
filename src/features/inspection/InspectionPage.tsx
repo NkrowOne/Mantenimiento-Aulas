@@ -138,7 +138,7 @@ export function InspectionPage({
       <div
         ref={filas}
         tabIndex={-1}
-        className="divide-y divide-line-soft border-y border-line bg-surface px-4 outline-none"
+        className="section-tail divide-y divide-line-soft border-y border-line bg-surface px-4 outline-none"
       >
         {rows.map((row) => {
           const key = row.key
@@ -251,7 +251,7 @@ export function InspectionPage({
       />
 
       <div className="border-t border-line px-4">
-        <div className="py-4">
+        <div className="section-tail py-4">
           <p className="eyebrow mb-2">Fotos y observaciones</p>
 
           <input

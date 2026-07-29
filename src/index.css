@@ -188,6 +188,23 @@
     @apply mb-3 flex items-center gap-3;
   }
 
+  /*
+   * El aire de cierre de un apartado.
+   *
+   * Todo terminaba a ras: la última línea de una sección y el filete de la
+   * siguiente se tocaban, así que la pantalla se leía como una tirada continua y
+   * costaba ver dónde acababa una cosa y empezaba otra.
+   *
+   * 12px y no 10: el resto de la aplicación se mide en múltiplos de 4 —los
+   * márgenes, las alturas de toque, los huecos de las rejillas— y meter un valor
+   * suelto fuera de esa escala se nota justamente en que no encaja con nada de
+   * lo que tiene al lado. 12 es el escalón inmediato y hace el trabajo: separa
+   * sin abrir un hueco que parezca un olvido.
+   */
+  .section-tail {
+    padding-bottom: 12px;
+  }
+
   .section-head::after {
     @apply h-px flex-1 bg-line;
     content: '';
@@ -226,9 +243,22 @@
       opacity 160ms var(--ease-out);
   }
 
+  /*
+   * `overflow: hidden` es lo que hace posible la animación —sin él, el contenido
+   * asoma entero desde el primer fotograma—, pero recorta TODO lo que toque el
+   * borde. Y lo primero que toca el borde es el anillo de foco: un `outline` de
+   * 2px con 2px de separación sobresale 4px de su control, así que un campo
+   * pegado al filo de la sección salía con el resaltado cortado por arriba. Se
+   * ve al tabular o al tocar un campo, que es justo cuando hace falta ver dónde
+   * está el foco.
+   *
+   * Cuatro píxeles de reserva arriba y abajo es exactamente lo que alcanza el
+   * anillo. Cuestan nada y no se ven cuando no hay foco.
+   */
   .collapse-y > * {
     overflow: hidden;
     min-height: 0;
+    padding-block: 4px;
   }
 
   .collapse-y[data-open='true'] {
