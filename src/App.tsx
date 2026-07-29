@@ -7,16 +7,14 @@ import { Diagnostico } from '@/features/admin/Diagnostico'
 import { InspectionPage } from '@/features/inspection/InspectionPage'
 import { RoomListPage } from '@/features/rooms/RoomListPage'
 import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
-import { FichaSala } from '@/features/rooms/FichaSala'
 import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
-import { parseQR, salaDeLaUrl } from '@/domain/qr'
 
 import { getSealed, lock, resumeSession, touch, watchSession } from '@/auth/session'
 import { db, purgeSyncedInspections, requestPersistentStorage } from '@/db/dexie'
 import { pullMaster, startPull, type ResultadoPull } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
 import { configError, supabase } from '@/lib/supabase'
-import { PARAM_SALA, salaDeLaUrl } from '@/lib/enlace-sala'
+import { PARAM_SALA, salaDeLaUrl, salaDeTextoQR } from '@/lib/enlace-sala'
 import type { SealedSession } from '@/auth/pin'
 import { OVERDUE_INSPECTION_DAYS, type Building, type Role, type Room } from '@/domain/types'
 
@@ -183,26 +181,6 @@ export function App(): React.ReactElement {
   const [roomOrder, setRoomOrder] = useState<RoomOrder>('antiguedad')
   const [escaneando, setEscaneando] = useState(false)
   const [avisoQR, setAvisoQR] = useState<string | null>(null)
-  /*
-   * La sala que pide la dirección con la que se abrió la aplicación.
-   *
-   * Se lee una sola vez, en el primer render, porque para cuando el efecto que
-   * restaura la última vista se ejecuta la dirección ya tiene que estar leída.
-   * La lectura es pura; borrar el parámetro es un efecto y va en su sitio —en
-   * `StrictMode` el inicializador corre dos veces, y escribir el historial
-   * desde ahí es de los efectos que un día muerden.
-   */
-  const [pendienteQR, setPendienteQR] = useState<string | null>(() =>
-    typeof window === 'undefined' ? null : salaDeLaUrl(window.location.href),
-  )
-
-  // Y se quita de la barra de direcciones enseguida: si no, recargar la página
-  // devolvería siempre al aula de la pegatina y no a donde estaba el técnico.
-  useEffect(() => {
-    if (salaDeLaUrl(window.location.href)) {
-      window.history.replaceState(null, '', window.location.pathname)
-    }
-  }, [])
   // Hasta que se intenta rehidratar no se pinta la lista de edificios: si no,
   // se vería un parpadeo desde la raíz hasta donde estabas.
   const [restaurado, setRestaurado] = useState(false)
@@ -322,41 +300,15 @@ export function App(): React.ReactElement {
     if (!building) return false
 
     setTab('revisar')
-    // Directo a revisar: esto lo llama el QR de la puerta, y quien lo escanea
-    // viene a revisar. La ficha está a un toque, en «Volver».
+    // Directo a revisar: esto lo llama el lector de la cámara, y quien escanea
+    // viene a revisar. La ficha está a un toque, en la placa de la cabecera.
     setView({ name: 'revision', building, room })
     return true
   }, [])
 
-  /*
-   * La sala de la pegatina, en cuanto se pueda.
-   *
-   * Puede llegar antes que los datos: quien escanea el QR con la aplicación
-   * cerrada y el espejo local vacío abre una pantalla que todavía no sabe qué
-   * salas hay. Por eso se reintenta cuando termina la descarga —`diagnostico`
-   * cambia— en vez de darlo por perdido a la primera.
-   */
-  useEffect(() => {
-    if (!unlocked || !pendienteQR) return
-    void (async () => {
-      if (await abrirSala(pendienteQR)) {
-        setPendienteQR(null)
-        setRestaurado(true)
-      } else if (diagnostico) {
-        // La descarga ya ha terminado y la sala sigue sin aparecer: o la
-        // pegatina es de una sala retirada, o este usuario no puede verla.
-        setPendienteQR(null)
-        setAvisoQR('Ese QR no corresponde a ninguna sala de las que puedes ver.')
-      }
-    })()
-  }, [unlocked, pendienteQR, diagnostico, abrirSala])
 
   useEffect(() => {
     if (!unlocked || restaurado) return
-    // El enlace de la pegatina manda sobre la última vista guardada: si alguien
-    // ha escaneado una puerta, quiere esa aula y no donde lo dejó ayer.
-    if (pendienteQR) return
-
     void (async () => {
       try {
         /*
@@ -408,7 +360,9 @@ export function App(): React.ReactElement {
             setView(
               room
                 ? guardado.vista === 'ficha'
-                  ? { name: 'ficha', building, room }
+                  ? // Restaurada desde la lista: es de donde se llega a la
+                    // ficha en frío, y es a donde tiene que devolver «Volver».
+                    ({ name: 'ficha', building, room, volverA: 'salas' } as const)
                   : { name: 'revision', building, room }
                 : { name: 'salas', building },
             )
@@ -712,7 +666,7 @@ export function App(): React.ReactElement {
           onBack={() =>
             setView(
               view.name === 'revision' && view.desdeFicha
-                ? { name: 'ficha', building: view.building, room: view.room }
+                ? ({ name: 'ficha', building: view.building, room: view.room, volverA: 'salas' } as const)
                 : { name: 'salas', building: view.building },
             )
           }
@@ -726,7 +680,9 @@ export function App(): React.ReactElement {
             local, así que con el orden por antigüedad la recién terminada cae al
             final y la primera del resto es la que toca.
           */
-          onFicha={() => setView({ name: 'ficha', building: view.building, room: view.room })}
+          onFicha={() =>
+            setView({ name: 'ficha', building: view.building, room: view.room, volverA: 'revision' })
+          }
           onDone={(encadenar) => {
             const siguiente =
               encadenar && rondaActual
@@ -749,9 +705,20 @@ export function App(): React.ReactElement {
             buildingName={view.building.name}
             zoneName={zoneName}
             userId={userId}
-            onBack={() => setView({ name: 'revision', building: view.building, room: view.room })}
+            onBack={() =>
+              setView(
+                view.name === 'ficha' && view.volverA === 'salas'
+                  ? { name: 'salas', building: view.building }
+                  : { name: 'revision', building: view.building, room: view.room },
+              )
+            }
             onRevisar={() =>
-              setView({ name: 'revision', building: view.building, room: view.room })
+              setView({
+                name: 'revision',
+                building: view.building,
+                room: view.room,
+                desdeFicha: true,
+              })
             }
             onImprimir={() => setView({ name: 'placas', building: view.building })}
           />
@@ -826,7 +793,7 @@ export function App(): React.ReactElement {
             onCerrar={() => setEscaneando(false)}
             onLeido={(texto) => {
               setEscaneando(false)
-              const sala = parseQR(texto)
+              const sala = salaDeTextoQR(texto)
               if (!sala) {
                 setAvisoQR('Ese código no es de una sala.')
                 return

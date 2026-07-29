@@ -766,7 +766,7 @@ begin;
   -- que UNA de ellas tenga la RLS mal puesta para que el histórico salga
   -- truncado sin ningún error: la lista simplemente enseñaría menos cosas.
   select case
-    when (select count(distinct kind) from room_timeline) >= 3
+    when (select count(distinct kind) from room_timeline) >= 3  -- revision_ok, incidencia, material…
     then 'OK: el técnico ve ' || (select count(*) from room_timeline) || ' entradas de ' ||
          (select count(distinct kind) from room_timeline) || ' familias'
     else 'FALLO: el técnico solo ve las familias ' ||
@@ -841,9 +841,9 @@ begin;
     from rooms limit 1;
 
   select case
-    when (select count(*) from room_timeline where subkind = 'inventario') = 1
-    then 'OK: «' || (select title from room_timeline where subkind = 'inventario') || '» · ' ||
-         (select detail from room_timeline where subkind = 'inventario')
+    when (select count(*) from room_timeline where kind = 'inventario') = 1
+    then 'OK: «' || (select title from room_timeline where kind = 'inventario') || '» · ' ||
+         (select detail from room_timeline where kind = 'inventario')
     else 'FALLO: el levantamiento no aparece en el histórico'
   end as resultado;
 rollback;

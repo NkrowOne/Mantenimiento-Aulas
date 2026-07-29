@@ -1,6 +1,7 @@
 import {
   FAMILIA_ESTILO,
   cantidadLegible,
+  familiaDe,
   fechaLegible,
   subtipoLegible,
   type EventoSala,
@@ -43,7 +44,7 @@ export function LineaTiempo({
       />
 
       {eventos.map((e) => {
-        const estilo = FAMILIA_ESTILO[e.kind]
+        const estilo = FAMILIA_ESTILO[familiaDe(e.kind)]
         const sub = subtipoLegible(e)
         const cantidad = cantidadLegible(e.qty)
         const sala = salaDe?.(e.room_id) ?? null

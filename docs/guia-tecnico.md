@@ -67,19 +67,17 @@ siempre: el buscador de arriba y la lista de edificios.
 ## La ficha de la sala
 
 Al tocar un aula en la lista se abre **su ficha**, no el formulario. Es la
-pantalla que contesta a lo que uno se pregunta llegando a la puerta:
+pantalla que contesta a lo que uno se pregunta llegando a la puerta: cuándo se
+revisó, qué hay registrado, qué queda abierto y qué le ha pasado antes. Y es
+donde se **registra sin que nada haya fallado** —una observación, una
+solicitud—, que es lo que hoy se pierde en la columna de texto libre del Excel.
 
-- **Cuándo se revisó**, cuántas **incidencias abiertas** hay, cuántos **equipos**
-  y cómo va la **lámpara**. Cuatro cifras de un vistazo.
-- Las incidencias abiertas se leen ahí mismo, no hay que irse a otra pestaña.
-- Debajo, plegados: **los equipos** y **el histórico**.
-
-Y arriba del todo, el botón grande: **«Revisar esta aula»** —o «Continuar la
-revisión» si la dejaste a medias—. Al salir de la revisión vuelves a la ficha.
+Arriba del todo, el botón grande: **«Revisar esta aula»**. Al salir de la
+revisión vuelves a la ficha.
 
 > **El camino corto sigue igual.** El QR de la puerta y el buscador entran
-> directos a revisar: si escaneas una pegatina ya sabes dónde estás y a qué
-> vienes. La ficha queda a un toque, en «Volver».
+> directos a revisar: si escaneas una placa ya sabes dónde estás y a qué vienes.
+> La ficha queda a un toque, tocando la placa de la cabecera.
 
 ## Revisar un aula
 
@@ -172,7 +170,7 @@ se queda como está.
 
 ### Qué le ha pasado antes a esta aula
 
-**«Histórico de la sala»**, en la ficha y también al final de la revisión. Se
+**El histórico**, en la ficha y también al final de la revisión, plegado. Se
 abre tocándolo y trae todo lo que le ha pasado: revisiones, **incidencias
 abiertas y resueltas**, material gastado y equipos que entraron o salieron. Con
 los botones de arriba se filtra por tipo.

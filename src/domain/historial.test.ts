@@ -33,7 +33,7 @@ describe('cómo se lee el histórico', () => {
     expect(subtipoLegible(evento({ kind: 'incidencia', subkind: 'resuelta' }))).toBe('resuelta')
     expect(subtipoLegible(evento({ kind: 'equipo', subkind: 'traslado' }))).toBe('traslado')
     // Una revisión completa no necesita adjetivo: es lo normal.
-    expect(subtipoLegible(evento({ kind: 'revision', subkind: 'completa' }))).toBe('')
+    expect(subtipoLegible(evento({ kind: 'revision_ok', subkind: 'completa' }))).toBe('')
   })
 
   it('deja pasar un subtipo que no conoce en vez de borrarlo', () => {

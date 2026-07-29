@@ -34,10 +34,13 @@ import { INCIDENT_KIND_LABELS, type IncidentKind, type Room } from '@/domain/typ
 interface TimelineRow {
   at: string
   kind: 'incidencia' | 'solicitud' | 'observacion' | 'revision_ok' | 'revision_ko'
+    | 'material' | 'equipo' | 'inventario'
   title: string
   ref: string | null
   who: string | null
   state: string
+  /** Unidades, en las filas de material. Negativo sale del almacén. */
+  qty: number | null
 }
 
 interface Fiabilidad {
@@ -63,6 +66,14 @@ const MARCA: Record<TimelineRow['kind'], { punto: string; texto: string }> = {
   observacion: { punto: 'bg-warn', texto: 'Observación' },
   revision_ok: { punto: 'bg-ok', texto: 'Revisión' },
   revision_ko: { punto: 'bg-crit', texto: 'Revisión' },
+  /*
+   * Las tres que trae la línea de tiempo desde que se fundió con la del
+   * almacén. Sin ellas aquí, `MARCA[h.kind]` era `undefined` y la ficha
+   * reventaba al abrir cualquier sala donde se hubiera gastado un cable.
+   */
+  material: { punto: 'bg-mark', texto: 'Material' },
+  equipo: { punto: 'bg-warn', texto: 'Equipo' },
+  inventario: { punto: 'bg-ok', texto: 'Inventario' },
 }
 
 interface Props {
@@ -419,6 +430,11 @@ export function RoomSheet({
                   <p>
                     <span className="text-muted">{MARCA[h.kind].texto} — </span>
                     {h.title}
+                    {h.qty !== null && h.qty !== 0 && (
+                      <span className="ml-2 font-mono text-xs font-semibold tabular text-ink-2">
+                        {h.qty > 0 ? `+${h.qty}` : `−${Math.abs(h.qty)}`}
+                      </span>
+                    )}
                     {h.state === 'borrador' && (
                       <span className="ml-2 rounded-tag bg-warn-tint px-1.5 py-0.5 text-xs text-warn">
                         sin completar

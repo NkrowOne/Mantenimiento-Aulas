@@ -363,24 +363,31 @@ where name in ('Lámpara proyector NP44', 'Cable HDMI fibra 15 m');
 
 Los artículos por debajo salen en rojo y en el panel.
 
-## 5. Etiquetas QR de las aulas
+## 5. Las placas de puerta
 
-En la pestaña **Datos**, abajo. Eliges edificio, **Generar** e **Imprimir**: una
-pegatina por puerta con el código del aula en grande y el QR al lado. Al
-escanearla con la cámara del móvil se abre la revisión de esa sala.
+Se imprimen desde la lista de salas del edificio, con **Placas**: una por
+puerta, con la matrícula (`SALA-000087`), el código del aula y el QR.
 
-Tres cosas que deciden si las pegatinas funcionan o no:
+Tres cosas que deciden si funcionan o no:
 
 - **Imprime en A4 sin ajuste de escala.** Si la impresora reduce, el código se
   emborrona y deja de leerse.
-- **En blanco y negro, tal y como se ve en pantalla.** El QR necesita contraste
-  y un margen blanco alrededor; pegarlo a ras de un marco oscuro lo estropea.
-- **El código apunta al identificador interno de la sala, no a su nombre.**
-  Renombrar el aula, cambiarla de planta o corregir su código **no rompe la
-  pegatina**. Lo único que la invalida es borrar la sala.
+- **Sale en blanco y negro aunque la aplicación esté en modo oscuro.** Una hoja
+  de placas en negativo se come un cartucho y sale ilegible.
+- **El QR apunta al identificador interno de la sala, no a su nombre ni a su
+  matrícula.** Renombrar el aula, cambiarla de planta o corregir su código **no
+  rompe la placa**. Lo único que la invalida es borrar la sala, o mudar el
+  despliegue a otro dominio — para eso, una redirección desde el viejo.
 
-Si un aula se parte en dos o se crea una nueva, genera solo ese edificio otra
-vez e imprime las que falten.
+Y para leerlas hay dos caminos, los dos válidos:
+
+- **La cámara del móvil**, sin abrir nada antes. El QR es una URL.
+- **«Escanear el QR del aula»**, arriba de la pantalla de Revisar, para cuando
+  ya se está dentro de la aplicación. Lleva linterna, que en un pasillo a
+  oscuras es la diferencia entre leer y no leer.
+
+Los dos entran **directos a la revisión**. La ficha de la sala queda a un toque,
+en la placa de la cabecera.
 
 ## 6. Inventario por levantar
 

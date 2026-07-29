@@ -4,7 +4,14 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { displayRoomCode } from '@/domain/normalize'
-import { FAMILIAS, FAMILIA_ESTILO, diaDe, type EventoSala, type Familia } from '@/domain/historial'
+import {
+  FAMILIAS,
+  FAMILIA_ESTILO,
+  TIPOS_DE_FAMILIA,
+  diaDe,
+  type EventoSala,
+  type Familia,
+} from '@/domain/historial'
 import { LineaTiempo } from './LineaTiempo'
 
 /**
@@ -117,7 +124,9 @@ export function HistorialPage(): React.ReactElement {
         .order('at', { ascending: false })
         .range(pageParam as number, (pageParam as number) + PAGINA - 1)
 
-      if (familia) q = q.eq('kind', familia)
+      // Una familia agrupa varios tipos —«Revisión» son las que salieron bien y
+      // las que no—, así que el filtro va por lista y no por igualdad.
+      if (familia) q = q.in('kind', TIPOS_DE_FAMILIA[familia])
       if (roomId) q = q.eq('room_id', roomId)
       else if (buildingId) q = q.eq('building_id', buildingId)
       if (desdeEfectivo) q = q.gte('at', desdeEfectivo)

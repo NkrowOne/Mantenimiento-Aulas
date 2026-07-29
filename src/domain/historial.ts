@@ -11,13 +11,72 @@
  * otro: quien lee las dos pantallas deja de saber si está viendo lo mismo.
  */
 
-/** Las cuatro familias. Es también el orden de los filtros. */
-export const FAMILIAS = ['revision', 'incidencia', 'material', 'equipo'] as const
+/**
+ * Lo que puede traer una fila de `room_timeline`.
+ *
+ * El vocabulario lo fija la vista, y viene de fundir dos que se llamaban igual:
+ * la de la ficha de sala —que distingue incidencia, solicitud y observación, y
+ * separa las revisiones que salieron bien de las que no— y la del almacén, que
+ * añade material, equipos y levantamientos. Distinguir una solicitud de una
+ * avería importa: una sala bien atendida acumula solicitudes, y contarlas como
+ * fallos la dejaría peor que una a la que nadie hace caso.
+ */
+export type TipoEvento =
+  | 'incidencia'
+  | 'solicitud'
+  | 'observacion'
+  | 'revision_ok'
+  | 'revision_ko'
+  | 'material'
+  | 'equipo'
+  | 'inventario'
+
+/**
+ * Las familias con las que se filtra, que no son una por tipo.
+ *
+ * Una revisión que sale bien y otra que sale mal son la misma cosa para quien
+ * filtra —«enséñame las revisiones»— y un levantamiento es inventario, igual
+ * que un alta de equipo. Ocho botones donde caben cinco no son más precisión:
+ * son cinco decisiones que nadie ha pedido tomar.
+ */
+export const FAMILIAS = ['revision', 'incidencia', 'solicitud', 'material', 'equipo'] as const
 export type Familia = (typeof FAMILIAS)[number]
+
+const FAMILIA_DE: Record<TipoEvento, Familia> = {
+  revision_ok: 'revision',
+  revision_ko: 'revision',
+  incidencia: 'incidencia',
+  // Las observaciones van con las solicitudes: las dos son «alguien pasó y
+  // apuntó algo», frente a «algo está roto».
+  solicitud: 'solicitud',
+  observacion: 'solicitud',
+  material: 'material',
+  equipo: 'equipo',
+  inventario: 'equipo',
+}
+
+export function familiaDe(kind: TipoEvento): Familia {
+  return FAMILIA_DE[kind] ?? 'incidencia'
+}
+
+/**
+ * Los tipos que caen en cada familia.
+ *
+ * Lo necesita el filtro de la pestaña Historial, que se resuelve en el servidor:
+ * pedir `kind = 'revision'` no devolvería nada porque ese valor no existe en la
+ * vista — son `revision_ok` y `revision_ko`.
+ */
+export const TIPOS_DE_FAMILIA: Record<Familia, TipoEvento[]> = FAMILIAS.reduce(
+  (acc, f) => {
+    acc[f] = (Object.keys(FAMILIA_DE) as TipoEvento[]).filter((k) => FAMILIA_DE[k] === f)
+    return acc
+  },
+  {} as Record<Familia, TipoEvento[]>,
+)
 
 export interface EventoSala {
   ref_id: string
-  kind: Familia
+  kind: TipoEvento
   subkind: string
   room_id: string
   at: string
@@ -37,14 +96,18 @@ export interface EventoSala {
 export const FAMILIA_ESTILO: Record<Familia, { etiqueta: string; punto: string; tinte: string }> = {
   revision: { etiqueta: 'Revisión', punto: 'bg-ok', tinte: 'text-ok' },
   incidencia: { etiqueta: 'Incidencia', punto: 'bg-crit', tinte: 'text-crit' },
-  material: { etiqueta: 'Material', punto: 'bg-accent', tinte: 'text-accent' },
+  solicitud: { etiqueta: 'Solicitudes', punto: 'bg-accent', tinte: 'text-accent' },
+  material: { etiqueta: 'Material', punto: 'bg-mark', tinte: 'text-ink-2' },
   equipo: { etiqueta: 'Equipo', punto: 'bg-warn', tinte: 'text-warn' },
 }
 
 const SUBTIPO: Record<string, string> = {
-  // Incidencias
+  // Incidencias, solicitudes y observaciones
   abierta: 'abierta',
+  en_curso: 'en curso',
+  borrador: 'sin completar',
   resuelta: 'resuelta',
+  levantamiento: 'confirmado',
   // Material
   consumo: 'consumido',
   compra: 'entrada',
@@ -56,9 +119,8 @@ const SUBTIPO: Record<string, string> = {
   sustitucion: 'sustitución',
   traslado: 'traslado',
   averia: 'avería',
-  // Revisiones
+  // Revisiones. Una revisión cerrada no necesita adjetivo: es lo normal.
   completa: '',
-  borrador: 'sin cerrar',
 }
 
 /** La palabra que acompaña al título. Vacía cuando no aporta nada. */

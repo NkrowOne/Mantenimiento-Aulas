@@ -1,7 +1,13 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import { FAMILIAS, FAMILIA_ESTILO, type EventoSala, type Familia } from '@/domain/historial'
+import {
+  FAMILIAS,
+  FAMILIA_ESTILO,
+  familiaDe,
+  type EventoSala,
+  type Familia,
+} from '@/domain/historial'
 import { LineaTiempo } from './LineaTiempo'
 
 /**
@@ -53,12 +59,12 @@ export function HistorialSala({ roomId }: { roomId: string }): React.ReactElemen
   })
 
   const eventos = data ?? []
-  const visibles = familia ? eventos.filter((e) => e.kind === familia) : eventos
+  const visibles = familia ? eventos.filter((e) => familiaDe(e.kind) === familia) : eventos
 
   // Cuántos hay de cada familia. Se cuenta sobre lo descargado, que es lo que
   // el filtro puede enseñar: prometer «12 incidencias» y luego enseñar 4 porque
   // el resto se quedó fuera del límite sería mentir con precisión.
-  const cuenta = (f: Familia): number => eventos.filter((e) => e.kind === f).length
+  const cuenta = (f: Familia): number => eventos.filter((e) => familiaDe(e.kind) === f).length
 
   return (
     /*
