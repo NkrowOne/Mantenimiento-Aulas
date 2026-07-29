@@ -77,14 +77,42 @@ grant anon, authenticated, service_role to authenticator;
 -- -----------------------------------------------------------------------------
 -- Esquemas que crean y pueblan los propios servicios
 -- -----------------------------------------------------------------------------
-create schema if not exists auth authorization supabase_auth_admin;
-create schema if not exists storage authorization supabase_storage_admin;
-create schema if not exists extensions;
+-- `create schema ... authorization` comprueba el AUTHORIZATION **antes** que el
+-- `if not exists`, así que sobre un Supabase ya montado —donde estos esquemas
+-- existen y los posee su propio administrador— la sentencia moría con «must be
+-- able to SET ROLE "supabase_auth_admin"» sin tener nada que crear. Y como la
+-- migración va entera en una transacción, eso dejaba el despliegue sin esquema
+-- y sin ninguna pista de que el problema fuera solo este renglón.
+do $$
+begin
+  if not exists (select 1 from pg_namespace where nspname = 'auth') then
+    execute 'create schema auth authorization supabase_auth_admin';
+  end if;
+  if not exists (select 1 from pg_namespace where nspname = 'storage') then
+    execute 'create schema storage authorization supabase_storage_admin';
+  end if;
+  if not exists (select 1 from pg_namespace where nspname = 'extensions') then
+    execute 'create schema extensions';
+  end if;
+end $$;
 
-grant usage on schema public     to anon, authenticated, service_role;
-grant usage on schema auth       to anon, authenticated, service_role;
-grant usage on schema storage    to anon, authenticated, service_role;
-grant usage on schema extensions to anon, authenticated, service_role;
+-- Uno a uno y tolerando que nos digan que no: sobre un Postgres desnudo estos
+-- esquemas los acabamos de crear y el permiso se da; sobre un Supabase ya
+-- montado son de sus administradores y estos permisos vienen de serie, así que
+-- lo que se recibe es un «permission denied» por algo que ya está hecho. Cada
+-- uno en su bloque para que el que falle no impida los demás.
+do $$
+declare
+  esquema text;
+begin
+  foreach esquema in array array['public', 'extensions', 'auth', 'storage'] loop
+    begin
+      execute format('grant usage on schema %I to anon, authenticated, service_role', esquema);
+    exception when insufficient_privilege then
+      raise notice 'sin permiso sobre el esquema %: es de otro rol y ya traerá los suyos', esquema;
+    end;
+  end loop;
+end $$;
 
 -- En Supabase estos permisos vienen de serie y RLS es quien restringe después.
 -- Sin ellos, `authenticated` ni siquiera vería las tablas y todo fallaría por
@@ -126,41 +154,88 @@ end $$;
 --
 -- Leen el JWT que PostgREST inyecta como variable de sesión en cada petición.
 -- -----------------------------------------------------------------------------
-create or replace function auth.uid()
-returns uuid
-language sql stable
-as $$
-  select nullif(
-    coalesce(
-      current_setting('request.jwt.claim.sub', true),
-      (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')
-    ), ''
-  )::uuid;
-$$;
+-- Se crean solo si faltan, y por el mismo motivo que los esquemas: cuando ya
+-- hay un Supabase, estas funciones existen y son de `supabase_auth_admin`. Un
+-- `create or replace` desde otro rol no las mejora, falla con «must be owner of
+-- function» y se lleva por delante toda la migración.
+--
+-- La existencia se pregunta al catálogo y no con `to_regprocedure`: resolver un
+-- nombre exige `usage` sobre su esquema, y `auth` es justo el que aquí puede
+-- estar vedado. Preguntarlo de la forma cómoda fallaba con «permission denied
+-- for schema auth» al comprobar si hacía falta hacer algo.
+do $do$
+declare
+  hay boolean;
+begin
+  select exists (
+    select 1 from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'auth' and p.proname = 'uid' and p.pronargs = 0
+  ) into hay;
+  if not hay then
+    execute $crea$
+      create function auth.uid()
+      returns uuid
+      language sql stable
+      as $cuerpo$
+        select nullif(
+          coalesce(
+            current_setting('request.jwt.claim.sub', true),
+            (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')
+          ), ''
+        )::uuid;
+      $cuerpo$
+    $crea$;
+  end if;
 
-create or replace function auth.jwt()
-returns jsonb
-language sql stable
-as $$
-  select coalesce(
-    nullif(current_setting('request.jwt.claim', true), '')::jsonb,
-    nullif(current_setting('request.jwt.claims', true), '')::jsonb,
-    '{}'::jsonb
-  );
-$$;
+  select exists (
+    select 1 from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'auth' and p.proname = 'jwt' and p.pronargs = 0
+  ) into hay;
+  if not hay then
+    execute $crea$
+      create function auth.jwt()
+      returns jsonb
+      language sql stable
+      as $cuerpo$
+        select coalesce(
+          nullif(current_setting('request.jwt.claim', true), '')::jsonb,
+          nullif(current_setting('request.jwt.claims', true), '')::jsonb,
+          '{}'::jsonb
+        );
+      $cuerpo$
+    $crea$;
+  end if;
 
-create or replace function auth.role()
-returns text
-language sql stable
-as $$
-  select coalesce(
-    current_setting('request.jwt.claim.role', true),
-    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role')
-  );
-$$;
+  select exists (
+    select 1 from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'auth' and p.proname = 'role' and p.pronargs = 0
+  ) into hay;
+  if not hay then
+    execute $crea$
+      create function auth.role()
+      returns text
+      language sql stable
+      as $cuerpo$
+        select coalesce(
+          current_setting('request.jwt.claim.role', true),
+          (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role')
+        );
+      $cuerpo$
+    $crea$;
+  end if;
+end
+$do$;
 
-grant execute on function auth.uid(), auth.jwt(), auth.role()
-  to anon, authenticated, service_role;
+do $$
+begin
+  grant execute on function auth.uid(), auth.jwt(), auth.role()
+    to anon, authenticated, service_role;
+exception when insufficient_privilege then
+  raise notice 'las funciones auth.* son de supabase_auth_admin y ya tienen estos permisos';
+end $$;
 
 -- -----------------------------------------------------------------------------
 -- Si tu proveedor no ofrece pg_cron ni pg_net

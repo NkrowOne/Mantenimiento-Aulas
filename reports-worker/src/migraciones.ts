@@ -84,9 +84,17 @@ async function conectarConEspera(): Promise<Sql | null> {
  * hasta mucho después.
  */
 async function esLaBaseDelDespliegue(sql: Sql): Promise<boolean> {
+  // Se pregunta al catálogo y no con `to_regclass`, que para resolver el nombre
+  // exige `usage` sobre el esquema: `auth` y `storage` son de sus propios
+  // administradores, así que la forma cómoda se contestaba a sí misma con
+  // «permission denied for schema auth» —un mensaje sobre permisos para una
+  // pregunta sobre si la tabla existe— y ahí se acababa el arranque.
   const [fila] = await sql<{ auth: boolean; storage: boolean }[]>`
-    select to_regclass('auth.users') is not null as auth,
-           to_regclass('storage.buckets') is not null as storage`
+    select
+      exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+              where n.nspname = 'auth' and c.relname = 'users') as auth,
+      exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+              where n.nspname = 'storage' and c.relname = 'buckets') as storage`
   if (fila?.auth && fila.storage) return true
   avisa('no existe auth.users o storage.buckets: esta base no es la de la aplicación.')
   avisa('Los crean GoTrue y Storage al arrancar. Si ya lo han hecho, es que')
