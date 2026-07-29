@@ -53,7 +53,13 @@ export const serverEnvSchema = z.object({
   S3_ACCESS_KEY: requiredString("S3_ACCESS_KEY es obligatoria"),
   S3_SECRET_KEY: requiredString("S3_SECRET_KEY es obligatoria"),
 
-  AUTH_SECRET: requiredString("AUTH_SECRET es obligatoria"),
+  // Firma/cifra las sesiones JWT de Auth.js (ver src/auth.config.ts): un
+  // secreto corto o adivinable anularía "sesiones seguras" de raíz, así
+  // que se exige una longitud mínima además de estar presente.
+  AUTH_SECRET: requiredString("AUTH_SECRET es obligatoria").min(
+    32,
+    "AUTH_SECRET debe tener al menos 32 caracteres",
+  ),
 
   // Opcional a propósito: sin ella, las funciones de IA (Gemini) se
   // ocultan y el resto de la aplicación sigue funcionando con normalidad.

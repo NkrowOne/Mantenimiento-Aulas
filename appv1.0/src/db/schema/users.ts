@@ -3,9 +3,11 @@ import { timestamps } from "./columns.helpers";
 import { userRoleEnum } from "./enums";
 
 /**
- * `password_hash`/`pin_hash` guardan únicamente hashes (nunca texto plano).
- * El algoritmo de hashing (argon2id vía Auth.js) se implementa en la Fase 2
- * de docs/PLAN.md; esta tabla ya deja el esquema listo para ello.
+ * `password_hash`/`pin_hash` guardan únicamente hashes Argon2id (nunca
+ * texto plano), calculados de forma independiente entre sí — ver
+ * `src/lib/auth/password.ts` y docs/AUTENTICACION.md. `pin_hash` es
+ * nullable: un usuario puede no haberse configurado todavía un PIN de
+ * reapertura.
  */
 export const users = pgTable("users", {
   id: uuid("id").primaryKey(),
@@ -15,5 +17,7 @@ export const users = pgTable("users", {
   name: text("name").notNull(),
   role: userRoleEnum("role").notNull().default("operador"),
   active: boolean("active").notNull().default(true),
+  /** Fuerza el cambio de contraseña antes de usar el resto de la app. */
+  mustChangePassword: boolean("must_change_password").notNull().default(false),
   ...timestamps(),
 });

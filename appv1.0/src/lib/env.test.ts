@@ -16,7 +16,7 @@ const validServerEnv = {
   S3_BUCKET: "mantenimiento-aulas",
   S3_ACCESS_KEY: "minioadmin",
   S3_SECRET_KEY: "minioadmin-secret",
-  AUTH_SECRET: "a-very-secret-value",
+  AUTH_SECRET: "a-very-secret-value-that-is-at-least-32-chars",
 };
 
 const validClientEnv = {
@@ -88,6 +88,12 @@ describe("parseServerEnv", () => {
   it("falla cuando alguna variable obligatoria está vacía", () => {
     expect(() =>
       parseServerEnv({ ...validServerEnv, AUTH_SECRET: "" }),
+    ).toThrowError(/AUTH_SECRET/);
+  });
+
+  it("falla cuando AUTH_SECRET es demasiado corto para firmar sesiones de forma segura", () => {
+    expect(() =>
+      parseServerEnv({ ...validServerEnv, AUTH_SECRET: "corto" }),
     ).toThrowError(/AUTH_SECRET/);
   });
 });

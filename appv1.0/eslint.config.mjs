@@ -17,7 +17,18 @@ const eslintConfig = defineConfig([
   // acceder a process.env directamente desde el resto de la app.
   {
     files: ["**/*.{js,jsx,ts,tsx}"],
-    ignores: ["src/lib/env.ts", "playwright.config.ts", "drizzle.config.ts"],
+    ignores: [
+      "src/lib/env.ts",
+      "playwright.config.ts",
+      "drizzle.config.ts",
+      // Guarda de runtime documentada por Next.js (NEXT_RUNTIME) para que
+      // instrumentation.ts no ejecute código de Node.js dentro del Edge
+      // Runtime que usa el middleware — ver src/instrumentation.ts.
+      "src/instrumentation.ts",
+      // Arranca un servidor real como proceso hijo y necesita heredar el
+      // process.env (incluido lo cargado por dotenv/config) tal cual.
+      "src/test/auth-http.integration.test.ts",
+    ],
     rules: {
       "no-restricted-properties": [
         "error",

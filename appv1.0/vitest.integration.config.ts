@@ -6,6 +6,9 @@ import { defineConfig } from "vitest/config";
  * up postgres && npm run db:migrate). Se ejecutan por separado
  * (`npm run test:integration`) porque no deben bloquear `npm run test` en
  * una máquina sin Docker levantado.
+ *
+ * `src/test/auth-http.integration.test.ts` además arranca el servidor
+ * standalone real, así que requiere `npm run build` antes.
  */
 export default defineConfig({
   resolve: {

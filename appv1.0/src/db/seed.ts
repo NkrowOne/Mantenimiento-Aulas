@@ -1,7 +1,7 @@
 import "dotenv/config";
-import { randomBytes, scryptSync } from "node:crypto";
 import { db } from "./index";
 import { buildings, equipmentTypes, rooms, stockItems, users, zones } from "./schema";
+import { hashPassword } from "../lib/auth/password";
 
 /**
  * Semilla idempotente: UUID v7 fijos (en vez de generados en cada
@@ -45,31 +45,26 @@ const ids = {
   stockPilaAa: "019fad73-0abd-7d78-b206-dbd4cccf0320",
 } as const;
 
-/**
- * Placeholder de hashing (scrypt, sin dependencias nativas) para poder
- * sembrar un usuario administrador sin guardar la contraseña en texto
- * plano. NO es el hash final de producción: Auth.js + argon2id llegan
- * en la Fase 2 de docs/PLAN.md y sustituirán este esquema.
- */
-function hashPasswordForSeed(password: string): string {
-  const salt = randomBytes(16);
-  const derived = scryptSync(password, salt, 64);
-  return `scrypt$${salt.toString("hex")}$${derived.toString("hex")}`;
-}
-
 const ADMIN_EMAIL = "admin@mantenimiento-aulas.local";
 const ADMIN_PASSWORD = "ChangeMe123!";
 
+/**
+ * `mustChangePassword: true` obliga a cambiarla en el primer login (ver
+ * `src/auth.config.ts` y docs/AUTENTICACION.md): la contraseña sembrada
+ * es pública (está en este fichero), así que no puede quedarse como
+ * contraseña real de la cuenta.
+ */
 async function seedUsers() {
   await db
     .insert(users)
     .values({
       id: ids.userAdmin,
       email: ADMIN_EMAIL,
-      passwordHash: hashPasswordForSeed(ADMIN_PASSWORD),
+      passwordHash: await hashPassword(ADMIN_PASSWORD),
       name: "Administrador",
       role: "operador",
       active: true,
+      mustChangePassword: true,
     })
     .onConflictDoNothing({ target: users.email });
 }
@@ -178,7 +173,9 @@ async function main() {
   await seedStockItems();
 
   console.log("✅ Seed completado.");
-  console.log(`   Usuario admin: ${ADMIN_EMAIL} / ${ADMIN_PASSWORD} (cámbiala cuanto antes)`);
+  console.log(
+    `   Usuario admin: ${ADMIN_EMAIL} / ${ADMIN_PASSWORD} (deberás cambiarla en el primer inicio de sesión)`,
+  );
 }
 
 main()

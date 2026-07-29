@@ -2,7 +2,7 @@
 
 PWA para la gestión de mantenimiento de aulas y salas de reunión. Este documento describe la base técnica del proyecto; el contexto funcional completo está en [`docs/PLAN.md`](../docs/PLAN.md).
 
-> Estado actual: esqueleto de proyecto (Fase 1). No incluye autenticación ni base de datos funcional todavía.
+> Estado actual: base de datos (Drizzle + PostgreSQL), auditoría y autenticación (Auth.js v5) ya implementadas; la lógica de negocio de cada módulo (salas, revisiones, incidencias, almacén) llega en fases posteriores según `docs/PLAN.md`.
 
 ## Requisitos
 
@@ -67,7 +67,7 @@ Variables mínimas (ver `.env.example`):
 | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | Credenciales del usuario root de MinIO (solo para el contenedor `minio`) |
 | `S3_ENDPOINT` / `S3_REGION` / `S3_BUCKET` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` | Configuración del cliente S3 contra MinIO |
 | `STORAGE_DRIVER` | Driver de almacenamiento de fotos/ficheros (`s3` para MinIO) |
-| `AUTH_SECRET` | Secreto para la futura capa de autenticación |
+| `AUTH_SECRET` | Firma/cifra las sesiones de Auth.js (mínimo 32 caracteres) |
 | `NEXT_PUBLIC_APP_URL` | URL pública de la aplicación (no es secreta, visible en el navegador) |
 | `GEMINI_API_KEY` | Clave de Gemini, **opcional** — sin ella las funciones de IA se ocultan |
 
@@ -110,6 +110,15 @@ Las migraciones **se aplican solas** al arrancar el contenedor: `src/instrumenta
 
 Toda escritura sobre las tablas de negocio queda auditada automáticamente por un trigger de PostgreSQL — API, sincronización o SQL directo por igual — y `audit_log` no puede alterarse desde el rol con el que se conecta la aplicación. Detalle completo, con los tests que lo verifican, en [`docs/AUDITORIA.md`](../docs/AUDITORIA.md) (`npm run test:integration`).
 
+## Autenticación (Auth.js v5)
+
+Login por email/contraseña (Argon2id) y PIN de 4 dígitos, roles `operador` (lectura y escritura) / `lector` (solo lectura), y bloqueo de usuarios inactivos. El mecanismo completo — hashing, *rate limiting*, protección contra enumeración de usuarios, el reparto de la configuración entre Edge Runtime y Node.js, y por qué el cambio de contraseña forzado del alta inicial necesita su propia excepción en el middleware — está documentado en [`docs/AUTENTICACION.md`](../docs/AUTENTICACION.md).
+
+- `/login` — email + contraseña, o pestaña de reapertura por PIN
+- `/account/change-password` — cambio de contraseña (obligatorio en el primer login del admin sembrado)
+- `/account/pin` — configurar el PIN de reapertura
+- `npm run test:integration` incluye `src/lib/auth/credentials.integration.test.ts` (lógica de autorización contra Postgres real) y `src/test/auth-http.integration.test.ts` (flujo completo por HTTP: login, roles, sesión persistente, cierre de sesión, cambio forzado — este último requiere `npm run build` antes, porque arranca el servidor standalone real)
+
 ## Variables de entorno (src/lib/env.ts)
 
 Todas las variables de entorno que usa la aplicación se validan con **Zod** en un único módulo central: [`src/lib/env.ts`](./src/lib/env.ts). Ningún otro fichero debe leer `process.env` directamente (una regla de ESLint lo impide fuera de ese módulo).
@@ -140,8 +149,12 @@ vitest.integration.config.ts # Tests contra Postgres real (npm run test:integrat
 src/
 ├── app/              # Rutas (App Router de Next.js)
 │   ├── api/
-│   │   └── health/   # Endpoint usado por el healthcheck de Docker
-│   ├── login/
+│   │   ├── health/           # Endpoint usado por el healthcheck de Docker
+│   │   ├── auth/[...nextauth]/ # Route handler de Auth.js
+│   │   ├── account/          # change-password, set-pin
+│   │   └── buildings/        # Recurso de ejemplo: GET (todos) / POST (operador)
+│   ├── login/        # Email+contraseña y reapertura por PIN
+│   ├── account/      # change-password/, pin/
 │   ├── dashboard/
 │   ├── rooms/
 │   ├── revisions/
@@ -152,8 +165,8 @@ src/
 │   └── page.tsx      # Página de inicio
 ├── components/
 │   ├── ui/           # Componentes de interfaz genéricos
-│   ├── layout/       # Componentes de estructura (cabecera, navegación...)
-│   ├── forms/        # Componentes de formularios
+│   ├── layout/       # SignOutButton y estructura (cabecera, navegación...)
+│   ├── forms/        # LoginForm, ChangePasswordForm, SetPinForm
 │   └── feedback/     # Estados de carga, error, vacío...
 ├── db/
 │   ├── schema/       # 16 tablas + vista stock_levels (Drizzle)
@@ -166,15 +179,24 @@ src/
 │   └── seed.ts        # Semilla idempotente (npm run db:seed)
 ├── lib/
 │   ├── env.ts        # Validación centralizada de variables de entorno (Zod)
-│   └── env.test.ts
+│   ├── env.test.ts
+│   └── auth/
+│       ├── password.ts        # Hash/verify Argon2id (contraseña y PIN, independientes)
+│       ├── rate-limit.ts      # Rate limiting básico en memoria
+│       ├── credentials.ts     # authorizeWithPassword/Pin (enumeration-safe)
+│       ├── authorize.ts       # requireUser/requireOperador para Route Handlers
+│       └── *.test.ts / *.integration.test.ts
 ├── services/         # Lógica de negocio / casos de uso
 ├── repositories/      # Acceso a datos
 ├── hooks/            # Hooks de React reutilizables
-├── types/            # Tipos e interfaces compartidos
+├── types/            # Tipos e interfaces compartidos (incluye next-auth.d.ts)
 ├── validators/       # Esquemas de validación (Zod, pendiente)
 ├── offline/          # Autoguardado, outbox y sincronización
 ├── storage/          # Abstracción de almacenamiento de ficheros/fotos
-├── test/             # Configuración y utilidades de test (Vitest)
+├── test/             # Configuración de test (Vitest) + auth-http.integration.test.ts
+├── middleware.ts     # Protege páginas: sesión y cambio de contraseña forzado
+├── auth.config.ts    # Config "edge-safe" de Auth.js (la usa el middleware)
+├── auth.ts           # Config completa (proveedores Credentials, Node.js)
 └── instrumentation.ts # Falla el arranque si faltan variables obligatorias
 
 e2e/                  # Tests end-to-end (Playwright)
@@ -191,5 +213,6 @@ Las carpetas todavía sin contenido llevan un `.gitkeep` para conservar la estru
 - Alias de importación `@/*` → `src/*`
 - **Docker / Docker Compose**: PostgreSQL 16 y MinIO como infraestructura local
 - **Drizzle ORM** + **drizzle-kit** (driver `postgres`) para el esquema y las migraciones
+- **Auth.js v5** + **Argon2id** (`@node-rs/argon2`) para login por contraseña y PIN
 
-No se ha añadido todavía autenticación ni lógica de negocio: esto se abordará en fases posteriores según [`docs/PLAN.md`](../docs/PLAN.md).
+No se ha añadido todavía la lógica de negocio de cada módulo (salas, revisiones, incidencias, almacén): esto se abordará en fases posteriores según [`docs/PLAN.md`](../docs/PLAN.md).
