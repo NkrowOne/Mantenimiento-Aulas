@@ -37,6 +37,22 @@ interface TimelineRow {
   state: string
 }
 
+interface Fiabilidad {
+  score: number
+  incidencias: number
+  observaciones: number
+  solicitudes: number
+  revisiones: number
+  hay_datos: boolean
+}
+
+interface Reincidencia {
+  item: string
+  veces: number
+  desde: string
+  hasta: string
+}
+
 /** Cómo se marca cada cosa en la línea de tiempo. Nunca solo el color. */
 const MARCA: Record<TimelineRow['kind'], { punto: string; texto: string }> = {
   incidencia: { punto: 'bg-crit', texto: 'Incidencia' },
@@ -79,6 +95,32 @@ export function RoomSheet({
       .map((a) => ({ ...a, tipo: tipos.get(a.asset_type_id)?.name ?? 'Sin tipo' }))
       .sort((x, y) => x.tipo.localeCompare(y.tipo, 'es'))
   }, [room.id])
+
+  const { data: fiabilidad } = useQuery({
+    queryKey: ['room-reliability', room.id],
+    queryFn: async (): Promise<Fiabilidad | null> => {
+      const { data, error } = await supabase
+        .from('room_reliability')
+        .select('*')
+        .eq('room_id', room.id)
+        .maybeSingle()
+      if (error) throw error
+      return (data as Fiabilidad | null) ?? null
+    },
+  })
+
+  const { data: reincidencias } = useQuery({
+    queryKey: ['room-repeats', room.id],
+    queryFn: async (): Promise<Reincidencia[]> => {
+      const { data, error } = await supabase
+        .from('room_repeat_offenders')
+        .select('*')
+        .eq('room_id', room.id)
+        .order('veces', { ascending: false })
+      if (error) throw error
+      return (data ?? []) as Reincidencia[]
+    },
+  })
 
   const { data: historial, isError: historialFalla } = useQuery({
     queryKey: ['room-timeline', room.id],
@@ -145,6 +187,60 @@ export function RoomSheet({
       />
 
       <div className="mx-auto max-w-2xl px-4">
+        {/*
+          El índice, y de qué está hecho.
+          Un número solo invita a discutirlo; un número con su recuento al lado
+          se puede comprobar. Y con la base recién arrancada dice honestamente
+          que no sabe lo suficiente, en vez de sacar un 100 de la nada — que se
+          leería como «va perfecta» cuando significa «no sé nada de ella».
+        */}
+        {fiabilidad && (
+          <div className="card mt-4 flex items-center gap-4 p-4">
+            <span
+              className={`font-mono text-3xl font-bold tabular ${
+                !fiabilidad.hay_datos
+                  ? 'text-muted'
+                  : fiabilidad.score >= 75
+                    ? 'text-ok'
+                    : fiabilidad.score >= 45
+                      ? 'text-warn'
+                      : 'text-crit'
+              }`}
+            >
+              {fiabilidad.hay_datos ? fiabilidad.score : '—'}
+            </span>
+            <div className="min-w-0 text-sm">
+              <p className="font-medium">Índice de fiabilidad</p>
+              <p className="text-muted">
+                {fiabilidad.hay_datos
+                  ? `${fiabilidad.incidencias} incidencias · ${fiabilidad.observaciones} observaciones · ${fiabilidad.revisiones} revisiones en el último año`
+                  : 'Datos insuficientes todavía: hacen falta unas cuantas revisiones más para que este número signifique algo.'}
+              </p>
+              {fiabilidad.hay_datos && fiabilidad.solicitudes > 0 && (
+                <p className="mt-1 text-xs text-muted">
+                  {fiabilidad.solicitudes} solicitudes, que no penalizan: pedir trabajo no es un
+                  fallo de la sala.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {(reincidencias ?? []).map((r) => (
+          <div key={r.item} className="card mt-3 border-warn/30 bg-warn-tint p-4 text-sm">
+            <p className="font-medium text-warn">Reincidencia detectada: {r.item}</p>
+            <p className="mt-1">
+              {r.veces} sustituciones en esta sala desde {fechaCorta(r.desde)}. Poner la pieza otra
+              vez no resuelve la causa: conviene revisar canalización, rosetas o longitud del
+              tirado.
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              Basado en {r.veces} incidencias con consumo de ese artículo, la última el{' '}
+              {fechaCorta(r.hasta)}.
+            </p>
+          </div>
+        ))}
+
         <div className="mt-4 flex gap-2">
           <button type="button" onClick={onRevisar} className="key key-accent min-h-11 flex-1 px-3 text-sm">
             Revisar esta sala
