@@ -154,6 +154,31 @@ async function main(): Promise<number> {
 
     await sql`select pg_advisory_unlock(${CERROJO})`
     ok(nuevas === 0 ? 'la base ya estaba al día' : `${nuevas} migraciones nuevas, ${ficheros.length} en total`)
+
+    /*
+     * PostgREST lee el esquema al arrancar y lo guarda en memoria: un `create
+     * table` posterior no lo cambia, y responde «Could not find the table
+     * 'public.profiles' in the schema cache» a todo, con la tabla delante.
+     * Esta notificación es la que le dice que vuelva a mirar, y aquí es donde
+     * toca, porque acabar de migrar es justo cuando su caché queda vieja.
+     *
+     * Se manda SIEMPRE, también cuando no se ha aplicado nada, porque el caso
+     * que deja a alguien atascado es ese: migrar, tropezar con el error
+     * después, y volver a ejecutar esto para que conteste «ya estaba al día»
+     * sin arreglar nada.
+     *
+     * Es un aviso, no una orden: si PostgREST no escucha ese canal
+     * (`PGRST_DB_CHANNEL_ENABLED` en false) esto no falla y el remedio es
+     * reiniciar su servicio. Por eso se dice lo que se ha hecho en vez de dar
+     * por hecho que ha surtido efecto.
+     */
+    try {
+      await sql.notify('pgrst', 'reload schema')
+      ok('avisado a PostgREST de que recargue el esquema')
+    } catch (err) {
+      avisa(`no se ha podido avisar a PostgREST (${mensaje(err)}): reinicia su servicio si la API no ve las tablas`)
+    }
+
     return 0
   } catch (err) {
     console.error(`  ✗ ${mensaje(err)}`)
