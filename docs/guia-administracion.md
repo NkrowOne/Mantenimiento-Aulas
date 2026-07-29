@@ -68,6 +68,19 @@ npm run admin:user -- rol    --email ana@x.es --rol supervisor
 
 **El código solo se muestra una vez.** Si se pierde, genera otro con `codigo`.
 
+### Si el despliegue está sobre una plataforma (Skyway, Railway, Fly…)
+
+Las mismas órdenes, desde la terminal del servicio **del worker de informes**,
+que ya tiene la clave de servicio en su entorno:
+
+```bash
+npm run admin -- crear --email ana@x.es --nombre "Ana Ruiz" --rol tecnico
+```
+
+No sirve la terminal del servicio de la aplicación: esa imagen es Caddy
+sirviendo la PWA ya compilada, sin Node ni npm dentro, y responde
+`sh: npm: not found`.
+
 ### Los tres roles
 
 | Rol | Puede |

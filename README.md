@@ -105,6 +105,14 @@ npm run admin:user -- rol    --email ana@x.es --rol supervisor
 npm run admin:user -- listar
 ```
 
+Sobre una plataforma, las mismas órdenes desde la terminal del servicio **del
+worker de informes**, que es el único contenedor con Node y con la clave de
+servicio a mano —el de la aplicación es Caddy con la PWA compilada, sin npm—:
+
+```bash
+npm run admin -- crear --email ana@x.es --nombre "Ana" --rol tecnico
+```
+
 El código **es** la contraseña temporal. Al usarlo, la app la rota
 inmediatamente a una aleatoria fuerte que no se guarda en ningún sitio, así que
 el código deja de valer y la única llave del dispositivo pasa a ser el refresh
@@ -283,7 +291,7 @@ src/features/     pantallas por área funcional
 supabase/         migraciones, harness de pruebas y seed generado
 src/integrations/ puerto de tickets externos (ServiceNow en el futuro)
 scripts/          importador del Excel y verificación de base de datos
-reports-worker/   generador de informes PDF, con su Dockerfile
+reports-worker/   informes PDF y alta de usuarios, con su Dockerfile
 Caddyfile         TLS por DNS-01, PWA y proxy de API en un solo origen
 docker-compose.yml  Supabase self-hosted, Caddy y worker
 ```

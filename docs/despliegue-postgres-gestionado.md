@@ -233,10 +233,19 @@ nombre evita ese problema por completo.
 
 ## Paso 9 — Primer usuario
 
+Desde el repositorio:
+
 ```bash
 SUPABASE_URL=https://TU-DOMINIO \
 SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 npm run admin:user -- crear --email tu@correo.es --nombre "Tu nombre" --primer-admin
+```
+
+O, sin clonar nada, desde la terminal del servicio del worker del paso 7, que ya
+tiene esas dos variables puestas:
+
+```bash
+npm run admin -- crear --email tu@correo.es --nombre "Tu nombre" --primer-admin
 ```
 
 Imprime un código de un solo uso que caduca en 24h.
