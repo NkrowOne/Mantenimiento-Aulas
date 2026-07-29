@@ -127,10 +127,18 @@ El paso 1 es el que corta de verdad: sin perfil activo el hook deja de dar rol y
 RLS no permite ver nada, en cuanto caduque el token de acceso (una hora como
 mucho). Después, para devolverle el acceso desde otro dispositivo:
 
+```sql
+-- Reactivar el perfil. Esto es lo que devuelve el rol: el hook de auth solo
+-- lo concede `where ... and active`, así que sin este paso el resto no sirve.
+update profiles set active = true where email = 'ana@x.es';
+```
+
 ```bash
-npm run admin:user -- rol --email ana@x.es --rol tecnico   # reactivar
 npm run admin:user -- codigo --email ana@x.es              # código nuevo
 ```
+
+`rol` cambia el rol, **no reactiva**: si el perfil sigue en `active = false`, la
+persona entra pero no ve nada.
 
 Si el dispositivo se perdió **con la sesión cerrada**, no hay urgencia: sin el
 PIN los datos guardados son ilegibles.
