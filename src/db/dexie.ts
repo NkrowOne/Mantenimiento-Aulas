@@ -38,6 +38,7 @@ export interface OutboxEntry {
     | 'asset_event'
     | 'asset_type'
     | 'asset'
+    | 'room_inventory'
   op: 'upsert'
   payload: Record<string, unknown>
   createdAt: number

@@ -20,6 +20,7 @@ const TABLE: Record<OutboxEntry['entity'], string> = {
   asset_event: 'asset_events',
   asset_type: 'asset_types',
   asset: 'assets',
+  room_inventory: 'room_inventories',
 }
 
 /** Orden de subida: una revisión debe existir antes que sus checks. */
@@ -33,7 +34,8 @@ const ORDER: Record<OutboxEntry['entity'], number> = {
   incident: 4,
   asset_event: 5,
   stock_movement: 6,
-  attachment: 7,
+  room_inventory: 7,
+  attachment: 8,
 }
 
 export type SyncState = 'inactivo' | 'sincronizando' | 'sin-conexion' | 'error'
@@ -110,6 +112,7 @@ const IGNORE_DUPLICATES = new Set<OutboxEntry['entity']>([
   'asset_type',
   'stock_movement',
   'asset_event',
+  'room_inventory',
 ])
 
 async function pushEntry(entry: OutboxEntry): Promise<void> {

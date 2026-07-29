@@ -20,6 +20,7 @@ function sala(code: string, zone: string, last: string | null, name = code): Roo
     projector_hours: null,
     lamp_pct: null,
     last_inspection_at: last,
+    last_inventory_at: null,
     active: true,
   short_ref: null,
   }

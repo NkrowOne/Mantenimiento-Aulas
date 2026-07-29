@@ -4,6 +4,7 @@ import { db } from '@/db/dexie'
 import { labelAvailable, resolveType, searchCatalog } from '@/domain/inventory'
 import { ASSET_STATUS_LABELS, type Asset, type AssetType } from '@/domain/types'
 import { typeRank } from '@/features/inspection/useInspection'
+import { LevantarInventario } from './LevantarInventario'
 import { OrigenDelEquipo } from './OrigenDelEquipo'
 import { useRoomInventory, type Origen } from './useRoomInventory'
 
@@ -36,7 +37,18 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
   /* Lo que se va a añadir, esperando a que se diga de dónde sale. */
   const [eligiendo, setEligiendo] = useState<{ nombre: string; tipo: AssetType | null } | null>(null)
 
-  const { addAssetConOrigen, patchAsset, setStatus } = useRoomInventory(roomId, userId)
+  const { addAssetConOrigen, confirmarInventario, patchAsset, setStatus } = useRoomInventory(
+    roomId,
+    userId,
+  )
+
+  /* Cuándo se confirmó por última vez que el inventario de esta sala está
+     completo. Se lee del espejo para que confirmar se vea al instante. */
+  const levantadoEl = useLiveQuery(
+    async () => (await db.rooms.get(roomId))?.last_inventory_at ?? null,
+    [roomId],
+    null,
+  )
 
   /*
    * Cuántas unidades hay en el almacén de cada tipo de equipo.
@@ -104,8 +116,21 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
         aria-expanded={open}
         className="flex w-full items-center justify-between px-4 py-3 text-left"
       >
-        <span className="eyebrow">Equipos de la sala</span>
-        <span className="text-sm text-muted">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="eyebrow">Equipos de la sala</span>
+          {/*
+            La marca de «sin inventariar» va en gris y no en naranja a
+            propósito. Son 41 salas: en naranja, el color de aviso dejaría de
+            significar nada en el resto de la aplicación. Aquí no hay nada roto,
+            hay algo por hacer.
+          */}
+          {levantadoEl === null && (
+            <span className="shrink-0 rounded-tag bg-sunken px-1.5 py-0.5 text-[0.6875rem] font-medium text-muted">
+              sin inventariar
+            </span>
+          )}
+        </span>
+        <span className="shrink-0 text-sm text-muted">
           {live.length} · {open ? 'cerrar' : 'añadir o corregir'}
         </span>
       </button>
@@ -189,6 +214,7 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                 typeName={eligiendo.nombre}
                 type={eligiendo.tipo}
                 roomId={roomId}
+                inventariando={levantadoEl === null}
                 onCancelar={() => setEligiendo(null)}
                 onConfirmar={(origen) => void add(origen)}
               />
@@ -253,12 +279,20 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                 )
               })}
 
-              {live.length === 0 && (
+              {live.length === 0 && levantadoEl !== null && (
                 <li className="py-3 text-sm text-muted">
                   Esta sala no tiene equipos registrados. Añádelos arriba.
                 </li>
               )}
             </ul>
+
+            {/* Y al final del todo, la única pregunta que la aplicación no puede
+                contestarse sola: ¿está esto completo? */}
+            <LevantarInventario
+              levantadoEl={levantadoEl}
+              equipos={live.length}
+              onConfirmar={(nota) => void confirmarInventario(live.length, nota ?? undefined)}
+            />
           </div>
         </div>
       </div>

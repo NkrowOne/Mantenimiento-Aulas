@@ -200,7 +200,46 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
     [patchAsset],
   )
 
-  return { addAsset, addAssetConOrigen, patchAsset, setStatus }
+  /**
+   * «He mirado el aula y esto es todo lo que hay.»
+   *
+   * Es lo que saca a una sala de la lista de pendientes, y por eso tiene que
+   * ser un acto explícito y no un efecto secundario de añadir un equipo: se
+   * puede añadir un proyector y seguir sin saber si falta algo más.
+   *
+   * Se guarda como una fila nueva y no como una fecha que se pisa. Un
+   * levantamiento se repite —el recuento del curso siguiente es el mismo acto
+   * otra vez— y así queda la serie entera, con quién y cuándo.
+   *
+   * El espejo local se actualiza a mano porque `rooms` viene de una vista que
+   * solo se refresca al sincronizar: sin esto, el técnico confirma y la sala
+   * sigue diciendo «sin inventariar» hasta la siguiente descarga.
+   */
+  const confirmarInventario = useCallback(
+    async (assetCount: number, note?: string): Promise<AddResult> => {
+      if (!roomId) return { ok: false, error: 'Sin sala.' }
+
+      const cuando = new Date().toISOString()
+      const id = uuidv7()
+      await enqueue('room_inventory', id, {
+        id,
+        room_id: roomId,
+        by_user: userId,
+        occurred_at: cuando,
+        asset_count: assetCount,
+        note: note?.trim() || null,
+      })
+
+      const room = await db.rooms.get(roomId)
+      if (room) await db.rooms.put({ ...room, last_inventory_at: cuando })
+
+      void flush()
+      return { ok: true }
+    },
+    [roomId, userId],
+  )
+
+  return { addAsset, addAssetConOrigen, confirmarInventario, patchAsset, setStatus }
 }
 
 /**

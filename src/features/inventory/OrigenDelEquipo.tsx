@@ -29,12 +29,20 @@ export function OrigenDelEquipo({
   typeName,
   type,
   roomId,
+  inventariando,
   onCancelar,
   onConfirmar,
 }: {
   typeName: string
   type: AssetType | null
   roomId: string
+  /**
+   * La sala está sin inventariar, así que lo que se está haciendo es un
+   * levantamiento y no una instalación. Cambia la respuesta que viene elegida:
+   * durante un barrido, todo «ya estaba», y preguntar de dónde sale veinte
+   * veces seguidas es justo lo que hace que se deje de apuntar.
+   */
+  inventariando: boolean
   onCancelar: () => void
   onConfirmar: (origen: Origen) => void
 }): React.ReactElement {
@@ -98,7 +106,8 @@ export function OrigenDelEquipo({
   )
 
   // --- Modo ------------------------------------------------------------------
-  const sugerido: Modo = conExistencias.length > 0 ? 'almacen' : 'sin_origen'
+  const sugerido: Modo =
+    inventariando || conExistencias.length === 0 ? 'sin_origen' : 'almacen'
   const [modo, setModo] = useState<Modo>(sugerido)
 
   // Las existencias llegan del espejo un instante después del primer pintado,
@@ -306,8 +315,9 @@ export function OrigenDelEquipo({
 
       {modo === 'sin_origen' && (
         <p className="mt-3 text-xs text-muted">
-          Se apunta el equipo sin tocar el almacén. Es lo que toca cuando el aparato ya estaba en la
-          sala y solo faltaba registrarlo.
+          {inventariando
+            ? 'Esta sala está sin inventariar, así que viene elegido lo más probable: el aparato ya estaba y solo faltaba apuntarlo. Si lo acabas de traer, dilo arriba.'
+            : 'Se apunta el equipo sin tocar el almacén. Es lo que toca cuando el aparato ya estaba en la sala y solo faltaba registrarlo.'}
         </p>
       )}
 

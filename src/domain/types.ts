@@ -129,6 +129,12 @@ export interface Room {
   projector_hours: number | null
   lamp_pct: number | null
   last_inspection_at: string | null
+  /**
+   * Cuándo confirmó alguien por última vez que el inventario de la sala está
+   * completo. `null` = nadie ha ido nunca a mirar, que no es lo mismo que «la
+   * sala está vacía»: son 41 aulas y la aplicación no puede distinguirlas.
+   */
+  last_inventory_at: string | null
   active: boolean
   /**
    * `SALA-000087`: la referencia corta y **estable**.

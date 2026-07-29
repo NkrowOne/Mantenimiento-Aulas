@@ -382,7 +382,46 @@ Tres cosas que deciden si las pegatinas funcionan o no:
 Si un aula se parte en dos o se crea una nueva, genera solo ese edificio otra
 vez e imprime las que falten.
 
-## 6. Historial
+## 6. Inventario por levantar
+
+Al importar quedaron **41 salas con cero equipos registrados** y 75 equipos sin
+número de serie. La aplicación no puede saber si esas aulas están vacías o si
+nadie ha ido nunca a mirar — y por eso **no insiste**: un aviso que sale en 41
+sitios y no se puede quitar deja de leerse en dos días, y arrastra consigo a los
+avisos que sí importaban.
+
+Lo que hay en su lugar es un acto explícito. El técnico, desde la propia
+revisión, confirma **«esto es todo lo que hay»** y la sala deja de estar
+pendiente. Queda registrado quién y cuándo, en la tabla `room_inventories`, que
+es **append-only**: el recuento del curso siguiente es una fila nueva, no pisa
+la anterior.
+
+Dónde se ve el pendiente:
+
+- **Panel** → tarjeta *Inventario por levantar*, en gris. Desaparece sola.
+- **Lista de salas** → etiqueta *Sin inventariar*, para poder ir a por ellas
+  mientras se está en el edificio.
+- **Historial** → cada confirmación sale como entrada de la familia *Equipo*.
+
+```sql
+-- Qué falta, por edificio
+select building_code, count(*) as sin_levantar
+from room_overview where last_inventory_at is null
+group by building_code order by 2 desc;
+
+-- Quién ha levantado qué, y cuándo
+select r.code, v.occurred_at, p.full_name, v.asset_count, v.note
+from room_inventories v
+join rooms r on r.id = v.room_id
+left join profiles p on p.id = v.by_user
+order by v.occurred_at desc limit 50;
+```
+
+Si el curso que viene quieres forzar un recuento general, **no hace falta borrar
+nada**: las salas siguen apareciendo con su última fecha, y basta con pedir que
+se vuelvan a confirmar.
+
+## 7. Historial
 
 La pestaña **Historial** cruza lo que hasta ahora había que mirar en tres
 sitios: revisiones, incidencias, material y movimientos de equipos, todo en una
@@ -400,7 +439,7 @@ Sale de la vista `room_timeline`, que **no guarda nada nuevo**: lee de las
 tablas que ya existen. Por eso no puede desincronizarse ni contradecir a las
 otras pantallas.
 
-## 7. Informes
+## 8. Informes
 
 Se emiten solos: **diario a las 07:00** y **semanal los lunes a las 07:30**.
 Quedan archivados en la pestaña **Informes**, con descarga.
@@ -411,7 +450,7 @@ Para uno a medida, elige rango de fechas y pulsa Generar.
 después, el PDF del lunes sigue diciendo lo que decía el lunes. Es lo que le da
 valor como registro.
 
-## 8. Ajustes que quizá quieras cambiar
+## 9. Ajustes que quizá quieras cambiar
 
 Se tocan en el `.env` y requieren reconstruir la aplicación (`npm run build`),
 porque se compilan dentro:
@@ -434,7 +473,7 @@ sala sin revisar a los 180) están en las vistas `alerts_*` de
 `supabase/migrations/20260728000200_views.sql`. Cambiarlos es reescribir la
 vista con `create or replace view`.
 
-## 9. Comprobaciones periódicas
+## 10. Comprobaciones periódicas
 
 ```bash
 npm run backup                        # a diario, por cron

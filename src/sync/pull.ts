@@ -167,6 +167,7 @@ export async function pullMaster(): Promise<ResultadoPull> {
       projector_hours: (r['projector_hours'] as number | null) ?? null,
       lamp_pct: (r['lamp_pct'] as number | null) ?? null,
       last_inspection_at: (r['last_inspection_at'] as string | null) ?? null,
+      last_inventory_at: (r['last_inventory_at'] as string | null) ?? null,
       active: true,
       short_ref: (r['short_ref'] as string | null) ?? null,
     }))

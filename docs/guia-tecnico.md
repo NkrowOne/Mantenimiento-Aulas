@@ -132,6 +132,27 @@ aquí**, sin salir de la revisión.
 
 Todo esto funciona sin cobertura, igual que el resto.
 
+### Un aula que nadie ha inventariado
+
+Algunas salas salen marcadas **«Sin inventariar»** en la lista y en el panel de
+equipos. Significa una cosa concreta: **nadie ha confirmado nunca qué hay ahí
+dentro**. No que falte algo — puede que el aula no tenga nada.
+
+Cuando pases por una:
+
+1. Añade arriba lo que veas. Como la sala está sin inventariar, la aplicación ya
+   da por hecho que **«ya estaba»** y no te pregunta de dónde sale: durante un
+   barrido, todo estaba. Un toque por aparato.
+2. Cuando la lista cuadre con lo que tienes delante, pulsa **«Esto es todo»**.
+   Si de verdad no tiene equipos, pulsa **«No tiene equipos»**.
+
+A partir de ahí **la sala deja de preguntar**, y queda apuntado quién lo
+confirmó y cuándo. No corre prisa y no bloquea la revisión: si hoy no da tiempo,
+se queda como está.
+
+> Si el año que viene toca recuento, se vuelve a confirmar y quedan las dos
+> fechas. No se pisa la anterior.
+
 ### Qué le ha pasado antes a esta aula
 
 Debajo de los equipos, **«Histórico de la sala»**. Se abre tocándolo y trae todo

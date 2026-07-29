@@ -799,3 +799,51 @@ begin;
          ' artículos enlazados'
   end as resultado;
 rollback;
+
+\echo ''
+\echo '=== 34. El técnico levanta inventario, y ese acto no se reescribe ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  savepoint s;
+
+  -- Es quien está en el aula, así que tiene que poder decir «esto es todo lo
+  -- que hay». Sin esto, las 41 salas sin equipos se quedan pendientes para
+  -- siempre y el aviso se convierte en ruido.
+  insert into room_inventories (id, room_id, by_user, occurred_at, asset_count)
+  select gen_random_uuid(), id, '11111111-1111-4111-8111-111111111111', now(), 3
+    from rooms limit 1;
+
+  select case
+    when (select count(*) from room_overview where last_inventory_at is not null) = 1
+    then 'OK: la sala deja de estar pendiente'
+    else 'FALLO: el levantamiento no llega a room_overview'
+  end as resultado;
+
+  -- Pero no puede firmarlo en nombre de otro.
+  do $$
+  begin
+    insert into room_inventories (id, room_id, by_user, occurred_at, asset_count)
+    select gen_random_uuid(), id, '22222222-2222-4222-8222-222222222222', now(), 0
+      from rooms limit 1;
+    raise exception 'FALLO: ha firmado un levantamiento en nombre de otro';
+  exception when insufficient_privilege then
+    raise notice 'OK: solo puede firmar lo suyo';
+  end $$;
+  rollback to savepoint s;
+rollback;
+
+\echo ''
+\echo '=== 35. El levantamiento sale en el histórico de la sala ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  insert into room_inventories (id, room_id, by_user, occurred_at, asset_count)
+  select gen_random_uuid(), id, '11111111-1111-4111-8111-111111111111', now(), 5
+    from rooms limit 1;
+
+  select case
+    when (select count(*) from room_timeline where subkind = 'inventario') = 1
+    then 'OK: «' || (select title from room_timeline where subkind = 'inventario') || '» · ' ||
+         (select detail from room_timeline where subkind = 'inventario')
+    else 'FALLO: el levantamiento no aparece en el histórico'
+  end as resultado;
+rollback;
