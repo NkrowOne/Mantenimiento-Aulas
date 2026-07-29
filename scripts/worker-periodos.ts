@@ -9,7 +9,7 @@
  * bien formado y con un título creíble.
  */
 
-import { periodFor } from '../reports-worker/src/data.js'
+import { periodFor } from '../reports-worker/src/periods.js'
 
 let fallos = 0
 

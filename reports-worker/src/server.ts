@@ -10,8 +10,9 @@
 
 import { createServer } from 'node:http'
 import { createClient } from '@supabase/supabase-js'
-import postgres from 'postgres'
-import { ZONA, loadReportData, periodFor } from './data.js'
+import { conectar } from './db.js'
+import { loadReportData } from './data.js'
+import { ZONA, periodFor } from './periods.js'
 import { renderReport } from './template.js'
 import { htmlToPdf } from './pdf.js'
 import { createHash, timingSafeEqual } from 'node:crypto'
@@ -57,12 +58,7 @@ function tokenValido(cabecera: string | undefined): boolean {
   return timingSafeEqual(esperado, recibido)
 }
 
-const sql = postgres(DATABASE_URL, {
-  max: 2,
-  // Con las consultas ya explícitas esto no cambia ningún número, pero deja la
-  // sesión en hora local para lo que se escriba aquí mañana y para los registros.
-  connection: { timezone: 'Europe/Madrid' },
-})
+const sql = conectar(DATABASE_URL, 2)
 const storage =
   SUPABASE_URL && SERVICE_KEY ? createClient(SUPABASE_URL, SERVICE_KEY) : null
 

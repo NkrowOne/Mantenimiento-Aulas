@@ -186,6 +186,15 @@ SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY>
 WORKER_TOKEN=<REPORTS_WORKER_TOKEN>
 ```
 
+**Ojo con el puerto de `DATABASE_URL`.** La cadena que ofrece por defecto el
+panel de Supabase es la del *pooler* en modo transacción (puerto 6543), y ese
+modo no admite sentencias preparadas, que es lo que usa el cliente `postgres`.
+`src/db.ts` detecta el pooler —puerto 6543, host `pooler.…` o `?pgbouncer=true`—
+y desactiva las preparadas solo en ese caso. Si tu proveedor lo señala de otra
+forma, añade `?pgbouncer=true` a la cadena: sin eso, el worker arranca bien,
+supera el healthcheck y solo falla cuando `pg_cron` le pide el primer informe,
+de madrugada y sin nadie mirando.
+
 Y alinea el token en la base, que si no los informes dan 401 sin explicar nada:
 
 ```sql

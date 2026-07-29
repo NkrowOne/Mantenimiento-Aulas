@@ -9,8 +9,9 @@
  */
 
 import { writeFileSync } from 'node:fs'
-import postgres from 'postgres'
-import { loadReportData, periodFor } from './data.js'
+import { conectar } from './db.js'
+import { loadReportData } from './data.js'
+import { periodFor } from './periods.js'
 import { renderReport } from './template.js'
 import { htmlToPdf } from './pdf.js'
 
@@ -25,7 +26,7 @@ if (!DATABASE_URL) {
   process.exit(1)
 }
 
-const sql = postgres(DATABASE_URL, { max: 1 })
+const sql = conectar(DATABASE_URL, 1)
 
 try {
   const period = start && end ? { start, end } : periodFor(kind)
