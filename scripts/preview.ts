@@ -392,6 +392,8 @@ async function main(): Promise<void> {
    * Merece la pena tenerlo: es la pantalla donde más fácil es que un cambio de
    * diseño quede bien en el editor y mal en un móvil a oscuras.
    */
+  const conBorradores = true
+
   await page.route('**/rest/v1/**', async (route) => {
     const url = route.request().url()
     const json = (data: unknown): Promise<void> =>
@@ -424,6 +426,7 @@ async function main(): Promise<void> {
       )
     }
     if (url.includes('alerts_stale_incidents')) return json([])
+
     if (url.includes('incidents_by_building')) {
       return json(
         [118, 41, 32, 22, 21, 19, 18, 9, 3].map((total, i) => ({
@@ -440,10 +443,64 @@ async function main(): Promise<void> {
         })),
       )
     }
+    /*
+     * Incidencias, con y sin borradores.
+     *
+     * Los borradores ya no tienen pestaña propia: salen dentro de esta pantalla
+     * y solo si los hay. Las dos capturas son justamente para comprobar las dos
+     * caras — que cuando no hay ninguno no queda ni un hueco.
+     */
+    /*
+     * El patrón lleva la interrogación a propósito.
+     *
+     * Con `url.includes('/incidents')` esta rama se tragaba también
+     * `/incidents_by_building` y `/incidents_by_month`, y los gráficos salían
+     * vacíos con un «undefined» debajo. Se vio en la captura, no razonándolo.
+     */
+    if (/\/incidents\?/.test(url)) {
+      if (url.includes('state=eq.borrador')) {
+        return json(
+          conBorradores
+            ? [
+                {
+                  id: 'd1',
+                  room_id: null,
+                  kind: 'observacion',
+                  title: null,
+                  external_ref: null,
+                  opened_at: '2026-06-02T09:00:00Z',
+                },
+                {
+                  id: 'd2',
+                  room_id: null,
+                  kind: 'incidencia',
+                  title: 'Soporte del altavoz izquierdo flojo',
+                  external_ref: null,
+                  opened_at: '2026-07-11T09:00:00Z',
+                },
+              ]
+            : [],
+        )
+      }
+      return json([
+        {
+          id: 'i1',
+          title: 'No duplica la imagen en el monitor principal',
+          description: null,
+          severity: 'media',
+          state: 'abierta',
+          opened_at: '2026-07-20T09:00:00Z',
+          resolved_at: null,
+          external_ref: 'I260720_0031',
+          room_id: null,
+        },
+      ])
+    }
+
     return json([])
   })
 
-  await page.getByRole('button', { name: 'Panel' }).click()
+  await page.locator('nav').getByRole('button', { name: 'Panel' }).click()
   await page.waitForTimeout(1500)
   await page.screenshot({ path: 'dist/preview-panel.png', fullPage: true })
   console.log('  dist/preview-panel.png')
@@ -452,6 +509,27 @@ async function main(): Promise<void> {
   await page.waitForTimeout(400)
   await page.screenshot({ path: 'dist/preview-panel-oscuro.png', fullPage: true })
   console.log('  dist/preview-panel-oscuro.png')
+
+  /*
+   * Incidencias, en sus dos estados.
+   *
+   * Con borradores y sin ellos: lo que hay que ver en la segunda es que NO se
+   * ve nada — ni cabecera, ni «ninguno pendiente», ni un hueco donde estaba.
+   */
+  await page.emulateMedia({ colorScheme: 'light' })
+  await page.locator('nav').getByRole('button', { name: 'Incidencias' }).click()
+  await page.waitForTimeout(1200)
+  await shot('incidencias-con-borradores')
+
+  /*
+   * El caso contrario —sin ningún borrador, donde no debe dibujarse nada— no se
+   * fotografía aquí: exigiría recargar para saltarse la caché de React Query, y
+   * al recargar la aplicación devuelve al técnico dentro de la revisión donde
+   * estaba, que esconde la barra inferior. Enredar el guion para eso no compensa.
+   *
+   * Esa regla la cubre `Borradores.test.ts`, que además es más duradero que una
+   * captura: comprueba que no se enseña nada ni vacío, ni cargando, ni al fallar.
+   */
 
   await browser.close()
   server.close()

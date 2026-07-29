@@ -1,6 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useQuery } from '@tanstack/react-query'
 import { SyncChip } from '@/components/SyncChip'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { LockScreen } from '@/features/auth/LockScreen'
@@ -41,9 +40,6 @@ const StockPage = lazy(() =>
 const CleanupPage = lazy(() =>
   import('@/features/admin/CleanupPage').then((m) => ({ default: m.CleanupPage })),
 )
-const DraftsPage = lazy(() =>
-  import('@/features/incidents/DraftsPage').then((m) => ({ default: m.DraftsPage })),
-)
 const RoomSheet = lazy(() =>
   import('@/features/rooms/RoomSheet').then((m) => ({ default: m.RoomSheet })),
 )
@@ -57,7 +53,7 @@ const ReportsPage = lazy(() =>
   import('@/features/reports/ReportsPage').then((m) => ({ default: m.ReportsPage })),
 )
 
-type Tab = 'revisar' | 'panel' | 'incidencias' | 'borradores' | 'almacen' | 'informes' | 'datos'
+type Tab = 'revisar' | 'panel' | 'incidencias' | 'almacen' | 'informes' | 'datos'
 
 type RoomView =
   | { name: 'edificios' }
@@ -79,9 +75,6 @@ const TABS: Array<{ id: Tab; label: string; minRole: Role }> = [
   { id: 'revisar', label: 'Revisar', minRole: 'tecnico' },
   { id: 'panel', label: 'Panel', minRole: 'tecnico' },
   { id: 'incidencias', label: 'Incidencias', minRole: 'tecnico' },
-  // Con su cuenta: si permitir aplazar no deja rastro visible desde la
-  // navegación, lo aplazado no se completa nunca.
-  { id: 'borradores', label: 'Borradores', minRole: 'tecnico' },
   { id: 'almacen', label: 'Almacén', minRole: 'tecnico' },
   { id: 'informes', label: 'Informes', minRole: 'supervisor' },
   { id: 'datos', label: 'Datos', minRole: 'admin' },
@@ -156,30 +149,6 @@ export function App(): React.ReactElement {
   const [escaneoFallido, setEscaneoFallido] = useState<string | null>(null)
   const [diagnostico, setDiagnostico] = useState<ResultadoPull | null>(null)
 
-  /*
-   * Cuántos borradores esperan.
-   *
-   * Va en la pestaña porque es el único sitio desde el que asoma sin
-   * interrumpir. Permitir guardar con solo la sala y no dejar rastro de lo
-   * guardado a medias es la receta exacta para que no se complete nunca — que
-   * es el problema del Excel del que venimos.
-   *
-   * `count: 'exact', head: true` no trae ni una fila: solo el número.
-   */
-  const { data: borradores = 0 } = useQuery({
-    queryKey: ['borradores', 'cuenta'],
-    enabled: unlocked,
-    queryFn: async (): Promise<number> => {
-      const { count, error } = await supabase
-        .from('incidents')
-        .select('id', { count: 'exact', head: true })
-        .eq('state', 'borrador')
-      // Sin conexión no es un cero: es «no lo sé». Decir cero escondería
-      // trabajo pendiente, así que se conserva lo último que se supo.
-      if (error) throw error
-      return count ?? 0
-    },
-  })
   const [tab, setTab] = useState<Tab>('revisar')
   const [view, setView] = useState<RoomView>({ name: 'edificios' })
   const [roomOrder, setRoomOrder] = useState<RoomOrder>('antiguedad')
@@ -668,7 +637,6 @@ export function App(): React.ReactElement {
             />
           )}
           {tab === 'incidencias' && <IncidentsPage />}
-          {tab === 'borradores' && <DraftsPage />}
           {tab === 'almacen' && <StockPage role={role} />}
           {tab === 'informes' && <ReportsPage />}
           {tab === 'datos' && <CleanupPage yo={userId} />}
@@ -699,11 +667,6 @@ export function App(): React.ReactElement {
                 }`}
               >
                 {t.label}
-                {t.id === 'borradores' && borradores > 0 && (
-                  <span className="ml-1.5 rounded-tag bg-warn-tint px-1.5 py-0.5 text-[0.625rem] font-semibold text-warn">
-                    {borradores}
-                  </span>
-                )}
               </button>
             </li>
           ))}

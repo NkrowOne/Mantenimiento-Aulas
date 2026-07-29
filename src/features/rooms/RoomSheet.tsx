@@ -13,8 +13,10 @@
  *
  * Por eso el botón está aquí y está siempre disponible, no colgando de un bloque
  * en FALLA. Y por eso **basta la sala para guardar**: nada obliga a teclear de
- * pie en un pasillo. Lo aplazado va a la bandeja de borradores, que es la
- * contrapartida honesta de permitir aplazar.
+ * pie en un pasillo. Lo aplazado aparece sin completar en Incidencias, que es
+ * la contrapartida honesta de permitir aplazar — y no una pestaña propia: un
+ * destino permanente en la barra para algo que casi siempre está vacío enseña a
+ * no pulsarlo.
  */
 
 import { useState } from 'react'
@@ -170,7 +172,7 @@ export function RoomSheet({
       setGuardado(
         completo
           ? `${INCIDENT_KIND_LABELS[kind]} registrada.`
-          : `Borrador guardado. Complétalo cuando puedas desde la bandeja.`,
+          : `Guardado sin describir. Aparecerá en Incidencias para que lo completes.`,
       )
       setTexto('')
       setCodigo('')
@@ -348,8 +350,7 @@ export function RoomSheet({
             )}
 
             <p className="mt-3 text-xs text-muted">
-              Basta la sala para guardar. Lo demás se completa después, desde la bandeja de
-              borradores.
+              Basta la sala para guardar. Lo demás se completa después, desde Incidencias.
             </p>
 
             {registrar.isError && (

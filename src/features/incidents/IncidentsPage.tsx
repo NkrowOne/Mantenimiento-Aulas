@@ -5,6 +5,7 @@ import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { displayRoomCode, norm } from '@/domain/normalize'
 import { MaterialUsado } from './MaterialUsado'
+import { Borradores } from './Borradores'
 import type { IncidentState } from '@/domain/types'
 
 interface IncidentRow {
@@ -20,9 +21,9 @@ interface IncidentRow {
 }
 
 const STATE_STYLE: Record<IncidentState, string> = {
-  // Nunca llega a pintarse aquí —los borradores tienen su propia bandeja— pero
-  // el mapa se declara completo: si mañana esta lista los incluyera, el hueco
-  // sería una etiqueta en blanco en vez de un error.
+  // No llega a pintarse en esta lista —los sin completar salen arriba, en su
+  // propia sección— pero el mapa se declara entero: si mañana la lista los
+  // incluyera, el hueco sería una etiqueta en blanco en vez de un error.
   borrador: 'bg-raised text-muted',
   abierta: 'bg-crit-tint text-crit',
   en_curso: 'bg-warn-tint text-warn',
@@ -79,8 +80,8 @@ export function IncidentsPage(): React.ReactElement {
         .from('incidents')
         .select('*')
         // Los borradores no son trabajo abierto: son notas a medio escribir, y
-        // tienen su propia bandeja. Mezclarlos aquí llenaría la lista de
-        // «(sin describir)» y enterraría lo que sí hay que atender.
+        // salen arriba en su propia sección. Mezclarlos aquí llenaría la lista
+        // de «(sin describir)» y enterraría lo que sí hay que atender.
         .neq('state', 'borrador')
         .order('opened_at', { ascending: false })
         .limit(LIMITE)
@@ -135,7 +136,15 @@ export function IncidentsPage(): React.ReactElement {
         </label>
       </div>
 
-      <label className="mt-3 block">
+      {/*
+        Lo sin terminar, antes que lo abierto, y solo si lo hay.
+        Un borrador es una incidencia a medio escribir: su sitio es esta
+        pantalla, no una pestaña propia en la barra de navegación. Cuando no hay
+        ninguno, este componente no dibuja absolutamente nada.
+      */}
+      <Borradores />
+
+      <label className="mt-4 block">
         <span className="sr-only">Buscar incidencia</span>
         <input
           type="search"
@@ -155,7 +164,14 @@ export function IncidentsPage(): React.ReactElement {
 
           return (
             <li key={i.id} className="py-3">
-              <div className="flex items-start gap-3">
+              {/*
+                En un móvil, tres botones y un texto no caben en la misma línea.
+                `shrink-0` en el bloque de acciones dejaba al título 90 px y lo
+                partía palabra a palabra —«No / duplica / la / imagen»—, que es
+                justo el dato que se viene a leer. Ahora las acciones bajan a su
+                propia fila hasta que hay sitio de sobra: se envuelve.
+              */}
+              <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
                 {/* Rectángulo, no píldora: esto es una etiqueta de un parte de
                     trabajo. La cápsula en todo es el tic más repetido. */}
                 <span
@@ -164,7 +180,7 @@ export function IncidentsPage(): React.ReactElement {
                   {STATE_LABEL[i.state]}
                 </span>
 
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 basis-48">
                   <p className="font-medium">{i.title}</p>
                   <p className="mt-0.5 text-xs text-muted">
                     {sala && <span className="font-mono font-semibold text-ink-2">{sala} · </span>}
@@ -175,7 +191,7 @@ export function IncidentsPage(): React.ReactElement {
                 </div>
 
                 {i.state !== 'resuelta' && (
-                  <div className="flex shrink-0 gap-2">
+                  <div className="ml-auto flex shrink-0 gap-2">
                     {i.state === 'abierta' && (
                       <button
                         type="button"
