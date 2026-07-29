@@ -17,6 +17,8 @@ interface Props {
   zoneName: string
   onDone: (nextRoom: boolean) => void
   onBack: () => void
+  /** Abrir la ficha de la sala desde la placa, sin salir del flujo. */
+  onFicha: () => void
 }
 
 const SEVERITIES: Array<{ value: Severity; label: string }> = [
@@ -32,6 +34,7 @@ export function InspectionPage({
   zoneName,
   onDone,
   onBack,
+  onFicha,
 }: Props): React.ReactElement {
   const { draft, rows, assets, types, typesById, saving, setCheck, setNotes, markRestOk, complete } =
     useInspection(room, userId)
@@ -88,6 +91,7 @@ export function InspectionPage({
         title={room.name === room.code ? `Sala ${displayRoomCode(room.code)}` : room.name}
         code={displayRoomCode(room.code)}
         onBack={onBack}
+        onFicha={onFicha}
       />
 
       {/* Revisión por excepción: primero la vía rápida, y solo se baja al

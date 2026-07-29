@@ -72,3 +72,21 @@ function desfaseMs(instante: Date): number {
 export function diaEnMadrid(instante = new Date()): string {
   return new Intl.DateTimeFormat('sv-SE', { timeZone: ZONA, dateStyle: 'short' }).format(instante)
 }
+
+/**
+ * Para leer, no para ordenar: `18 jul 2026`.
+ *
+ * En la zona del campus y no en la del dispositivo, que es lo mismo que hace
+ * todo lo demás de este fichero: un iPad con la zona mal puesta no debe mover un
+ * registro de día en el historial de una sala.
+ */
+export function fechaCorta(iso: string): string {
+  const t = new Date(iso)
+  if (Number.isNaN(t.getTime())) return ''
+  return new Intl.DateTimeFormat('es-ES', {
+    timeZone: ZONA,
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(t)
+}

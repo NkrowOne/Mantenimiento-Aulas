@@ -20,12 +20,17 @@ interface IncidentRow {
 }
 
 const STATE_STYLE: Record<IncidentState, string> = {
+  // Nunca llega a pintarse aquí —los borradores tienen su propia bandeja— pero
+  // el mapa se declara completo: si mañana esta lista los incluyera, el hueco
+  // sería una etiqueta en blanco en vez de un error.
+  borrador: 'bg-raised text-muted',
   abierta: 'bg-crit-tint text-crit',
   en_curso: 'bg-warn-tint text-warn',
   resuelta: 'bg-ok-tint text-ok',
 }
 
 const STATE_LABEL: Record<IncidentState, string> = {
+  borrador: 'Borrador',
   abierta: 'Abierta',
   en_curso: 'En curso',
   resuelta: 'Resuelta',
@@ -73,6 +78,10 @@ export function IncidentsPage(): React.ReactElement {
       let q = supabase
         .from('incidents')
         .select('*')
+        // Los borradores no son trabajo abierto: son notas a medio escribir, y
+        // tienen su propia bandeja. Mezclarlos aquí llenaría la lista de
+        // «(sin describir)» y enterraría lo que sí hay que atender.
+        .neq('state', 'borrador')
         .order('opened_at', { ascending: false })
         .limit(LIMITE)
       if (!showResolved) q = q.neq('state', 'resuelta')

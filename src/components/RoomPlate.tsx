@@ -21,9 +21,53 @@ interface Props {
   /** Código de sala. Se muestra aparte, como la matrícula grabada en la placa. */
   code: string
   onBack: () => void
+  /**
+   * Ir a la ficha de la sala. Cuando se pasa, la placa entera se vuelve
+   * pulsable.
+   *
+   * Es el camino a la ficha desde dentro de la revisión, y va aquí y no en un
+   * botón nuevo a propósito: la barra de acción de la revisión promete cerrar
+   * una sala en cinco segundos, y cada control que se le añade la encarece. La
+   * placa ya está en pantalla, ya identifica a la sala, y llevar de ella a su
+   * ficha es lo que cualquiera esperaría al tocarla.
+   */
+  onFicha?: () => void
 }
 
-export function RoomPlate({ building, zone, title, code, onBack }: Props): React.ReactElement {
+export function RoomPlate({
+  building,
+  zone,
+  title,
+  code,
+  onBack,
+  onFicha,
+}: Props): React.ReactElement {
+  const placa = (
+    <>
+      <div className="min-w-0 flex-1 border-r border-line px-5 py-3 text-left">
+        <p className="font-mono text-[0.625rem] font-bold uppercase tracking-[0.17em] text-muted">
+          {building} · {zone}
+        </p>
+        {/*
+          `leading-none` recortaba las letras con trazo descendente: la caja de
+          línea mide exactamente 1em, `truncate` esconde lo que se salga, y la
+          «g» de Criminología caía justo por debajo. Con 1.2 hay sitio para el
+          descendente sin que el título deje de ser compacto.
+        */}
+        <h1 className="mt-1 truncate text-[1.6rem] font-bold leading-[1.2] tracking-tight">
+          {title}
+        </h1>
+      </div>
+
+      <div className="flex shrink-0 flex-col items-center justify-center px-5 py-3">
+        <span className="font-mono text-[0.5625rem] uppercase tracking-[0.16em] text-muted">
+          Sala
+        </span>
+        <span className="mt-0.5 font-mono text-base font-semibold tabular text-ink">{code}</span>
+      </div>
+    </>
+  )
+
   return (
     <header className="border-b border-line bg-ground px-3 pb-3 pt-2">
       <button
@@ -46,27 +90,18 @@ export function RoomPlate({ building, zone, title, code, onBack }: Props): React
           className="absolute right-[7px] top-1/2 h-[5px] w-[5px] -translate-y-1/2 rounded-full bg-sunken shadow-[inset_0_1px_1px_rgba(0,0,0,.35)]"
         />
 
-        <div className="min-w-0 flex-1 border-r border-line px-5 py-3">
-          <p className="font-mono text-[0.625rem] font-bold uppercase tracking-[0.17em] text-muted">
-            {building} · {zone}
-          </p>
-          {/*
-            `leading-none` recortaba las letras con trazo descendente: la caja de
-            línea mide exactamente 1em, `truncate` esconde lo que se salga, y la
-            «g» de Criminología caía justo por debajo. Con 1.2 hay sitio para el
-            descendente sin que el título deje de ser compacto.
-          */}
-          <h1 className="mt-1 truncate text-[1.6rem] font-bold leading-[1.2] tracking-tight">
-            {title}
-          </h1>
-        </div>
-
-        <div className="flex shrink-0 flex-col items-center justify-center px-5 py-3">
-          <span className="font-mono text-[0.5625rem] uppercase tracking-[0.16em] text-muted">
-            Sala
-          </span>
-          <span className="mt-0.5 font-mono text-base font-semibold tabular text-ink">{code}</span>
-        </div>
+        {onFicha ? (
+          <button
+            type="button"
+            onClick={onFicha}
+            title="Abrir la ficha de la sala"
+            className="flex flex-1 items-stretch text-left transition-colors duration-100 active:bg-raised"
+          >
+            {placa}
+          </button>
+        ) : (
+          placa
+        )}
       </div>
     </header>
   )
