@@ -51,7 +51,12 @@
 		# index.html y el service worker NO se cachean: son los que anuncian
 		# que hay versión nueva. Si se cachean, un despliegue puede tardar
 		# días en llegar a un iPad que nunca cierra la pestaña.
-		@nocache path /index.html / /sw.js /manifest.webmanifest
+		#
+		# `salud.json` tampoco: describe la configuración del despliegue, y
+		# una respuesta cacheada describiría al anterior. Aquí lleva solo la
+		# mitad de construcción —no hay arranque que lo reescriba—, pero
+		# rancia sigue siendo peor que ninguna.
+		@nocache path /index.html / /sw.js /manifest.webmanifest /salud.json
 		header @nocache Cache-Control "no-cache, must-revalidate"
 
 		header {

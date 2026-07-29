@@ -83,6 +83,43 @@ lleve plugin de CORS. Necesita `SUPABASE_UPSTREAM` en tiempo de ejecución y
 Esa imagen lleva además la orden de altas de usuario (`alta`, ver *Usuarios*),
 que es lo único que necesita `SUPABASE_SERVICE_ROLE_KEY` en el servicio.
 
+### Saber si le falta alguna variable
+
+Un despliegue de esto puede quedar **verde y roto**: sin `SUPABASE_UPSTREAM` la
+PWA carga entera y solo la API devuelve 503; sin `VITE_SUPABASE_ANON_KEY` la
+aplicación abre sin configuración. En los dos casos el servicio está «activo».
+
+Así que lo dice él mismo, en dos sitios:
+
+```bash
+curl -s https://<dominio>/salud.json     # desde cualquier parte
+salud --texto                            # en la terminal del servicio
+```
+
+```json
+{ "estado": "desconfigurado", "revisado": "arranque",
+  "construccion": { "clave_anonima": true, "url_api": "origen", "bloqueo_min": 0 },
+  "ejecucion": { "upstream": "ausente", "puerto": 8080, "clave_de_servicio": false },
+  "faltan": ["SUPABASE_UPSTREAM"],
+  "avisos": ["SUPABASE_SERVICE_ROLE_KEY ausente: la PWA funciona, pero alta no podrá crear usuarios"] }
+```
+
+El mismo informe, en texto, sale por el registro del contenedor en cada
+arranque —que es lo único que enseña el panel de una plataforma—. Nunca
+contiene el **valor** de nada: solo si está puesto, y de `SUPABASE_UPSTREAM`,
+la forma. `/salud.json` es público.
+
+`estado` no sale del código de salida a propósito: falta de configuración
+devuelve 200 igual. Tumbar el servicio por eso lo dejaría caído en vez de
+meramente desconfigurado, y en una plataforma que sondea esta ruta durante el
+despliegue, además abortaría el despliegue y restauraría una versión anterior
+igual de desconfigurada. Lo único que marca enfermo es que Caddy no sirva.
+
+Dos cosas que el informe **no** puede saber, y hay que decirlo: si la clave
+anónima es la *correcta* (una firmada con otro `JWT_SECRET` da 401 en toda la
+API con el informe en verde) y si Kong responde de verdad detrás del upstream.
+Lo primero lo comprueba `npm run variables`, desde fuera.
+
 ### El certificado, que es lo que decide si hay modo offline
 
 Sin HTTPS válido no hay service worker, y sin service worker no hay modo

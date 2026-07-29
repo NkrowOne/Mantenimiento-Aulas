@@ -88,6 +88,19 @@ async function main(): Promise<void> {
     (await page.locator('input[inputmode="numeric"]').count()) > 0,
   )
 
+  console.log('\n▸ Informe de configuración')
+  // Nadie más comprueba que `salud.json` exista. Ni este servidor ni Caddy
+  // devuelven 404 cuando falta un fichero: los dos caen al index.html de la SPA
+  // con un 200, así que el código de estado no prueba nada y la sonda del
+  // contenedor seguiría en verde sirviendo HTML. Si el plugin dejara de
+  // emitirlo, esto es lo único que se daría cuenta.
+  await check('/salud.json es el informe y no el index.html', async () => {
+    const r = await fetch(`http://127.0.0.1:${PORT}/salud.json`)
+    if (!r.ok) return false
+    const informe = (await r.json()) as { ok?: boolean; version?: string; construccion?: unknown }
+    return informe.ok === true && typeof informe.version === 'string' && informe.construccion !== undefined
+  })
+
   console.log('\n▸ Validación del PIN, sin red')
   await page.locator('input[type="email"]').fill('tecnico@test.local')
   await page.locator('input[autocomplete="one-time-code"]').fill('AAAA-BBBB-CCCC')
