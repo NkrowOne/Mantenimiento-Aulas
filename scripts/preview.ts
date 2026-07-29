@@ -380,6 +380,79 @@ async function main(): Promise<void> {
   await page.locator('header').first().screenshot({ path: 'dist/preview-lampara.png' })
   console.log('  dist/preview-lampara.png')
 
+  /*
+   * El PANEL, que hasta ahora no se podía previsualizar.
+   *
+   * Es la única pantalla de la aplicación que lee SOLO del servidor: sin
+   * Supabase delante no pasa del mensaje de «no se ha podido leer». Así que aquí
+   * se le contesta a la API con datos de ejemplo —los del despliegue real, para
+   * que las cifras y las proporciones sean las que se van a ver— y se fotografía
+   * en claro y en oscuro.
+   *
+   * Merece la pena tenerlo: es la pantalla donde más fácil es que un cambio de
+   * diseño quede bien en el editor y mal en un móvil a oscuras.
+   */
+  await page.route('**/rest/v1/**', async (route) => {
+    const url = route.request().url()
+    const json = (data: unknown): Promise<void> =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) })
+
+    /*
+     * Los cuatro recuentos de arriba salen a CERO en esta previsualización, y no
+     * es un fallo de la aplicación.
+     *
+     * `useSummary()` los pide con `{ count: 'exact', head: true }`, o sea que la
+     * cifra no viaja en el cuerpo sino en la cabecera `Content-Range`. Falsearla
+     * desde aquí no ha salido bien, así que queda dicho en vez de disimulado:
+     * las baldosas se ven con su forma, su acción y su altura —que es lo que se
+     * viene a comprobar— pero con el número a cero.
+     *
+     * Los gráficos y las listas sí traen datos de ejemplo: esos llegan en el
+     * cuerpo y se pueden contestar.
+     */
+
+    if (url.includes('alerts_lamp_low')) {
+      return json(
+        Array.from({ length: 6 }, (_, i) => ({
+          room_id: `r${i}`,
+          building_code: 'H',
+          room_code: `1.${i}`,
+          room_name: `1.${i}`,
+          lamp_pct: 0.02 + i * 0.025,
+          projector_hours: 3400 + i * 120,
+        })),
+      )
+    }
+    if (url.includes('alerts_stale_incidents')) return json([])
+    if (url.includes('incidents_by_building')) {
+      return json(
+        [118, 41, 32, 22, 21, 19, 18, 9, 3].map((total, i) => ({
+          code: ['P', 'H', 'E', 'M', 'C', 'O', 'CD', 'COM', 'PRY'][i],
+          total,
+        })),
+      )
+    }
+    if (url.includes('incidents_by_month')) {
+      return json(
+        ['2025-09', '2025-10', '2025-11', '2025-12', '2026-01', '2026-02'].map((month, i) => ({
+          month,
+          total: [8, 14, 11, 6, 19, 12][i],
+        })),
+      )
+    }
+    return json([])
+  })
+
+  await page.getByRole('button', { name: 'Panel' }).click()
+  await page.waitForTimeout(1500)
+  await page.screenshot({ path: 'dist/preview-panel.png', fullPage: true })
+  console.log('  dist/preview-panel.png')
+
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.waitForTimeout(400)
+  await page.screenshot({ path: 'dist/preview-panel-oscuro.png', fullPage: true })
+  console.log('  dist/preview-panel-oscuro.png')
+
   await browser.close()
   server.close()
 }

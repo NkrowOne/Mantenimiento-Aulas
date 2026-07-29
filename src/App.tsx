@@ -17,7 +17,7 @@ import { startSync } from '@/sync/outbox'
 import { configError, supabase } from '@/lib/supabase'
 import { PARAM_SALA, salaDeLaUrl } from '@/lib/enlace-sala'
 import type { SealedSession } from '@/auth/pin'
-import type { Building, Role, Room } from '@/domain/types'
+import { OVERDUE_INSPECTION_DAYS, type Building, type Role, type Room } from '@/domain/types'
 
 /*
  * Todo lo que no es revisar un aula se carga aparte.
@@ -188,6 +188,40 @@ export function App(): React.ReactElement {
   const [restaurado, setRestaurado] = useState(false)
 
   const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [])
+
+  /*
+   * Cuántas salas tiene cada edificio y cuántas van con retraso.
+   *
+   * La lista de edificios eran veintitrés filas con un código y un nombre: la
+   * misma altura, el mismo peso y ni un dato. Monótona, sí, pero sobre todo
+   * MUDA — hay que entrar en cada una para saber cuál toca, que es justo lo que
+   * la lista debería ahorrar.
+   *
+   * Con el recuento y el retraso, cada fila dice algo distinto y la vista se
+   * ordena sola ante los ojos. La variedad sale de los datos, que es la única
+   * que no cansa a la tercera semana.
+   *
+   * Se calcula en local, de una sola pasada sobre las tres tablas, y lo
+   * recalcula Dexie cuando cambian.
+   */
+  const porEdificio = useLiveQuery(async () => {
+    const [zones, rooms] = await Promise.all([db.zones.toArray(), db.rooms.toArray()])
+    const edificioDeZona = new Map(zones.map((z) => [z.id, z.building_id]))
+
+    const acc = new Map<string, { total: number; pendientes: number }>()
+    const limite = Date.now() - OVERDUE_INSPECTION_DAYS * 86_400_000
+
+    for (const r of rooms) {
+      const edificio = edificioDeZona.get(r.zone_id)
+      if (!edificio) continue
+      const fila = acc.get(edificio) ?? { total: 0, pendientes: 0 }
+      fila.total++
+      const revisada = r.last_inspection_at ? new Date(r.last_inspection_at).getTime() : 0
+      if (revisada < limite) fila.pendientes++
+      acc.set(edificio, fila)
+    }
+    return acc
+  }, [])
 
   // La planta de la sala en revisión. Va en la cabecera porque un código como
   // `-2.1` leído sin ella parece un sótano cualquiera.
@@ -479,25 +513,65 @@ export function App(): React.ReactElement {
           />
         {/* Misma regla que la lista de salas: el contenido va sobre papel. */}
         <ul className="divide-y divide-line-soft border-b border-line bg-surface">
-          {(buildings ?? []).map((b) => (
-            <li key={b.id}>
-              <button
-                type="button"
-                onClick={() => setView({ name: 'salas', building: b })}
-                className="flex w-full items-center gap-3 px-4 py-4 text-left transition-colors duration-100 active:bg-raised"
-              >
-                <span className="w-14 shrink-0 font-mono text-sm font-semibold text-accent">
-                  {b.code}
-                </span>
-                <span className="flex-1">{b.name}</span>
-                {b.needs_review && (
-                  <span className="rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
-                    Sin identificar
+          {(buildings ?? []).map((b) => {
+            const cuenta = porEdificio?.get(b.id)
+            const total = cuenta?.total ?? 0
+            const pendientes = cuenta?.pendientes ?? 0
+            const hechas = total - pendientes
+
+            return (
+              <li key={b.id}>
+                <button
+                  type="button"
+                  onClick={() => setView({ name: 'salas', building: b })}
+                  className="flex w-full items-center gap-3.5 px-4 py-3.5 text-left transition-colors duration-100 active:bg-raised"
+                >
+                  {/*
+                    El código, en una chapa.
+                    Suelto competía con el nombre a la misma altura y el ojo no
+                    sabía cuál de los dos era la entrada. Metido en su recuadro
+                    monoespaciado se lee como lo que es: una matrícula.
+                  */}
+                  <span className="w-12 shrink-0 rounded-tag bg-raised py-1 text-center font-mono text-xs font-semibold text-accent">
+                    {b.code}
                   </span>
-                )}
-              </button>
-            </li>
-          ))}
+
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{b.name}</span>
+                    {total > 0 && (
+                      <span className="mt-1 flex items-center gap-2">
+                        {/*
+                          El avance del edificio, recto y sin animar.
+                          Es una medida, no una barra de carga: animarla obligaría
+                          a esperar para poder leerla, y aquí se lee de pasada.
+                        */}
+                        <span
+                          aria-hidden
+                          className="h-1 w-16 shrink-0 overflow-hidden rounded-full bg-line"
+                        >
+                          <span
+                            className={`block h-full ${pendientes === 0 ? 'bg-ok' : 'bg-warn'}`}
+                            style={{ width: `${total ? (hechas / total) * 100 : 0}%` }}
+                          />
+                        </span>
+                        <span className="truncate text-xs text-muted">
+                          {pendientes === 0
+                            ? `${total} salas al día`
+                            : `${pendientes} de ${total} por revisar`}
+                        </span>
+                      </span>
+                    )}
+                  </span>
+
+                  {b.needs_review && (
+                    <span className="shrink-0 rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
+                      Sin identificar
+                    </span>
+                  )}
+                </button>
+              </li>
+            )
+          })}
           {buildings?.length === 0 && (
             <li className="p-4">
               <SinDatos
@@ -581,7 +655,18 @@ export function App(): React.ReactElement {
 
       {tab !== 'revisar' && (
         <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
-          {tab === 'panel' && <DashboardPage />}
+          {tab === 'panel' && (
+            <DashboardPage
+              ir={{
+                revisar: () => {
+                  setTab('revisar')
+                  setView({ name: 'edificios' })
+                },
+                incidencias: () => setTab('incidencias'),
+                datos: () => setTab('datos'),
+              }}
+            />
+          )}
           {tab === 'incidencias' && <IncidentsPage />}
           {tab === 'borradores' && <DraftsPage />}
           {tab === 'almacen' && <StockPage role={role} />}

@@ -10,7 +10,21 @@ import {
   useSummary,
 } from './queries'
 
-export function DashboardPage(): React.ReactElement {
+/**
+ * A dónde lleva cada cifra del panel.
+ *
+ * El cuadro de mando decía cuatro cosas y no llevaba a ninguna: «11 lámparas por
+ * debajo del 20 %» y ahí se acababa. Enterarse de un problema y no poder ir a él
+ * desde donde te enteras es lo que convierte un panel en un cartel — se mira dos
+ * semanas y luego se deja de mirar.
+ */
+export interface Destinos {
+  revisar: () => void
+  incidencias: () => void
+  datos: () => void
+}
+
+export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
   const { data: s, isPending, isError, refetch } = useSummary()
   const { data: lamps } = useLampAlerts()
   const { data: stale } = useStaleIncidents()
@@ -47,51 +61,95 @@ export function DashboardPage(): React.ReactElement {
   const pct = s.roomsTotal ? Math.round((s.inspectedThisMonth / s.roomsTotal) * 100) : 0
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-4">
-      <section>
-        <h2 className="eyebrow mb-3">Situación</h2>
+    /*
+     * `space-y-8` y no 6: con seis tarjetas seguidas del mismo tamaño, seis
+     * unidades de aire entre ellas las convierte en una sola columna continua.
+     * Ocho, más las cabeceras con filete, es lo que hace que la pantalla se
+     * recorra por secciones en vez de leerse entera de arriba abajo.
+     */
+    <div className="mx-auto max-w-5xl space-y-8 p-4">
+      <section aria-labelledby="sec-situacion">
+        <div className="section-head">
+          <h2 id="sec-situacion" className="eyebrow">
+            Situación
+          </h2>
+        </div>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatTile
             label="Revisadas este mes"
             value={s.inspectedThisMonth}
             detail={`${pct}% de ${s.roomsTotal}`}
             tone={pct >= 25 ? 'ok' : 'aviso'}
+            onClick={ir.revisar}
+            accion={pct >= 100 ? 'Ver la ronda' : 'Seguir la ronda'}
           />
           <StatTile
             label="Incidencias abiertas"
             value={s.openIncidents}
             detail={s.staleIncidents > 0 ? `${s.staleIncidents} estancadas` : undefined}
             tone={s.staleIncidents > 0 ? 'critico' : s.openIncidents > 0 ? 'aviso' : 'ok'}
+            onClick={ir.incidencias}
+            accion={s.openIncidents > 0 ? 'Atenderlas' : 'Ver el histórico'}
           />
           <StatTile
             label="Salas con problemas"
             value={s.roomsWithProblems}
             tone={s.roomsWithProblems > 0 ? 'aviso' : 'ok'}
+            onClick={ir.incidencias}
+            accion={s.roomsWithProblems > 0 ? 'Ver cuáles' : 'Ver incidencias'}
           />
+          {/*
+            Esta no cambia de pestaña: la lista de lámparas está más abajo, en
+            esta misma pantalla. Llevar a otro sitio para enseñar algo que ya
+            está aquí sería hacerle dar una vuelta al usuario.
+          */}
           <StatTile
             label={`Lámparas < ${LAMP_ALERT_THRESHOLD * 100}%`}
             value={s.lampAlerts}
-            
             tone={s.lampAlerts > 0 ? 'critico' : 'ok'}
+            onClick={
+              s.lampAlerts > 0
+                ? () =>
+                    document
+                      .getElementById('sec-lamparas')
+                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                : undefined
+            }
+            accion={s.lampAlerts > 0 ? 'Cuáles y cuánto' : undefined}
           />
         </div>
       </section>
 
       {(s.needsReview > 0 || s.quarantine > 0) && (
-        <section className="card border-warn/40 bg-warn-tint p-4">
-          <h2 className="font-semibold text-warn">Datos por revisar</h2>
-          <p className="mt-1 text-sm text-muted">
-            {[
-              s.needsReview > 0 && `${s.needsReview} edificios sin identificar`,
-              s.quarantine > 0 && `${s.quarantine} filas en cuarentena`,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </p>
-        </section>
+        <button
+          type="button"
+          onClick={ir.datos}
+          className="key card flex w-full items-center gap-4 border-warn/40 bg-warn-tint p-4 text-left"
+        >
+          <span className="min-w-0 flex-1">
+            <span className="block font-semibold text-warn">Datos por revisar</span>
+            <span className="mt-1 block text-sm text-muted">
+              {[
+                s.needsReview > 0 && `${s.needsReview} edificios sin identificar`,
+                s.quarantine > 0 && `${s.quarantine} filas en cuarentena`,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </span>
+          </span>
+          <span aria-hidden className="shrink-0 text-lg text-warn">
+            →
+          </span>
+        </button>
       )}
 
-      <section className="grid gap-4 lg:grid-cols-2">
+      <section aria-labelledby="sec-graficos">
+        <div className="section-head">
+          <h2 id="sec-graficos" className="eyebrow">
+            Cómo viene el año
+          </h2>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
         <div className="card p-4">
           <h3 className="mb-1 font-semibold">Incidencias por edificio</h3>
           <p className="mb-3 text-xs text-muted">Histórico</p>
@@ -129,11 +187,19 @@ export function DashboardPage(): React.ReactElement {
             notMerge
           />
         </div>
+        </div>
       </section>
 
-      <section className="card p-4">
+      <section id="sec-lamparas" className="scroll-mt-4">
+        <div className="section-head">
+          <h2 className="eyebrow">Lo que va a dar guerra</h2>
+        </div>
+        <div className="card p-4">
         <h3 className="font-semibold">Lámparas que van a fundirse</h3>
-        
+        <p className="mb-3 text-xs text-muted">
+          Por debajo del {LAMP_ALERT_THRESHOLD * 100} % de vida restante
+        </p>
+
         {lamps?.length === 0 && <p className="text-sm text-muted">Ninguna.</p>}
 
         <div className="scroll-x">
@@ -166,9 +232,9 @@ export function DashboardPage(): React.ReactElement {
             </tbody>
           </table>
         </div>
-      </section>
+        </div>
 
-      <section className="card p-4">
+        <div className="card mt-4 p-4">
         <h3 className="font-semibold">Incidencias estancadas</h3>
         <p className="mb-3 text-xs text-muted">Más de 7 días abiertas</p>
 
@@ -189,6 +255,7 @@ export function DashboardPage(): React.ReactElement {
             </li>
           ))}
         </ul>
+        </div>
       </section>
     </div>
   )
