@@ -18,6 +18,7 @@
     "admin:user": "tsx scripts/admin-user.ts",
     "gen:keys": "tsx scripts/gen-keys.ts",
     "deploy": "bash scripts/deploy.sh",
+    "init:plataforma": "bash scripts/init-plataforma.sh",
     "backup": "bash scripts/backup.sh",
     "smoke": "tsx scripts/smoke.ts",
     "check:contrast": "tsx scripts/check-contrast.ts",

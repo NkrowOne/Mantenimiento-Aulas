@@ -47,6 +47,29 @@ npm run admin:user -- crear --email tu@correo.es --nombre "Tu nombre" --primer-a
 que arranca a medias y falla en el tercer servicio cuesta mucho más de
 diagnosticar que uno que se niega a empezar diciendo qué falta.
 
+### Sobre una plataforma (skyway, Railway, Fly…)
+
+Cuando los servicios los levanta la plataforma y aquí solo llega una cadena de
+conexión, `deploy.sh` no sirve: cada paso suyo pasa por `docker compose exec`.
+
+```bash
+export DATABASE_URL=postgresql://postgres:CLAVE@HOST:5432/postgres
+export REPORTS_WORKER_TOKEN=...
+export REPORTS_WORKER_URL=http://worker.interno:8080/generate
+npm run init:plataforma -- --con-seed
+```
+
+Comprueba **antes de tocar nada** que GoTrue y Storage ya hayan arrancado
+—crean `auth.users` y `storage.buckets` con sus propias migraciones—, aplica lo
+que falte llevando registro en `schema_migrations`, alinea el token del worker y
+verifica al final que el hook del rol es ejecutable. Repetirlo no duplica nada.
+
+El `Dockerfile` de la raíz construye la PWA y la sirve con `Caddyfile.skyway`,
+que además hace de proxy de `/rest`, `/auth` y `/storage` hacia Kong: **la API
+va por el mismo origen que la PWA**, que es lo que permite que `kong.yml` no
+lleve plugin de CORS. Necesita `SUPABASE_UPSTREAM` en tiempo de ejecución y
+`VITE_SUPABASE_ANON_KEY` como argumento de construcción.
+
 ### El certificado, que es lo que decide si hay modo offline
 
 Sin HTTPS válido no hay service worker, y sin service worker no hay modo
