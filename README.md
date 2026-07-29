@@ -40,7 +40,7 @@ cp .env.example .env
 npm run gen:keys                 # secretos y claves; pégalos en .env
 npm run import:excel -- <xlsx>   # genera supabase/seed.sql
 npm run deploy -- --con-seed
-npm run admin:user -- crear --email tu@correo.es --nombre "Tu nombre" --primer-admin
+npm run admin:user -- crear tu@correo.es "Tu nombre" --primer-admin
 ```
 
 `deploy.sh` valida la configuración **antes** de levantar nada: un despliegue
@@ -150,13 +150,19 @@ No hay registro abierto ni SMTP. Un administrador da de alta a cada técnico y l
 entrega un código de un solo uso que caduca en 24 horas:
 
 ```bash
-npm run admin:user -- crear  ana@x.es "Ana" --rol tecnico
+npm run admin:user -- crear  ana@x.es "Ana Ruiz" tecnico
 npm run admin:user -- crear  ana@x.es              # ya existe: código nuevo
 npm run admin:user -- codigo ana@x.es              # lo mismo, dicho aparte
 npm run admin:user -- rol    ana@x.es supervisor
 npm run admin:user -- borrar ana@x.es
 npm run admin:user -- listar
 ```
+
+El alta entera cabe en una orden y **el orden de los argumentos da igual**: el
+email se reconoce por la `@` y el rol porque solo puede ser `tecnico`,
+`supervisor` o `admin`. Sin rol entra como técnico. Lo que no encaje en ninguno
+de los tres huecos no se ignora: el comando se para y lo dice, porque un rol
+mal escrito o un nombre sin comillas daría de alta a alguien mal y en silencio.
 
 **`crear` se puede repetir**: si el email ya existe no falla, le da un código
 nuevo y anula el anterior. Es lo que hace falta cuando se dictó mal o se
@@ -172,7 +178,7 @@ Sobre una plataforma no hay repositorio a mano, así que la imagen del servicio
 lleva las mismas órdenes dentro, como `alta`:
 
 ```bash
-alta crear ana@x.es "Ana" --rol tecnico
+alta crear ana@x.es "Ana Ruiz" tecnico
 alta borrar ana@x.es
 ```
 

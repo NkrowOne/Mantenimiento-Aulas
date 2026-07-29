@@ -61,11 +61,17 @@ Desde el servidor, con el `.env` cargado:
 
 ```bash
 npm run admin:user -- listar
-npm run admin:user -- crear  ana@x.es "Ana Ruiz" --rol tecnico
+npm run admin:user -- crear  ana@x.es "Ana Ruiz" tecnico
 npm run admin:user -- codigo ana@x.es
 npm run admin:user -- rol    ana@x.es supervisor
 npm run admin:user -- borrar ana@x.es
 ```
+
+El alta cabe en una orden y el orden de los argumentos da igual: el email se
+reconoce por la `@`, el rol porque solo puede ser una de tres palabras, y lo que
+quede es el nombre. Lo que no encaje en ninguno de los tres huecos detiene el
+comando y se dice en voz alta: un rol mal escrito o un nombre sin comillas
+daría de alta a alguien mal y sin avisar.
 
 **El código solo se muestra una vez.** Si se pierde, no hay que borrar a nadie
 ni buscar otro comando: repite el mismo `crear`. Si el email ya existe le da un
@@ -81,7 +87,7 @@ escriben en la terminal del servicio, desde el panel:
 
 ```bash
 alta listar
-alta crear  ana@x.es "Ana Ruiz" --rol tecnico
+alta crear  ana@x.es "Ana Ruiz" tecnico
 alta crear  ana@x.es                  # ya existe: código nuevo, el viejo anulado
 alta codigo ana@x.es
 alta rol    ana@x.es supervisor
@@ -140,9 +146,12 @@ El paso 1 es el que corta de verdad: sin perfil activo el hook deja de dar rol y
 RLS no permite ver nada, en cuanto caduque el token de acceso (una hora como
 mucho). Después, para devolverle el acceso desde otro dispositivo:
 
+```sql
+update profiles set active = true where email = 'ana@x.es';   -- reactivar
+```
+
 ```bash
-npm run admin:user -- rol --email ana@x.es --rol tecnico   # reactivar
-npm run admin:user -- codigo --email ana@x.es              # código nuevo
+npm run admin:user -- codigo ana@x.es                         -- código nuevo
 ```
 
 Si el dispositivo se perdió **con la sesión cerrada**, no hay urgencia: sin el

@@ -1,7 +1,7 @@
 /**
  * Alta y gestión de usuarios.
  *
- *   npm run admin:user -- crear  ana@x.es "Ana Ruiz" --rol tecnico
+ *   npm run admin:user -- crear  ana@x.es "Ana Ruiz" tecnico
  *   npm run admin:user -- crear  jefe@x.es "Jefe" --primer-admin
  *   npm run admin:user -- crear  ana@x.es          # ya existe: código nuevo
  *   npm run admin:user -- codigo ana@x.es          # lo mismo, dicho aparte
@@ -9,9 +9,11 @@
  *   npm run admin:user -- borrar ana@x.es
  *   npm run admin:user -- listar
  *
- * El email va suelto, sin `--email`, porque esto se teclea entero en la
- * terminal de un panel, sin historial ni autocompletado. Las opciones con
- * nombre siguen valiendo y ganan si se ponen las dos.
+ * El alta entera cabe en una orden y el orden de los argumentos da igual: el
+ * email se reconoce por la `@` y el rol porque solo puede ser una de tres
+ * palabras. Va así, sin `--`, porque esto se teclea entero en la terminal de un
+ * panel, sin historial ni autocompletado. Las opciones con nombre siguen
+ * valiendo y ganan si se ponen las dos.
  *
  * Una sola implementación para los tres sitios desde los que se administra:
  *
@@ -119,10 +121,9 @@ const BANDERAS = new Set(['primer-admin'])
 /**
  * Argumentos sueltos, los que no son ni una opción ni el valor de una.
  *
- * Están porque `alta borrar --email ana@x.es` es más de lo que hace falta
- * escribir en la terminal de un panel, donde no hay historial ni autocompletado
- * y el comando se teclea entero cada vez. El orden es siempre el mismo que en
- * la ayuda: primero el email, luego lo que pida el comando.
+ * Están porque `alta crear --email ana@x.es --nombre "Ana" --rol tecnico` es
+ * mucho más de lo que hace falta escribir en la terminal de un panel, donde no
+ * hay historial ni autocompletado y el comando se teclea entero cada vez.
  *
  * Las opciones con nombre siguen valiendo, y ganan si aparecen las dos: hay
  * documentación y guiones escritos con ellas, y romperlos por escribir menos
@@ -145,6 +146,38 @@ function sueltos(): string[] {
 }
 
 type Role = 'tecnico' | 'supervisor' | 'admin'
+
+const ROLES: readonly string[] = ['tecnico', 'supervisor', 'admin']
+
+/**
+ * Reparte los argumentos sueltos por su FORMA, no por su posición: el email es
+ * el que lleva `@` y el rol solo puede ser una de tres palabras, así que lo que
+ * quede es el nombre.
+ *
+ * Se puede escribir el alta entera de una vez y en el orden que salga —
+ * `crear tecnico ana@x.es "Ana"` y `crear ana@x.es "Ana" tecnico` son lo
+ * mismo—, que es justo lo que se agradece cuando se teclea a mano y de memoria.
+ * Exigir un orden concreto solo sirve para que el comando falle por algo que la
+ * máquina podía deducir sola.
+ *
+ * El único caso ambiguo es alguien que se llame «admin», «tecnico» o
+ * «supervisor». Para eso está `--nombre`, que gana siempre.
+ *
+ * Lo que no encaja en ningún hueco se devuelve aparte en vez de tirarse, y esa
+ * es la parte que importa: `crear ana@x.es "Ana" tecnica` y `crear ana@x.es Ana
+ * Ruiz` —el nombre sin comillas— son los dos errores que se cometen de verdad,
+ * y callándolos se daría de alta a alguien con el rol o el nombre equivocados
+ * sin que nadie se enterara hasta que la aplicación no le dejara hacer nada.
+ */
+function reparto(): { email?: string; nombre?: string; rol?: string; sobrantes: string[] } {
+  const libres = sueltos()
+  const email = libres.find((t) => t.includes('@'))
+  // Mayúsculas y minúsculas dan igual: `Admin` es un rol, no un nombre propio.
+  const rol = libres.find((t) => ROLES.includes(t.toLowerCase()))?.toLowerCase()
+  const nombre = libres.find((t) => t !== email && t.toLowerCase() !== rol)
+  const sobrantes = libres.filter((t) => t !== email && t.toLowerCase() !== rol && t !== nombre)
+  return { email, nombre, rol, sobrantes }
+}
 
 function parseRole(value: string | undefined, fallback: Role = 'tecnico'): Role {
   if (!value) return fallback
@@ -233,14 +266,16 @@ async function nuevoCodigo(id: string, email: string, renovado: boolean): Promis
  * en silencio, porque `--rol` vale `tecnico` por defecto.
  */
 async function crear(): Promise<void> {
-  const email = arg('email') ?? sueltos()[0]
-  const nombre = arg('nombre') ?? sueltos()[1]
+  const suelto = reparto()
+  const email = arg('email') ?? suelto.email
+  const nombre = arg('nombre') ?? suelto.nombre
   if (!email) {
-    console.error(`Uso: ${CLI} crear <email> "<nombre>" [--rol tecnico|supervisor|admin] [--primer-admin]`)
+    console.error(`Uso: ${CLI} crear <email> "<nombre>" [tecnico|supervisor|admin]`)
     process.exit(1)
   }
 
-  const rolPedido: Role | undefined = has('primer-admin') ? 'admin' : arg('rol') ? parseRole(arg('rol')) : undefined
+  const rolEscrito = arg('rol') ?? suelto.rol
+  const rolPedido: Role | undefined = has('primer-admin') ? 'admin' : rolEscrito ? parseRole(rolEscrito) : undefined
 
   const existente = await findUserByEmail(email)
   if (existente) {
@@ -263,7 +298,7 @@ async function crear(): Promise<void> {
   // Para un alta de verdad el nombre no es opcional: es lo que se ve en el
   // historial de cada revisión.
   if (!nombre) {
-    console.error(`Uso: ${CLI} crear <email> "<nombre>" [--rol tecnico|supervisor|admin] [--primer-admin]`)
+    console.error(`Uso: ${CLI} crear <email> "<nombre>" [tecnico|supervisor|admin]`)
     process.exit(1)
   }
 
@@ -300,7 +335,7 @@ async function crear(): Promise<void> {
 }
 
 async function codigo(): Promise<void> {
-  const email = arg('email') ?? sueltos()[0]
+  const email = arg('email') ?? reparto().email
   if (!email) {
     console.error(`Uso: ${CLI} codigo <email>`)
     process.exit(1)
@@ -316,8 +351,9 @@ async function codigo(): Promise<void> {
 }
 
 async function rol(): Promise<void> {
-  const email = arg('email') ?? sueltos()[0]
-  const nuevo = parseRole(arg('rol') ?? sueltos()[1])
+  const suelto = reparto()
+  const email = arg('email') ?? suelto.email
+  const nuevo = parseRole(arg('rol') ?? suelto.rol)
   if (!email) {
     console.error(`Uso: ${CLI} rol <email> tecnico|supervisor|admin`)
     process.exit(1)
@@ -361,7 +397,7 @@ async function rol(): Promise<void> {
  * qué, y eso es lo que le da valor. Para esos casos la baja es desactivar.
  */
 async function borrar(): Promise<void> {
-  const email = arg('email') ?? sueltos()[0]
+  const email = arg('email') ?? reparto().email
   if (!email) {
     console.error(`Uso: ${CLI} borrar <email>`)
     process.exit(1)
@@ -417,19 +453,40 @@ async function listar(): Promise<void> {
 const command = process.argv[2]
 const commands: Record<string, () => Promise<void>> = { crear, codigo, rol, borrar, listar }
 
+/*
+ * Nada de lo que se escribe se ignora en silencio. Un argumento suelto que no
+ * es email, ni rol, ni nombre, casi siempre es una de estas dos cosas: un rol
+ * mal escrito —`tecnica`, `admin1`— o un nombre sin comillas, del que solo
+ * habría entrado la primera palabra. Las dos crean el usuario mal y sin decir
+ * nada; se ve semanas después, cuando la aplicación no le deja hacer su trabajo.
+ */
+const { sobrantes } = reparto()
+if (command && sobrantes.length > 0) {
+  console.error(`
+No sé qué hacer con: ${sobrantes.join(', ')}
+
+  Si es el rol, tiene que ser exactamente tecnico, supervisor o admin.
+  Si es parte del nombre, va entre comillas: ${CLI} crear ana@x.es "Ana Ruiz"
+`)
+  process.exit(1)
+}
+
 const run = command ? commands[command] : undefined
 if (!run) {
   console.error(`
 Uso: ${CLI} <comando> [opciones]
 
-  crear   <email> "<nombre>" [--rol tecnico|supervisor|admin] [--primer-admin]
-          Si el email ya existe, le da un código nuevo y anula el anterior.
+  crear   <email> "<nombre>" [tecnico|supervisor|admin]
+          El orden da igual: el email se reconoce por la @ y el rol por su
+          nombre. Sin rol, entra como tecnico; con --primer-admin, como admin.
+          Si el email ya existe, le da un código nuevo y anula el anterior,
+          y respeta el nombre y el rol que no se escriban.
   codigo  <email>
   rol     <email> tecnico|supervisor|admin
   borrar  <email>
   listar
 
-Las opciones con nombre (--email, --nombre, --rol) siguen valiendo.
+Las opciones con nombre (--email, --nombre, --rol) siguen valiendo y ganan.
 `)
   process.exit(1)
 }

@@ -238,7 +238,7 @@ Desde el repositorio:
 ```bash
 SUPABASE_URL=https://TU-DOMINIO \
 SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
-npm run admin:user -- crear --email tu@correo.es --nombre "Tu nombre" --primer-admin
+npm run admin:user -- crear tu@correo.es "Tu nombre" --primer-admin
 ```
 
 O, sin clonar nada, desde la terminal del servicio de la aplicación en el panel
@@ -246,7 +246,7 @@ O, sin clonar nada, desde la terminal del servicio de la aplicación en el panel
 `SUPABASE_SERVICE_ROLE_KEY` entre sus variables—:
 
 ```bash
-alta crear --email tu@correo.es --nombre "Tu nombre" --primer-admin
+alta crear tu@correo.es "Tu nombre" --primer-admin
 ```
 
 Imprime un código de un solo uso que caduca en 24h.
