@@ -9,10 +9,12 @@ import path from 'node:path'
  *
  * Comprobar que Caddy responde es la mitad del trabajo, y la menos útil: un
  * servidor de ficheros estáticos casi nunca es lo que se rompe. Lo que sí se
- * rompe —ya pasó— es desplegar sin `VITE_SUPABASE_URL` ni `VITE_SUPABASE_ANON_KEY`:
- * el build sale bien, la plataforma da el despliegue por bueno y la aplicación
- * abre diciendo que le falta configuración. Como esas dos variables se hornean
- * dentro del bundle, aquí es el único sitio donde se sabe si estaban.
+ * rompe —ya pasó— es desplegar sin `VITE_SUPABASE_ANON_KEY`: el build sale
+ * bien, la plataforma da el despliegue por bueno y la aplicación abre diciendo
+ * que le falta configuración. Como esa clave se hornea dentro del bundle, aquí
+ * es el único sitio donde se sabe si estaba.
+ *
+ * La URL no se comprueba: por defecto es el propio origen (ver `lib/supabase.ts`).
  *
  * Devuelve 200 siempre a propósito. Marcar el despliegue como enfermo por una
  * variable ausente dejaría el servicio caído en vez de meramente desconfigurado,
@@ -37,7 +39,7 @@ export default defineConfig(({ mode }) => {
   // `process.env` no basta: si las variables vienen de un `.env`, quien las lee
   // es Vite, no el proceso.
   const env = loadEnv(mode, process.cwd(), 'VITE_')
-  const configurada = Boolean(env['VITE_SUPABASE_URL'] && env['VITE_SUPABASE_ANON_KEY'])
+  const configurada = Boolean(env['VITE_SUPABASE_ANON_KEY'])
 
   return {
     plugins: [

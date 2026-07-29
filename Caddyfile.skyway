@@ -1,0 +1,88 @@
+# Caddy para una plataforma que ya termina el TLS (skyway, Railway, Fly…).
+#
+# Hermano del `Caddyfile` de la raíz, que es el del despliegue con
+# `docker-compose.yml`. Las diferencias son las tres que impone la plataforma:
+#
+#   1. Sin TLS ni reto DNS-01: el borde de la plataforma ya sirve HTTPS y aquí
+#      llega HTTP plano. Pedir certificado desde dentro fallaría y, peor, dejaría
+#      el arranque colgado reintentando ACME.
+#   2. Escucha en `$PORT`, que asigna la plataforma. Fijar el 443 hace que el
+#      enrutador no encuentre el servicio y el despliegue muera por healthcheck.
+#   3. Los registros van a stdout, no a un fichero: en un contenedor efímero un
+#      `/var/log` es un agujero por donde se pierden.
+#
+# Lo que NO cambia es lo importante: la PWA y la API comparten origen, así que
+# no hay CORS que configurar. `supabase/kong.yml` no lleva plugin de CORS a
+# propósito, y con esto no le hace falta.
+
+{
+	# La plataforma es quien decide el puerto y quien hace de frontal.
+	auto_https off
+	admin off
+
+	# Quién puede decir de parte de quién viene una petición.
+	#
+	# Por defecto Caddy no se fía de nadie y REEMPLAZA la `X-Forwarded-For`
+	# entrante por la IP de su par, para que nadie se invente la suya. Detrás
+	# del borde de la plataforma eso significa que GoTrue vería la IP del borde
+	# en todas las peticiones y metería a los 276 usuarios en el mismo cubo de
+	# límite: el primero que falle la contraseña bloquea al resto.
+	#
+	# El borde habla con este contenedor por la red privada de la plataforma, así
+	# que confiar en los rangos privados recupera la IP real del cliente sin abrir
+	# la puerta a que la falsifique nadie de fuera: desde Internet no se llega
+	# aquí sin pasar por el borde.
+	servers {
+		trusted_proxies static private_ranges
+	}
+	log {
+		output stdout
+		format console
+	}
+}
+
+:{$PORT:8080} {
+	encode zstd gzip
+
+	# ── API de Supabase ────────────────────────────────────────────────
+	# `SUPABASE_UPSTREAM` es el host:puerto de Kong en la red interna de la
+	# plataforma; por ejemplo `kong.railway.internal:8000`. Al ir por dentro,
+	# la API no necesita URL pública y Supabase queda sin exponer.
+	# GoTrue limita por `X-Forwarded-For` (`GOTRUE_RATE_LIMIT_HEADER`), y Caddy ya
+	# la rellena solo: añade la IP del cliente a la que venga del borde. NO la
+	# pongas a mano con `header_up X-Forwarded-For {http.request.header...}`:
+	# cuando no hay cabecera entrante eso la fija a cadena vacía en lugar de
+	# dejar actuar al valor por defecto, y entonces GoTrue mete a todos los
+	# clientes en el mismo cubo — el primero que falle la contraseña bloquea al
+	# resto. Se vio sondeando el contenedor, no leyendo la documentación.
+	@api path /rest/* /auth/* /storage/* /realtime/*
+	handle @api {
+		reverse_proxy {$SUPABASE_UPSTREAM}
+	}
+
+	# ── PWA ────────────────────────────────────────────────────────────
+	handle {
+		root * /srv/dist
+		try_files {path} /index.html
+		file_server
+
+		# Los assets llevan hash en el nombre, así que son inmutables.
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+
+		# index.html y el service worker NO se cachean: son los que anuncian que
+		# hay versión nueva. Si se cachean, un despliegue puede tardar días en
+		# llegar a un iPad que nunca cierra la pestaña.
+		#
+		# `salud.json` tampoco: es lo que mira la plataforma para decidir si el
+		# despliegue está sano, y una respuesta cacheada describiría al anterior.
+		@nocache path /index.html / /sw.js /manifest.webmanifest /salud.json
+		header @nocache Cache-Control "no-cache, must-revalidate"
+
+		header {
+			X-Content-Type-Options nosniff
+			X-Frame-Options DENY
+			Referrer-Policy strict-origin-when-cross-origin
+		}
+	}
+}

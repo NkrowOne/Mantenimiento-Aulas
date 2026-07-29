@@ -1,0 +1,29 @@
+# Lo que no debe entrar en el contexto de construcción.
+#
+# `node_modules` es el importante: además de pesar, trae binarios compilados
+# para el sistema de quien construye. Colarlos en una imagen Alpine da fallos
+# de enlazado que no mencionan en ningún momento que el problema sea ese.
+node_modules
+reports-worker/node_modules
+
+# Se regenera dentro de la imagen; el de fuera solo puede estar más viejo.
+dist
+dist-ssr
+dev-dist
+
+.git
+.github
+coverage
+*.tsbuildinfo
+
+# Secretos. `.env` nunca debe acabar en una capa de imagen.
+.env
+.env.*
+!.env.example
+
+# Nada de esto lo necesita el build de la PWA.
+docs
+supabase/volumes
+reports-worker/__pycache__
+*.pyc
+.DS_Store
