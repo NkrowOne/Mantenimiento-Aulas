@@ -15,6 +15,8 @@ interface Props {
   building: Building
   onPick: (room: Room) => void
   onBack: () => void
+  /** Abrir la hoja de placas imprimibles de este edificio. */
+  onPlacas: () => void
   order: RoomOrder
   onOrderChange: (order: RoomOrder) => void
 }
@@ -31,6 +33,7 @@ export function RoomListPage({
   building,
   onPick,
   onBack,
+  onPlacas,
   order,
   onOrderChange,
 }: Props): React.ReactElement {
@@ -78,7 +81,18 @@ export function RoomListPage({
         <button type="button" onClick={onBack} className="-ml-2 min-h-11 px-2 text-sm text-accent">
           ← Edificios
         </button>
-        <h1 className="text-xl font-semibold">{building.name}</h1>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <h1 className="text-xl font-semibold tracking-tight">{building.name}</h1>
+          {/* Etiquetar un edificio se decide mientras se recorre ese edificio,
+              así que la hoja de placas se ofrece aquí y no escondida en «Datos». */}
+          <button
+            type="button"
+            onClick={onPlacas}
+            className="-mr-2 min-h-11 px-2 text-sm text-accent"
+          >
+            Placas de puerta
+          </button>
+        </div>
 
         <label className="mt-2 block">
           <span className="sr-only">Buscar sala en {building.name}</span>

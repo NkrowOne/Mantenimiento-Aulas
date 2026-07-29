@@ -15,6 +15,7 @@ import { db, purgeSyncedInspections, requestPersistentStorage } from '@/db/dexie
 import { pullMaster, type ResultadoPull } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
 import { configError, supabase } from '@/lib/supabase'
+import { PARAM_SALA, salaDeLaUrl } from '@/lib/enlace-sala'
 import type { SealedSession } from '@/auth/pin'
 import type { Building, Role, Room } from '@/domain/types'
 
@@ -46,6 +47,12 @@ const DraftsPage = lazy(() =>
 const RoomSheet = lazy(() =>
   import('@/features/rooms/RoomSheet').then((m) => ({ default: m.RoomSheet })),
 )
+/* La hoja de placas arrastra el codificador de QR, y solo se abre para imprimir
+   etiquetas: una o dos veces en la vida del despliegue. No tiene por qué viajar
+   en el arranque, que ocurre justo con la peor cobertura. */
+const PlateSheet = lazy(() =>
+  import('@/features/rooms/PlateSheet').then((m) => ({ default: m.PlateSheet })),
+)
 const ReportsPage = lazy(() =>
   import('@/features/reports/ReportsPage').then((m) => ({ default: m.ReportsPage })),
 )
@@ -63,6 +70,10 @@ type RoomView =
    * Se llega desde la placa de la cabecera, que ya identifica la sala.
    */
   | { name: 'ficha'; building: Building; room: Room }
+  /* La hoja de placas del edificio. Vive aquí y no en «Datos» porque se imprime
+     desde donde se está trabajando: se decide etiquetar un edificio cuando se
+     está recorriendo ese edificio. */
+  | { name: 'placas'; building: Building }
 
 const TABS: Array<{ id: Tab; label: string; minRole: Role }> = [
   { id: 'revisar', label: 'Revisar', minRole: 'tecnico' },
@@ -141,6 +152,8 @@ export function App(): React.ReactElement {
    * cuenta: no hay consola donde mirar.
    */
   const [rolError, setRolError] = useState<string | null>(null)
+  /** Se escaneó una placa cuya sala no está en este dispositivo. */
+  const [escaneoFallido, setEscaneoFallido] = useState<string | null>(null)
   const [diagnostico, setDiagnostico] = useState<ResultadoPull | null>(null)
 
   /*
@@ -245,6 +258,42 @@ export function App(): React.ReactElement {
 
     void (async () => {
       try {
+        /*
+         * Si se ha llegado escaneando la placa de la puerta, manda eso.
+         *
+         * Es el camino más corto que existe entre llegar al aula y empezar a
+         * trabajar: sin esto, el técnico elige edificio, busca la sala en una
+         * lista de hasta 39 y la abre — dos toques y dos rastreos visuales, de
+         * pie, en cada una de las 276 salas de la ronda.
+         *
+         * Va ANTES de restaurar la última vista, y por eso: quien acaba de
+         * escanear una puerta quiere esa puerta, no donde estaba ayer.
+         */
+        const escaneada = salaDeLaUrl(window.location.search)
+        if (escaneada) {
+          // La URL se limpia siempre, haya funcionado o no: si se queda, cada
+          // recarga vuelve a arrastrar al técnico a la misma sala y no hay forma
+          // de salir de ella salvo editando la barra de direcciones.
+          const limpia = new URL(window.location.href)
+          limpia.searchParams.delete(PARAM_SALA)
+          window.history.replaceState({}, '', limpia.pathname + limpia.search)
+
+          const room = await db.rooms.get(escaneada)
+          const zone = room ? await db.zones.get(room.zone_id) : undefined
+          const building = zone ? await db.buildings.get(zone.building_id) : undefined
+
+          if (room && building) {
+            setTab('revisar')
+            setView({ name: 'revision', building, room })
+            return
+          }
+
+          // La placa apunta a una sala que este dispositivo no tiene todavía.
+          // Decirlo es mejor que dejarlo en la lista de edificios como si no se
+          // hubiera escaneado nada: el técnico está delante de la puerta.
+          setEscaneoFallido(escaneada)
+        }
+
         const guardado = (await db.meta.get('ultima-vista'))?.value as
           | { tab?: Tab; buildingId?: string; roomId?: string }
           | undefined
@@ -396,6 +445,22 @@ export function App(): React.ReactElement {
         </div>
       </header>
 
+      {escaneoFallido && (
+        <div className="border-b border-line bg-warn-tint px-4 py-3">
+          <p className="text-sm text-warn">
+            Has escaneado una placa, pero esa sala no está descargada en este dispositivo todavía.
+            Sincroniza y vuelve a escanear.
+          </p>
+          <button
+            type="button"
+            onClick={() => setEscaneoFallido(null)}
+            className="key key-quiet mt-2 min-h-11 px-3 text-sm"
+          >
+            Entendido
+          </button>
+        </div>
+      )}
+
       {rolError && (
         <div className="border-b border-line px-4 py-3">
           <p className="text-sm text-crit">{rolError}</p>
@@ -446,6 +511,7 @@ export function App(): React.ReactElement {
           order={roomOrder}
           onOrderChange={setRoomOrder}
           onBack={() => setView({ name: 'edificios' })}
+          onPlacas={() => setView({ name: 'placas', building: view.building })}
           onPick={(room) => setView({ name: 'revision', building: view.building, room })}
         />
       )}
@@ -494,6 +560,16 @@ export function App(): React.ReactElement {
             onRevisar={() =>
               setView({ name: 'revision', building: view.building, room: view.room })
             }
+            onImprimir={() => setView({ name: 'placas', building: view.building })}
+          />
+        </Suspense>
+      )}
+
+      {tab === 'revisar' && view.name === 'placas' && (
+        <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
+          <PlateSheet
+            building={view.building}
+            onBack={() => setView({ name: 'salas', building: view.building })}
           />
         </Suspense>
       )}

@@ -130,6 +130,15 @@ export interface Room {
   lamp_pct: number | null
   last_inspection_at: string | null
   active: boolean
+  /**
+   * `SALA-000087`: la referencia corta y **estable**.
+   *
+   * El nombre cambia y el código de sala también —los dos son etiquetas—, así
+   * que ninguno sirve para dictar por teléfono ni para grabar en una placa. Esta
+   * no cambia nunca. Anulable porque un dispositivo con el espejo de antes de la
+   * migración todavía no la tiene.
+   */
+  short_ref: string | null
 }
 
 export interface Inspection {

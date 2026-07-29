@@ -24,6 +24,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { RoomPlate } from '@/components/RoomPlate'
+import { DoorPlate } from '@/components/DoorPlate'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaCorta } from '@/domain/fechas'
 import { INCIDENT_KIND_LABELS, type IncidentKind, type Room } from '@/domain/types'
@@ -69,6 +70,8 @@ interface Props {
   userId: string | null
   onBack: () => void
   onRevisar: () => void
+  /** Ir a la hoja de placas del edificio, lista para imprimir. */
+  onImprimir: () => void
 }
 
 export function RoomSheet({
@@ -78,6 +81,7 @@ export function RoomSheet({
   userId,
   onBack,
   onRevisar,
+  onImprimir,
 }: Props): React.ReactElement {
   const qc = useQueryClient()
   const [abierto, setAbierto] = useState(false)
@@ -186,7 +190,38 @@ export function RoomSheet({
         onBack={onBack}
       />
 
-      <div className="mx-auto max-w-2xl px-4">
+      <div className="mx-auto max-w-2xl px-4 pb-10">
+        {/*
+          La placa, con su código escaneable.
+          Va arriba del todo porque es lo que identifica la sala, y porque es lo
+          que alguien viene a buscar cuando entra aquí desde el listado: «¿es
+          esta?». El QR codifica el identificador interno, no el nombre, así que
+          renombrar la sala no invalida las etiquetas ya atornilladas.
+        */}
+        {room.short_ref && (
+          <section aria-labelledby="sec-placa" className="mt-6">
+            <div className="section-head">
+              <h2 id="sec-placa" className="eyebrow">Placa de puerta</h2>
+            </div>
+            <DoorPlate
+              building={buildingName}
+              zone={zoneName}
+              title={room.name || displayRoomCode(room.code)}
+              ref={room.short_ref}
+              id={room.id}
+            />
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={onImprimir}
+                className="key key-quiet min-h-11 px-3 text-sm"
+              >
+                Imprimir las placas del edificio
+              </button>
+            </div>
+          </section>
+        )}
+
         {/*
           El índice, y de qué está hecho.
           Un número solo invita a discutirlo; un número con su recuento al lado
@@ -268,7 +303,9 @@ export function RoomSheet({
               registrar.mutate()
             }}
           >
-            <span className="eyebrow">Registrar en {room.name || displayRoomCode(room.code)}</span>
+            <h2 className="eyebrow">
+              Registrar en {room.name || displayRoomCode(room.code)}
+            </h2>
 
             {/* Los tres tipos, a la vista y sin desplegable: son tres y se elige
                 uno de pie. Un `select` aquí serían dos toques y una lista. */}
@@ -335,9 +372,11 @@ export function RoomSheet({
           </form>
         )}
 
-        <section className="mt-6">
-          <span className="eyebrow">Inventario instalado</span>
-          <ul className="mt-2 divide-y divide-line">
+        <section aria-labelledby="sec-inv" className="mt-8">
+          <div className="section-head">
+            <h2 id="sec-inv" className="eyebrow">Inventario instalado</h2>
+          </div>
+          <ul className="divide-y divide-line">
             {(equipos ?? []).map((a) => (
               <li key={a.id} className="flex items-center gap-3 py-2 text-sm">
                 <span className="flex-1">
@@ -359,8 +398,10 @@ export function RoomSheet({
           </ul>
         </section>
 
-        <section className="mt-6">
-          <span className="eyebrow">Historial</span>
+        <section aria-labelledby="sec-hist" className="mt-8">
+          <div className="section-head">
+            <h2 id="sec-hist" className="eyebrow">Historial</h2>
+          </div>
           {historialFalla && (
             <p className="mt-2 text-sm text-muted">
               El historial necesita conexión; lo demás de esta ficha funciona sin ella.

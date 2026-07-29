@@ -159,6 +159,39 @@
   }
 
   /*
+   * Cabecera de sección.
+   *
+   * Un `eyebrow` suelto encima de una lista se lee como parte de la lista. Con
+   * el filete que sale del texto y llega al margen, se lee como lo que es: la
+   * división de un documento. Es lo que hace que una pantalla larga —la ficha de
+   * sala tiene cinco secciones— se recorra en vez de leerse entera.
+   *
+   * El filete es un `flex-1` sobre un borde, no un `hr`: así no hay que saber
+   * cuánto mide el texto.
+   */
+  .section-head {
+    @apply mb-3 flex items-center gap-3;
+  }
+
+  .section-head::after {
+    @apply h-px flex-1 bg-line;
+    content: '';
+  }
+
+  /*
+   * La placa de puerta, impresa.
+   *
+   * `print-color-adjust` es obligatorio y no es un detalle de estilo: los
+   * navegadores quitan fondos al imprimir para ahorrar tinta, y un QR sin su
+   * fondo blanco sale sobre el papel con lo que haya debajo. Una hoja de placas
+   * que no escanean es peor que no imprimir nada.
+   */
+  .plate {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /*
    * Colapso vertical sin medir alturas en JavaScript.
    *
    * El truco es `grid-template-rows: 0fr → 1fr`: la rejilla interpola la
@@ -222,4 +255,70 @@
 
 .update-bar {
   animation: slide-up 260ms var(--ease-drawer);
+}
+
+/*
+ * Impresión.
+ *
+ * La única cosa de esta aplicación que se imprime son las placas de puerta, y se
+ * imprimen una vez por sala y para siempre. Así que la hoja no puede llevar
+ * navegación, ni cabecera, ni el resto de la interfaz: todo eso se va, y queda
+ * la rejilla de placas sobre papel.
+ *
+ * `.solo-pantalla` marca lo que desaparece; `.hoja-placas` es lo que queda.
+ */
+@media print {
+  .solo-pantalla {
+    display: none !important;
+  }
+
+  /*
+   * Papel blanco y tinta negra pase lo que pase.
+   *
+   * La aplicación puede estar en modo oscuro cuando alguien pulsa Imprimir, y
+   * eso NO puede llegar al papel: una hoja de placas en negativo se come el
+   * tóner de un cartucho y sale ilegible.
+   *
+   * La lista de selectores no es adorno. El tema oscuro se declara sobre
+   * `:root:not([data-theme='light'])`, que puntúa (0,2,0); un `:root` a secas
+   * puntúa (0,1,0) y perdía en silencio — las placas seguían saliendo negras y
+   * solo se veía mirando la vista previa de impresión.
+   */
+  :root,
+  :root:not([data-theme='light']),
+  :root[data-theme='dark'] {
+    --ground: 255 255 255;
+    --surface: 255 255 255;
+    --raised: 255 255 255;
+    --sunken: 235 235 235;
+    --line: 140 140 140;
+    --line-soft: 190 190 190;
+    --ink: 0 0 0;
+    --ink-2: 40 40 40;
+    --muted: 90 90 90;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  .hoja-placas {
+    /* `auto-fill` y no un número de columnas: la misma hoja sale a dos columnas
+       en A4 vertical y a tres en horizontal, sin tener que elegir por el
+       usuario. */
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(78mm, 1fr));
+    gap: 6mm;
+  }
+
+  /* Que ninguna placa se parta entre dos páginas: media placa impresa es papel
+     tirado, y sobre todo es un QR cortado que no lee nadie. */
+  .hoja-placas > * {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  @page {
+    margin: 10mm;
+  }
 }

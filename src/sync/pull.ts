@@ -165,6 +165,7 @@ export async function pullMaster(): Promise<ResultadoPull> {
       lamp_pct: (r['lamp_pct'] as number | null) ?? null,
       last_inspection_at: (r['last_inspection_at'] as string | null) ?? null,
       active: true,
+      short_ref: (r['short_ref'] as string | null) ?? null,
     }))
     await db.rooms.bulkPut(mapped)
     filas += mapped.length

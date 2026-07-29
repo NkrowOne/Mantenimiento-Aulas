@@ -95,17 +95,20 @@ export function DraftsPage(): React.ReactElement {
 
   return (
     <div className="mx-auto max-w-3xl p-4">
-      <div className="flex items-baseline justify-between gap-3">
-        <h1 className="text-xl font-semibold">Borradores</h1>
-        {pendientes.length > 0 && (
-          <span className="rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
-            {pendientes.length} sin completar
-          </span>
-        )}
-      </div>
-      <p className="mt-1 text-sm text-muted">
-        Lo que se guardó en el pasillo con solo la sala. Las más antiguas, primero.
-      </p>
+      <header className="mb-6">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <h1 className="text-xl font-semibold tracking-tight">Borradores</h1>
+          {pendientes.length > 0 && (
+            <span className="rounded-tag bg-warn-tint px-2 py-0.5 text-xs font-semibold text-warn">
+              {pendientes.length} sin completar
+            </span>
+          )}
+        </div>
+        <p className="mt-1.5 max-w-prose text-sm leading-relaxed text-muted">
+          Lo que se guardó en el pasillo con solo la sala. Las más antiguas, primero: son las que
+          corren peligro de no completarse nunca.
+        </p>
+      </header>
 
       {isPending && <p className="mt-6 text-sm text-muted">Cargando…</p>}
 
@@ -129,20 +132,24 @@ export function DraftsPage(): React.ReactElement {
         </p>
       )}
 
-      <ul className="mt-4 divide-y divide-line">
+      <ul className="divide-y divide-line border-t border-line">
         {pendientes.map((b) => (
-          <li key={b.id} className="py-3">
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <span className="rounded-tag bg-raised px-2 py-0.5 text-xs text-muted">
+          <li key={b.id} className="py-4">
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+              <span className="rounded-tag bg-raised px-2 py-0.5 text-xs font-medium text-muted">
                 {INCIDENT_KIND_LABELS[b.kind]}
               </span>
-              <span className="font-mono text-sm text-accent">
+              <span className="font-mono text-sm font-semibold text-accent">
                 {b.room_id ? (salas?.get(b.room_id) ?? '—') : 'Sin sala'}
               </span>
-              <span className="font-mono text-xs text-muted">{fechaCorta(b.opened_at)}</span>
+              <span className="font-mono text-xs tabular text-muted">
+                {fechaCorta(b.opened_at)}
+              </span>
             </div>
 
-            <p className="mt-1 text-sm">{b.title || <span className="text-muted">Sin describir</span>}</p>
+            <p className="mt-2 text-sm leading-relaxed">
+              {b.title || <span className="text-muted">Sin describir</span>}
+            </p>
 
             {editando === b.id ? (
               <form
