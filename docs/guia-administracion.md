@@ -363,7 +363,44 @@ where name in ('Lámpara proyector NP44', 'Cable HDMI fibra 15 m');
 
 Los artículos por debajo salen en rojo y en el panel.
 
-## 5. Informes
+## 5. Etiquetas QR de las aulas
+
+En la pestaña **Datos**, abajo. Eliges edificio, **Generar** e **Imprimir**: una
+pegatina por puerta con el código del aula en grande y el QR al lado. Al
+escanearla con la cámara del móvil se abre la revisión de esa sala.
+
+Tres cosas que deciden si las pegatinas funcionan o no:
+
+- **Imprime en A4 sin ajuste de escala.** Si la impresora reduce, el código se
+  emborrona y deja de leerse.
+- **En blanco y negro, tal y como se ve en pantalla.** El QR necesita contraste
+  y un margen blanco alrededor; pegarlo a ras de un marco oscuro lo estropea.
+- **El código apunta al identificador interno de la sala, no a su nombre.**
+  Renombrar el aula, cambiarla de planta o corregir su código **no rompe la
+  pegatina**. Lo único que la invalida es borrar la sala.
+
+Si un aula se parte en dos o se crea una nueva, genera solo ese edificio otra
+vez e imprime las que falten.
+
+## 6. Historial
+
+La pestaña **Historial** cruza lo que hasta ahora había que mirar en tres
+sitios: revisiones, incidencias, material y movimientos de equipos, todo en una
+lista y filtrable por tipo, edificio, sala y fechas.
+
+Es de donde salen las respuestas que se piden a final de curso:
+
+- *Cuánto material se llevó el edificio H* → filtro **Material** + edificio H +
+  **Este curso**.
+- *Qué pasó la semana del apagón* → fechas exactas, sin filtro de tipo.
+- *Si el proyector del 1.7 lleva tres averías o una* → filtro **Incidencia** +
+  esa sala.
+
+Sale de la vista `room_timeline`, que **no guarda nada nuevo**: lee de las
+tablas que ya existen. Por eso no puede desincronizarse ni contradecir a las
+otras pantallas.
+
+## 7. Informes
 
 Se emiten solos: **diario a las 07:00** y **semanal los lunes a las 07:30**.
 Quedan archivados en la pestaña **Informes**, con descarga.
@@ -374,7 +411,7 @@ Para uno a medida, elige rango de fechas y pulsa Generar.
 después, el PDF del lunes sigue diciendo lo que decía el lunes. Es lo que le da
 valor como registro.
 
-## 6. Ajustes que quizá quieras cambiar
+## 8. Ajustes que quizá quieras cambiar
 
 Se tocan en el `.env` y requieren reconstruir la aplicación (`npm run build`),
 porque se compilan dentro:
@@ -397,7 +434,7 @@ sala sin revisar a los 180) están en las vistas `alerts_*` de
 `supabase/migrations/20260728000200_views.sql`. Cambiarlos es reescribir la
 vista con `create or replace view`.
 
-## 7. Comprobaciones periódicas
+## 9. Comprobaciones periódicas
 
 ```bash
 npm run backup                        # a diario, por cron

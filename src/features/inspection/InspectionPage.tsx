@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { RoomPlate } from '@/components/RoomPlate'
 import { TriState } from '@/components/TriState'
 import { RoomInventory } from '@/features/inventory/RoomInventory'
+import { HistorialSala } from '@/features/history/HistorialSala'
 import { PHOTO_ACCEPT, capturePhoto } from '@/lib/photos'
 import { db } from '@/db/dexie'
 import { type CheckKey, type Room, type Severity } from '@/domain/types'
@@ -249,6 +250,10 @@ export function InspectionPage({
         types={types}
         typesById={typesById}
       />
+
+      {/* Y debajo, lo que le ha pasado antes. El orden es el del razonamiento:
+          qué hay que comprobar, qué equipos hay, y qué historia arrastran. */}
+      <HistorialSala roomId={room.id} />
 
       <div className="border-t border-line px-4">
         <div className="section-tail py-4">

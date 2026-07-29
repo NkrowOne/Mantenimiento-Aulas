@@ -1,8 +1,11 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { db } from '@/db/dexie'
 import { labelAvailable, resolveType, searchCatalog } from '@/domain/inventory'
 import { ASSET_STATUS_LABELS, type Asset, type AssetType } from '@/domain/types'
 import { typeRank } from '@/features/inspection/useInspection'
-import { useRoomInventory } from './useRoomInventory'
+import { OrigenDelEquipo } from './OrigenDelEquipo'
+import { useRoomInventory, type Origen } from './useRoomInventory'
 
 /**
  * El inventario de la sala, dentro de la propia revisión.
@@ -30,8 +33,29 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
   const [query, setQuery] = useState('')
   const [note, setNote] = useState<string | null>(null)
   const [fixing, setFixing] = useState<string | null>(null)
+  /* Lo que se va a añadir, esperando a que se diga de dónde sale. */
+  const [eligiendo, setEligiendo] = useState<{ nombre: string; tipo: AssetType | null } | null>(null)
 
-  const { addAsset, patchAsset, setStatus } = useRoomInventory(roomId, userId)
+  const { addAssetConOrigen, patchAsset, setStatus } = useRoomInventory(roomId, userId)
+
+  /*
+   * Cuántas unidades hay en el almacén de cada tipo de equipo.
+   *
+   * Se calcula una vez para todo el panel y se enseña en la propia sugerencia,
+   * antes de tocarla. Es la mitad barata de «que se señale bien si es de
+   * stock»: quien busca «proyector» ve en la misma línea que hay doce en el
+   * almacén, y eso ya cambia lo que va a hacer.
+   */
+  const stockPorTipo = useLiveQuery(async () => {
+    const [items, niveles] = await Promise.all([db.stockItems.toArray(), db.stockLevels.toArray()])
+    const onHand = new Map(niveles.map((n) => [n.stock_item_id, n.on_hand]))
+    const total = new Map<string, number>()
+    for (const i of items) {
+      if (!i.asset_type_id) continue
+      total.set(i.asset_type_id, (total.get(i.asset_type_id) ?? 0) + (onHand.get(i.id) ?? 0))
+    }
+    return total
+  }, [], new Map<string, number>())
 
   // Mismo orden que las filas de arriba. Sin esto, el mismo equipamiento salía
   // dos veces en la misma pantalla en dos órdenes distintos.
@@ -45,17 +69,32 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
   const hits = searchCatalog(types, query)
   const raw = query.trim()
 
-  async function add(typeName: string, existing: AssetType | null): Promise<void> {
-    const result = await addAsset(typeName, existing)
+  async function add(origen: Origen): Promise<void> {
+    if (!eligiendo) return
+    const { nombre, tipo } = eligiendo
+    const result = await addAssetConOrigen(nombre, tipo, origen)
+
+    setEligiendo(null)
     setQuery('')
     setNote(
-      result.ok
-        ? existing
-          ? `Añadido «${result.label}».`
-          : `Añadido «${result.label}». Sale en naranja hasta que un coordinador lo valide.`
-        : (result.error ?? 'No se pudo añadir.'),
+      !result.ok
+        ? (result.error ?? 'No se pudo añadir.')
+        : origen.tipo === 'traslado'
+          ? `Trasladado «${result.label}» a esta sala.`
+          : origen.tipo === 'almacen'
+            ? `Añadido «${result.label}» y descontado del almacén.`
+            : tipo
+              ? `Añadido «${result.label}».`
+              : `Añadido «${result.label}». Sale en naranja hasta que un coordinador lo valide.`,
     )
   }
+
+  /** El equipo elegido, y si su tipo tiene existencias que enseñar. */
+  const stockDe = useMemo(
+    () => (tipo: AssetType | null): number | null =>
+      tipo ? (stockPorTipo.get(tipo.id) ?? null) : null,
+    [stockPorTipo],
+  )
 
   return (
     <section className="border-t border-line">
@@ -95,33 +134,47 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                   if (e.key !== 'Enter') return
                   e.preventDefault()
                   const primero = hits[0]
-                  if (primero) void add(primero.type.name, primero.type)
-                  else if (raw.length >= 2) void add(raw, null)
+                  if (primero) setEligiendo({ nombre: primero.type.name, tipo: primero.type })
+                  else if (raw.length >= 2) setEligiendo({ nombre: raw, tipo: null })
                 }}
                 className="h-touch w-full rounded-ctl border border-line bg-surface px-3"
               />
             </label>
 
-            {raw && (
+            {raw && !eligiendo && (
               <div className="mt-2 flex flex-col gap-1">
-                {hits.map((hit) => (
-                  <button
-                    key={hit.type.id}
-                    type="button"
-                    onClick={() => void add(hit.type.name, hit.type)}
-                    className="key key-quiet flex items-center justify-between px-3 py-2 text-left text-sm"
-                  >
-                    <span>{hit.type.name}</span>
-                    <span className="text-xs font-normal text-muted">
-                      {hit.why || (hit.type.confirmed ? 'del catálogo' : 'sin validar')}
-                    </span>
-                  </button>
-                ))}
+                {hits.map((hit) => {
+                  const enAlmacen = stockDe(hit.type)
+                  return (
+                    <button
+                      key={hit.type.id}
+                      type="button"
+                      onClick={() => setEligiendo({ nombre: hit.type.name, tipo: hit.type })}
+                      className="key key-quiet flex items-center justify-between gap-2 px-3 py-2 text-left text-sm"
+                    >
+                      <span className="min-w-0 flex-1 truncate">{hit.type.name}</span>
+                      {/*
+                        La marca de almacén va en la propia sugerencia y no dos
+                        pantallas más adentro: es lo que decide si el técnico va
+                        a por una caja o busca en el aula de al lado, y esa
+                        decisión se toma aquí.
+                      */}
+                      {enAlmacen !== null && enAlmacen > 0 && (
+                        <span className="shrink-0 rounded-tag bg-accent-tint px-1.5 py-0.5 text-[0.6875rem] font-semibold text-accent">
+                          {enAlmacen} en almacén
+                        </span>
+                      )}
+                      <span className="shrink-0 text-xs font-normal text-muted">
+                        {hit.why || (hit.type.confirmed ? 'del catálogo' : 'sin validar')}
+                      </span>
+                    </button>
+                  )
+                })}
 
                 {hits.length === 0 && (
                   <button
                     type="button"
-                    onClick={() => void add(raw, null)}
+                    onClick={() => setEligiendo({ nombre: raw, tipo: null })}
                     className="key flex items-center justify-between border border-warn/40 bg-warn-tint px-3 py-2 text-left text-sm text-warn"
                   >
                     <span>Crear «{raw}»</span>
@@ -129,6 +182,16 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                   </button>
                 )}
               </div>
+            )}
+
+            {eligiendo && (
+              <OrigenDelEquipo
+                typeName={eligiendo.nombre}
+                type={eligiendo.tipo}
+                roomId={roomId}
+                onCancelar={() => setEligiendo(null)}
+                onConfirmar={(origen) => void add(origen)}
+              />
             )}
 
             {note && <p className="mt-2 text-xs text-muted">{note}</p>}

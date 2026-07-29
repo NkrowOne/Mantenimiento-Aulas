@@ -20,7 +20,8 @@
 
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
-import type { Asset, AssetType, Building, Incident, Room, StockItem, Zone } from '@/domain/types'
+import type { Asset, AssetType, Building, Incident, Room, StockItem,
+  StockLevel, Zone } from '@/domain/types'
 
 /** Dónde queda el parte de la última descarga, para que la interfaz lo lea. */
 export const DIAGNOSTICO_PULL = 'ultimo-pull'
@@ -109,6 +110,7 @@ export async function pullMaster(): Promise<ResultadoPull> {
         ['zones', supabase.from('zones').select('*')],
         ['room_overview', supabase.from('room_overview').select('*')],
         ['stock_items', supabase.from('stock_items').select('*').eq('active', true)],
+        ['stock_levels', supabase.from('stock_levels').select('*')],
         ['incidents', supabase.from('incidents').select('*').neq('state', 'resuelta')],
         // El catálogo entero, fusionados incluidos: sin las lápidas, un elemento
         // cuyo tipo se fusionó ayer se quedaría sin nombre en el dispositivo.
@@ -146,6 +148,7 @@ export async function pullMaster(): Promise<ResultadoPull> {
   await guardar<Building>(de('buildings'), db.buildings)
   await guardar<Zone>(de('zones'), db.zones)
   await guardar<StockItem>(de('stock_items'), db.stockItems)
+  await guardar<StockLevel>(de('stock_levels'), db.stockLevels)
   await guardar<Incident>(de('incidents'), db.incidents)
   await guardar<AssetType>(de('asset_types'), db.assetTypes)
   await guardar<Asset>(de('assets'), db.assets)

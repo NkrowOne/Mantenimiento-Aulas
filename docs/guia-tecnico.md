@@ -51,6 +51,19 @@ pedirá confirmación, porque después hay que volver a teclear el PIN.
 lo pasas a otra persona—. Mientras esté abierta, cualquiera que coja el iPad
 entra sin PIN.
 
+## Llegar al aula: escanea el QR
+
+En el marco de la puerta hay una pegatina con un código. **Apúntale con la
+cámara y se abre la revisión de esa aula, directamente.** Vale la cámara normal
+del móvil —sin abrir nada antes— y también el botón **«Escanear el QR del
+aula»** que hay arriba del todo si ya estás dentro de la aplicación.
+
+Es el camino corto. Si no hay pegatina, o la cámara no va, sigue estando el de
+siempre: el buscador de arriba y la lista de edificios.
+
+> Si el código no lee, acércate hasta que quepa dentro del marco de la pantalla,
+> y usa el botón **Linterna** si el pasillo está oscuro.
+
 ## Revisar un aula
 
 1. **Elige el edificio.**
@@ -94,6 +107,19 @@ aquí**, sin salir de la revisión.
 - **Falta un aparato.** Escribe lo que sea —`proyector`, `jab`, `cañón`— y te lo
   busca por el nombre y por como lo llamáis vosotros. Si ya existe, lo eliges y
   ya está.
+  - En la propia sugerencia verás **«12 en almacén»** cuando ese tipo de equipo
+    lo hay en la bolsa. Es la información que te dice si vas a por una caja o
+    buscas en el aula de al lado.
+- **De dónde sale.** Al elegirlo te pregunta una cosa y solo una:
+
+  | | Qué hace |
+  |---|---|
+  | **Del almacén** | Descuenta las unidades de la bolsa. Viene ya elegido si hay existencias. |
+  | **De otra sala** | Eliges edificio y sala, y **el aparato se mueve** con su modelo, su número de serie y su histórico. Deja de estar en la de origen. |
+  | **Ya estaba** | Solo lo apunta. Es lo que toca cuando el aparato llevaba ahí toda la vida y faltaba registrarlo. |
+
+  Elige y dale a **Añadir**. Un toque más que antes, y a cambio el almacén
+  cuadra: hasta ahora se instalaban proyectores que no salían de ningún sitio.
 - **No está en la lista.** Sale **«Crear "lo que has escrito"»** en naranja.
   Créalo y sigue: el equipo queda dado de alta y usable al momento, y el
   coordinador lo confirma después. **No esperes a preguntar** — lo que no se
@@ -105,6 +131,20 @@ aquí**, sin salir de la revisión.
   número de serie, marcarlo **averiado**, o **retirarlo** de la sala.
 
 Todo esto funciona sin cobertura, igual que el resto.
+
+### Qué le ha pasado antes a esta aula
+
+Debajo de los equipos, **«Histórico de la sala»**. Se abre tocándolo y trae todo
+lo que le ha pasado: revisiones, incidencias abiertas y resueltas, material
+gastado y equipos que entraron o salieron. Con los botones de arriba se filtra
+por tipo.
+
+Sirve para lo de siempre: el proyector no da imagen y ahí ves que en enero pasó
+lo mismo y que la lámpara se cambió en marzo. **No es una avería nueva, es la
+tercera vez** — y eso cambia lo que hay que hacer.
+
+Esta parte necesita cobertura. La revisión no; si estás en un sótano, revisa
+igual y el histórico lo miras al salir.
 
 ### Se guarda solo
 

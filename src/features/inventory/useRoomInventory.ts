@@ -19,6 +19,25 @@ export interface AddResult {
   error?: string
 }
 
+/**
+ * De dónde sale el equipo que se está dando de alta.
+ *
+ * Era la pregunta que nadie hacía, y por eso el almacén y las aulas eran dos
+ * mundos: se instalaban proyectores que no salían de ningún sitio y el saldo
+ * del almacén no se movía. Tres respuestas posibles y las tres son verdad
+ * alguna vez:
+ *
+ *  - `almacen`: se ha cogido una caja del almacén. Descuenta unidades.
+ *  - `traslado`: estaba en otra aula y se ha movido. No toca el almacén —el
+ *    equipo ya era del centro— pero sí desaparece de la sala de origen.
+ *  - `sin_origen`: ya estaba aquí y solo faltaba apuntarlo. Es el caso del
+ *    inventario que se está poniendo al día, y no mueve nada más.
+ */
+export type Origen =
+  | { tipo: 'sin_origen' }
+  | { tipo: 'almacen'; stockItemId: string; unidades: number }
+  | { tipo: 'traslado'; assetId: string; desdeRoomId: string }
+
 export function useRoomInventory(roomId: string | null, userId: string | null) {
   /**
    * Da de alta un elemento.
@@ -97,6 +116,56 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
   )
 
   /**
+   * Alta con origen: la de arriba, más lo que el origen implique.
+   *
+   * Todo pasa por la cola de salida y en este orden: primero el equipo, después
+   * el movimiento de almacén. Si se sincroniza a medias —cobertura que va y
+   * viene— lo que queda es un equipo dado de alta sin descontar, que es un
+   * descuadre de una unidad y se ve; al revés quedaría una unidad descontada sin
+   * equipo, que no se ve en ningún sitio.
+   *
+   * El descuento no se comprueba aquí contra las existencias del espejo: esa
+   * cifra puede tener horas y el servidor tiene la buena. Si no llegan, el
+   * movimiento se queda rechazado en la cola y el técnico lo ve en el chip de
+   * sincronización — con el equipo ya apuntado, que es lo que no se puede
+   * perder.
+   */
+  const addAssetConOrigen = useCallback(
+    async (typeName: string, existing: AssetType | null, origen: Origen): Promise<AddResult> => {
+      if (origen.tipo === 'traslado') {
+        return trasladarAsset(origen.assetId, roomId, userId)
+      }
+
+      const unidades = origen.tipo === 'almacen' ? Math.max(1, origen.unidades) : 1
+
+      // Varias unidades son varios equipos: dos altavoces en un aula son dos
+      // filas con dos etiquetas, porque uno se puede averiar sin el otro.
+      let ultimo: AddResult = { ok: false, error: 'No se pudo añadir.' }
+      for (let i = 0; i < unidades; i++) {
+        ultimo = await addAsset(typeName, existing)
+        if (!ultimo.ok) return ultimo
+      }
+
+      if (origen.tipo === 'almacen' && roomId) {
+        const id = uuidv7()
+        await enqueue('stock_movement', id, {
+          id,
+          stock_item_id: origen.stockItemId,
+          qty: -unidades,
+          kind: 'consumo',
+          room_id: roomId,
+          occurred_at: new Date().toISOString(),
+          by_user: userId,
+        })
+        void flush()
+      }
+
+      return ultimo
+    },
+    [addAsset, roomId, userId],
+  )
+
+  /**
    * Guarda un cambio del elemento en local y lo encola.
    *
    * Relee el elemento de Dexie en vez de fiarse del objeto que le pasan. Ese
@@ -131,5 +200,63 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
     [patchAsset],
   )
 
-  return { addAsset, patchAsset, setStatus }
+  return { addAsset, addAssetConOrigen, patchAsset, setStatus }
+}
+
+/**
+ * Mover un equipo de una sala a otra.
+ *
+ * No es un alta seguida de una baja: es la MISMA fila que cambia de sitio, y
+ * eso importa porque el número de serie, el modelo y su histórico de averías
+ * viajan con el aparato. Dar de baja y volver a crear rompería justo eso, que
+ * es lo único que un inventario aporta sobre una lista.
+ *
+ * La etiqueta se recalcula en el destino: llegar como «Pantalla 2» a una sala
+ * donde ya hay una «Pantalla 2» chocaría contra el índice único de la base, y
+ * el traslado se quedaría rechazado en la cola sin que nadie entendiera por qué.
+ */
+async function trasladarAsset(
+  assetId: string,
+  destinoRoomId: string | null,
+  userId: string | null,
+): Promise<AddResult> {
+  if (!destinoRoomId) return { ok: false, error: 'Sin sala.' }
+
+  const asset = await db.assets.get(assetId)
+  if (!asset) return { ok: false, error: 'Ese equipo ya no está.' }
+  if (asset.room_id === destinoRoomId) return { ok: false, error: 'Ya está en esta sala.' }
+
+  const origen = asset.room_id
+  const type = await db.assetTypes.get(asset.asset_type_id)
+  const enDestino = await db.assets.where('room_id').equals(destinoRoomId).toArray()
+  const label = nextLabel(enDestino, type?.name ?? asset.label ?? 'Equipo')
+
+  const movido: Asset = { ...asset, room_id: destinoRoomId, label }
+  await db.assets.put(movido)
+  await enqueue('asset', movido.id, {
+    id: movido.id,
+    asset_type_id: movido.asset_type_id,
+    room_id: movido.room_id,
+    label: movido.label,
+    serial: movido.serial,
+    model: movido.model,
+    status: movido.status,
+  })
+
+  // El evento es lo que deja rastro del traslado en el histórico de las dos
+  // salas: sin él, el equipo simplemente desaparecería de una y aparecería en
+  // otra sin que nada dijera cuándo ni quién.
+  const eventoId = uuidv7()
+  await enqueue('asset_event', eventoId, {
+    id: eventoId,
+    asset_id: movido.id,
+    room_id: destinoRoomId,
+    kind: 'traslado',
+    occurred_at: new Date().toISOString(),
+    by_user: userId,
+    meta: { desde_room_id: origen, nota: 'Trasladado desde otra sala' },
+  })
+  void flush()
+
+  return { ok: true, label }
 }

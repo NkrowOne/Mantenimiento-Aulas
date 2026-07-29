@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { SyncChip } from '@/components/SyncChip'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
@@ -8,6 +8,7 @@ import { InspectionPage } from '@/features/inspection/InspectionPage'
 import { RoomListPage } from '@/features/rooms/RoomListPage'
 import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
 import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
+import { parseQR, salaDeLaUrl } from '@/domain/qr'
 
 import { getSealed, lock, resumeSession, touch, watchSession } from '@/auth/session'
 import { db, purgeSyncedInspections, requestPersistentStorage } from '@/db/dexie'
@@ -49,11 +50,18 @@ const RoomSheet = lazy(() =>
 const PlateSheet = lazy(() =>
   import('@/features/rooms/PlateSheet').then((m) => ({ default: m.PlateSheet })),
 )
+const HistorialPage = lazy(() =>
+  import('@/features/history/HistorialPage').then((m) => ({ default: m.HistorialPage })),
+)
 const ReportsPage = lazy(() =>
   import('@/features/reports/ReportsPage').then((m) => ({ default: m.ReportsPage })),
 )
+/* La cámara y el lector de QR solo se descargan cuando alguien va a escanear. */
+const EscanerQR = lazy(() =>
+  import('@/features/rooms/EscanerQR').then((m) => ({ default: m.EscanerQR })),
+)
 
-type Tab = 'revisar' | 'panel' | 'incidencias' | 'almacen' | 'informes' | 'datos'
+type Tab = 'revisar' | 'panel' | 'incidencias' | 'almacen' | 'historial' | 'informes' | 'datos'
 
 type RoomView =
   | { name: 'edificios' }
@@ -76,6 +84,7 @@ const TABS: Array<{ id: Tab; label: string; minRole: Role }> = [
   { id: 'panel', label: 'Panel', minRole: 'tecnico' },
   { id: 'incidencias', label: 'Incidencias', minRole: 'tecnico' },
   { id: 'almacen', label: 'Almacén', minRole: 'tecnico' },
+  { id: 'historial', label: 'Historial', minRole: 'tecnico' },
   { id: 'informes', label: 'Informes', minRole: 'supervisor' },
   { id: 'datos', label: 'Datos', minRole: 'admin' },
 ]
@@ -152,6 +161,28 @@ export function App(): React.ReactElement {
   const [tab, setTab] = useState<Tab>('revisar')
   const [view, setView] = useState<RoomView>({ name: 'edificios' })
   const [roomOrder, setRoomOrder] = useState<RoomOrder>('antiguedad')
+  const [escaneando, setEscaneando] = useState(false)
+  const [avisoQR, setAvisoQR] = useState<string | null>(null)
+  /*
+   * La sala que pide la dirección con la que se abrió la aplicación.
+   *
+   * Se lee una sola vez, en el primer render, porque para cuando el efecto que
+   * restaura la última vista se ejecuta la dirección ya tiene que estar leída.
+   * La lectura es pura; borrar el parámetro es un efecto y va en su sitio —en
+   * `StrictMode` el inicializador corre dos veces, y escribir el historial
+   * desde ahí es de los efectos que un día muerden.
+   */
+  const [pendienteQR, setPendienteQR] = useState<string | null>(() =>
+    typeof window === 'undefined' ? null : salaDeLaUrl(window.location.href),
+  )
+
+  // Y se quita de la barra de direcciones enseguida: si no, recargar la página
+  // devolvería siempre al aula de la pegatina y no a donde estaba el técnico.
+  useEffect(() => {
+    if (salaDeLaUrl(window.location.href)) {
+      window.history.replaceState(null, '', window.location.pathname)
+    }
+  }, [])
   // Hasta que se intenta rehidratar no se pinta la lista de edificios: si no,
   // se vería un parpadeo desde la raíz hasta donde estabas.
   const [restaurado, setRestaurado] = useState(false)
@@ -256,8 +287,53 @@ export function App(): React.ReactElement {
    * Se guarda solo la ubicación, que es lo barato y lo que se pierde. El trabajo
    * en sí ya sobrevive por otro camino: está en Dexie y respaldado en el servidor.
    */
+  /**
+   * Abre una sala por su identificador, venga de donde venga.
+   *
+   * La usan el enlace de la pegatina y el lector de la cámara, y tiene que
+   * resolver también el edificio: la revisión necesita saber a qué lista volver
+   * al salir, y la cabecera enseña el edificio y la planta.
+   */
+  const abrirSala = useCallback(async (roomId: string): Promise<boolean> => {
+    const room = await db.rooms.get(roomId)
+    if (!room) return false
+    const zone = await db.zones.get(room.zone_id)
+    const building = zone ? await db.buildings.get(zone.building_id) : undefined
+    if (!building) return false
+
+    setTab('revisar')
+    setView({ name: 'revision', building, room })
+    return true
+  }, [])
+
+  /*
+   * La sala de la pegatina, en cuanto se pueda.
+   *
+   * Puede llegar antes que los datos: quien escanea el QR con la aplicación
+   * cerrada y el espejo local vacío abre una pantalla que todavía no sabe qué
+   * salas hay. Por eso se reintenta cuando termina la descarga —`diagnostico`
+   * cambia— en vez de darlo por perdido a la primera.
+   */
+  useEffect(() => {
+    if (!unlocked || !pendienteQR) return
+    void (async () => {
+      if (await abrirSala(pendienteQR)) {
+        setPendienteQR(null)
+        setRestaurado(true)
+      } else if (diagnostico) {
+        // La descarga ya ha terminado y la sala sigue sin aparecer: o la
+        // pegatina es de una sala retirada, o este usuario no puede verla.
+        setPendienteQR(null)
+        setAvisoQR('Ese QR no corresponde a ninguna sala de las que puedes ver.')
+      }
+    })()
+  }, [unlocked, pendienteQR, diagnostico, abrirSala])
+
   useEffect(() => {
     if (!unlocked || restaurado) return
+    // El enlace de la pegatina manda sobre la última vista guardada: si alguien
+    // ha escaneado una puerta, quiere esa aula y no donde lo dejó ayer.
+    if (pendienteQR) return
 
     void (async () => {
       try {
@@ -477,6 +553,38 @@ export function App(): React.ReactElement {
 
       {tab === 'revisar' && view.name === 'edificios' && (
         <>
+          {/*
+            Escanear va ANTES del buscador y de la lista, y ocupa el ancho
+            entero, porque es el camino corto: el técnico ya está delante de la
+            puerta. Buscar y bajar por los edificios siguen debajo para cuando no
+            hay pegatina —o no hay cámara—, que es lo que impide que esto se
+            convierta en un callejón.
+          */}
+          <div className="border-b border-line bg-surface px-4 pt-3">
+            <button
+              type="button"
+              onClick={() => {
+                setAvisoQR(null)
+                setEscaneando(true)
+              }}
+              className="key key-accent flex min-h-touch w-full items-center justify-center gap-2 px-4 text-sm"
+            >
+              {/* El icono es el marco de una mirilla: cuatro esquinas y un
+                  punto. Se lee como «apunta» sin necesidad de leerlo. */}
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+                <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" />
+              </svg>
+              Escanear el QR del aula
+            </button>
+            {avisoQR && <p className="pt-2 text-sm text-crit">{avisoQR}</p>}
+          </div>
+
           <BuscadorGlobal
             onPick={(building, room) => setView({ name: 'revision', building, room })}
           />
@@ -638,6 +746,7 @@ export function App(): React.ReactElement {
           )}
           {tab === 'incidencias' && <IncidentsPage />}
           {tab === 'almacen' && <StockPage role={role} />}
+          {tab === 'historial' && <HistorialPage />}
           {tab === 'informes' && <ReportsPage />}
           {tab === 'datos' && <CleanupPage yo={userId} />}
         </Suspense>
@@ -672,6 +781,25 @@ export function App(): React.ReactElement {
           ))}
         </ul>
       </nav>
+      )}
+
+      {escaneando && (
+        <Suspense fallback={<div className="fixed inset-0 z-50 bg-black" />}>
+          <EscanerQR
+            onCerrar={() => setEscaneando(false)}
+            onLeido={(texto) => {
+              setEscaneando(false)
+              const sala = parseQR(texto)
+              if (!sala) {
+                setAvisoQR('Ese código no es de una sala.')
+                return
+              }
+              void abrirSala(sala).then((ok) => {
+                if (!ok) setAvisoQR('Ese QR no corresponde a ninguna sala de las que puedes ver.')
+              })
+            }}
+          />
+        </Suspense>
       )}
 
       {/* El aviso lleva z-30 y la barra de la revisión vive en la misma esquina:

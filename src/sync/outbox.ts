@@ -100,7 +100,17 @@ function isPermanentFailure(status: number | undefined): boolean {
  * Con un upsert normal eso sería un UPDATE, y `stock_movements` ya no lo
  * acepta: es un libro de asientos, y un asiento no se reescribe.
  */
-const IGNORE_DUPLICATES = new Set<OutboxEntry['entity']>(['asset_type', 'stock_movement'])
+/*
+ * Y un evento de equipo, por lo mismo: `asset_events` es un registro de cosas
+ * que pasaron y solo acepta altas. Un reenvío que se convirtiera en UPDATE
+ * chocaría contra una política que no existe y volvería como un error que no lo
+ * es.
+ */
+const IGNORE_DUPLICATES = new Set<OutboxEntry['entity']>([
+  'asset_type',
+  'stock_movement',
+  'asset_event',
+])
 
 async function pushEntry(entry: OutboxEntry): Promise<void> {
   await db.outbox.update(entry.id, { status: 'enviando' })

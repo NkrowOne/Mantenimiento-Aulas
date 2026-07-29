@@ -756,3 +756,46 @@ begin;
          ' con sala'
   end as resultado;
 rollback;
+
+\echo ''
+\echo '=== 31. El histórico de una sala se lee entero y con una sola consulta ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  -- `room_timeline` une cinco tablas con `security_invoker`, así que basta con
+  -- que UNA de ellas tenga la RLS mal puesta para que el histórico salga
+  -- truncado sin ningún error: la lista simplemente enseñaría menos cosas.
+  select case
+    when (select count(distinct kind) from room_timeline) >= 3
+    then 'OK: el técnico ve ' || (select count(*) from room_timeline) || ' entradas de ' ||
+         (select count(distinct kind) from room_timeline) || ' familias'
+    else 'FALLO: el técnico solo ve las familias ' ||
+         coalesce((select string_agg(distinct kind, ', ') from room_timeline), 'ninguna')
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 32. Un anónimo NO ve el histórico ==='
+begin;
+  set local role anon;
+  select set_config('request.jwt.claims', '', true);
+  select case
+    when (select count(*) from room_timeline) = 0
+    then 'OK: sin token, el histórico está vacío'
+    else 'FALLO: ' || (select count(*) from room_timeline) || ' entradas legibles desde Internet'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 33. Cada artículo de almacén que es un equipo sabe de qué tipo ==='
+begin;
+  -- Sin este puente, dar de alta un proyector en un aula no puede descontar
+  -- nada del almacén: son dos mundos que no se tocan.
+  select case
+    when (select count(*) from stock_items where asset_type_id is not null) >= 10
+    then 'OK: ' || (select count(*) from stock_items where asset_type_id is not null) ||
+         ' artículos enlazados con su tipo de equipo'
+    else 'ATENCIÓN: solo ' || (select count(*) from stock_items where asset_type_id is not null) ||
+         ' artículos enlazados'
+  end as resultado;
+rollback;
