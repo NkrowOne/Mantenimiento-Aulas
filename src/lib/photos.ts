@@ -7,7 +7,6 @@
  * reescala por pasos en vez de una compresión artesanal.
  */
 
-import imageCompression from 'browser-image-compression'
 import { v7 as uuidv7 } from 'uuid'
 import { db } from '@/db/dexie'
 
@@ -51,6 +50,9 @@ export async function capturePhoto(
 
   let blob: Blob
   try {
+    // Import dinámico: la librería de compresión pesa y solo hace falta la
+    // primera vez que alguien fotografía una incidencia, no al arrancar.
+    const { default: imageCompression } = await import('browser-image-compression')
     blob = await imageCompression(file, {
       maxSizeMB: TARGET_MB,
       maxWidthOrHeight: MAX_DIMENSION,

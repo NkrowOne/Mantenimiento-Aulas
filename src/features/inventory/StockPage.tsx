@@ -21,21 +21,36 @@ interface StockLevel {
  * ajuste, y el saldo se recalcula solo. Es lo que impide que vuelva a haber
  * saldos negativos como los de la hoja Bolsa.
  */
+/**
+ * ¿El fallo es de red o del servidor?
+ *
+ * Es la única distinción que cambia lo que el técnico hace después: buscar
+ * cobertura, o hablar con administración.
+ */
+function esFalloDeRed(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return /fetch|network|failed to fetch|networkerror|load failed/i.test(error.message)
+}
+
 export function StockPage(): React.ReactElement {
   const qc = useQueryClient()
   const [filter, setFilter] = useState('')
   const [onlyLow, setOnlyLow] = useState(false)
 
-  const { data: levels } = useQuery({
+  const { data: levels, isPending, isError, refetch } = useQuery({
     queryKey: ['stock-levels'],
     queryFn: async (): Promise<StockLevel[]> => {
-      const { data } = await supabase.from('stock_levels').select('*').order('name')
+      const { data, error } = await supabase.from('stock_levels').select('*').order('name')
+      if (error) throw error
       return (data ?? []) as StockLevel[]
     },
   })
 
+  type Movimiento = { itemId: string; qty: number; kind: 'compra' | 'consumo' | 'ajuste' }
+  const [ultimo, setUltimo] = useState<Movimiento | null>(null)
+
   const move = useMutation({
-    mutationFn: async (input: { itemId: string; qty: number; kind: 'compra' | 'consumo' | 'ajuste' }) => {
+    mutationFn: async (input: Movimiento) => {
       const { data: user } = await supabase.auth.getUser()
       const { error } = await supabase.from('stock_movements').insert({
         id: uuidv7(),
@@ -47,7 +62,13 @@ export function StockPage(): React.ReactElement {
       })
       if (error) throw error
     },
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['stock-levels'] }),
+    onSuccess: (_data, input) => {
+      // Un movimiento no se puede editar ni borrar —el saldo es la suma— así que
+      // lo único que puede deshacerlo es el movimiento contrario. Se ofrece
+      // durante unos segundos, que es cuando uno se da cuenta del dedazo.
+      setUltimo(input)
+      void qc.invalidateQueries({ queryKey: ['stock-levels'] })
+    },
   })
 
   const rows = (levels ?? [])
@@ -111,8 +132,12 @@ export function StockPage(): React.ReactElement {
                 </td>
                 <td className="py-2 text-right">
                   <span className="inline-flex gap-2">
+                    {/* Deshabilitados mientras vuela el anterior: la cifra no se
+                        movía hasta que volvía el servidor, así que el técnico
+                        pulsaba otra vez y se registraban dos movimientos. */}
                     <button
                       type="button"
+                      disabled={move.isPending}
                       onClick={() => move.mutate({ itemId: l.stock_item_id, qty: -1, kind: 'consumo' })}
                       className="key key-quiet h-11 w-11"
                       aria-label={`Consumir una unidad de ${l.name}`}
@@ -121,6 +146,7 @@ export function StockPage(): React.ReactElement {
                     </button>
                     <button
                       type="button"
+                      disabled={move.isPending}
                       onClick={() => move.mutate({ itemId: l.stock_item_id, qty: 1, kind: 'compra' })}
                       className="key key-quiet h-11 w-11"
                       aria-label={`Añadir una unidad de ${l.name}`}
@@ -135,11 +161,76 @@ export function StockPage(): React.ReactElement {
         </table>
       </div>
 
-      {rows.length === 0 && <p className="mt-6 text-sm text-muted">Ningún artículo coincide.</p>}
+      {isPending && <p className="mt-6 text-sm text-muted">Cargando el almacén…</p>}
+
+      {isError && (
+        <div className="card mt-6 p-4">
+          <p className="text-sm text-crit">No se ha podido leer el almacén.</p>
+          <p className="mt-1 text-sm text-muted">Esta pantalla necesita conexión.</p>
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            className="key key-quiet mt-3 min-h-11 px-3 text-sm"
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
+
+      {!isPending && !isError && rows.length === 0 && (
+        <p className="mt-6 text-sm text-muted">Ningún artículo coincide.</p>
+      )}
+
+      {/*
+        El mensaje distinguía nada: decía «Solo un supervisor registra compras»
+        tanto si faltaba el permiso como si el técnico estaba en un sótano sin
+        cobertura, que es el caso frecuente. Se iba convencido de que le faltaba
+        un rol. Esta pantalla escribe directa contra el servidor, sin cola.
+      */}
       {move.isError && (
-        <p className="mt-4 text-sm text-crit">
-          Solo un supervisor registra compras.
-        </p>
+        <div className="card mt-4 p-4">
+          {!navigator.onLine || esFalloDeRed(move.error) ? (
+            <>
+              <p className="text-sm text-crit">
+                Sin conexión: el movimiento no se ha registrado.
+              </p>
+              <p className="mt-1 text-sm text-muted">
+                El almacén se apunta contra el servidor en el momento, a diferencia de
+                las revisiones. Busca cobertura y repítelo.
+              </p>
+              <button
+                type="button"
+                disabled={!move.variables}
+                onClick={() => move.variables && move.mutate(move.variables)}
+                className="key key-quiet mt-3 min-h-11 px-3 text-sm"
+              >
+                Reintentar
+              </button>
+            </>
+          ) : (
+            <p className="text-sm text-crit">Solo un supervisor registra compras.</p>
+          )}
+        </div>
+      )}
+
+      {/* Deshacer: el movimiento contrario, que es la única forma de corregir un
+          saldo que se calcula sumando. */}
+      {ultimo && !move.isPending && !move.isError && (
+        <div className="mt-4 flex items-center justify-between gap-3 rounded-ctl border border-line bg-surface px-3 py-2">
+          <span className="text-sm text-muted">
+            {ultimo.qty > 0 ? 'Añadida' : 'Consumida'} 1 unidad.
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              move.mutate({ itemId: ultimo.itemId, qty: -ultimo.qty, kind: 'ajuste' })
+              setUltimo(null)
+            }}
+            className="key key-quiet min-h-11 shrink-0 px-3 text-sm"
+          >
+            Deshacer
+          </button>
+        </div>
       )}
     </div>
   )

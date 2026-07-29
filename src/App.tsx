@@ -7,24 +7,39 @@ import { InspectionPage } from '@/features/inspection/InspectionPage'
 import { RoomListPage } from '@/features/rooms/RoomListPage'
 import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
 import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
-import { IncidentsPage } from '@/features/incidents/IncidentsPage'
-import { StockPage } from '@/features/inventory/StockPage'
-import { CleanupPage } from '@/features/admin/CleanupPage'
-import { ReportsPage } from '@/features/reports/ReportsPage'
 
 import { getSealed, lock, resumeSession, touch } from '@/auth/session'
-import { db, requestPersistentStorage } from '@/db/dexie'
+import { db, purgeSyncedInspections, requestPersistentStorage } from '@/db/dexie'
 import { pullMaster } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
 import { configError, supabase } from '@/lib/supabase'
 import type { SealedSession } from '@/auth/pin'
 import type { Building, Role, Room } from '@/domain/types'
 
-// El panel arrastra ECharts, que pesa más que todo lo demás junto. Cargarlo
-// aparte deja el arranque ligero para quien solo va a revisar aulas, que es el
-// caso mayoritario y el que ocurre con peor cobertura.
+/*
+ * Todo lo que no es revisar un aula se carga aparte.
+ *
+ * El panel arrastra ECharts, que pesa más que todo lo demás junto. Y las otras
+ * cuatro pantallas las esconde el rol —un técnico no puede abrir Informes ni
+ * Datos— pero se descargaban igual: el arranque traía «Fusionar con», «Bajo
+ * mínimo» y la bandeja de cuarentena a un dispositivo que nunca los va a
+ * enseñar. Y el arranque ocurre justo con la peor cobertura, al llegar al
+ * edificio.
+ */
 const DashboardPage = lazy(() =>
   import('@/features/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
+)
+const IncidentsPage = lazy(() =>
+  import('@/features/incidents/IncidentsPage').then((m) => ({ default: m.IncidentsPage })),
+)
+const StockPage = lazy(() =>
+  import('@/features/inventory/StockPage').then((m) => ({ default: m.StockPage })),
+)
+const CleanupPage = lazy(() =>
+  import('@/features/admin/CleanupPage').then((m) => ({ default: m.CleanupPage })),
+)
+const ReportsPage = lazy(() =>
+  import('@/features/reports/ReportsPage').then((m) => ({ default: m.ReportsPage })),
 )
 
 type Tab = 'revisar' | 'panel' | 'incidencias' | 'almacen' | 'informes' | 'datos'
@@ -53,6 +68,9 @@ export function App(): React.ReactElement {
   const [tab, setTab] = useState<Tab>('revisar')
   const [view, setView] = useState<RoomView>({ name: 'edificios' })
   const [roomOrder, setRoomOrder] = useState<RoomOrder>('antiguedad')
+  // Hasta que se intenta rehidratar no se pinta la lista de edificios: si no,
+  // se vería un parpadeo desde la raíz hasta donde estabas.
+  const [restaurado, setRestaurado] = useState(false)
 
   const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [])
 
@@ -98,11 +116,61 @@ export function App(): React.ReactElement {
     })()
   }, [])
 
+  /*
+   * Recuperar el sitio.
+   *
+   * Toda la navegación era estado en memoria: cerrar la pestaña, que iOS
+   * descargue la aplicación de fondo o simplemente recargar dejaba al técnico en
+   * la raíz. Con 23 edificios y hasta 39 salas por edificio, volver a donde
+   * estabas eran dos toques y dos rastreos visuales — de pie, cada vez.
+   *
+   * Se guarda solo la ubicación, que es lo barato y lo que se pierde. El trabajo
+   * en sí ya sobrevive por otro camino: está en Dexie y respaldado en el servidor.
+   */
+  useEffect(() => {
+    if (!unlocked || restaurado) return
+
+    void (async () => {
+      try {
+        const guardado = (await db.meta.get('ultima-vista'))?.value as
+          | { tab?: Tab; buildingId?: string; roomId?: string }
+          | undefined
+
+        if (guardado?.tab) setTab(guardado.tab)
+
+        if (guardado?.buildingId) {
+          const building = await db.buildings.get(guardado.buildingId)
+          if (building) {
+            const room = guardado.roomId ? await db.rooms.get(guardado.roomId) : undefined
+            setView(room ? { name: 'revision', building, room } : { name: 'salas', building })
+          }
+        }
+      } finally {
+        setRestaurado(true)
+      }
+    })()
+  }, [unlocked, restaurado])
+
+  useEffect(() => {
+    if (!unlocked || !restaurado) return
+    void db.meta.put({
+      key: 'ultima-vista',
+      value: {
+        tab,
+        buildingId: view.name === 'edificios' ? null : view.building.id,
+        roomId: view.name === 'revision' ? view.room.id : null,
+      },
+    })
+  }, [unlocked, restaurado, tab, view])
+
   useEffect(() => {
     if (!unlocked) return
 
     void requestPersistentStorage()
     void pullMaster()
+    // Las revisiones cerradas y ya subidas no tienen por qué seguir aquí: nadie
+    // las purgaba y crecía una fila por aula revisada, para siempre.
+    void purgeSyncedInspections()
     void (async () => {
       const { data } = await supabase.auth.getUser()
       if (!data.user) return
@@ -166,7 +234,11 @@ export function App(): React.ReactElement {
 
   return (
     <div className={`min-h-dvh ${inspecting ? '' : 'pb-20'}`}>
-      <header className="sticky top-0 z-10 border-b border-line bg-ground/95 backdrop-blur">
+      {/* Sin `backdrop-blur`: obliga a WebKit a recapturar y desenfocar el fondo
+          en cada frame de desplazamiento —de lo más caro que se puede poner en un
+          `sticky` de un iPad— y aquí ni se veía: `--ground` es un color sólido y
+          el 95% dejaba pasar un 5% de nada. */}
+      <header className="sticky top-0 z-10 border-b border-line bg-ground">
         <div className="flex items-center justify-between gap-2 px-4 py-2">
           <span className="eyebrow truncate">Aulas</span>
           <div className="flex shrink-0 items-center gap-2">
@@ -266,15 +338,15 @@ export function App(): React.ReactElement {
         />
       )}
 
-      {tab === 'panel' && (
-        <Suspense fallback={<p className="p-6 text-muted">Cargando el panel…</p>}>
-          <DashboardPage />
+      {tab !== 'revisar' && (
+        <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
+          {tab === 'panel' && <DashboardPage />}
+          {tab === 'incidencias' && <IncidentsPage />}
+          {tab === 'almacen' && <StockPage />}
+          {tab === 'informes' && <ReportsPage />}
+          {tab === 'datos' && <CleanupPage />}
         </Suspense>
       )}
-      {tab === 'incidencias' && <IncidentsPage />}
-      {tab === 'almacen' && <StockPage />}
-      {tab === 'informes' && <ReportsPage />}
-      {tab === 'datos' && <CleanupPage />}
 
       {/* La navegación se queda abajo: es donde llega el pulgar sin recolocar
           la mano, y respeta la zona de gestos del iPhone.

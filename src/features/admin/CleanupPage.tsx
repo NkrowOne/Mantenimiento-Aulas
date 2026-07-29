@@ -61,6 +61,10 @@ export function CleanupPage(): React.ReactElement {
         .from('import_quarantine')
         .select('*')
         .eq('resolved', false)
+        // Sin `order`, Postgres no garantiza ninguno y el `update` de «Revisada»
+        // puede mover la fila dentro del heap: la lista se reordenaba bajo el
+        // dedo del coordinador.
+        .order('at', { ascending: true })
         .limit(100)
       return (data ?? []) as QuarantineRow[]
     },

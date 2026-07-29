@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { labelAvailable, resolveType, searchCatalog } from '@/domain/inventory'
 import { ASSET_STATUS_LABELS, type Asset, type AssetType } from '@/domain/types'
+import { typeRank } from '@/features/inspection/useInspection'
 import { useRoomInventory } from './useRoomInventory'
 
 /**
@@ -32,7 +33,15 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
 
   const { addAsset, patchAsset, setStatus } = useRoomInventory(roomId, userId)
 
-  const live = assets.filter((a) => a.status !== 'retirado')
+  // Mismo orden que las filas de arriba. Sin esto, el mismo equipamiento salía
+  // dos veces en la misma pantalla en dos órdenes distintos.
+  const live = assets
+    .filter((a) => a.status !== 'retirado')
+    .sort(
+      (a, b) =>
+        typeRank(typesById, a.asset_type_id) - typeRank(typesById, b.asset_type_id) ||
+        (a.label ?? '').localeCompare(b.label ?? '', 'es', { numeric: true }),
+    )
   const hits = searchCatalog(types, query)
   const raw = query.trim()
 
@@ -78,6 +87,17 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                   setNote(null)
                 }}
                 placeholder="Añadir equipo: proyector, pantalla…"
+                enterKeyHint="done"
+                autoCorrect="off"
+                /* La tecla de retorno acepta la primera sugerencia, que es lo
+                   que promete decir «hecho». */
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return
+                  e.preventDefault()
+                  const primero = hits[0]
+                  if (primero) void add(primero.type.name, primero.type)
+                  else if (raw.length >= 2) void add(raw, null)
+                }}
                 className="h-touch w-full rounded-ctl border border-line bg-surface px-3"
               />
             </label>
@@ -235,6 +255,9 @@ function AssetFixer({
             <input
               type="text"
               value={model}
+              autoCapitalize="off"
+              autoCorrect="off"
+              enterKeyHint="done"
               onChange={(e) => setModel(e.target.value)}
               onBlur={() => model.trim() !== (asset.model ?? '') && onPatch({ model: model.trim() || null })}
               className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
@@ -242,9 +265,15 @@ function AssetFixer({
           </label>
           <label className="text-xs text-muted">
             Nº de serie
+            {/* Un número de serie no es una frase: sin esto iOS lo capitaliza y
+                el corrector reescribe cadenas alfanuméricas cortas. */}
             <input
               type="text"
               value={serial}
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="done"
               onChange={(e) => setSerial(e.target.value)}
               onBlur={() => serial.trim() !== (asset.serial ?? '') && onPatch({ serial: serial.trim() || null })}
               className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 font-mono text-sm text-ink"

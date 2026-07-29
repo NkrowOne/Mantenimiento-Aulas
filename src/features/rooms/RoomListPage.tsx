@@ -36,19 +36,27 @@ export function RoomListPage({
 }: Props): React.ReactElement {
   const [query, setQuery] = useState('')
 
-  const zones = useLiveQuery(async () => {
-    const list = await db.zones.where('building_id').equals(building.id).toArray()
-    return new Map(list.map((z) => [z.id, z]))
+  /*
+   * Una sola consulta, y por índice.
+   *
+   * Eran dos, y las dos leían las zonas del edificio. Y `db.rooms.filter()` no
+   * es un `where`: deserializa las 276 salas y ejecuta la lambda sobre cada una
+   * teniendo el índice `zone_id` delante.
+   */
+  const datos = useLiveQuery(async () => {
+    const zonas = await db.zones.where('building_id').equals(building.id).toArray()
+    const ids = zonas.map((z) => z.id)
+    return {
+      zones: new Map(zonas.map((z) => [z.id, z])),
+      rooms: await db.rooms.where('zone_id').anyOf(ids).toArray(),
+    }
   }, [building.id])
 
-  const rooms = useLiveQuery(async () => {
-    const list = await db.zones.where('building_id').equals(building.id).toArray()
-    const zoneIds = new Set(list.map((z) => z.id))
-    return db.rooms.filter((r) => zoneIds.has(r.zone_id)).toArray()
-  }, [building.id])
+  const zones = datos?.zones
+  const rooms = datos?.rooms
 
   const drafts = useLiveQuery(
-    () => db.inspections.filter((i) => i.status === 'borrador').toArray(),
+    () => db.inspections.where('status').equals('borrador').toArray(),
     [],
   )
   const draftRoomIds = useMemo(
@@ -119,13 +127,29 @@ export function RoomListPage({
       )}
 
       <ul className="divide-y divide-line">
-        {visible.map((room) => {
+        {visible.map((room, i) => {
           const days = daysSince(room.last_inspection_at)
           const overdue = days === null || days > OVERDUE_INSPECTION_DAYS
           const hasDraft = draftRoomIds.has(room.id)
 
+          /*
+             Cabecera de planta, solo en el orden por planta.
+             Es lo que convierte la lista en un recorrido: se ve dónde acaba una
+             planta y empieza la siguiente sin tener que leer la línea gris de
+             cada fila. En el orden por antigüedad no se pone, porque ahí las
+             plantas se mezclan a propósito.
+          */
+          const zona = zones?.get(room.zone_id)?.name ?? ''
+          const zonaAnterior = i > 0 ? (zones?.get(visible[i - 1]!.zone_id)?.name ?? '') : null
+          const abreZona = order === 'planta' && zona !== zonaAnterior
+
           return (
             <li key={room.id}>
+              {abreZona && (
+                <p className="eyebrow sticky top-0 z-[1] border-y border-line bg-sunken px-4 py-1.5">
+                  {zona}
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => onPick(room)}
@@ -146,8 +170,8 @@ export function RoomListPage({
                   {/* La planta va en cada fila: aquí el código aparece suelto,
                       y `−2.1` sin contexto se lee como una errata. */}
                   <span className="block truncate text-sm text-muted">
-                    {zones?.get(room.zone_id)?.name ?? ''}
-                    {room.name !== room.code && ` · ${room.name}`}
+                    {order === 'planta' ? '' : zona}
+                    {room.name !== room.code && `${order === 'planta' ? '' : ' · '}${room.name}`}
                   </span>
                 </span>
 

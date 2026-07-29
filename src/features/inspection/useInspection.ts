@@ -42,7 +42,7 @@ const REMOTE_DEBOUNCE_MS = 3000
  * aula. Alfabéticamente la botonera iría primero y el proyector el sexto, que
  * no es el orden en que nadie revisa nada.
  */
-const TYPE_ORDER = [
+export const TYPE_ORDER = [
   'PROYECTOR',
   'PANTALLA',
   'ALTAVOCES',
@@ -52,6 +52,18 @@ const TYPE_ORDER = [
   'ORDENADOR',
   'ATRIL',
 ]
+
+/**
+ * Rango de un tipo en el recorrido del aula. Fuera de `checkRows` porque el
+ * bloque de inventario, en esa misma pantalla, tiene que ordenar igual: tenerlo
+ * en dos sitios producía el mismo equipamiento listado dos veces en dos órdenes
+ * distintos.
+ */
+export function typeRank(types: Map<string, AssetType>, assetTypeId: string): number {
+  const name = norm(resolveType(types, assetTypeId)?.name ?? '')
+  const i = TYPE_ORDER.indexOf(name)
+  return i === -1 ? TYPE_ORDER.length : i
+}
 
 /** Una fila de la revisión: o un elemento del inventario, o algo de la sala. */
 export interface CheckRow {
@@ -98,14 +110,12 @@ export function checkRows(assets: Asset[], types: Map<string, AssetType>): Check
         pending: type ? !type.confirmed : false,
       }
     })
-    .sort((a, b) => {
-      const rank = (row: CheckRow): number => {
-        const name = norm(resolveType(types, row.asset?.asset_type_id ?? '')?.name ?? '')
-        const i = TYPE_ORDER.indexOf(name)
-        return i === -1 ? TYPE_ORDER.length : i
-      }
-      return rank(a) - rank(b) || a.label.localeCompare(b.label, 'es', { numeric: true })
-    })
+    .sort(
+      (a, b) =>
+        typeRank(types, a.asset?.asset_type_id ?? '') -
+          typeRank(types, b.asset?.asset_type_id ?? '') ||
+        a.label.localeCompare(b.label, 'es', { numeric: true }),
+    )
 
   // Lo de la sala va al final: no es un aparato que se pueda señalar con el
   // dedo, así que tampoco encabeza la lista.
@@ -199,14 +209,31 @@ export function useInspection(room: Room | null, userId: string | null) {
     }
   }, [room, userId])
 
+  /**
+   * Qué comprobaciones han cambiado desde el último guardado.
+   *
+   * Sin esto, cada toque reescribía las nueve filas y reencolaba las nueve
+   * entradas, cada `enqueue` en su propia transacción: unas veinte transacciones
+   * de IndexedDB para reflejar un solo dedo. Y cada una emitía su evento de
+   * cambio, que la lámpara de la cabecera observa.
+   */
+  const sucias = useRef(new Set<CheckKey>())
+
   const scheduleSave = useCallback((next: InspectionDraft) => {
     setSaving(true)
 
     if (localTimer.current) clearTimeout(localTimer.current)
     localTimer.current = setTimeout(() => {
       void (async () => {
-        await db.inspections.put(next.inspection)
-        await db.checks.bulkPut([...next.checks.values()])
+        const cambiadas = [...sucias.current]
+          .map((k) => next.checks.get(k))
+          .filter((c): c is InspectionCheck => c !== undefined)
+
+        // Una sola transacción: un único evento de cambio en vez de uno por fila.
+        await db.transaction('rw', db.inspections, db.checks, async () => {
+          await db.inspections.put(next.inspection)
+          if (cambiadas.length > 0) await db.checks.bulkPut(cambiadas)
+        })
         setSaving(false)
       })()
     }, LOCAL_DEBOUNCE_MS)
@@ -214,16 +241,65 @@ export function useInspection(room: Room | null, userId: string | null) {
     if (remoteTimer.current) clearTimeout(remoteTimer.current)
     remoteTimer.current = setTimeout(() => {
       void (async () => {
-        await enqueue('inspection', next.inspection.id, {
-          ...next.inspection,
-          recorded_at: undefined,
+        const cambiadas = [...sucias.current]
+          .map((k) => next.checks.get(k))
+          .filter((c): c is InspectionCheck => c !== undefined)
+        sucias.current = new Set()
+
+        await db.transaction('rw', db.outbox, async () => {
+          await enqueue('inspection', next.inspection.id, {
+            ...next.inspection,
+            recorded_at: undefined,
+          })
+          for (const check of cambiadas) {
+            await enqueue('inspection_check', check.id, check)
+          }
         })
-        for (const check of next.checks.values()) {
-          await enqueue('inspection_check', check.id, check)
-        }
         void flush()
       })()
     }, REMOTE_DEBOUNCE_MS)
+  }, [])
+
+  /*
+   * Volcado al desmontar.
+   *
+   * Los dos temporizadores dejan una ventana en la que lo último que se tocó
+   * solo vive en memoria. Salir del aula sin cerrar la revisión —el botón
+   * «Volver», o cambiar de pestaña— caía en esa ventana y perdía el último
+   * toque. `complete()` no cubre este caso porque justamente no se llama.
+   */
+  const draftRef = useRef<InspectionDraft | null>(null)
+  useEffect(() => {
+    draftRef.current = draft
+  }, [draft])
+
+  useEffect(() => {
+    return () => {
+      if (localTimer.current) clearTimeout(localTimer.current)
+      if (remoteTimer.current) clearTimeout(remoteTimer.current)
+
+      const pendiente = draftRef.current
+      if (!pendiente || sucias.current.size === 0) return
+
+      const cambiadas = [...sucias.current]
+        .map((k) => pendiente.checks.get(k))
+        .filter((c): c is InspectionCheck => c !== undefined)
+
+      void (async () => {
+        await db.transaction('rw', db.inspections, db.checks, async () => {
+          await db.inspections.put(pendiente.inspection)
+          if (cambiadas.length > 0) await db.checks.bulkPut(cambiadas)
+        })
+        await db.transaction('rw', db.outbox, async () => {
+          await enqueue('inspection', pendiente.inspection.id, {
+            ...pendiente.inspection,
+            recorded_at: undefined,
+          })
+          for (const check of cambiadas) await enqueue('inspection_check', check.id, check)
+        })
+        void flush()
+      })()
+    }
   }, [])
 
   const setCheck = useCallback(
@@ -244,6 +320,7 @@ export function useInspection(room: Room | null, userId: string | null) {
           note: extra?.note ?? existing?.note ?? null,
         })
 
+        sucias.current.add(key)
         const next = { ...prev, checks }
         scheduleSave(next)
         return next
@@ -267,6 +344,7 @@ export function useInspection(room: Room | null, userId: string | null) {
 
       for (const row of rows) {
         if (checks.has(row.key)) continue
+        sucias.current.add(row.key)
         checks.set(row.key, {
           id: uuidv7(),
           inspection_id: prev.inspection.id,
@@ -332,10 +410,15 @@ export function useInspection(room: Room | null, userId: string | null) {
       last_inspection_at: inspection.occurred_at,
     })
 
-    await enqueue('inspection', inspection.id, { ...inspection, recorded_at: undefined })
-    for (const check of draft.checks.values()) {
-      await enqueue('inspection_check', check.id, check)
-    }
+    // Al cerrar sí se manda todo, y en una transacción: es la última
+    // oportunidad de que el servidor reciba la revisión íntegra.
+    await db.transaction('rw', db.outbox, async () => {
+      await enqueue('inspection', inspection.id, { ...inspection, recorded_at: undefined })
+      for (const check of draft.checks.values()) {
+        await enqueue('inspection_check', check.id, check)
+      }
+    })
+    sucias.current = new Set()
     void flush()
 
     setDraft(null)

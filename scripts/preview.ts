@@ -68,11 +68,12 @@ async function seal(pin: string, session: unknown) {
   }
 }
 
+// Dos plantas, para que el orden «Por planta» tenga algo que agrupar.
 const ROOMS = [
-  { code: '1.7', name: '1.7', caps: { proyector: true, altavoces: true, camara: false, microfono: false, botonera: true, tv: false }, days: 214 },
-  { code: '1.8', name: '1.8', caps: { proyector: true, altavoces: true, camara: true, microfono: true, botonera: true, tv: true }, days: 189 },
-  { code: '2.1', name: '2.1', caps: { proyector: true, altavoces: false, camara: false, microfono: false, botonera: false, tv: false }, days: 45 },
-  { code: '-2.1', name: 'Lab Criminología', caps: { proyector: true, altavoces: true, camara: true, microfono: true, botonera: true, tv: true }, days: 302 },
+  { code: '1.7', name: '1.7', zone: 'z2', caps: { proyector: true, altavoces: true, camara: false, microfono: false, botonera: true, tv: false }, days: 214 },
+  { code: '1.8', name: '1.8', zone: 'z2', caps: { proyector: true, altavoces: true, camara: true, microfono: true, botonera: true, tv: true }, days: 189 },
+  { code: '2.1', name: '2.1', zone: 'z2', caps: { proyector: true, altavoces: false, camara: false, microfono: false, botonera: false, tv: false }, days: 45 },
+  { code: '-2.1', name: 'Lab Criminología', zone: 'z1', caps: { proyector: true, altavoces: true, camara: true, microfono: true, botonera: true, tv: true }, days: 302 },
 ]
 
 /**
@@ -141,9 +142,10 @@ async function main(): Promise<void> {
             id: 'b1', code: 'H', name: 'EDIFICIO H', sort_order: 1, needs_review: false,
           })
           tx.objectStore('zones').put({ id: 'z1', building_id: 'b1', name: 'PLANTA −2', sort_order: 1 })
+          tx.objectStore('zones').put({ id: 'z2', building_id: 'b1', name: '1ª PLANTA', sort_order: 2 })
           ;(rooms as Array<Record<string, unknown>>).forEach((r, i) => {
             tx.objectStore('rooms').put({
-              id: `r${i}`, zone_id: 'z1', code: r['code'], name: r['name'],
+              id: `r${i}`, zone_id: r['zone'], code: r['code'], name: r['name'],
               kind: 'aula', capabilities: r['caps'],
               projector_hours: 3400, lamp_pct: 0.14,
               last_inspection_at: new Date(Date.now() - (r['days'] as number) * 86400000).toISOString(),
@@ -204,6 +206,20 @@ async function main(): Promise<void> {
   await page.getByRole('button', { name: /EDIFICIO H/ }).click()
   await page.waitForTimeout(500)
   await shot('salas')
+
+  // El orden por planta, con sus cabeceras: es lo que convierte la lista en un
+  // recorrido en vez de en una cola temporal.
+  await page.getByRole('button', { name: 'Por planta' }).click()
+  await page.waitForTimeout(400)
+  await shot('salas-por-planta')
+
+  // Y el buscador filtrando.
+  await page.getByPlaceholder('Buscar sala').fill('crimin')
+  await page.waitForTimeout(400)
+  await shot('salas-buscando')
+  await page.getByPlaceholder('Buscar sala').fill('')
+  await page.getByRole('button', { name: 'Más antiguas' }).click()
+  await page.waitForTimeout(300)
 
   // La fila de la sala, no el título de la placa: ahora hay buscador y cabecera
   // con el mismo texto.

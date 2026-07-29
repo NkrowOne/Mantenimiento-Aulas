@@ -80,8 +80,11 @@
       transition-duration: 120ms !important;
     }
 
-    .key:active {
-      transform: none;
+    /* Con la especificidad de la regla que anula: `.key:active:not(:disabled)`
+       puntúa (0,3,0) porque `:not()` aporta la de su argumento, así que un
+       `.key:active` (0,2,0) era letra muerta. */
+    .key:active:not(:disabled) {
+      transform: none !important;
     }
   }
 }

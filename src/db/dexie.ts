@@ -108,6 +108,13 @@ export class AulasDB extends Dexie {
       photos: 'id, status, nextAttemptAt, [entityType+entityId]',
       meta: 'key',
     })
+
+    // `createdAt` entra en el índice para poder responder «¿cuánto lleva
+    // esperando lo más viejo?» con un `orderBy(...).first()` en vez de leyendo
+    // la tabla entera —con los Blob de las fotos dentro— en cada escritura.
+    this.version(2).stores({
+      outbox: 'id, status, nextAttemptAt, entity, createdAt',
+    })
   }
 }
 
@@ -157,21 +164,72 @@ export interface PendingSummary {
   oldestAt: number | null
 }
 
+/**
+ * Resumen de lo pendiente, resuelto con índices.
+ *
+ * Antes leía `db.outbox.toArray()` y `db.photos.toArray()` enteras —los Blob de
+ * las fotos incluidos— y filtraba en JavaScript. Y esto lo observa la lámpara de
+ * la cabecera, que está montada siempre: cada escritura en la cola reejecutaba
+ * la consulta. Guardar una revisión de nueve filas disparaba del orden de veinte
+ * relecturas completas de dos tablas, con las fotos dentro, mientras el técnico
+ * seguía pulsando.
+ *
+ * Ahora son conteos sobre índices que ya existían, y la fecha del más antiguo
+ * solo se busca si hay algo pendiente.
+ */
 export async function pendingSummary(): Promise<PendingSummary> {
-  const [entries, photos] = await Promise.all([db.outbox.toArray(), db.photos.toArray()])
-  const live = entries.filter((e) => e.status !== 'rechazado')
-  const oldest = [...live, ...photos].reduce<number | null>((min, e) => {
-    const t = 'createdAt' in e ? e.createdAt : Date.now()
-    return min === null || t < min ? t : min
-  }, null)
+  const [pendientes, enviando, rechazadosCola, fotosPend, fotosSubiendo, fotosRech] =
+    await Promise.all([
+      db.outbox.where('status').equals('pendiente').count(),
+      db.outbox.where('status').equals('enviando').count(),
+      db.outbox.where('status').equals('rechazado').count(),
+      db.photos.where('status').equals('pendiente').count(),
+      db.photos.where('status').equals('subiendo').count(),
+      db.photos.where('status').equals('rechazado').count(),
+    ])
+
+  const colaViva = pendientes + enviando
+  const fotosVivas = fotosPend + fotosSubiendo
+
+  // Solo se busca la más antigua si hay algo esperando: es una consulta más, y
+  // con la cola vacía —el caso normal— no aporta nada.
+  const oldest =
+    colaViva > 0 ? ((await db.outbox.orderBy('createdAt').first())?.createdAt ?? null) : null
 
   return {
-    total: live.length + photos.filter((p) => p.status !== 'rechazado').length,
-    rejected: entries.filter((e) => e.status === 'rechazado').length +
-      photos.filter((p) => p.status === 'rechazado').length,
-    photos: photos.filter((p) => p.status !== 'rechazado').length,
+    total: colaViva + fotosVivas,
+    rejected: rechazadosCola + fotosRech,
+    photos: fotosVivas,
     oldestAt: oldest,
   }
+}
+
+/**
+ * Borra de local las revisiones ya cerradas y confirmadas.
+ *
+ * `inspections` no la purgaba nadie: crecía una fila por revisión para siempre,
+ * y con 276 salas por ronda eso son miles de filas al año que se leen y se
+ * filtran en cada consulta de borradores. El servidor es el archivo; el
+ * dispositivo solo necesita lo que aún no ha subido.
+ *
+ * Se conserva un margen de dos días por si hiciera falta mirar atrás sin red.
+ */
+export async function purgeSyncedInspections(): Promise<number> {
+  const margen = Date.now() - 2 * 86_400_000
+  const cerradas = await db.inspections.where('status').equals('completa').toArray()
+
+  const enCola = new Set((await db.outbox.toCollection().primaryKeys()) as string[])
+  const borrables = cerradas.filter(
+    (i) => !enCola.has(i.id) && new Date(i.occurred_at).getTime() < margen,
+  )
+  if (borrables.length === 0) return 0
+
+  const ids = borrables.map((i) => i.id)
+  await db.transaction('rw', db.inspections, db.checks, async () => {
+    await db.checks.where('inspection_id').anyOf(ids).delete()
+    await db.inspections.bulkDelete(ids)
+  })
+  return ids.length
 }
 
 // -----------------------------------------------------------------------------

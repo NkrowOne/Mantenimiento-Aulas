@@ -38,6 +38,7 @@ export function InspectionPage({
   const [photoError, setPhotoError] = useState<string | null>(null)
   const [subiendoFoto, setSubiendoFoto] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
+  const filas = useRef<HTMLDivElement>(null)
 
   /*
    * Las fotos se cuentan desde los adjuntos, no desde un contador en memoria.
@@ -102,9 +103,19 @@ export function InspectionPage({
       >
         <div>
           <div className="px-4 pt-4">
+            {/*
+              Al pulsarlo, `markRestOk` deja el propio contenedor del botón en
+              `inert` y el navegador desenfoca su descendiente sin reubicar el
+              foco: acababa en <body>, y el siguiente tabulador reempezaba desde
+              la cabecera. Se manda el foco a la lista, que es donde sigue el
+              trabajo.
+            */}
             <button
               type="button"
-              onClick={markRestOk}
+              onClick={() => {
+                markRestOk()
+                filas.current?.focus()
+              }}
               className="key key-ok flex h-touch w-full items-center justify-center gap-2"
             >
               <span aria-hidden className="text-lg">✓</span>
@@ -116,7 +127,7 @@ export function InspectionPage({
         </div>
       </div>
 
-      <div className="divide-y divide-line px-4">
+      <div ref={filas} tabIndex={-1} className="divide-y divide-line px-4 outline-none">
         {rows.map((row) => {
           const key = row.key
           const check = draft.checks.get(key)
