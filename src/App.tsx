@@ -12,7 +12,7 @@ import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
 
 import { getSealed, lock, resumeSession, touch, watchSession } from '@/auth/session'
 import { db, purgeSyncedInspections, requestPersistentStorage } from '@/db/dexie'
-import { pullMaster, type ResultadoPull } from '@/sync/pull'
+import { pullMaster, startPull, type ResultadoPull } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
 import { configError, supabase } from '@/lib/supabase'
 import { PARAM_SALA, salaDeLaUrl } from '@/lib/enlace-sala'
@@ -363,12 +363,16 @@ export function App(): React.ReactElement {
     })()
 
     const stop = startSync()
+    // Y los de la bajada, que no existían: lo que escribe este dispositivo subía
+    // en segundos, pero lo que escribían los demás no llegaba hasta recargar.
+    const stopPull = startPull(setDiagnostico)
     const onActivity = (): void => void touch()
     window.addEventListener('pointerdown', onActivity)
     document.addEventListener('visibilitychange', onActivity)
 
     return () => {
       stop()
+      stopPull()
       window.removeEventListener('pointerdown', onActivity)
       document.removeEventListener('visibilitychange', onActivity)
     }
