@@ -42,10 +42,16 @@ export function esPooler(url: string): boolean {
  *
  * `max` es distinto en el servidor (2, atiende peticiones seguidas) y en la
  * línea de órdenes (1, un informe y se acaba).
+ *
+ * `onnotice` es para quien ejecute DDL: por defecto postgres.js vuelca el
+ * objeto entero del aviso, y las migraciones sueltan unos cuantos («pg_cron no
+ * disponible», «ya existe, se omite») que en un arranque conviene leer de un
+ * vistazo, no en veinte líneas de JSON.
  */
-export function conectar(url: string, max: number): postgres.Sql {
+export function conectar(url: string, max: number, onnotice?: (aviso: postgres.Notice) => void): postgres.Sql {
   return postgres(url, {
     max,
+    ...(onnotice ? { onnotice } : {}),
     // Sin esto, contra el pooler de Supabase no funciona ninguna consulta.
     prepare: !esPooler(url),
     // Con las consultas ya explícitas esto no cambia ningún número, pero deja la

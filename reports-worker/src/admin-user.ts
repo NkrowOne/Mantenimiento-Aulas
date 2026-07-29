@@ -58,6 +58,9 @@ function urlDeLaApi(): string | undefined {
  */
 const CLI = process.env['ADMIN_CLI'] ?? 'npm run admin:user --'
 
+/** De qué variable ha salido la URL, para poder señalarla si es la equivocada. */
+const VARIABLE_DE_LA_URL = process.env['SUPABASE_URL'] ? 'SUPABASE_URL' : 'SUPABASE_UPSTREAM'
+
 const SUPABASE_URL = urlDeLaApi()
 const SERVICE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY']
 
@@ -294,7 +297,54 @@ Uso: ${CLI} <comando> [opciones]
   process.exit(1)
 }
 
-run().catch((err) => {
+/**
+ * ¿El fallo es de leer como JSON algo que no lo era?
+ *
+ * Es el síntoma de que la URL configurada no lleva a la puerta de entrada de
+ * Supabase, y el mensaje que sale de supabase-js no lo dice por ningún lado:
+ * `404 page not found` —el cuerpo con el que responde un proxy escrito en Go
+ * cuando ni el host ni la ruta le suenan— llega hasta aquí como «Unexpected
+ * non-whitespace character after JSON at position 4», porque `404` es JSON
+ * válido hasta que aparece la `p` de `page`. Cierto, y sin una sola pista de
+ * dónde mirar.
+ */
+function esRespuestaNoJson(err: unknown): boolean {
+  const mensaje = err instanceof Error ? err.message : String(err)
+  return /JSON|Unexpected token|Unexpected end of/i.test(mensaje)
+}
+
+/**
+ * Quién contesta de verdad en la URL configurada. Cuesta una petición, pero
+ * solo se paga cuando algo ya ha fallado: el estado, el tipo de contenido y la
+ * primera línea del cuerpo bastan para distinguir «esto es Kong» de «esto es el
+ * frontal de la plataforma». La clave viaja al mismo sitio al que ya iba la
+ * petición que ha fallado, así que esto no la enseña a nadie nuevo.
+ */
+async function quienResponde(url: string, clave: string): Promise<string> {
+  const sonda = `${url.replace(/\/+$/, '')}/auth/v1/health`
+  try {
+    const res = await fetch(sonda, { headers: { apikey: clave, Authorization: `Bearer ${clave}` } })
+    const cuerpo = (await res.text()).trim().replace(/\s+/g, ' ').slice(0, 160)
+    const tipo = res.headers.get('content-type') ?? 'sin content-type'
+    return `  ${sonda}\n  responde HTTP ${res.status} (${tipo}): ${cuerpo || '(cuerpo vacío)'}`
+  } catch (err) {
+    return `  ${sonda}\n  no responde: ${err instanceof Error ? err.message : String(err)}`
+  }
+}
+
+run().catch(async (err) => {
   console.error(err instanceof Error ? err.message : err)
+  if (esRespuestaNoJson(err)) {
+    console.error(`
+  La API ha contestado algo que no es JSON, así que ${VARIABLE_DE_LA_URL} no
+  apunta a la puerta de entrada de Supabase (Kong), o esta no enruta /auth/v1:
+
+${await quienResponde(SUPABASE_URL, SERVICE_KEY)}
+
+  Ahí tiene que ir el host:puerto de Kong en la red privada del despliegue
+  (p. ej. kong:8000), NO un dominio público: al salir por el frontal, su
+  «404 page not found» vuelve convertido en este error de JSON.
+`)
+  }
   process.exit(1)
 })

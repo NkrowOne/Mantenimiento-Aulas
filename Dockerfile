@@ -54,6 +54,15 @@ RUN npx esbuild reports-worker/src/admin-user.ts \
       --bundle --platform=node --target=node20 --format=cjs \
       --outfile=/alta/admin-user.cjs
 
+# Las migraciones viajan igual, y por el mismo motivo con más razón:
+# `scripts/init-plataforma.sh` necesita bash, psql y el repositorio, y en la
+# imagen de servicio no hay ninguno de los tres. Su única dependencia
+# (`postgres`) está en el `package.json` de la raíz para que este `npm ci` la
+# traiga; al navegador no llega, porque nada de `src/` la importa.
+RUN npx esbuild reports-worker/src/migraciones.ts \
+      --bundle --platform=node --target=node20 --format=cjs \
+      --outfile=/alta/migraciones.cjs
+
 # ── Servicio ─────────────────────────────────────────────────────────────
 FROM caddy:2-alpine
 
@@ -65,11 +74,17 @@ RUN apk add --no-cache nodejs
 COPY Caddyfile.skyway /etc/caddy/Caddyfile
 COPY --from=build /app/dist /srv/dist
 COPY --from=build /alta/admin-user.cjs /opt/alta/admin-user.cjs
+COPY --from=build /alta/migraciones.cjs /opt/alta/migraciones.cjs
 
 # El informe del build, apartado FUERA de `/srv/dist`. El arranque reescribe
 # `/srv/dist/salud.json` juntando esto con el entorno; si leyera del mismo sitio
 # donde escribe, en el segundo arranque estaría leyendo su propia salida.
 COPY --from=build /app/dist/salud.json /srv/salud-construccion.json
+
+# El SQL, tal cual está en el repositorio: `migrar` lo lee de aquí y lleva la
+# cuenta en `public.schema_migrations`, con los mismos nombres de fichero que
+# usa `init-plataforma.sh`. Así da igual cuál de los dos aplicara cada una.
+COPY --from=build /app/supabase/migrations /opt/migraciones
 
 # `salud` también sirve suelto desde la terminal del panel, que es donde alguien
 # querrá preguntarlo cuando algo vaya mal.
@@ -77,10 +92,11 @@ COPY scripts/salud.sh /usr/local/bin/salud
 COPY scripts/arranque.sh /usr/local/bin/arranque
 RUN chmod +x /usr/local/bin/salud /usr/local/bin/arranque
 
-# Un envoltorio en el PATH: en la terminal del panel se escribe
+# Envoltorios en el PATH: en la terminal del panel se escribe
 # `alta crear --email … --nombre "…"`, no la ruta a un fichero .cjs.
 RUN printf '#!/bin/sh\nexec node /opt/alta/admin-user.cjs "$@"\n' > /usr/local/bin/alta \
-    && chmod +x /usr/local/bin/alta
+    && printf '#!/bin/sh\nexec node /opt/alta/migraciones.cjs "$@"\n' > /usr/local/bin/migrar \
+    && chmod +x /usr/local/bin/alta /usr/local/bin/migrar
 
 # La orden se anuncia a sí misma con este nombre en sus mensajes de ayuda.
 ENV ADMIN_CLI=alta
@@ -88,6 +104,11 @@ ENV ADMIN_CLI=alta
 # Necesita SUPABASE_SERVICE_ROLE_KEY en el entorno del servicio. NO se declara
 # aquí a propósito: una clave de servicio no se graba en una capa de imagen. La
 # URL de la API sale de SUPABASE_UPSTREAM, la misma que ya usa el Caddyfile.
+#
+# Y DATABASE_URL si se quiere que el propio arranque ponga la base al día: tiene
+# que ser el Postgres del despliegue (`migrar` se niega si no encuentra
+# `auth.users` y `storage.buckets`, que es como se detecta una base equivocada).
+# Sin ella, el arranque lo dice en el registro y sirve la aplicación igual.
 
 ENV PORT=8080
 EXPOSE 8080
@@ -105,12 +126,18 @@ EXPOSE 8080
 # queda en `docker inspect … State.Health`, y un `/salud.json` que en realidad
 # es el index.html —porque `try_files` cae a la SPA cuando el fichero falta—
 # deja de pasar por bueno.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s \
+#
+# El periodo de gracia cubre las migraciones: se aplican antes de ceder el
+# proceso a Caddy, y en el primer arranque son unos segundos —o hasta medio
+# minuto si la base todavía está levantando, que es lo normal cuando la
+# plataforma arranca la pila entera a la vez. Con los 5 s de antes, un
+# despliegue nuevo se pintaba enfermo mientras hacía justo lo que debía.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
   CMD salud --sonda
 
-# El arranque rehace el informe y lo escribe en el registro antes de ceder el
-# proceso. Va en ENTRYPOINT y no dentro del CMD porque la plataforma puede
-# sustituir el CMD por un `startCmd` suyo: el ENTRYPOINT sobrevive a eso y el
-# diagnóstico sigue saliendo.
+# El arranque rehace el informe, pone la base al día y lo escribe todo en el
+# registro antes de ceder el proceso. Va en ENTRYPOINT y no dentro del CMD
+# porque la plataforma puede sustituir el CMD por un `startCmd` suyo: el
+# ENTRYPOINT sobrevive a eso y el diagnóstico sigue saliendo.
 ENTRYPOINT ["/usr/local/bin/arranque"]
 CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
