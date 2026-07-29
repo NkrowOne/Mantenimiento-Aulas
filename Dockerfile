@@ -66,6 +66,17 @@ COPY Caddyfile.skyway /etc/caddy/Caddyfile
 COPY --from=build /app/dist /srv/dist
 COPY --from=build /alta/admin-user.cjs /opt/alta/admin-user.cjs
 
+# El informe del build, apartado FUERA de `/srv/dist`. El arranque reescribe
+# `/srv/dist/salud.json` juntando esto con el entorno; si leyera del mismo sitio
+# donde escribe, en el segundo arranque estaría leyendo su propia salida.
+COPY --from=build /app/dist/salud.json /srv/salud-construccion.json
+
+# `salud` también sirve suelto desde la terminal del panel, que es donde alguien
+# querrá preguntarlo cuando algo vaya mal.
+COPY scripts/salud.sh /usr/local/bin/salud
+COPY scripts/arranque.sh /usr/local/bin/arranque
+RUN chmod +x /usr/local/bin/salud /usr/local/bin/arranque
+
 # Un envoltorio en el PATH: en la terminal del panel se escribe
 # `alta crear --email … --nombre "…"`, no la ruta a un fichero .cjs.
 RUN printf '#!/bin/sh\nexec node /opt/alta/admin-user.cjs "$@"\n' > /usr/local/bin/alta \
@@ -82,10 +93,24 @@ ENV PORT=8080
 EXPOSE 8080
 
 # Comprueba que Caddy sirve, no solo que el proceso existe. El estado de la
-# configuración va en el cuerpo (`configurada`), no en el código: una clave
-# ausente deja la aplicación inservible pero el servicio sano, y marcarlo
-# enfermo lo tumbaría en vez de solo señalarlo.
+# configuración sigue yendo en el cuerpo (`estado`, `faltan`) y no en el código
+# de salida: una variable ausente deja la aplicación inservible pero el servicio
+# sano, y marcarlo enfermo lo tumbaría en vez de solo señalarlo. Peor todavía
+# aquí, donde Skyway sondea esta misma ruta durante el despliegue y exige 2xx:
+# devolver error abortaría el despliegue y restauraría la versión anterior, que
+# estará igual de desconfigurada, sin decir por qué —la sonda de Skyway tira el
+# cuerpo—. Un problema legible se convertiría en uno mudo.
+#
+# Lo que cambia respecto de antes es que ese cuerpo ahora SE LEE: el resumen
+# queda en `docker inspect … State.Health`, y un `/salud.json` que en realidad
+# es el index.html —porque `try_files` cae a la SPA cuando el fichero falta—
+# deja de pasar por bueno.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s \
-  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT}/salud.json" || exit 1
+  CMD salud --sonda
 
+# El arranque rehace el informe y lo escribe en el registro antes de ceder el
+# proceso. Va en ENTRYPOINT y no dentro del CMD porque la plataforma puede
+# sustituir el CMD por un `startCmd` suyo: el ENTRYPOINT sobrevive a eso y el
+# diagnóstico sigue saliendo.
+ENTRYPOINT ["/usr/local/bin/arranque"]
 CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

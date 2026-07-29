@@ -279,6 +279,7 @@ ${B('▸ Servicio del front')}   \x1b[2m(la clave es argumento de CONSTRUCCIÓN,
 
 VITE_SUPABASE_ANON_KEY=${anonKey}
 SUPABASE_UPSTREAM=${env['SUPABASE_UPSTREAM'] ?? '<host:puerto de Kong en la red privada>'}
+SUPABASE_SERVICE_ROLE_KEY=${serviceKey}   \x1b[2m(solo para \`alta\`; la PWA no la usa)\x1b[0m
 
 ${B('▸ Servicio del worker de informes')}
 
