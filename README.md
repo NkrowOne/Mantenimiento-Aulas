@@ -83,6 +83,17 @@ lleve plugin de CORS. Necesita `SUPABASE_UPSTREAM` en tiempo de ejecución y
 Esa imagen lleva además la orden de altas de usuario (`alta`, ver *Usuarios*),
 que es lo único que necesita `SUPABASE_SERVICE_ROLE_KEY` en el servicio.
 
+Y **se pone la base al día ella sola**: al arrancar aplica las migraciones que
+falten (`migrar`, el mismo SQL de `supabase/migrations` y el mismo registro en
+`public.schema_migrations` que lleva `init-plataforma.sh`, así que da igual cuál
+de los dos aplicara cada una). Solo pide `DATABASE_URL`, y del Postgres **del
+despliegue**: si ahí no encuentra `auth.users` y `storage.buckets` se planta sin
+tocar nada, que es como se caza una cadena que apunta a otra base. Sin
+`DATABASE_URL` no migra y lo dice en el registro. En ningún caso impide que la
+aplicación se sirva —es una PWA que funciona sin conexión, y dejar el iPad en
+blanco porque la base tarda en levantar no arregla nada—, y para lanzarlo a mano
+`migrar` está en el `PATH`, como `alta`.
+
 ### Saber si le falta alguna variable
 
 Un despliegue de esto puede quedar **verde y roto**: sin `SUPABASE_UPSTREAM` la
