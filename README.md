@@ -101,6 +101,7 @@ entrega un código de un solo uso que caduca en 24 horas:
 ```bash
 npm run admin:user -- crear  --email ana@x.es --nombre "Ana" --rol tecnico
 npm run admin:user -- codigo --email ana@x.es      # si se pierde
+npm run admin:user -- codigo --email ana@x.es --codigo 'Loma-Verde-41'  # dictado por teléfono
 npm run admin:user -- rol    --email ana@x.es --rol supervisor
 npm run admin:user -- listar
 ```

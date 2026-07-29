@@ -4,6 +4,7 @@
  *   npm run admin:user -- crear  --email ana@x.es --nombre "Ana Ruiz" --rol tecnico
  *   npm run admin:user -- crear  --email jefe@x.es --nombre "Jefe" --primer-admin
  *   npm run admin:user -- codigo --email ana@x.es          # nuevo código de alta
+ *   npm run admin:user -- codigo --email ana@x.es --codigo 'Loma-Verde-41'
  *   npm run admin:user -- rol    --email ana@x.es --rol supervisor
  *   npm run admin:user -- listar
  *
@@ -51,6 +52,31 @@ function generateCode(): string {
   const pick = (): string => ALPHABET[randomInt(ALPHABET.length)]!
   const group = (): string => Array.from({ length: 4 }, pick).join('')
   return `${group()}-${group()}-${group()}`
+}
+
+/** Longitud mínima de un código elegido a mano. GoTrue rechaza por debajo de 6. */
+const MIN_CODE_LENGTH = 8
+
+/**
+ * El código de esta alta: el que pida `--codigo`, o uno aleatorio.
+ *
+ * Elegirlo a mano es cómodo cuando el alta se hace por teléfono y hay que
+ * dictarlo. No lo convierte en una credencial permanente: sigue caducando a las
+ * CODE_TTL_HOURS horas, sigue sirviendo una sola vez, y `enrollDevice()` rota la
+ * contraseña nada más entrar. Un código elegido y memorable es exactamente igual
+ * de válido que uno aleatorio *durante esa ventana*, así que conviene que la
+ * ventana sea la que es.
+ */
+function resolveCode(): { code: string; chosen: boolean } {
+  const chosen = arg('codigo')
+  if (chosen === undefined) return { code: generateCode(), chosen: false }
+
+  if (chosen.length < MIN_CODE_LENGTH) {
+    console.error(`El código debe tener al menos ${MIN_CODE_LENGTH} caracteres.`)
+    process.exit(1)
+  }
+
+  return { code: chosen, chosen: true }
 }
 
 function hashCode(code: string): string {
@@ -101,7 +127,7 @@ async function storeCode(profileId: string, code: string): Promise<void> {
   if (error) throw error
 }
 
-function announce(email: string, code: string, role: Role): void {
+function announce(email: string, code: string, role: Role, chosen = false): void {
   console.log(`
   Usuario:  ${email}
   Rol:      ${role}
@@ -113,7 +139,16 @@ function announce(email: string, code: string, role: Role): void {
 
   No vuelve a mostrarse. Si se pierde, genera otro con:
     npm run admin:user -- codigo --email ${email}
-`)
+${
+  chosen
+    ? `
+  Código elegido a mano: en cuanto se use deja de valer, igual que uno
+  aleatorio. Si no se usa hoy, caduca solo. No lo reutilices para otra alta
+  ni lo guardes como si fuera una contraseña: la contraseña de este usuario
+  pasa a ser aleatoria en el primer inicio de sesión.
+`
+    : ''
+}`)
 }
 
 async function crear(): Promise<void> {
@@ -126,13 +161,14 @@ async function crear(): Promise<void> {
 
   const role: Role = has('primer-admin') ? 'admin' : parseRole(arg('rol'))
 
+  // Antes de la red: un `--codigo` mal puesto debe fallar al instante.
+  const { code, chosen } = resolveCode()
+
   if (await findUserByEmail(email)) {
     console.error(`Ya existe un usuario con ${email}. Para darle un código nuevo:`)
     console.error(`  npm run admin:user -- codigo --email ${email}`)
     process.exit(1)
   }
-
-  const code = generateCode()
 
   const { data, error } = await admin.auth.admin.createUser({
     email,
@@ -160,7 +196,7 @@ async function crear(): Promise<void> {
   }
 
   await storeCode(data.user.id, code)
-  announce(email, code, role)
+  announce(email, code, role, chosen)
 }
 
 async function codigo(): Promise<void> {
@@ -170,13 +206,14 @@ async function codigo(): Promise<void> {
     process.exit(1)
   }
 
+  // Antes de la red: un `--codigo` mal puesto debe fallar al instante.
+  const { code, chosen } = resolveCode()
+
   const user = await findUserByEmail(email)
   if (!user) {
     console.error(`No hay ningún usuario con ${email}.`)
     process.exit(1)
   }
-
-  const code = generateCode()
 
   // Reponer la contraseña temporal invalida el dispositivo anterior sólo si
   // este vuelve a necesitar autenticarse: los refresh tokens vivos siguen
@@ -190,7 +227,7 @@ async function codigo(): Promise<void> {
   await storeCode(user.id, code)
 
   const { data: profile } = await admin.from('profiles').select('role').eq('id', user.id).single()
-  announce(email, code, (profile?.role as Role) ?? 'tecnico')
+  announce(email, code, (profile?.role as Role) ?? 'tecnico', chosen)
 }
 
 async function rol(): Promise<void> {
@@ -248,10 +285,13 @@ if (!run) {
   console.error(`
 Uso: npm run admin:user -- <comando> [opciones]
 
-  crear   --email <e> --nombre "<n>" [--rol <r>] [--primer-admin]
-  codigo  --email <e>
+  crear   --email <e> --nombre "<n>" [--rol <r>] [--primer-admin] [--codigo <c>]
+  codigo  --email <e> [--codigo <c>]
   rol     --email <e> --rol tecnico|supervisor|admin
   listar
+
+  --codigo fija el código de alta en vez de generarlo al azar. Sigue caducando
+  en ${CODE_TTL_HOURS}h y sigue quemándose en el primer uso: no es una contraseña maestra.
 `)
   process.exit(1)
 }

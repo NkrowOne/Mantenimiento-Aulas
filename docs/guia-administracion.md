@@ -68,6 +68,26 @@ npm run admin:user -- rol    --email ana@x.es --rol supervisor
 
 **El código solo se muestra una vez.** Si se pierde, genera otro con `codigo`.
 
+### Elegir el código en vez de generarlo
+
+Cuando el alta se hace por teléfono y hay que dictar el código, `--codigo` deja
+fijarlo (mínimo 8 caracteres):
+
+```bash
+npm run admin:user -- crear  --email ana@x.es --nombre "Ana Ruiz" --codigo 'Loma-Verde-41'
+npm run admin:user -- codigo --email ana@x.es --codigo 'Loma-Verde-41'
+```
+
+**No es una contraseña maestra, y no existe tal cosa en este sistema.** Un código
+elegido caduca a las 24 horas y se quema en el primer uso, igual que uno
+aleatorio: en cuanto el dispositivo entra, la app rota la contraseña a una
+aleatoria que no se guarda en ningún sitio. Por eso no sirve reutilizar el mismo
+código para varias altas ni apuntarlo como si fuera la llave de la cuenta — la
+llave, a partir del alta, es el PIN de ese dispositivo.
+
+Un código fijo que no caducara sería una contraseña permanente y adivinable en
+el endpoint público de login, que es la única puerta abierta del despliegue.
+
 ### Los tres roles
 
 | Rol | Puede |
