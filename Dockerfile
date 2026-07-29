@@ -40,11 +40,43 @@ ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY \
 
 RUN npm run build
 
+# El alta de usuarios, empaquetada en un fichero suelto.
+#
+# En la imagen de servicio no hay repositorio ni `node_modules`, así que la
+# orden viaja con sus dependencias dentro y allí basta Node para ejecutarla.
+# Sin esto, dar de alta a alguien exigía otra máquina con el repositorio
+# clonado: el contenedor solo lleva Caddy y los ficheros compilados.
+#
+# El `target` va por debajo del Node del repositorio a propósito: en la imagen
+# de servicio la versión la decide el Alpine de Caddy, no `engines`, y sube o
+# baja sola cuando cambie la base.
+RUN npx esbuild reports-worker/src/admin-user.ts \
+      --bundle --platform=node --target=node20 --format=cjs \
+      --outfile=/alta/admin-user.cjs
+
 # ── Servicio ─────────────────────────────────────────────────────────────
 FROM caddy:2-alpine
 
+# Node está aquí solo para el alta de usuarios. Son unos 50 MB en una imagen
+# que sirve ficheros estáticos, y es lo que cuesta poder administrar el
+# despliegue desde la terminal del panel en vez de desde un portátil.
+RUN apk add --no-cache nodejs
+
 COPY Caddyfile.skyway /etc/caddy/Caddyfile
 COPY --from=build /app/dist /srv/dist
+COPY --from=build /alta/admin-user.cjs /opt/alta/admin-user.cjs
+
+# Un envoltorio en el PATH: en la terminal del panel se escribe
+# `alta crear --email … --nombre "…"`, no la ruta a un fichero .cjs.
+RUN printf '#!/bin/sh\nexec node /opt/alta/admin-user.cjs "$@"\n' > /usr/local/bin/alta \
+    && chmod +x /usr/local/bin/alta
+
+# La orden se anuncia a sí misma con este nombre en sus mensajes de ayuda.
+ENV ADMIN_CLI=alta
+
+# Necesita SUPABASE_SERVICE_ROLE_KEY en el entorno del servicio. NO se declara
+# aquí a propósito: una clave de servicio no se graba en una capa de imagen. La
+# URL de la API sale de SUPABASE_UPSTREAM, la misma que ya usa el Caddyfile.
 
 ENV PORT=8080
 EXPOSE 8080

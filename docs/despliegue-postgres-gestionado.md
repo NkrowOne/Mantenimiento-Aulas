@@ -241,11 +241,12 @@ SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 npm run admin:user -- crear --email tu@correo.es --nombre "Tu nombre" --primer-admin
 ```
 
-O, sin clonar nada, desde la terminal del servicio del worker del paso 7, que ya
-tiene esas dos variables puestas:
+O, sin clonar nada, desde la terminal del servicio de la aplicación en el panel
+—la imagen lleva la orden dentro como `alta`, y solo pide que el servicio tenga
+`SUPABASE_SERVICE_ROLE_KEY` entre sus variables—:
 
 ```bash
-npm run admin -- crear --email tu@correo.es --nombre "Tu nombre" --primer-admin
+alta crear --email tu@correo.es --nombre "Tu nombre" --primer-admin
 ```
 
 Imprime un código de un solo uso que caduca en 24h.

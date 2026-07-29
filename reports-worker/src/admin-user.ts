@@ -7,14 +7,20 @@
  *   npm run admin:user -- rol    --email ana@x.es --rol supervisor
  *   npm run admin:user -- listar
  *
- * Vive en el worker, y no en `scripts/`, porque en un despliegue sobre
- * plataforma (Skyway, Railway, Fly…) este es el único contenedor capaz de
- * ejecutarla desde la terminal del panel: la imagen de la PWA es
- * `caddy:2-alpine` con `dist` dentro —ni Node, ni npm, ni este repositorio—,
- * mientras que el worker ya es Node y ya recibe `SUPABASE_URL` y
- * `SUPABASE_SERVICE_ROLE_KEY`, que le hacen falta para subir los informes. Sin
- * esto, dar de alta a alguien exigía una máquina con el repositorio clonado.
- * `scripts/admin-user.ts` es esta misma orden lanzada desde el repositorio.
+ * Una sola implementación para los tres sitios desde los que se administra:
+ *
+ *   - el repositorio, con `npm run admin:user` (`scripts/admin-user.ts`);
+ *   - el worker de informes, con `npm run admin`, que ya es Node;
+ *   - el contenedor de la PWA, con `alta`, donde el `Dockerfile` de la raíz la
+ *     empaqueta con esbuild porque allí no hay ni repositorio ni node_modules.
+ *
+ * El tercero es el que importa en un despliegue sobre plataforma: la imagen de
+ * servicio es `caddy:2-alpine` con `dist` dentro, y sin esto dar de alta a
+ * alguien exigía otra máquina con el repositorio clonado.
+ *
+ * Copiar el fichero en vez de compartirlo saldría caro: si el alfabeto de los
+ * códigos, su hash o su caducidad se separan entre copias, el síntoma es un
+ * código que la aplicación no reconoce.
  *
  * Usa la clave de servicio, así que **solo se ejecuta en el servidor**, nunca
  * desde el navegador.
@@ -30,15 +36,37 @@
 import { createClient } from '@supabase/supabase-js'
 import { createHash, randomInt } from 'node:crypto'
 
-const SUPABASE_URL = process.env['SUPABASE_URL']
+/**
+ * En el contenedor de la PWA no hay `SUPABASE_URL`, pero sí `SUPABASE_UPSTREAM`
+ * —el host:puerto de Kong en la red interna—, que es lo que Caddy usa ya para
+ * hacer de proxy de la API. Reutilizarlo ahorra una variable de entorno y, de
+ * paso, el alta no sale a Internet para hablar con la API de al lado.
+ */
+function urlDeLaApi(): string | undefined {
+  const explicita = process.env['SUPABASE_URL']
+  if (explicita) return explicita
+  const upstream = process.env['SUPABASE_UPSTREAM']
+  if (!upstream) return undefined
+  return /^https?:\/\//.test(upstream) ? upstream : `http://${upstream}`
+}
+
+/**
+ * Cómo se invoca esta orden allí donde se esté ejecutando. Un mensaje de ayuda
+ * que sugiere un comando inexistente en ese contenedor no ayuda a nadie: la
+ * imagen de la PWA la expone como `alta`, y el repositorio y el worker como
+ * script de npm.
+ */
+const CLI = process.env['ADMIN_CLI'] ?? 'npm run admin:user --'
+
+const SUPABASE_URL = urlDeLaApi()
 const SERVICE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY']
 
 if (!SUPABASE_URL || !SERVICE_KEY) {
   console.error(
-    'Faltan SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY.\n' +
+    'Falta SUPABASE_SERVICE_ROLE_KEY o la URL de la API.\n' +
       'Este script gestiona usuarios, así que necesita la clave de servicio.\n' +
-      'En la terminal del worker ya están puestas; desde el repositorio,\n' +
-      'ejecútalo en el servidor con el .env cargado.',
+      'La URL sale de SUPABASE_URL o, en el contenedor de la PWA, de\n' +
+      'SUPABASE_UPSTREAM. Desde el repositorio, ejecútalo con el .env cargado.',
   )
   process.exit(1)
 }
@@ -122,7 +150,7 @@ function announce(email: string, code: string, role: Role): void {
   aplicación, y a continuación elige su PIN.
 
   No vuelve a mostrarse. Si se pierde, genera otro con:
-    npm run admin:user -- codigo --email ${email}
+    ${CLI} codigo --email ${email}
 `)
 }
 
@@ -138,7 +166,7 @@ async function crear(): Promise<void> {
 
   if (await findUserByEmail(email)) {
     console.error(`Ya existe un usuario con ${email}. Para darle un código nuevo:`)
-    console.error(`  npm run admin:user -- codigo --email ${email}`)
+    console.error(`  ${CLI} codigo --email ${email}`)
     process.exit(1)
   }
 
@@ -256,7 +284,7 @@ const commands: Record<string, () => Promise<void>> = { crear, codigo, rol, list
 const run = command ? commands[command] : undefined
 if (!run) {
   console.error(`
-Uso: npm run admin:user -- <comando> [opciones]
+Uso: ${CLI} <comando> [opciones]
 
   crear   --email <e> --nombre "<n>" [--rol <r>] [--primer-admin]
   codigo  --email <e>

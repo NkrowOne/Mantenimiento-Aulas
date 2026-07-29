@@ -80,6 +80,9 @@ va por el mismo origen que la PWA**, que es lo que permite que `kong.yml` no
 lleve plugin de CORS. Necesita `SUPABASE_UPSTREAM` en tiempo de ejecución y
 `VITE_SUPABASE_ANON_KEY` como argumento de construcción.
 
+Esa imagen lleva además la orden de altas de usuario (`alta`, ver *Usuarios*),
+que es lo único que necesita `SUPABASE_SERVICE_ROLE_KEY` en el servicio.
+
 ### El certificado, que es lo que decide si hay modo offline
 
 Sin HTTPS válido no hay service worker, y sin service worker no hay modo
@@ -105,13 +108,19 @@ npm run admin:user -- rol    --email ana@x.es --rol supervisor
 npm run admin:user -- listar
 ```
 
-Sobre una plataforma, las mismas órdenes desde la terminal del servicio **del
-worker de informes**, que es el único contenedor con Node y con la clave de
-servicio a mano —el de la aplicación es Caddy con la PWA compilada, sin npm—:
+Sobre una plataforma no hay repositorio a mano, así que la imagen del servicio
+lleva las mismas órdenes dentro, como `alta`:
 
 ```bash
-npm run admin -- crear --email ana@x.es --nombre "Ana" --rol tecnico
+alta crear --email ana@x.es --nombre "Ana" --rol tecnico
 ```
+
+Se ejecuta desde la terminal del servicio, en el panel de la plataforma. Pide
+`SUPABASE_SERVICE_ROLE_KEY` entre las variables del servicio —la URL de la API
+la saca de `SUPABASE_UPSTREAM`, la que ya usa el Caddyfile—, y **esa clave no
+llega al navegador**: en el bundle solo entran las variables `VITE_*`, y esta no
+lo es. El worker de informes, si lo tienes desplegado, responde a las mismas
+órdenes con `npm run admin -- …`.
 
 El código **es** la contraseña temporal. Al usarlo, la app la rota
 inmediatamente a una aleatoria fuerte que no se guarda en ningún sitio, así que
