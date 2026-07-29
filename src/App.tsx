@@ -586,7 +586,7 @@ export function App(): React.ReactElement {
           {tab === 'borradores' && <DraftsPage />}
           {tab === 'almacen' && <StockPage role={role} />}
           {tab === 'informes' && <ReportsPage />}
-          {tab === 'datos' && <CleanupPage />}
+          {tab === 'datos' && <CleanupPage yo={userId} />}
         </Suspense>
       )}
 

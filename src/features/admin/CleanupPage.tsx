@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { AssetTypeTray } from './AssetTypeTray'
+import { UsersPage } from './UsersPage'
 
 interface ProvisionalBuilding {
   id: string
@@ -26,7 +27,7 @@ interface QuarantineRow {
  * el edificio entra marcado y aquí se resuelve con un clic: fusionarlo con el
  * correcto o confirmarlo como propio.
  */
-export function CleanupPage(): React.ReactElement {
+export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
   const qc = useQueryClient()
   const [mergeInto, setMergeInto] = useState<Record<string, string>>({})
 
@@ -110,6 +111,15 @@ export function CleanupPage(): React.ReactElement {
 
   return (
     <div className="mx-auto max-w-4xl space-y-8 p-4">
+      {/*
+        Los usuarios van los PRIMEROS de la pantalla de administración.
+        Lo demás —edificios sin identificar, cuarentena, tipos sin validar— es
+        depuración de la importación: importante, pero se hace una vez. Esto es
+        lo que se viene a buscar cuando algo va mal, y lo que hasta ahora obligaba
+        a abrir una terminal.
+      */}
+      <UsersPage yo={yo} />
+
       <section>
         <h1 className="text-xl font-semibold">Edificios sin identificar</h1>
         <p className="mt-1 text-sm text-muted">Están en el histórico pero no en el maestro.</p>
