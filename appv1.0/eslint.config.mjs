@@ -13,6 +13,23 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  // Toda la configuración de entorno pasa por src/lib/env.ts: prohíbe
+  // acceder a process.env directamente desde el resto de la app.
+  {
+    files: ["**/*.{js,jsx,ts,tsx}"],
+    ignores: ["src/lib/env.ts", "playwright.config.ts"],
+    rules: {
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "process",
+          property: "env",
+          message:
+            "No accedas a process.env directamente: usa `serverEnv`/`clientEnv` de @/lib/env.",
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

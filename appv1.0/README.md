@@ -49,17 +49,20 @@ cp .env.example .env
 
 `.env` no se sube al repositorio (está en `.gitignore`) ni se copia dentro de la imagen (está en `.dockerignore`); Docker Compose lo lee automáticamente para sustituir las variables del `docker-compose.yml`.
 
+Todas las variables que lee el proceso de Next.js se validan de forma centralizada con Zod en [`src/lib/env.ts`](./src/lib/env.ts) — ver la sección [Variables de entorno](#variables-de-entorno-srclibenvts) más abajo. `POSTGRES_DB`/`POSTGRES_USER`/`POSTGRES_PASSWORD` y `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` solo los consumen los contenedores de `postgres` y `minio` respectivamente, nunca el proceso de la app.
+
 Variables mínimas (ver `.env.example`):
 
 | Variable | Descripción |
 |---|---|
 | `DATABASE_URL` | Cadena de conexión a PostgreSQL usada por la app |
-| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Credenciales de PostgreSQL |
-| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | Credenciales del usuario root de MinIO |
+| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Credenciales de PostgreSQL (solo para el contenedor `postgres`) |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | Credenciales del usuario root de MinIO (solo para el contenedor `minio`) |
 | `S3_ENDPOINT` / `S3_REGION` / `S3_BUCKET` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` | Configuración del cliente S3 contra MinIO |
 | `STORAGE_DRIVER` | Driver de almacenamiento de fotos/ficheros (`s3` para MinIO) |
 | `AUTH_SECRET` | Secreto para la futura capa de autenticación |
-| `APP_URL` | URL pública de la aplicación |
+| `NEXT_PUBLIC_APP_URL` | URL pública de la aplicación (no es secreta, visible en el navegador) |
+| `GEMINI_API_KEY` | Clave de Gemini, **opcional** — sin ella las funciones de IA se ocultan |
 
 ### Levantar los servicios
 
@@ -82,6 +85,23 @@ docker compose down
 ```
 
 Esta infraestructura todavía no incluye Drizzle ni migraciones: PostgreSQL arranca vacío, a la espera de las fases del `docs/PLAN.md` donde se introduce el ORM.
+
+## Variables de entorno (src/lib/env.ts)
+
+Todas las variables de entorno que usa la aplicación se validan con **Zod** en un único módulo central: [`src/lib/env.ts`](./src/lib/env.ts). Ningún otro fichero debe leer `process.env` directamente (una regla de ESLint lo impide fuera de ese módulo).
+
+- **`serverEnv`** — configuración de servidor: `DATABASE_URL`, `STORAGE_DRIVER`, `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `AUTH_SECRET` y `GEMINI_API_KEY` (opcional). No debe importarse nunca desde un componente de cliente.
+- **`clientEnv`** — configuración pública, con prefijo `NEXT_PUBLIC_*`: por ahora solo `NEXT_PUBLIC_APP_URL`. Ninguna variable secreta lleva ese prefijo.
+
+```ts
+import { serverEnv } from "@/lib/env";
+
+const bucket = serverEnv.S3_BUCKET; // tipado y validado, sin tocar process.env
+```
+
+Si falta una variable obligatoria, **la aplicación falla al arrancar** con un mensaje explicando cuál: `src/instrumentation.ts` llama a `assertEnv()` en cuanto arranca el servidor (`next dev` / `next start`), antes de atender ninguna petición. `GEMINI_API_KEY` es deliberadamente la única opcional — sin ella, el resto de la aplicación funciona con normalidad y las funciones de IA simplemente se ocultan.
+
+`src/lib/env.test.ts` cubre configuraciones válidas e inválidas (variables ausentes, URLs mal formadas, `GEMINI_API_KEY` ausente, etc.).
 
 ## Estructura inicial
 
@@ -113,7 +133,9 @@ src/
 │   ├── schema/       # Esquema de base de datos (Drizzle, pendiente)
 │   ├── migrations/   # Migraciones (pendiente)
 │   └── index.ts      # Punto de entrada de la capa de datos
-├── lib/              # Utilidades transversales
+├── lib/
+│   ├── env.ts        # Validación centralizada de variables de entorno (Zod)
+│   └── env.test.ts
 ├── services/         # Lógica de negocio / casos de uso
 ├── repositories/      # Acceso a datos
 ├── hooks/            # Hooks de React reutilizables
@@ -121,7 +143,8 @@ src/
 ├── validators/       # Esquemas de validación (Zod, pendiente)
 ├── offline/          # Autoguardado, outbox y sincronización
 ├── storage/          # Abstracción de almacenamiento de ficheros/fotos
-└── test/             # Configuración y utilidades de test (Vitest)
+├── test/             # Configuración y utilidades de test (Vitest)
+└── instrumentation.ts # Falla el arranque si faltan variables obligatorias
 
 e2e/                  # Tests end-to-end (Playwright)
 ```
