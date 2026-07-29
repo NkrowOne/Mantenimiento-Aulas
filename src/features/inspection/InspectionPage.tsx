@@ -131,7 +131,15 @@ export function InspectionPage({
         </div>
       </div>
 
-      <div ref={filas} tabIndex={-1} className="divide-y divide-line px-4 outline-none">
+      {/* Las comprobaciones son el trabajo, así que van sobre PAPEL. Misma regla
+          que la lista de salas: el cromo se queda para el fondo, la cabecera y la
+          navegación. Sin esto, la hoja de la revisión y el fondo de la aplicación
+          eran la misma superficie y la pantalla se leía como un solo campo. */}
+      <div
+        ref={filas}
+        tabIndex={-1}
+        className="divide-y divide-line-soft border-y border-line bg-surface px-4 outline-none"
+      >
         {rows.map((row) => {
           const key = row.key
           const check = draft.checks.get(key)

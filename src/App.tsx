@@ -473,7 +473,8 @@ export function App(): React.ReactElement {
           <BuscadorGlobal
             onPick={(building, room) => setView({ name: 'revision', building, room })}
           />
-        <ul className="divide-y divide-line">
+        {/* Misma regla que la lista de salas: el contenido va sobre papel. */}
+        <ul className="divide-y divide-line-soft border-b border-line bg-surface">
           {(buildings ?? []).map((b) => (
             <li key={b.id}>
               <button

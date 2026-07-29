@@ -126,7 +126,39 @@ async function main(): Promise<void> {
     )
   }
 
-  const sealed = await seal(PIN, { access_token: 'demo', refresh_token: 'demo' })
+  /*
+   * Un token con FORMA de token, no la cadena «demo».
+   *
+   * `supabase.auth.setSession()` decodifica el acceso para saber cuándo caduca.
+   * Con una cadena cualquiera falla al analizarlo, y desde que `unlockWithPin()`
+   * mira ese error —antes lo descartaba— la previsualización se quedaba clavada
+   * en la pantalla del PIN diciendo que el servidor no acepta la sesión. Tenía
+   * razón: lo que estaba mal era lo que se sembraba aquí.
+   *
+   * Sin firmar y sin caducar en un año: no vale contra ningún servidor, y no
+   * hace falta, porque estas capturas se toman contra `dist` servido en local y
+   * ninguna pantalla de esta previsualización llega a pedir datos remotos.
+   */
+  const jwtDeMentira = (): string => {
+    const b64 = (o: unknown): string =>
+      Buffer.from(JSON.stringify(o))
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '')
+    const exp = Math.floor(Date.now() / 1000) + 365 * 24 * 3600
+    return `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({
+      sub: '00000000-0000-4000-8000-000000000001',
+      role: 'authenticated',
+      app_role: 'admin',
+      exp,
+    })}.previsualizacion`
+  }
+
+  const sealed = await seal(PIN, {
+    access_token: jwtDeMentira(),
+    refresh_token: 'previsualizacion',
+  })
   await page.evaluate(
     async ([sealedSession, rooms, types, inventory]) => {
       await new Promise<void>((resolve, reject) => {

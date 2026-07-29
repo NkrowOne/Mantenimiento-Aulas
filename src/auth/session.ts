@@ -135,6 +135,48 @@ export function watchSession(): () => void {
   return () => data.subscription.unsubscribe()
 }
 
+/**
+ * ¿Es «no he podido preguntar» y no «me han dicho que no»?
+ *
+ * Es la distinción que decide si el técnico entra o se queda fuera, así que se
+ * mira por varios lados: `supabase-js` marca los fallos de transporte como
+ * `AuthRetryableFetchError` y les deja el estado a 0 o sin definir, mientras que
+ * un rechazo del servidor trae un 400 o un 401.
+ */
+function esFalloDeRed(error: unknown): boolean {
+  if (!navigator.onLine) return true
+  const e = error as { name?: string; status?: number; message?: string }
+  if (e?.name === 'AuthRetryableFetchError') return true
+  if (typeof e?.status === 'number' && e.status !== 0) return false
+  return /fetch|network|failed to fetch|networkerror|load failed|timeout/i.test(e?.message ?? '')
+}
+
+/**
+ * Vuelve a establecer la sesión cuando regrese la conexión.
+ *
+ * Sin esto, quien entra sin cobertura se queda con la aplicación en local para
+ * siempre: `resumeSession()` solo corre al arrancar, así que recuperar la línea
+ * a media mañana no serviría de nada hasta la siguiente recarga.
+ *
+ * Se registra una sola vez y se desengancha al primer intento, tenga éxito o
+ * no: si vuelve a fallar, el motor de sincronización ya reintenta por su cuenta.
+ */
+function reintentarAlVolverLaRed(session: TabSession): void {
+  const alVolver = (): void => {
+    window.removeEventListener('online', alVolver)
+    void (async () => {
+      const { data } = await supabase.auth.setSession(session)
+      if (data.session) {
+        await custodiar({
+          access_token: data.session.access_token,
+          refresh_token: data.session.refresh_token,
+        })
+      }
+    })()
+  }
+  window.addEventListener('online', alVolver)
+}
+
 export interface EnrollResult {
   ok: boolean
   error?: string
@@ -263,6 +305,33 @@ export async function unlockWithPin(pin: string): Promise<UnlockResult> {
     access_token: session.access_token,
     refresh_token: session.refresh_token,
   })
+
+  /*
+   * Y aquí hay que distinguir dos cosas que se parecen y no lo son.
+   *
+   * «El servidor dice que no» y «no he podido preguntarle» llegan las dos como
+   * un error de `setSession()`, pero piden lo contrario:
+   *
+   *   - Rechazo real (400/401): el refresh token está revocado. Entrar sería
+   *     entrar a una aplicación que no puede leer nada.
+   *   - Fallo de red: **hay que dejar entrar**. El PIN se valida en local a
+   *     propósito, y todo el trabajo de campo ocurre en sótanos y pasillos sin
+   *     cobertura. Exigir servidor para desbloquear vacía de sentido el diseño
+   *     entero: el técnico llega al aula, no tiene línea y no puede ni abrir la
+   *     revisión que iba a rellenar sin conexión.
+   *
+   * Lo destapó la previsualización: sin servidor delante, la pantalla del PIN
+   * respondía «el servidor ya no acepta esta sesión» y no dejaba pasar de ahí.
+   */
+  if (error && esFalloDeRed(error)) {
+    pinEnMemoria = pin
+    // Los tokens siguen siendo los buenos; lo que falta es la red. Se guardan y
+    // se reintenta en cuanto vuelva, para que la sesión quede viva sola.
+    cacheForTab(session)
+    reintentarAlVolverLaRed(session)
+    await touch()
+    return { ok: true }
+  }
 
   if (error || !viva.session) {
     return {

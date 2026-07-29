@@ -90,9 +90,24 @@
 }
 
 @layer components {
+  /*
+   * La tarjeta.
+   *
+   * Vive en el plano del PAPEL, un punto más cálido y más claro que el cromo del
+   * fondo (ver `tokens.css`). Con una sola familia de neutro había que subir la
+   * sombra para que se despegara, y una sombra grande sobre un parte de trabajo
+   * se ve como una app de consumo. Con dos materiales se despega sola, y la
+   * sombra puede quedarse donde debe: apenas insinuada.
+   *
+   * `--edge-quiet` le añade la línea de luz superior. Es el mismo canto que
+   * llevan las teclas, y es lo que hace que las superficies de la aplicación se
+   * lean como un sistema y no como cajas de distinta procedencia.
+   */
   .card {
     @apply bg-surface border border-line rounded-card;
-    box-shadow: var(--lift);
+    box-shadow:
+      var(--edge-quiet),
+      var(--lift);
   }
 
   /*
