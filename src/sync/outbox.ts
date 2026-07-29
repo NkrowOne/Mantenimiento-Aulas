@@ -92,7 +92,15 @@ function isPermanentFailure(status: number | undefined): boolean {
  * Y protege lo importante: que un alta repetida no pueda devolver a «sin
  * confirmar» un tipo que el coordinador ya validó.
  */
-const IGNORE_DUPLICATES = new Set<OutboxEntry['entity']>(['asset_type'])
+/*
+ * Y un movimiento de almacén, por dos motivos que apuntan al mismo sitio.
+ *
+ * El id se genera al pulsar y no al enviar, así que un reintento —el mismo
+ * consumo que ya llegó pero cuya respuesta se perdió— trae la fila idéntica.
+ * Con un upsert normal eso sería un UPDATE, y `stock_movements` ya no lo
+ * acepta: es un libro de asientos, y un asiento no se reescribe.
+ */
+const IGNORE_DUPLICATES = new Set<OutboxEntry['entity']>(['asset_type', 'stock_movement'])
 
 async function pushEntry(entry: OutboxEntry): Promise<void> {
   await db.outbox.update(entry.id, { status: 'enviando' })

@@ -245,6 +245,44 @@ select gen_random_uuid(), id, 12, 'ajuste', now(), 'Recuento físico de julio'
 from stock_items where name = 'Cable HDMI fibra 15 m';
 ```
 
+### De dónde sale el consumo
+
+El material se apunta **en la incidencia**, no en el almacén: botón **Material**
+en la fila de la incidencia, se busca el artículo y se pone la cantidad. Así el
+movimiento nace sabiendo para qué fue y en qué sala, que es lo que permite
+contestar «cuánto material se llevó el edificio H». Se puede apuntar sin
+cobertura: va por la cola de salida como las revisiones.
+
+El `−` de la pestaña Almacén sigue estando y sirve para lo demás —una
+instalación programada, una sustitución preventiva—, pero ese consumo queda sin
+destino y por eso no aparece repartido por edificio.
+
+Dos consultas que ya tienen datos de verdad:
+
+```sql
+-- Qué se gasta más
+select * from material_consumption_ranking limit 10;
+
+-- Cuánto se gastó cada mes, que sustituye a las doce columnas de la hoja Bolsa
+select * from stock_monthly_consumption order by month desc, consumed desc;
+```
+
+### Un movimiento no se corrige: se contrapone
+
+`stock_movements` es un libro de asientos y está cerrado a solo-alta. Ni la
+aplicación ni la API dejan modificar ni borrar un movimiento: **para corregir un
+error se registra el contrario**, y las dos filas se quedan. Es lo que hace el
+botón «Deshacer» de la pantalla de Almacén.
+
+Si necesitas reparar algo a mano —un movimiento importado con la fecha mal— hay
+que desactivar el disparador a propósito, y eso se nota:
+
+```sql
+alter table stock_movements disable trigger stock_movements_solo_alta;
+-- … la reparación, anotando qué y por qué en import_fixes …
+alter table stock_movements enable trigger stock_movements_solo_alta;
+```
+
 ### Las existencias no bajan de cero
 
 **No se puede gastar lo que no hay.** El `−` sale apagado en los artículos a

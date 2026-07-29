@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { displayRoomCode, norm } from '@/domain/normalize'
+import { MaterialUsado } from './MaterialUsado'
 import type { IncidentState } from '@/domain/types'
 
 interface IncidentRow {
@@ -34,6 +35,9 @@ export function IncidentsPage(): React.ReactElement {
   const qc = useQueryClient()
   const [showResolved, setShowResolved] = useState(false)
   const [query, setQuery] = useState('')
+  /* Qué incidencia tiene abierto el apunte de material. Solo una: el técnico
+     está apuntando lo de una avería, no llevando la contabilidad de seis. */
+  const [apuntando, setApuntando] = useState<string | null>(null)
 
   /*
    * La sala de cada incidencia, resuelta desde el espejo local.
@@ -172,6 +176,17 @@ export function IncidentsPage(): React.ReactElement {
                         Empezar
                       </button>
                     )}
+                    {/* El material se apunta antes de cerrar: después nadie
+                        vuelve a la incidencia, y ese era el dato que no llegaba
+                        nunca al almacén. */}
+                    <button
+                      type="button"
+                      aria-expanded={apuntando === i.id}
+                      onClick={() => setApuntando((a) => (a === i.id ? null : i.id))}
+                      className="key key-quiet min-h-11 px-3 text-xs"
+                    >
+                      Material
+                    </button>
                     <button
                       type="button"
                       onClick={() => advance.mutate({ id: i.id, state: 'resuelta' })}
@@ -182,6 +197,8 @@ export function IncidentsPage(): React.ReactElement {
                   </div>
                 )}
               </div>
+
+              {apuntando === i.id && <MaterialUsado incidentId={i.id} roomId={i.room_id} />}
             </li>
           )
         })}

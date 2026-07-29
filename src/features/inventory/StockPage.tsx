@@ -97,20 +97,40 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
     },
   })
 
-  type Movimiento = { itemId: string; qty: number; kind: 'compra' | 'consumo' | 'ajuste' }
+  /**
+   * El id viaja **dentro** del movimiento, no se genera al enviarlo.
+   *
+   * Se generaba dentro del `mutationFn`, así que cada reintento llevaba id
+   * nuevo. El caso para el que existe el botón «Reintentar» es justo el peor:
+   * la inserción llegó al servidor y se perdió la respuesta. Con id nuevo, ese
+   * reintento registraba un segundo consumo del mismo cable —y como el saldo es
+   * la suma y un movimiento ya no se puede borrar, para arreglarlo hace falta
+   * un tercero—. Naciendo el id con la pulsación, reenviarlo es no hacer nada.
+   */
+  type Movimiento = {
+    id: string
+    itemId: string
+    qty: number
+    kind: 'compra' | 'consumo' | 'ajuste'
+  }
   const [ultimo, setUltimo] = useState<Movimiento | null>(null)
 
   const move = useMutation({
     mutationFn: async (input: Movimiento) => {
-      const { data: user } = await supabase.auth.getUser()
-      const { error } = await supabase.from('stock_movements').insert({
-        id: uuidv7(),
-        stock_item_id: input.itemId,
-        qty: input.qty,
-        kind: input.kind,
-        occurred_at: new Date().toISOString(),
-        by_user: user.user?.id ?? null,
-      })
+      const { data } = await supabase.auth.getSession()
+      const { error } = await supabase.from('stock_movements').upsert(
+        {
+          id: input.id,
+          stock_item_id: input.itemId,
+          qty: input.qty,
+          kind: input.kind,
+          occurred_at: new Date().toISOString(),
+          by_user: data.session?.user.id ?? null,
+        },
+        // `ignoreDuplicates` y no un upsert normal: el reenvío tiene que ser un
+        // no-op, nunca una reescritura del asiento que ya está puesto.
+        { onConflict: 'id', ignoreDuplicates: true },
+      )
       if (error) throw error
     },
     onSuccess: (_data, input) => {
@@ -300,7 +320,14 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
                     <button
                       type="button"
                       disabled={move.isPending || l.on_hand <= 0}
-                      onClick={() => move.mutate({ itemId: l.stock_item_id, qty: -1, kind: 'consumo' })}
+                      onClick={() =>
+                        move.mutate({
+                          id: uuidv7(),
+                          itemId: l.stock_item_id,
+                          qty: -1,
+                          kind: 'consumo',
+                        })
+                      }
                       className="key key-quiet h-11 w-11"
                       aria-label={
                         l.on_hand <= 0
@@ -313,7 +340,14 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
                     <button
                       type="button"
                       disabled={move.isPending}
-                      onClick={() => move.mutate({ itemId: l.stock_item_id, qty: 1, kind: 'compra' })}
+                      onClick={() =>
+                        move.mutate({
+                          id: uuidv7(),
+                          itemId: l.stock_item_id,
+                          qty: 1,
+                          kind: 'compra',
+                        })
+                      }
                       className="key key-quiet h-11 w-11"
                       aria-label={`Añadir una unidad de ${l.name}`}
                     >
@@ -429,7 +463,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
           <button
             type="button"
             onClick={() => {
-              move.mutate({ itemId: ultimo.itemId, qty: -ultimo.qty, kind: 'ajuste' })
+              move.mutate({ id: uuidv7(), itemId: ultimo.itemId, qty: -ultimo.qty, kind: 'ajuste' })
               setUltimo(null)
             }}
             className="key key-quiet min-h-11 shrink-0 px-3 text-sm"

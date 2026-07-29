@@ -20,9 +20,15 @@ create table auth.users (
 grant usage on schema auth to authenticated, anon, service_role;
 
 -- En Supabase estas leen el JWT que PostgREST inyecta como GUC de la sesión.
+-- El `nullif` va **antes** del cast y no después, que es como estaba: las
+-- pruebas del anónimo dejan `request.jwt.claims` en cadena vacía, y `''::jsonb`
+-- no es JSON válido. La suite reventaba con «invalid input syntax for type
+-- json» en la primera escritura auditada posterior —la prueba 28— y se llevaba
+-- por delante todo lo que viniera detrás sin que el fallo tuviera nada que ver
+-- con lo que se estaba probando.
 create or replace function auth.uid() returns uuid
 language sql stable as $$
-  select nullif(current_setting('request.jwt.claims', true)::jsonb ->> 'sub', '')::uuid;
+  select nullif(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub', '')::uuid;
 $$;
 
 create or replace function auth.jwt() returns jsonb

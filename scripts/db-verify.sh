@@ -155,7 +155,9 @@ select 'lámparas por debajo del 20%', count(*) from alerts_lamp_low
 union all select 'incidencias estancadas', count(*) from alerts_stale_incidents
 union all select 'salas sin revisar', count(*) from alerts_overdue_rooms
 union all select 'stock bajo mínimo', count(*) from stock_levels where below_threshold
-union all select 'artículos en negativo', count(*) from stock_levels where on_hand < 0;" | sed 's/^/   /'
+union all select 'artículos en negativo', count(*) from stock_levels where on_hand < 0
+union all select 'consumos sin destino', count(*) from stock_movements
+  where kind = 'consumo' and incident_id is null and room_id is null;" | sed 's/^/   /'
 
 echo "▸ Pruebas de RLS e inmutabilidad"
 psql "$PGURL" -q -v ON_ERROR_STOP=1 -f supabase/rls-test.sql 2>&1 \

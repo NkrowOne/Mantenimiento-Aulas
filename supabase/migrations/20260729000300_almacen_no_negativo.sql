@@ -119,6 +119,7 @@ comment on function public.stock_no_negativo() is
 
 -- `after` y no `before`: así comprueba el saldo ya con la fila puesta y el
 -- mismo código vale para el alta, la corrección y el borrado.
+drop trigger if exists stock_movements_no_negativo on stock_movements;
 create trigger stock_movements_no_negativo
   after insert or update or delete on stock_movements
   for each row execute function public.stock_no_negativo();
