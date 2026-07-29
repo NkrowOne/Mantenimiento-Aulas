@@ -28,8 +28,15 @@ ENV NODE_ENV=production
 ENV PORT=8080
 EXPOSE 8080
 
-# El healthcheck confirma que el proceso responde, no solo que existe.
+# El healthcheck confirma que el proceso responde, no solo que existe: un
+# weasyprint colgado deja el proceso vivo y el servicio inútil.
+#
+# Contra `/salud`, no contra `/generate`. Lo segundo era de antes de que
+# existiera el endpoint de salud: sondeaba la ruta real esperando un 401 para
+# darla por sana, así que cada minuto dejaba un intento de autenticación
+# fallido en los registros y confundía el diagnóstico de un 401 de verdad.
+# Además se apoyaba en `$PORT` fijo a 8080 aunque la variable sea configurable.
 HEALTHCHECK --interval=60s --timeout=10s --start-period=20s \
-  CMD node -e "fetch('http://127.0.0.1:8080/generate',{method:'POST'}).then(r=>process.exit(r.status===401||r.status===400?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/salud').then(r=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"
 
 CMD ["npx", "tsx", "src/server.ts"]
