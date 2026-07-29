@@ -1,3 +1,10 @@
-// Punto de entrada de la capa de base de datos.
-// Pendiente: configurar Drizzle ORM + conexión a Postgres (ver docs/PLAN.md, fase 1-2).
-export {};
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
+import { serverEnv } from "@/lib/env";
+import * as schema from "./schema";
+
+const queryClient = postgres(serverEnv.DATABASE_URL, { max: 10 });
+
+export const db = drizzle(queryClient, { schema });
+
+export * from "./schema";

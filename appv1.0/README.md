@@ -28,6 +28,10 @@ npm install
 | `npm run test` | Ejecuta los tests unitarios/integración con Vitest |
 | `npm run test:watch` | Ejecuta Vitest en modo observador |
 | `npm run test:e2e` | Ejecuta los tests end-to-end con Playwright |
+| `npm run db:generate` | Genera SQL de migración a partir del esquema Drizzle |
+| `npm run db:migrate` | Aplica las migraciones pendientes contra `DATABASE_URL` |
+| `npm run db:studio` | Abre Drizzle Studio contra la base configurada |
+| `npm run db:seed` | Siembra datos iniciales (idempotente, ver más abajo) |
 
 Antes del primer `npm run test:e2e` es necesario instalar los navegadores de Playwright:
 
@@ -84,7 +88,22 @@ Para parar y limpiar contenedores conservando los volúmenes:
 docker compose down
 ```
 
-Esta infraestructura todavía no incluye Drizzle ni migraciones: PostgreSQL arranca vacío, a la espera de las fases del `docs/PLAN.md` donde se introduce el ORM.
+## Base de datos (Drizzle ORM)
+
+El esquema vive en `src/db/schema/` (16 tablas + la vista `stock_levels`) y se gestiona con **Drizzle ORM** + **drizzle-kit**, usando el driver `postgres` (postgres.js). El modelo completo, con diagrama de relaciones, está documentado en [`docs/MODELO-DATOS.md`](../docs/MODELO-DATOS.md).
+
+Con `postgres` levantado (`docker compose up -d postgres`), desde el host:
+
+```bash
+npm run db:generate   # genera SQL de migración a partir del esquema
+npm run db:migrate    # la aplica contra DATABASE_URL
+npm run db:seed       # siembra datos iniciales (idempotente)
+npm run db:studio     # explorador visual de la base
+```
+
+`db:generate`/`db:migrate`/`db:seed` usan el `DATABASE_URL` de `.env`, que apunta a `localhost:5432` (el puerto que Docker Compose publica en el host). **Dentro** del contenedor `app`, `docker-compose.yml` compone su propia `DATABASE_URL` con el host de red interno `postgres` a partir de `POSTGRES_DB`/`USER`/`PASSWORD` — son dos valores distintos a propósito, ver el comentario en `.env.example`.
+
+Las migraciones **se aplican solas** al arrancar el contenedor: `src/instrumentation.ts` las ejecuta con el runtime de Drizzle (no el CLI de `drizzle-kit`, que es una herramienta de desarrollo) antes de servir peticiones. Es idempotente, así que `docker compose down -v && docker compose up` deja el sistema operativo sin pasos manuales. El seed sigue siendo manual (`npm run db:seed`) porque crea un usuario administrador con una contraseña conocida — no algo que quieras repetir sin querer en cada reinicio.
 
 ## Variables de entorno (src/lib/env.ts)
 
@@ -108,6 +127,7 @@ Si falta una variable obligatoria, **la aplicación falla al arrancar** con un m
 ```
 Dockerfile              # Build multi-stage (deps/builder/runner), output standalone
 docker-compose.yml      # app + postgres + minio, volúmenes y healthchecks
+drizzle.config.ts       # Configuración de drizzle-kit (generate/migrate/studio)
 .dockerignore
 .env.example            # Plantilla de variables de entorno
 
@@ -130,9 +150,11 @@ src/
 │   ├── forms/        # Componentes de formularios
 │   └── feedback/     # Estados de carga, error, vacío...
 ├── db/
-│   ├── schema/       # Esquema de base de datos (Drizzle, pendiente)
-│   ├── migrations/   # Migraciones (pendiente)
-│   └── index.ts      # Punto de entrada de la capa de datos
+│   ├── schema/       # 16 tablas + vista stock_levels (Drizzle)
+│   ├── migrations/   # SQL generado por drizzle-kit
+│   ├── index.ts      # Cliente Drizzle (drizzle-orm/postgres-js)
+│   ├── migrate.ts    # Migrador en runtime, usado por instrumentation.ts
+│   └── seed.ts        # Semilla idempotente (npm run db:seed)
 ├── lib/
 │   ├── env.ts        # Validación centralizada de variables de entorno (Zod)
 │   └── env.test.ts
@@ -159,5 +181,6 @@ Las carpetas todavía sin contenido llevan un `.gitkeep` para conservar la estru
 - **Playwright** para tests end-to-end
 - Alias de importación `@/*` → `src/*`
 - **Docker / Docker Compose**: PostgreSQL 16 y MinIO como infraestructura local
+- **Drizzle ORM** + **drizzle-kit** (driver `postgres`) para el esquema y las migraciones
 
-No se ha añadido todavía autenticación, ORM (Drizzle) ni lógica de negocio: esto se abordará en fases posteriores según [`docs/PLAN.md`](../docs/PLAN.md).
+No se ha añadido todavía autenticación ni lógica de negocio: esto se abordará en fases posteriores según [`docs/PLAN.md`](../docs/PLAN.md).

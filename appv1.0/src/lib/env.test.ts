@@ -42,6 +42,11 @@ describe("parseServerEnv", () => {
     expect(env.GEMINI_API_KEY).toBe("gemini-key-123");
   });
 
+  it("trata GEMINI_API_KEY='' como ausente (Docker Compose asigna cadena vacía, no undefined)", () => {
+    const env = parseServerEnv({ ...validServerEnv, GEMINI_API_KEY: "" });
+    expect(env.GEMINI_API_KEY).toBeUndefined();
+  });
+
   it("aplica el valor por defecto de STORAGE_DRIVER cuando se omite", () => {
     const input: Record<string, string | undefined> = { ...validServerEnv };
     delete input.STORAGE_DRIVER;

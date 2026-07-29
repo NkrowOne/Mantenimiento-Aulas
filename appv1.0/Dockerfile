@@ -25,6 +25,9 @@ RUN addgroup --system --gid 1001 nodejs \
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Necesarias en runtime: instrumentation.ts las aplica al arrancar
+# (drizzle-orm/postgres-js/migrator, no el CLI de drizzle-kit).
+COPY --from=builder --chown=nextjs:nodejs /app/src/db/migrations ./src/db/migrations
 
 USER nextjs
 EXPOSE 3000

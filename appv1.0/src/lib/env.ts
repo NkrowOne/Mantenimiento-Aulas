@@ -49,7 +49,12 @@ export const serverEnvSchema = z.object({
 
   // Opcional a propósito: sin ella, las funciones de IA (Gemini) se
   // ocultan y el resto de la aplicación sigue funcionando con normalidad.
-  GEMINI_API_KEY: z.string().min(1).optional(),
+  // Se preprocesa "" -> undefined porque Docker Compose asigna cadena
+  // vacía (no "ausente") a las variables sin valor en `environment:`.
+  GEMINI_API_KEY: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().min(1).optional(),
+  ),
 });
 
 export const clientEnvSchema = z.object({

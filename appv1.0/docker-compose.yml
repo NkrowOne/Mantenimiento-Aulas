@@ -50,7 +50,10 @@ services:
       NODE_ENV: production
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
       AUTH_SECRET: ${AUTH_SECRET}
-      DATABASE_URL: ${DATABASE_URL}
+      # Compuesta con el host de red interno "postgres", no con el
+      # DATABASE_URL de .env (ese apunta a "localhost" para herramientas
+      # que corren en el host, ver comentario en .env.example).
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       STORAGE_DRIVER: ${STORAGE_DRIVER}
       S3_ENDPOINT: ${S3_ENDPOINT}
       S3_REGION: ${S3_REGION}

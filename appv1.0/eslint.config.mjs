@@ -17,7 +17,7 @@ const eslintConfig = defineConfig([
   // acceder a process.env directamente desde el resto de la app.
   {
     files: ["**/*.{js,jsx,ts,tsx}"],
-    ignores: ["src/lib/env.ts", "playwright.config.ts"],
+    ignores: ["src/lib/env.ts", "playwright.config.ts", "drizzle.config.ts"],
     rules: {
       "no-restricted-properties": [
         "error",
