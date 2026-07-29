@@ -5,7 +5,13 @@ import { FAMILIAS, FAMILIA_ESTILO, type EventoSala, type Familia } from '@/domai
 import { LineaTiempo } from './LineaTiempo'
 
 /**
- * Lo que le ha pasado a esta sala, al final de la revisión.
+ * Lo que le ha pasado a esta sala.
+ *
+ * Vive en dos sitios y es el mismo componente: en la ficha de la sala —donde se
+ * viene a preguntar antes de hacer nada— y al final de la revisión, para el
+ * momento en que lo que tienes delante no cuadra. Uno solo, porque quien lo mira
+ * en las dos pantallas tiene que reconocer las mismas filas y no traducir entre
+ * dos diseños.
  *
  * El caso que lo justifica: el técnico llega al aula y el proyector no da
  * imagen. Sin esto, lo único que sabe es lo que ve. Con esto sabe que hace tres
@@ -55,22 +61,45 @@ export function HistorialSala({ roomId }: { roomId: string }): React.ReactElemen
   const cuenta = (f: Familia): number => eventos.filter((e) => e.kind === f).length
 
   return (
-    <section className="border-t border-line">
+    /*
+     * Tarjeta con aire alrededor, y no otra banda a lo ancho como el panel de
+     * equipos que tiene encima. La diferencia no es decorativa: el inventario es
+     * parte de lo que se hace en la revisión —se corrige mientras se revisa— y
+     * el histórico es material de consulta. Dos cosas distintas leídas seguidas
+     * necesitan verse distintas, o la pantalla se convierte en una sucesión de
+     * franjas indistinguibles en la que nadie encuentra nada.
+     */
+    <section className="card mx-4 my-4 overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center justify-between px-4 py-3 text-left"
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
       >
-        <span className="eyebrow">Histórico de la sala</span>
-        <span className="text-sm text-muted">
-          {open ? 'cerrar' : 'revisiones, incidencias y material'}
+        <span className="min-w-0">
+          <span className="eyebrow block">Histórico de la sala</span>
+          <span className="mt-0.5 block truncate text-xs text-muted">
+            Revisiones, incidencias y material
+          </span>
         </span>
+        {/* El galón dice «esto se abre» sin gastar una palabra, y girándolo dice
+            si está abierto. En una pantalla que ya tiene tres paneles plegables,
+            la señal tiene que ser reconocible de un vistazo. */}
+        <svg
+          aria-hidden="true"
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          className={`shrink-0 text-muted transition-transform duration-150 ${open ? 'rotate-180' : ''}`}
+        >
+          <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       </button>
 
       <div className="collapse-y" data-open={open} inert={!open}>
         <div>
-          <div className="px-4 pb-4">
+          <div className="border-t border-line px-4 py-3">
             {/* Los filtros solo aparecen cuando hay algo que filtrar y más de una
                 familia: con seis eventos de un solo tipo son cuatro botones que
                 no hacen nada. */}

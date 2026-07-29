@@ -64,6 +64,23 @@ siempre: el buscador de arriba y la lista de edificios.
 > Si el código no lee, acércate hasta que quepa dentro del marco de la pantalla,
 > y usa el botón **Linterna** si el pasillo está oscuro.
 
+## La ficha de la sala
+
+Al tocar un aula en la lista se abre **su ficha**, no el formulario. Es la
+pantalla que contesta a lo que uno se pregunta llegando a la puerta:
+
+- **Cuándo se revisó**, cuántas **incidencias abiertas** hay, cuántos **equipos**
+  y cómo va la **lámpara**. Cuatro cifras de un vistazo.
+- Las incidencias abiertas se leen ahí mismo, no hay que irse a otra pestaña.
+- Debajo, plegados: **los equipos** y **el histórico**.
+
+Y arriba del todo, el botón grande: **«Revisar esta aula»** —o «Continuar la
+revisión» si la dejaste a medias—. Al salir de la revisión vuelves a la ficha.
+
+> **El camino corto sigue igual.** El QR de la puerta y el buscador entran
+> directos a revisar: si escaneas una pegatina ya sabes dónde estás y a qué
+> vienes. La ficha queda a un toque, en «Volver».
+
 ## Revisar un aula
 
 1. **Elige el edificio.**
@@ -155,10 +172,14 @@ se queda como está.
 
 ### Qué le ha pasado antes a esta aula
 
-Debajo de los equipos, **«Histórico de la sala»**. Se abre tocándolo y trae todo
-lo que le ha pasado: revisiones, incidencias abiertas y resueltas, material
-gastado y equipos que entraron o salieron. Con los botones de arriba se filtra
-por tipo.
+**«Histórico de la sala»**, en la ficha y también al final de la revisión. Se
+abre tocándolo y trae todo lo que le ha pasado: revisiones, **incidencias
+abiertas y resueltas**, material gastado y equipos que entraron o salieron. Con
+los botones de arriba se filtra por tipo.
+
+Una incidencia sale **dos veces**: el día que se abrió y el día que se resolvió.
+No es un duplicado — son dos cosas que pasaron, y entre las dos fechas está lo
+que se tardó.
 
 Sirve para lo de siempre: el proyector no da imagen y ahí ves que en enero pasó
 lo mismo y que la lámpara se cambió en marzo. **No es una avería nueva, es la

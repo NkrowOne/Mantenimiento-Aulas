@@ -7,6 +7,7 @@ import { Diagnostico } from '@/features/admin/Diagnostico'
 import { InspectionPage } from '@/features/inspection/InspectionPage'
 import { RoomListPage } from '@/features/rooms/RoomListPage'
 import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
+import { FichaSala } from '@/features/rooms/FichaSala'
 import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
 import { parseQR, salaDeLaUrl } from '@/domain/qr'
 
@@ -63,17 +64,36 @@ const EscanerQR = lazy(() =>
 
 type Tab = 'revisar' | 'panel' | 'incidencias' | 'almacen' | 'historial' | 'informes' | 'datos'
 
+/*
+ * La ficha se intercala entre la lista y la revisión, pero solo por ese camino.
+ * El QR de la puerta y el buscador global siguen entrando directos a revisar:
+ * quien escanea una pegatina ya sabe dónde está y a qué viene, y cobrarle un
+ * toque por información que no ha pedido convertiría el camino corto en uno
+ * largo. Por eso la revisión recuerda de dónde vino: volver tiene que devolver
+ * al sitio del que se salió, no a uno que no se ha visto nunca.
+ */
 type RoomView =
   | { name: 'edificios' }
   | { name: 'salas'; building: Building }
-  | { name: 'revision'; building: Building; room: Room }
+  | { name: 'revision'; building: Building; room: Room; desdeFicha?: boolean }
   /*
-   * La ficha de la sala. No está en el camino de la revisión a propósito: el
-   * prototipo promete edificio → sala → «Todo correcto», y meter una pantalla
-   * intermedia costaría un toque en cada una de las 276 salas de la ronda.
-   * Se llega desde la placa de la cabecera, que ya identifica la sala.
+   * La ficha de la sala.
+   *
+   * Es lo primero que se abre al tocar un aula en la lista: lo que uno se
+   * pregunta llegando a la puerta —qué hay aquí, esto ya falló, queda algo
+   * abierto— viene antes que rellenar comprobaciones, y desde la ficha se
+   * empieza la revisión con un botón que ocupa el ancho.
+   *
+   * El camino corto sigue intacto y es lo que importa: el QR de la puerta y el
+   * buscador global entran DIRECTOS a revisar. Quien escanea una pegatina ya
+   * sabe dónde está y a qué viene; cobrarle una pantalla intermedia convertiría
+   * el atajo en un rodeo, y son 276 salas en una ronda.
+   *
+   * `volverA` existe porque a la ficha se llega por dos sitios —la lista y la
+   * placa de la cabecera de la revisión— y volver tiene que devolver al sitio
+   * del que se salió, no a uno que no se ha visto.
    */
-  | { name: 'ficha'; building: Building; room: Room }
+  | { name: 'ficha'; building: Building; room: Room; volverA: 'salas' | 'revision' }
   /* La hoja de placas del edificio. Vive aquí y no en «Datos» porque se imprime
      desde donde se está trabajando: se decide etiquetar un edificio cuando se
      está recorriendo ese edificio. */
@@ -302,6 +322,8 @@ export function App(): React.ReactElement {
     if (!building) return false
 
     setTab('revisar')
+    // Directo a revisar: esto lo llama el QR de la puerta, y quien lo escanea
+    // viene a revisar. La ficha está a un toque, en «Volver».
     setView({ name: 'revision', building, room })
     return true
   }, [])
@@ -374,7 +396,7 @@ export function App(): React.ReactElement {
         }
 
         const guardado = (await db.meta.get('ultima-vista'))?.value as
-          | { tab?: Tab; buildingId?: string; roomId?: string }
+          | { tab?: Tab; buildingId?: string; roomId?: string; vista?: RoomView['name'] }
           | undefined
 
         if (guardado?.tab) setTab(guardado.tab)
@@ -383,7 +405,13 @@ export function App(): React.ReactElement {
           const building = await db.buildings.get(guardado.buildingId)
           if (building) {
             const room = guardado.roomId ? await db.rooms.get(guardado.roomId) : undefined
-            setView(room ? { name: 'revision', building, room } : { name: 'salas', building })
+            setView(
+              room
+                ? guardado.vista === 'ficha'
+                  ? { name: 'ficha', building, room }
+                  : { name: 'revision', building, room }
+                : { name: 'salas', building },
+            )
           }
         }
       } finally {
@@ -398,8 +426,9 @@ export function App(): React.ReactElement {
       key: 'ultima-vista',
       value: {
         tab,
+        vista: view.name,
         buildingId: view.name === 'edificios' ? null : view.building.id,
-        roomId: view.name === 'revision' ? view.room.id : null,
+        roomId: view.name === 'revision' || view.name === 'ficha' ? view.room.id : null,
       },
     })
   }, [unlocked, restaurado, tab, view])
@@ -668,7 +697,9 @@ export function App(): React.ReactElement {
           onOrderChange={setRoomOrder}
           onBack={() => setView({ name: 'edificios' })}
           onPlacas={() => setView({ name: 'placas', building: view.building })}
-          onPick={(room) => setView({ name: 'revision', building: view.building, room })}
+          onPick={(room) =>
+            setView({ name: 'ficha', building: view.building, room, volverA: 'salas' })
+          }
         />
       )}
 
@@ -678,7 +709,13 @@ export function App(): React.ReactElement {
           userId={userId}
           buildingName={view.building.name}
           zoneName={zoneName}
-          onBack={() => setView({ name: 'salas', building: view.building })}
+          onBack={() =>
+            setView(
+              view.name === 'revision' && view.desdeFicha
+                ? { name: 'ficha', building: view.building, room: view.room }
+                : { name: 'salas', building: view.building },
+            )
+          }
           /*
             «Guardar y siguiente sala» salta de verdad a la siguiente.
             Antes este manejador ignoraba el parámetro, así que los dos botones
