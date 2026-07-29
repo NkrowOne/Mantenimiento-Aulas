@@ -61,12 +61,16 @@ Desde el servidor, con el `.env` cargado:
 
 ```bash
 npm run admin:user -- listar
-npm run admin:user -- crear  --email ana@x.es --nombre "Ana Ruiz" --rol tecnico
-npm run admin:user -- codigo --email ana@x.es
-npm run admin:user -- rol    --email ana@x.es --rol supervisor
+npm run admin:user -- crear  ana@x.es "Ana Ruiz" --rol tecnico
+npm run admin:user -- codigo ana@x.es
+npm run admin:user -- rol    ana@x.es supervisor
+npm run admin:user -- borrar ana@x.es
 ```
 
-**El código solo se muestra una vez.** Si se pierde, genera otro con `codigo`.
+**El código solo se muestra una vez.** Si se pierde, no hay que borrar a nadie
+ni buscar otro comando: repite el mismo `crear`. Si el email ya existe le da un
+código nuevo y **anula el anterior**, y deja el nombre y el rol como estaban
+salvo que los escribas.
 
 ### Si el despliegue está sobre una plataforma (Skyway, Railway, Fly…)
 
@@ -77,9 +81,11 @@ escriben en la terminal del servicio, desde el panel:
 
 ```bash
 alta listar
-alta crear  --email ana@x.es --nombre "Ana Ruiz" --rol tecnico
-alta codigo --email ana@x.es
-alta rol    --email ana@x.es --rol supervisor
+alta crear  ana@x.es "Ana Ruiz" --rol tecnico
+alta crear  ana@x.es                  # ya existe: código nuevo, el viejo anulado
+alta codigo ana@x.es
+alta rol    ana@x.es supervisor
+alta borrar ana@x.es
 ```
 
 Requisito único: que el servicio tenga `SUPABASE_SERVICE_ROLE_KEY` entre sus
@@ -109,6 +115,12 @@ update profiles set active = false where email = 'ana@x.es';
 Deja de tener rol, y **RLS le impide ver absolutamente nada** — comprobado en la
 prueba 13 del proyecto. Sus revisiones e incidencias se conservan, que es justo
 lo que da valor a la trazabilidad.
+
+Esta es la baja de casi todo el mundo. `alta borrar` existe para el otro caso:
+el alta equivocada, la persona que nunca llegó a entrar. Al que tenga historial
+la base de datos no lo deja borrar —`by_user`, `opened_by` y `resolved_by`
+apuntan a su perfil sin `on delete`—, así que el comando falla y remite aquí.
+Es la protección funcionando, no una avería.
 
 ### Un dispositivo perdido
 

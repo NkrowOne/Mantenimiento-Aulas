@@ -93,7 +93,7 @@ COPY scripts/arranque.sh /usr/local/bin/arranque
 RUN chmod +x /usr/local/bin/salud /usr/local/bin/arranque
 
 # Envoltorios en el PATH: en la terminal del panel se escribe
-# `alta crear --email … --nombre "…"`, no la ruta a un fichero .cjs.
+# `alta crear ana@x.es "Ana"`, no la ruta a un fichero .cjs.
 RUN printf '#!/bin/sh\nexec node /opt/alta/admin-user.cjs "$@"\n' > /usr/local/bin/alta \
     && printf '#!/bin/sh\nexec node /opt/alta/migraciones.cjs "$@"\n' > /usr/local/bin/migrar \
     && chmod +x /usr/local/bin/alta /usr/local/bin/migrar

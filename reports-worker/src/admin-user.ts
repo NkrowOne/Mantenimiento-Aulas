@@ -1,11 +1,17 @@
 /**
  * Alta y gestión de usuarios.
  *
- *   npm run admin:user -- crear  --email ana@x.es --nombre "Ana Ruiz" --rol tecnico
- *   npm run admin:user -- crear  --email jefe@x.es --nombre "Jefe" --primer-admin
- *   npm run admin:user -- codigo --email ana@x.es          # nuevo código de alta
- *   npm run admin:user -- rol    --email ana@x.es --rol supervisor
+ *   npm run admin:user -- crear  ana@x.es "Ana Ruiz" --rol tecnico
+ *   npm run admin:user -- crear  jefe@x.es "Jefe" --primer-admin
+ *   npm run admin:user -- crear  ana@x.es          # ya existe: código nuevo
+ *   npm run admin:user -- codigo ana@x.es          # lo mismo, dicho aparte
+ *   npm run admin:user -- rol    ana@x.es supervisor
+ *   npm run admin:user -- borrar ana@x.es
  *   npm run admin:user -- listar
+ *
+ * El email va suelto, sin `--email`, porque esto se teclea entero en la
+ * terminal de un panel, sin historial ni autocompletado. Las opciones con
+ * nombre siguen valiendo y ganan si se ponen las dos.
  *
  * Una sola implementación para los tres sitios desde los que se administra:
  *
@@ -107,6 +113,37 @@ function has(name: string): boolean {
   return process.argv.includes(`--${name}`)
 }
 
+/** Opciones que no llevan valor detrás; el resto consume el argumento siguiente. */
+const BANDERAS = new Set(['primer-admin'])
+
+/**
+ * Argumentos sueltos, los que no son ni una opción ni el valor de una.
+ *
+ * Están porque `alta borrar --email ana@x.es` es más de lo que hace falta
+ * escribir en la terminal de un panel, donde no hay historial ni autocompletado
+ * y el comando se teclea entero cada vez. El orden es siempre el mismo que en
+ * la ayuda: primero el email, luego lo que pida el comando.
+ *
+ * Las opciones con nombre siguen valiendo, y ganan si aparecen las dos: hay
+ * documentación y guiones escritos con ellas, y romperlos por escribir menos
+ * sería un mal cambio.
+ */
+function sueltos(): string[] {
+  const resto = process.argv.slice(3)
+  const libres: string[] = []
+  for (let i = 0; i < resto.length; i++) {
+    const token = resto[i]!
+    if (!token.startsWith('--')) {
+      libres.push(token)
+      continue
+    }
+    // Una opción con valor se lleva por delante el argumento siguiente, que no
+    // es suelto por mucho que no empiece por guiones.
+    if (!BANDERAS.has(token.slice(2))) i++
+  }
+  return libres
+}
+
 type Role = 'tecnico' | 'supervisor' | 'admin'
 
 function parseRole(value: string | undefined, fallback: Role = 'tecnico'): Role {
@@ -142,37 +179,95 @@ async function storeCode(profileId: string, code: string): Promise<void> {
   if (error) throw error
 }
 
-function announce(email: string, code: string, role: Role): void {
+function announce(email: string, code: string, role: Role, renovado = false): void {
   console.log(`
   Usuario:  ${email}
   Rol:      ${role}
   Código:   ${code}
-
+${renovado ? '\n  Ya existía: este código sustituye al anterior, que queda anulado.\n' : ''}
   Caduca en ${CODE_TTL_HOURS} horas y solo sirve una vez.
   El técnico lo introduce junto a su email la primera vez que abre la
   aplicación, y a continuación elige su PIN.
 
   No vuelve a mostrarse. Si se pierde, genera otro con:
-    ${CLI} codigo --email ${email}
+    ${CLI} codigo ${email}
 `)
 }
 
+/**
+ * Da un código nuevo y anula el anterior, que es lo que de verdad hace falta
+ * casi siempre. Lo comparten `crear` y `codigo` para que el usuario que ya
+ * existe acabe exactamente igual por los dos caminos.
+ *
+ * Reponer la contraseña temporal invalida el dispositivo anterior sólo si este
+ * vuelve a necesitar autenticarse: los refresh tokens vivos siguen
+ * funcionando, que es lo que queremos cuando alguien añade un segundo iPad.
+ */
+async function nuevoCodigo(id: string, email: string, renovado: boolean): Promise<void> {
+  const code = generateCode()
+
+  const { error } = await admin.auth.admin.updateUserById(id, { password: code })
+  if (error) {
+    console.error('No se pudo generar el código:', error.message)
+    process.exit(1)
+  }
+
+  await storeCode(id, code)
+
+  const { data: profile } = await admin.from('profiles').select('role').eq('id', id).single()
+  announce(email, code, (profile?.role as Role) ?? 'tecnico', renovado)
+}
+
+/**
+ * Alta de un usuario, y **repetible**: si el email ya existe no es un error,
+ * es una renovación —código nuevo, el anterior anulado—.
+ *
+ * Antes fallaba pidiendo que se usara `codigo`, y eso convertía el caso más
+ * común —«dicté mal el código», «se lo pasé a quien no era»— en dos comandos y
+ * un mensaje de error por el que no hay nada roto. La alternativa que tenía a
+ * mano quien no leyera el mensaje era borrar al usuario y volver a crearlo, que
+ * es mucho más destructivo de lo que el problema pedía.
+ *
+ * El rol solo cambia si se pide explícitamente. Sin esa cautela, renovarle el
+ * código a un administrador escribiendo `crear` a secas lo degradaría a técnico
+ * en silencio, porque `--rol` vale `tecnico` por defecto.
+ */
 async function crear(): Promise<void> {
-  const email = arg('email')
-  const nombre = arg('nombre')
-  if (!email || !nombre) {
-    console.error('Uso: crear --email <email> --nombre "<nombre>" [--rol tecnico|supervisor|admin]')
+  const email = arg('email') ?? sueltos()[0]
+  const nombre = arg('nombre') ?? sueltos()[1]
+  if (!email) {
+    console.error(`Uso: ${CLI} crear <email> "<nombre>" [--rol tecnico|supervisor|admin] [--primer-admin]`)
     process.exit(1)
   }
 
-  const role: Role = has('primer-admin') ? 'admin' : parseRole(arg('rol'))
+  const rolPedido: Role | undefined = has('primer-admin') ? 'admin' : arg('rol') ? parseRole(arg('rol')) : undefined
 
-  if (await findUserByEmail(email)) {
-    console.error(`Ya existe un usuario con ${email}. Para darle un código nuevo:`)
-    console.error(`  ${CLI} codigo --email ${email}`)
+  const existente = await findUserByEmail(email)
+  if (existente) {
+    // Lo que se haya escrito se aplica; lo que no, se deja como estaba. Un
+    // `crear` sin `--rol` no es una petición de degradar a nadie.
+    const cambios: { full_name?: string; role?: Role } = {}
+    if (nombre) cambios.full_name = nombre
+    if (rolPedido) cambios.role = rolPedido
+    if (Object.keys(cambios).length > 0) {
+      const { error } = await admin.from('profiles').update(cambios).eq('id', existente.id)
+      if (error) {
+        console.error('No se pudo actualizar el perfil:', error.message)
+        process.exit(1)
+      }
+    }
+    await nuevoCodigo(existente.id, email, true)
+    return
+  }
+
+  // Para un alta de verdad el nombre no es opcional: es lo que se ve en el
+  // historial de cada revisión.
+  if (!nombre) {
+    console.error(`Uso: ${CLI} crear <email> "<nombre>" [--rol tecnico|supervisor|admin] [--primer-admin]`)
     process.exit(1)
   }
 
+  const role: Role = rolPedido ?? 'tecnico'
   const code = generateCode()
 
   const { data, error } = await admin.auth.admin.createUser({
@@ -205,9 +300,9 @@ async function crear(): Promise<void> {
 }
 
 async function codigo(): Promise<void> {
-  const email = arg('email')
+  const email = arg('email') ?? sueltos()[0]
   if (!email) {
-    console.error('Uso: codigo --email <email>')
+    console.error(`Uso: ${CLI} codigo <email>`)
     process.exit(1)
   }
 
@@ -217,28 +312,14 @@ async function codigo(): Promise<void> {
     process.exit(1)
   }
 
-  const code = generateCode()
-
-  // Reponer la contraseña temporal invalida el dispositivo anterior sólo si
-  // este vuelve a necesitar autenticarse: los refresh tokens vivos siguen
-  // funcionando, que es lo que queremos cuando alguien añade un segundo iPad.
-  const { error } = await admin.auth.admin.updateUserById(user.id, { password: code })
-  if (error) {
-    console.error('No se pudo generar el código:', error.message)
-    process.exit(1)
-  }
-
-  await storeCode(user.id, code)
-
-  const { data: profile } = await admin.from('profiles').select('role').eq('id', user.id).single()
-  announce(email, code, (profile?.role as Role) ?? 'tecnico')
+  await nuevoCodigo(user.id, email, true)
 }
 
 async function rol(): Promise<void> {
-  const email = arg('email')
-  const nuevo = parseRole(arg('rol'))
+  const email = arg('email') ?? sueltos()[0]
+  const nuevo = parseRole(arg('rol') ?? sueltos()[1])
   if (!email) {
-    console.error('Uso: rol --email <email> --rol tecnico|supervisor|admin')
+    console.error(`Uso: ${CLI} rol <email> tecnico|supervisor|admin`)
     process.exit(1)
   }
 
@@ -263,6 +344,58 @@ async function rol(): Promise<void> {
 `)
 }
 
+/**
+ * Borra un usuario de verdad: desaparece de GoTrue y, en cascada, su perfil,
+ * sus códigos de alta y sus dispositivos.
+ *
+ * No pregunta «¿seguro?» y no es un descuido: en la terminal del panel el
+ * comando corre sin entrada estándar, así que una confirmación interactiva no
+ * esperaría a nadie —se quedaría colgada hasta agotar el tiempo—. Lo que sí
+ * hace es decir a quién ha borrado, para que un email mal escrito se vea al
+ * instante.
+ *
+ * La base de datos pone el límite y está bien puesto: `by_user`, `opened_by`,
+ * `resolved_by` y compañía apuntan a `profiles` sin `on delete`, o sea
+ * `no action`. Quien tenga una sola revisión o incidencia a su nombre NO se
+ * puede borrar, y el motivo es el de siempre: el historial dice quién hizo
+ * qué, y eso es lo que le da valor. Para esos casos la baja es desactivar.
+ */
+async function borrar(): Promise<void> {
+  const email = arg('email') ?? sueltos()[0]
+  if (!email) {
+    console.error(`Uso: ${CLI} borrar <email>`)
+    process.exit(1)
+  }
+
+  const user = await findUserByEmail(email)
+  if (!user) {
+    console.error(`No hay ningún usuario con ${email}.`)
+    process.exit(1)
+  }
+
+  const { error } = await admin.auth.admin.deleteUser(user.id)
+  if (error) {
+    console.error(`No se pudo borrar a ${email}: ${error.message}`)
+    console.error(`
+  Si tiene historial, la base de datos lo impide a propósito: sus revisiones
+  e incidencias guardan quién las hizo. La baja de alguien con historial es
+  desactivarlo, que le quita el rol y RLS no le deja ver nada:
+
+    update profiles set active = false where email = '${email}';
+`)
+    process.exit(1)
+  }
+
+  console.log(`
+  Borrado ${email}.
+
+  Con él se han ido su perfil, sus códigos de alta sin usar y sus
+  dispositivos. Si vuelve, es un alta nueva:
+
+    ${CLI} crear ${email} "<nombre>" --rol tecnico
+`)
+}
+
 async function listar(): Promise<void> {
   const { data, error } = await admin
     .from('profiles')
@@ -282,17 +415,21 @@ async function listar(): Promise<void> {
 }
 
 const command = process.argv[2]
-const commands: Record<string, () => Promise<void>> = { crear, codigo, rol, listar }
+const commands: Record<string, () => Promise<void>> = { crear, codigo, rol, borrar, listar }
 
 const run = command ? commands[command] : undefined
 if (!run) {
   console.error(`
 Uso: ${CLI} <comando> [opciones]
 
-  crear   --email <e> --nombre "<n>" [--rol <r>] [--primer-admin]
-  codigo  --email <e>
-  rol     --email <e> --rol tecnico|supervisor|admin
+  crear   <email> "<nombre>" [--rol tecnico|supervisor|admin] [--primer-admin]
+          Si el email ya existe, le da un código nuevo y anula el anterior.
+  codigo  <email>
+  rol     <email> tecnico|supervisor|admin
+  borrar  <email>
   listar
+
+Las opciones con nombre (--email, --nombre, --rol) siguen valiendo.
 `)
   process.exit(1)
 }

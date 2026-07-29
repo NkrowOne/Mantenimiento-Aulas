@@ -150,17 +150,30 @@ No hay registro abierto ni SMTP. Un administrador da de alta a cada técnico y l
 entrega un código de un solo uso que caduca en 24 horas:
 
 ```bash
-npm run admin:user -- crear  --email ana@x.es --nombre "Ana" --rol tecnico
-npm run admin:user -- codigo --email ana@x.es      # si se pierde
-npm run admin:user -- rol    --email ana@x.es --rol supervisor
+npm run admin:user -- crear  ana@x.es "Ana" --rol tecnico
+npm run admin:user -- crear  ana@x.es              # ya existe: código nuevo
+npm run admin:user -- codigo ana@x.es              # lo mismo, dicho aparte
+npm run admin:user -- rol    ana@x.es supervisor
+npm run admin:user -- borrar ana@x.es
 npm run admin:user -- listar
 ```
+
+**`crear` se puede repetir**: si el email ya existe no falla, le da un código
+nuevo y anula el anterior. Es lo que hace falta cuando se dictó mal o se
+entregó a quien no era, y evita el rodeo de borrar al usuario para volver a
+crearlo. El nombre y el rol solo cambian si se escriben, así que un `crear` a
+secas no degrada a nadie.
+
+`borrar` es para quien nunca llegó a usar la aplicación. Al que tenga historial
+no lo deja borrar la base de datos, y a propósito: sus revisiones e incidencias
+guardan quién las hizo. Para esos la baja es desactivar.
 
 Sobre una plataforma no hay repositorio a mano, así que la imagen del servicio
 lleva las mismas órdenes dentro, como `alta`:
 
 ```bash
-alta crear --email ana@x.es --nombre "Ana" --rol tecnico
+alta crear ana@x.es "Ana" --rol tecnico
+alta borrar ana@x.es
 ```
 
 Se ejecuta desde la terminal del servicio, en el panel de la plataforma. Pide
