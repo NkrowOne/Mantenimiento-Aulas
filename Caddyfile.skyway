@@ -14,7 +14,6 @@
 # Lo que NO cambia es lo importante: la PWA y la API comparten origen, así que
 # no hay CORS que configurar. `supabase/kong.yml` no lleva plugin de CORS a
 # propósito, y con esto no le hace falta.
-
 {
 	# La plataforma es quien decide el puerto y quien hace de frontal.
 	auto_https off
@@ -35,13 +34,21 @@
 	servers {
 		trusted_proxies static private_ranges
 	}
+}
+
+:{$PORT:8080} {
+	# Registro de ACCESO, y va aquí dentro a propósito.
+	#
+	# Un `log` en el bloque global solo dice a dónde escribe el registro por
+	# defecto; no enciende el de acceso de ningún sitio. Estuvo ahí arriba y el
+	# resultado fue un contenedor que arrancaba impecable y no imprimía una sola
+	# petición, justo cuando hacía falta distinguir «el borde no me habla» de
+	# «respondo mal». Sin esta línea el servicio es opaco por dentro.
 	log {
 		output stdout
 		format console
 	}
-}
 
-:{$PORT:8080} {
 	encode zstd gzip
 
 	# ── API de Supabase ────────────────────────────────────────────────
