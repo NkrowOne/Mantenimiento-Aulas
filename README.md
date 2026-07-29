@@ -53,11 +53,21 @@ Cuando los servicios los levanta la plataforma y aquí solo llega una cadena de
 conexión, `deploy.sh` no sirve: cada paso suyo pasa por `docker compose exec`.
 
 ```bash
+export JWT_SECRET=<el que ya usa tu Supabase>
 export DATABASE_URL=postgresql://postgres:CLAVE@HOST:5432/postgres
-export REPORTS_WORKER_TOKEN=...
-export REPORTS_WORKER_URL=http://worker.interno:8080/generate
+npm run variables            # deduce, verifica y te dice qué pegar dónde
 npm run init:plataforma -- --con-seed
 ```
+
+`npm run variables` es lo primero porque casi nada hay que buscarlo: `ANON_KEY`
+y `SERVICE_ROLE_KEY` **son JWT firmados con el `JWT_SECRET`**, así que se
+calculan; el token del worker se lee de `app_config` si ya está acordado, y si
+no se genera. Lo único que no toca es el `JWT_SECRET`: tu Supabase ya tiene uno
+y cambiarlo invalidaría de golpe las claves de GoTrue, PostgREST y Storage.
+
+Lo que sí hace con lo que ya tengas es **verificarlo**: comprueba que cada clave
+esté firmada con ese secreto, con el `role` correcto y sin caducar. Copiarlas de
+un tutorial —el error clásico en self-hosted— deja de pasar desapercibido.
 
 Comprueba **antes de tocar nada** que GoTrue y Storage ya hayan arrancado
 —crean `auth.users` y `storage.buckets` con sus propias migraciones—, aplica lo

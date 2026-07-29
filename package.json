@@ -17,6 +17,7 @@
     "db:verify": "bash scripts/db-verify.sh",
     "admin:user": "tsx scripts/admin-user.ts",
     "gen:keys": "tsx scripts/gen-keys.ts",
+    "variables": "tsx scripts/variables.ts",
     "deploy": "bash scripts/deploy.sh",
     "init:plataforma": "bash scripts/init-plataforma.sh",
     "backup": "bash scripts/backup.sh",
