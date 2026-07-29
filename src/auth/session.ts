@@ -50,6 +50,29 @@ interface TabSession {
   refresh_token: string
 }
 
+/**
+ * El PIN, mientras la pestaña viva. En memoria y en ninguna otra parte.
+ *
+ * Está aquí por una razón concreta: GoTrue **rota** el refresh token en cada
+ * renovación (`GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED`) y revoca el
+ * anterior diez segundos después. El token viaja a memoria del cliente de
+ * Supabase y ahí se quedaba: ni el respaldo de `localStorage` ni la sesión
+ * sellada con el PIN se volvían a escribir nunca.
+ *
+ * O sea que una hora después de entrar —`GOTRUE_JWT_EXP` son 3600 segundos— los
+ * dos sitios donde guardamos la sesión contenían un token muerto. Recargar
+ * dejaba de funcionar, y el PIN también: `unlockWithPin()` mandaba el token
+ * revocado, `setSession()` fallaba... y como su error no se miraba, la
+ * aplicación se daba por desbloqueada **sin sesión ninguna**. Desde fuera se ve
+ * igual que lo que se ve cuando RLS bloquea: todo vacío, ningún error, y el rol
+ * atascado en `tecnico` porque `getUser()` devuelve null.
+ *
+ * Guardar el PIN es lo que permite volver a sellar la sesión cada vez que el
+ * token se renueva. No sale de aquí, no se persiste y se borra al cerrar sesión;
+ * la pestaña ya lo tuvo en memoria para descifrar, así que no expone nada nuevo.
+ */
+let pinEnMemoria: string | null = null
+
 function cacheForTab(session: TabSession): void {
   try {
     localStorage.setItem(TAB_SESSION_KEY, JSON.stringify(session))
@@ -74,6 +97,42 @@ function clearTabCache(): void {
   } catch {
     /* nada que limpiar */
   }
+}
+
+/**
+ * Guarda la sesión que acaba de emitir el servidor en los dos sitios: el
+ * respaldo que sobrevive a recargar, y el sobre cifrado con el PIN.
+ *
+ * El segundo solo se puede reescribir si tenemos el PIN a mano, que es el caso
+ * mientras la pestaña siga viva desde que alguien lo tecleó. Cuando no lo está
+ * —una recarga reanuda con el respaldo, sin pedir PIN— se actualiza al menos el
+ * respaldo, y el sobre se pone al día en el siguiente desbloqueo.
+ */
+async function custodiar(session: TabSession): Promise<void> {
+  cacheForTab(session)
+
+  if (!pinEnMemoria) return
+  const sealed = await getSealed()
+  if (!sealed) return
+  await db.meta.put({ key: SEALED_KEY, value: await sealSession(pinEnMemoria, session, sealed.hint) })
+}
+
+/**
+ * Sigue las renovaciones del token para que lo guardado nunca sea lo viejo.
+ *
+ * Sin esto, todo lo demás de este fichero funciona exactamente una hora.
+ */
+export function watchSession(): () => void {
+  const { data } = supabase.auth.onAuthStateChange((evento, session) => {
+    if (!session) return
+    if (evento !== 'TOKEN_REFRESHED' && evento !== 'SIGNED_IN' && evento !== 'USER_UPDATED') return
+    void custodiar({
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+    })
+  })
+
+  return () => data.subscription.unsubscribe()
 }
 
 export interface EnrollResult {
@@ -124,6 +183,8 @@ export async function enrollDevice(
 
   await db.meta.put({ key: SEALED_KEY, value: sealed })
   await db.meta.put({ key: ATTEMPTS_KEY, value: 0 })
+  // A partir de aquí, cada renovación del token se vuelve a sellar sola.
+  pinEnMemoria = pin
   cacheForTab(data.session)
   await touch()
   await registerDevice(data.session.user.id)
@@ -188,11 +249,38 @@ export async function unlockWithPin(pin: string): Promise<UnlockResult> {
   }
 
   await db.meta.put({ key: ATTEMPTS_KEY, value: 0 })
-  await supabase.auth.setSession({
+
+  /*
+   * El PIN era correcto —el sobre se ha abierto—, pero eso no significa que el
+   * servidor siga aceptando lo que había dentro.
+   *
+   * El error de `setSession()` se descartaba, así que un refresh token ya
+   * revocado desbloqueaba la aplicación igual, sin sesión: todas las lecturas
+   * volvían vacías, `getUser()` devolvía null y el rol se quedaba en `tecnico`.
+   * Un zombi. Y es indistinguible, desde la pantalla, de que RLS te bloquee.
+   */
+  const { data: viva, error } = await supabase.auth.setSession({
     access_token: session.access_token,
     refresh_token: session.refresh_token,
   })
-  cacheForTab(session)
+
+  if (error || !viva.session) {
+    return {
+      ok: false,
+      error:
+        'Tu PIN es correcto, pero el servidor ya no acepta esta sesión. ' +
+        'Pide un código de alta nuevo para volver a registrar el dispositivo.',
+    }
+  }
+
+  pinEnMemoria = pin
+  // Lo que devuelve `setSession` NO es lo que le hemos mandado: al renovar, el
+  // servidor emite un refresh token nuevo y anula el anterior. Guardar el que
+  // teníamos era justo lo que dejaba el dispositivo con un token muerto.
+  await custodiar({
+    access_token: viva.session.access_token,
+    refresh_token: viva.session.refresh_token,
+  })
   await touch()
 
   return { ok: true }
@@ -212,28 +300,35 @@ export async function resumeSession(): Promise<boolean> {
   const cached = readTabCache()
   if (!cached) return false
 
-  const { error } = await supabase.auth.setSession({
+  const { data, error } = await supabase.auth.setSession({
     access_token: cached.access_token,
     refresh_token: cached.refresh_token,
   })
-  if (error) {
+  if (error || !data.session) {
     // El refresh token ya no vale (revocado, rotado por otro dispositivo…):
     // se pide el PIN, que es la vía correcta para volver a entrar.
     clearTabCache()
     return false
   }
 
+  // Reanudar consume el refresh token y devuelve otro. Sin escribirlo, la
+  // siguiente recarga mandaría el mismo token ya revocado y la sesión duraría
+  // exactamente una: reanudar una vez y no poder reanudar nunca más.
+  await custodiar({
+    access_token: data.session.access_token,
+    refresh_token: data.session.refresh_token,
+  })
   await touch()
   return true
 }
 
-/** Vuelve a sellar la sesión tras renovarse el token, para no perder el refresh. */
-export async function resealCurrentSession(pin: string): Promise<void> {
-  const { data } = await supabase.auth.getSession()
-  const sealed = await getSealed()
-  if (!data.session || !sealed) return
-  await db.meta.put({ key: SEALED_KEY, value: await sealSession(pin, data.session, sealed.hint) })
-}
+/*
+ * Aquí vivía `resealCurrentSession(pin)`, que hacía esto mismo pero **no la
+ * llamaba nadie**: había que pasarle el PIN y para cuando el token se renovaba
+ * ya no lo tenía nadie a mano. De ahí que la sesión guardada se quedara
+ * congelada en el primer token. Ahora lo hace `custodiar()`, sola, en cada
+ * renovación.
+ */
 
 export async function touch(): Promise<void> {
   await db.meta.put({ key: 'last-active', value: Date.now() })
@@ -262,6 +357,7 @@ export async function shouldRelock(): Promise<boolean> {
  */
 export async function lock(): Promise<void> {
   clearTabCache()
+  pinEnMemoria = null
   await supabase.auth.signOut({ scope: 'local' })
   await db.meta.delete('last-active')
 }

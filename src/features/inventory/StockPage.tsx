@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { v7 as uuidv7 } from 'uuid'
 import { supabase } from '@/lib/supabase'
+import type { Role } from '@/domain/types'
 
 interface StockLevel {
   stock_item_id: string
@@ -32,10 +33,12 @@ function esFalloDeRed(error: unknown): boolean {
   return /fetch|network|failed to fetch|networkerror|load failed/i.test(error.message)
 }
 
-export function StockPage(): React.ReactElement {
+export function StockPage({ role }: { role: Role }): React.ReactElement {
   const qc = useQueryClient()
   const [filter, setFilter] = useState('')
   const [onlyLow, setOnlyLow] = useState(false)
+  const [alta, setAlta] = useState(false)
+  const esAdmin = role === 'admin'
 
   const { data: levels, isPending, isError, refetch } = useQuery({
     queryKey: ['stock-levels'],
@@ -71,13 +74,113 @@ export function StockPage(): React.ReactElement {
     },
   })
 
+  /**
+   * Alta de artículo.
+   *
+   * Faltaba entera: el almacén sabía sumar y restar unidades de lo que ya
+   * existía, pero no había forma —desde la aplicación— de crear el artículo
+   * primero. Con la lista vacía eso dejaba la pantalla en un callejón sin
+   * salida, y con datos obligaba a entrar en la base de datos a mano para algo
+   * tan corriente como empezar a llevar la cuenta de un consumible nuevo.
+   *
+   * Es de admin porque así lo dice RLS: la política «admin escribe stock_items»
+   * es la que decide de verdad, y ofrecer el botón a un supervisor solo serviría
+   * para que el servidor le dijera que no.
+   */
+  const crear = useMutation({
+    mutationFn: async (input: { name: string; unit: string; min_threshold: number }) => {
+      const { error } = await supabase.from('stock_items').insert({
+        name: input.name,
+        unit: input.unit || 'ud',
+        min_threshold: input.min_threshold,
+        active: true,
+      })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      setAlta(false)
+      void qc.invalidateQueries({ queryKey: ['stock-levels'] })
+    },
+  })
+
   const rows = (levels ?? [])
     .filter((l) => l.name.toLowerCase().includes(filter.toLowerCase()))
     .filter((l) => !onlyLow || l.below_threshold)
 
   return (
     <div className="mx-auto max-w-4xl p-4">
-      <h1 className="text-xl font-semibold">Almacén</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">Almacén</h1>
+        {esAdmin && (
+          <button
+            type="button"
+            onClick={() => setAlta((v) => !v)}
+            className="key key-accent min-h-11 shrink-0 px-3 text-sm"
+          >
+            {alta ? 'Cancelar' : 'Nuevo artículo'}
+          </button>
+        )}
+      </div>
+
+      {alta && (
+        <form
+          className="card mt-4 p-4"
+          onSubmit={(e) => {
+            e.preventDefault()
+            const f = new FormData(e.currentTarget)
+            const name = String(f.get('name') ?? '').trim()
+            if (!name) return
+            crear.mutate({
+              name,
+              unit: String(f.get('unit') ?? '').trim(),
+              min_threshold: Number(f.get('min_threshold') ?? 0) || 0,
+            })
+          }}
+        >
+          <div className="flex flex-wrap gap-3">
+            <label className="flex-1 text-sm">
+              <span className="text-muted">Nombre</span>
+              <input
+                name="name"
+                required
+                autoFocus
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-sm"
+              />
+            </label>
+            <label className="w-24 text-sm">
+              <span className="text-muted">Unidad</span>
+              <input
+                name="unit"
+                defaultValue="ud"
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-sm"
+              />
+            </label>
+            <label className="w-24 text-sm">
+              <span className="text-muted">Mínimo</span>
+              <input
+                name="min_threshold"
+                type="number"
+                min={0}
+                defaultValue={0}
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-sm"
+              />
+            </label>
+          </div>
+          {crear.isError && (
+            <p className="mt-3 text-sm text-crit">
+              No se ha podido crear:{' '}
+              {crear.error instanceof Error ? crear.error.message : String(crear.error)}
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={crear.isPending}
+            className="key key-accent mt-3 min-h-11 px-4 text-sm"
+          >
+            {crear.isPending ? 'Creando…' : 'Crear artículo'}
+          </button>
+        </form>
+      )}
 
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -177,8 +280,38 @@ export function StockPage(): React.ReactElement {
         </div>
       )}
 
+      {/*
+        «Ningún artículo coincide» decía lo mismo con el filtro puesto que con el
+        almacén entero vacío, y son dos problemas distintos: uno se arregla
+        borrando lo escrito y el otro no se arregla desde aquí. Con cero
+        artículos y sin filtro, además, casi nunca es que el almacén esté vacío:
+        es que el servidor no ha dejado leerlo —RLS devuelve una lista vacía sin
+        error—, y eso hay que decirlo o no hay forma de averiguarlo.
+      */}
       {!isPending && !isError && rows.length === 0 && (
-        <p className="mt-6 text-sm text-muted">Ningún artículo coincide.</p>
+        <div className="mt-6 text-sm text-muted">
+          {(levels?.length ?? 0) > 0 ? (
+            <p>Ningún artículo coincide con el filtro.</p>
+          ) : (
+            <>
+              <p>El almacén no tiene ningún artículo.</p>
+              <p className="mt-1">
+                Si debería tenerlos, el servidor no te está dejando leerlos: revisa que tu token
+                lleve el rol (claim <span className="font-mono">app_role</span>) y que tu perfil
+                tenga uno asignado.
+              </p>
+              {esAdmin && !alta && (
+                <button
+                  type="button"
+                  onClick={() => setAlta(true)}
+                  className="key key-accent mt-3 min-h-11 px-3 text-sm"
+                >
+                  Crear el primer artículo
+                </button>
+              )}
+            </>
+          )}
+        </div>
       )}
 
       {/*

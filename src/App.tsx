@@ -3,14 +3,15 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { SyncChip } from '@/components/SyncChip'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { LockScreen } from '@/features/auth/LockScreen'
+import { Diagnostico } from '@/features/admin/Diagnostico'
 import { InspectionPage } from '@/features/inspection/InspectionPage'
 import { RoomListPage } from '@/features/rooms/RoomListPage'
 import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
 import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
 
-import { getSealed, lock, resumeSession, touch } from '@/auth/session'
+import { getSealed, lock, resumeSession, touch, watchSession } from '@/auth/session'
 import { db, purgeSyncedInspections, requestPersistentStorage } from '@/db/dexie'
-import { pullMaster } from '@/sync/pull'
+import { pullMaster, type ResultadoPull } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
 import { configError, supabase } from '@/lib/supabase'
 import type { SealedSession } from '@/auth/pin'
@@ -60,11 +61,70 @@ const TABS: Array<{ id: Tab; label: string; minRole: Role }> = [
 
 const RANK: Record<Role, number> = { tecnico: 0, supervisor: 1, admin: 2 }
 
+/**
+ * Por qué la lista está vacía.
+ *
+ * «Sin datos. Conéctate una vez para descargarlos.» era la respuesta a las tres
+ * situaciones a la vez: sin red, servidor vacío y servidor que no deja leer. Las
+ * tres piden cosas distintas de quien lo lee, y la tercera —RLS devolviendo cero
+ * filas sin error— es justo la que se pasa semanas sin diagnosticar, porque
+ * desde el iPad se ve idéntica a «aún no me he conectado».
+ */
+function SinDatos({
+  diagnostico,
+  onReintentar,
+}: {
+  diagnostico: ResultadoPull | null
+  onReintentar: () => void
+}): React.ReactElement {
+  return (
+    <div className="card p-4">
+      {diagnostico?.error ? (
+        <>
+          <p className="text-sm font-medium text-crit">No se han podido descargar los datos.</p>
+          <p className="mt-2 text-sm text-muted">{diagnostico.error}</p>
+          {diagnostico.fallos.length > 0 && (
+            <ul className="mt-2 space-y-1 font-mono text-xs text-muted">
+              {diagnostico.fallos.map((f) => (
+                <li key={f.tabla}>
+                  {f.tabla}: {f.code ? `[${f.code}] ` : ''}
+                  {f.mensaje}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      ) : (
+        <p className="text-sm text-muted">
+          Sin datos todavía. Conéctate una vez para descargarlos.
+        </p>
+      )}
+      <button type="button" onClick={onReintentar} className="key key-quiet mt-3 min-h-11 px-3 text-sm">
+        Reintentar descarga
+      </button>
+      <Diagnostico />
+    </div>
+  )
+}
+
 export function App(): React.ReactElement {
   const [unlocked, setUnlocked] = useState(false)
   const [sealed, setSealed] = useState<SealedSession | null | undefined>(undefined)
   const [userId, setUserId] = useState<string | null>(null)
   const [role, setRole] = useState<Role>('tecnico')
+  /*
+   * Por qué el rol es el que es, y por qué no hay datos.
+   *
+   * Los dos se resolvían en silencio: si la consulta del perfil fallaba, el rol
+   * se quedaba en el `tecnico` inicial y un administrador se encontraba la
+   * aplicación sin las pestañas de Informes y Datos sin una sola pista de por
+   * qué. Y si el servidor no devolvía filas, la lista decía «Sin datos» tanto si
+   * el servidor estaba vacío como si RLS estaba bloqueando todas las lecturas.
+   * Nada de esto se puede diagnosticar desde un iPad si la aplicación no lo
+   * cuenta: no hay consola donde mirar.
+   */
+  const [rolError, setRolError] = useState<string | null>(null)
+  const [diagnostico, setDiagnostico] = useState<ResultadoPull | null>(null)
   const [tab, setTab] = useState<Tab>('revisar')
   const [view, setView] = useState<RoomView>({ name: 'edificios' })
   const [roomOrder, setRoomOrder] = useState<RoomOrder>('antiguedad')
@@ -100,6 +160,15 @@ export function App(): React.ReactElement {
       zones: new Map(zones.map((z) => [z.id, z])),
     }
   }, [buildingId])
+
+  /*
+   * La custodia se engancha ANTES de restaurar nada, y fuera del efecto que
+   * depende de `unlocked`: la primera renovación del token puede ocurrir dentro
+   * del propio `setSession()` de la reanudación, o sea antes de que la
+   * aplicación se considere desbloqueada. Engancharla después es perderse justo
+   * el token que había que guardar.
+   */
+  useEffect(() => watchSession(), [])
 
   useEffect(() => {
     void (async () => {
@@ -167,19 +236,37 @@ export function App(): React.ReactElement {
     if (!unlocked) return
 
     void requestPersistentStorage()
-    void pullMaster()
+    void pullMaster().then(setDiagnostico)
     // Las revisiones cerradas y ya subidas no tienen por qué seguir aquí: nadie
     // las purgaba y crecía una fila por aula revisada, para siempre.
     void purgeSyncedInspections()
     void (async () => {
       const { data } = await supabase.auth.getUser()
-      if (!data.user) return
-      const { data: profile } = await supabase
+      if (!data.user) {
+        setRolError('No se ha podido identificar la sesión.')
+        return
+      }
+      const { data: profile, error } = await supabase
         .from('profiles')
         .select('role')
         .eq('id', data.user.id)
-        .single()
-      if (profile?.role) setRole(profile.role as Role)
+        // `maybeSingle`, no `single`: con cero filas —una cuenta sin perfil, o
+        // RLS bloqueando— `single` devuelve error 406 y antes se descartaba sin
+        // mirarlo, dejando el rol en `tecnico` como si fuera lo normal.
+        .maybeSingle()
+
+      if (error) {
+        setRolError(`No se ha podido leer tu perfil: ${error.message}`)
+        return
+      }
+      if (!profile) {
+        setRolError(
+          'Tu cuenta no tiene perfil, así que la aplicación te trata como técnico. ' +
+            'Que un administrador ejecute: alta crear <tu-email> "<tu nombre>" admin',
+        )
+        return
+      }
+      setRole(profile.role as Role)
     })()
 
     const stop = startSync()
@@ -240,7 +327,10 @@ export function App(): React.ReactElement {
           el 95% dejaba pasar un 5% de nada. */}
       <header className="sticky top-0 z-10 border-b border-line bg-ground">
         <div className="flex items-center justify-between gap-2 px-4 py-2">
-          <span className="eyebrow truncate">Aulas</span>
+          {/* El rol, a la vista. Es lo que decide qué pestañas hay, así que
+              esconderlo convierte «no tengo el botón» en un misterio: quien es
+              admin y se ve como técnico lo detecta aquí, de un vistazo. */}
+          <span className="eyebrow truncate">Aulas · {role}</span>
           <div className="flex shrink-0 items-center gap-2">
             <SyncChip />
             <button
@@ -261,6 +351,13 @@ export function App(): React.ReactElement {
           </div>
         </div>
       </header>
+
+      {rolError && (
+        <div className="border-b border-line px-4 py-3">
+          <p className="text-sm text-crit">{rolError}</p>
+          <Diagnostico />
+        </div>
+      )}
 
       {tab === 'revisar' && view.name === 'edificios' && (
         <>
@@ -288,8 +385,11 @@ export function App(): React.ReactElement {
             </li>
           ))}
           {buildings?.length === 0 && (
-            <li className="p-6 text-sm text-muted">
-              Sin datos. Conéctate una vez para descargarlos.
+            <li className="p-4">
+              <SinDatos
+                diagnostico={diagnostico}
+                onReintentar={() => void pullMaster().then(setDiagnostico)}
+              />
             </li>
           )}
         </ul>
@@ -342,7 +442,7 @@ export function App(): React.ReactElement {
         <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
           {tab === 'panel' && <DashboardPage />}
           {tab === 'incidencias' && <IncidentsPage />}
-          {tab === 'almacen' && <StockPage />}
+          {tab === 'almacen' && <StockPage role={role} />}
           {tab === 'informes' && <ReportsPage />}
           {tab === 'datos' && <CleanupPage />}
         </Suspense>

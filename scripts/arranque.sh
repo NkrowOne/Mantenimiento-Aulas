@@ -30,13 +30,21 @@ PARCIAL=/srv/dist/.salud.json.parcial
 # plataforma se le come los ocho primeros caracteres al volcar las últimas
 # líneas de un contenedor muerto. Y el motivo importa: «solo lectura» y
 # «directorio inexistente» piden arreglos distintos.
-if motivo=$( { salud --json > "$PARCIAL"; } 2>&1 ) && mv "$PARCIAL" "$DESTINO" 2>/dev/null; then
-	:
-else
+escribir_salud() {
+	if motivo=$( { salud --json > "$PARCIAL"; } 2>&1 ) && mv "$PARCIAL" "$DESTINO" 2>/dev/null; then
+		return 0
+	fi
 	rm -f "$PARCIAL" 2>/dev/null
 	printf '[salud] No he podido reescribir %s: %s\n' "$DESTINO" "${motivo:-motivo desconocido}"
 	printf '[salud] Se sirve el informe del build: dirá lo de la compilación y nada del entorno.\n'
-fi
+	return 1
+}
+
+# La señal de un arranque anterior no dice nada de este. Borrarla antes de nada
+# evita que un fallo ya resuelto se quede pegado al informe para siempre.
+rm -f /srv/dist/.migraciones-fallidas 2>/dev/null
+
+escribir_salud
 
 salud --texto
 
@@ -50,7 +58,19 @@ salud --texto
 # en marcha esto imprime una sola línea («la base ya estaba al día»), y cuando
 # imprime más es porque ha pasado algo que hay que leer —y entonces conviene
 # que sea lo último, no lo penúltimo.
-migrar || printf '[migrar] El esquema no se ha podido poner al día: la aplicación se sirve igual.\n'
+if ! migrar; then
+	printf '[migrar] El esquema no se ha podido poner al día: la aplicación se sirve igual.\n'
+	# Y que conste en el informe, no solo aquí. Un `"faltan":[]` sobre una base
+	# que no tiene las tablas ni las funciones que la aplicación va a pedir es
+	# una mentira que se descubre semanas después, cuando el registro del
+	# arranque hace mucho que se perdió.
+	#
+	# Por eso el informe se reescribe: se emitió antes de migrar —y ahí va bien,
+	# porque `migrar` conviene que hable el último— así que aquella foto no sabía
+	# nada de esto.
+	touch /srv/dist/.migraciones-fallidas 2>/dev/null
+	escribir_salud
+fi
 
 # Lo último antes de ceder el proceso, y a propósito: a partir de aquí el
 # registro de acceso de Caddy empuja estas líneas hacia arriba, y cuando un

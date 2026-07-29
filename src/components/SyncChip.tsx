@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { pendingSummary } from '@/db/dexie'
-import { flush, onSyncState, retryRejected, type SyncState } from '@/sync/outbox'
+import { flush, getUltimoErrorSync, onSyncState, retryRejected, type SyncState } from '@/sync/outbox'
+import { pullMaster, ultimoPull } from '@/sync/pull'
+import { Diagnostico } from '@/features/admin/Diagnostico'
 
 /**
  * La lámpara de estado.
@@ -27,9 +29,41 @@ import { flush, onSyncState, retryRejected, type SyncState } from '@/sync/outbox
 export function SyncChip(): React.ReactElement {
   const [state, setState] = useState<SyncState>('inactivo')
   const [open, setOpen] = useState(false)
+  const [bajando, setBajando] = useState(false)
+  const [resultado, setResultado] = useState<string | null>(null)
+  const raiz = useRef<HTMLDivElement>(null)
   const summary = useLiveQuery(() => pendingSummary(), [], null)
+  // El parte de la última bajada. `ultimoPull()` existía y no lo leía nadie.
+  const ultimo = useLiveQuery(() => ultimoPull(), [], null)
 
   useEffect(() => onSyncState(setState), [])
+
+  /*
+   * Cerrar tocando fuera, y con Escape.
+   *
+   * Antes la única salida era volver a pulsar la lámpara —un cuadrado de 8 px
+   * que el propio panel tapa en cuanto se abre—, así que en un móvil el panel
+   * se quedaba clavado en pantalla y no había forma de quitarlo sin recargar.
+   * Un popover que no se cierra tocando fuera no es un popover, es un modal
+   * sin botón de cerrar.
+   */
+  useEffect(() => {
+    if (!open) return
+
+    const fuera = (e: PointerEvent): void => {
+      if (!raiz.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const escape = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+
+    document.addEventListener('pointerdown', fuera)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('pointerdown', fuera)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [open])
 
   const pending = summary?.total ?? 0
   const rejected = summary?.rejected ?? 0
@@ -38,33 +72,47 @@ export function SyncChip(): React.ReactElement {
   const stuckHours = summary?.oldestAt ? (Date.now() - summary.oldestAt) / 3_600_000 : 0
   const stuck = pending > 0 && stuckHours > 6
 
-  const { label, lamp } =
-    rejected > 0
-      ? { label: `${rejected} sin enviar`, lamp: 'bg-crit' }
-      : stuck
-        ? { label: `${pending} atascados`, lamp: 'bg-crit' }
-        : state === 'sin-conexion'
-          ? {
-              label: pending > 0 ? `${pending} sin conexión` : 'Sin conexión',
-              lamp: 'bg-warn',
-            }
-          : state === 'sincronizando'
-            ? { label: 'Guardando…', lamp: 'bg-accent' }
-            : pending > 0
-              ? { label: `${pending} pendientes`, lamp: 'bg-warn' }
-              : { label: null, lamp: 'bg-muted/50' }
+  /*
+   * Qué enseña la lámpara. Es una cadena de prioridades, no un conmutador: lo
+   * más grave que esté pasando gana.
+   *
+   * Escrito como cadena de `if` y no de ternarios porque ya son seis casos, y
+   * el sexto —`error`— faltaba: caía al último brazo y se pintaba gris y mudo,
+   * exactamente igual que «todo bien». El motor tiene un estado para decir que
+   * ha reventado y la lámpara lo dibujaba como si no hubiera pasado nada.
+   */
+  const { label, lamp } = ((): { label: string | null; lamp: string } => {
+    if (rejected > 0) return { label: `${rejected} sin enviar`, lamp: 'bg-crit' }
+    if (stuck) return { label: `${pending} atascados`, lamp: 'bg-crit' }
+    if (state === 'error') return { label: 'Error al sincronizar', lamp: 'bg-crit' }
+    if (state === 'sin-conexion') {
+      return { label: pending > 0 ? `${pending} sin conexión` : 'Sin conexión', lamp: 'bg-warn' }
+    }
+    if (state === 'sincronizando') return { label: 'Guardando…', lamp: 'bg-accent' }
+    if (pending > 0) return { label: `${pending} pendientes`, lamp: 'bg-warn' }
+    return { label: null, lamp: 'bg-muted' }
+  })()
 
   return (
-    <div className="relative">
+    <div ref={raiz} className="relative">
+      {/*
+        Sin pendientes —el caso normal— `label` es null y el botón se quedaba
+        reducido a la lámpara: 16×20 px de área pulsable, muy por debajo del
+        mínimo 24×24 de WCAG y a un mundo de los 44×44 de Apple. Y en `bg-muted/50`
+        sobre el fondo daba 1.98:1 de contraste, o sea que se leía como
+        decoración, no como un control. Un piloto apagado sigue teniendo que ser
+        un botón: es la única puerta al detalle y al «Sincronizar».
+      */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 px-1 py-1.5 text-xs font-medium text-ink-2"
+        className="flex min-h-11 min-w-11 items-center justify-center gap-2 px-2 py-1.5 text-xs font-medium text-ink-2"
         aria-expanded={open}
-        aria-label={label ?? 'Todo guardado'}
+        aria-controls="panel-sync"
+        aria-label={label ?? 'Estado de sincronización'}
       >
         {/* Cuadrado, no círculo: un piloto de panel, no un punto de notificación. */}
-        <span aria-hidden className={`h-2 w-2 rounded-[1px] ${lamp}`} />
+        <span aria-hidden className={`h-2 w-2 rounded-[1px] ring-1 ring-line ${lamp}`} />
         {label}
       </button>
 
@@ -74,15 +122,41 @@ export function SyncChip(): React.ReactElement {
         origen se lee como el detalle de lo que acabas de tocar.
       */}
       {open && (
+        // El ancho fijo de 288 px se salía por la izquierda en cualquier móvil
+        // por debajo de ~419 px: el panel cuelga de `right-0` del chip, que no
+        // está pegado al borde —a su derecha hay «Cerrar sesión» y el `px-4` de
+        // la cabecera—. Lo que se sale por la izquierda no se puede recuperar
+        // desplazando, así que se recortaba texto sin más.
         <div
-          className="card absolute right-0 z-20 mt-2 w-72 origin-top-right p-4 text-sm"
+          id="panel-sync"
+          className="card absolute right-0 z-20 mt-2 w-[min(18rem,calc(100vw-2rem))] origin-top-right p-4 text-sm"
           style={{ animation: 'pop 150ms var(--ease-out)' }}
         >
+          {/*
+            Decía «Todo guardado en el servidor» a partir de seis `count()` de
+            Dexie, sin preguntarle al servidor absolutamente nada. En el caso que
+            trajo aquí a este usuario —la aplicación sin datos y sin dejarle
+            hacer nada— el único panel que abrió le afirmaba que todo iba bien, y
+            le mandaba a mirar la SUBIDA cuando lo roto era la BAJADA. Ahora dice
+            solo lo que sabe, y la bajada se cuenta aparte.
+          */}
           <p className="text-muted">
             {pending === 0 && rejected === 0
-              ? 'Todo guardado en el servidor.'
+              ? 'Nada pendiente de subir.'
               : `${pending} sin subir${summary?.photos ? ` · ${summary.photos} fotos` : ''}`}
           </p>
+
+          {ultimo && (
+            <p className={`mt-1 ${ultimo.ok ? 'text-muted' : 'text-crit'}`}>
+              {ultimo.ok
+                ? `Última descarga: ${ultimo.filas} filas.`
+                : `La última descarga falló: ${ultimo.error}`}
+            </p>
+          )}
+
+          {state === 'error' && getUltimoErrorSync() && (
+            <p className="mt-2 break-words font-mono text-xs text-crit">{getUltimoErrorSync()}</p>
+          )}
 
           {stuck && (
             <p className="mt-2 text-crit">
@@ -91,18 +165,60 @@ export function SyncChip(): React.ReactElement {
           )}
 
           {rejected > 0 && (
-            <p className="mt-2 text-crit">
-              {rejected} rechazados. Avisa a administración.
-            </p>
+            <>
+              <p className="mt-2 text-crit">
+                {rejected} rechazados. Avisa a administración.
+              </p>
+              {/* El motivo se guardaba por entrada desde el principio y no lo
+                  leía nadie: «avisa a administración» sin decir de qué obliga a
+                  administración a adivinarlo. */}
+              {summary?.ultimoMotivo && (
+                <p className="mt-1 break-words font-mono text-xs text-muted">
+                  {summary.ultimoMotivo}
+                </p>
+              )}
+            </>
           )}
 
+          {/* `aria-live` para que el resultado de «Sincronizar» se anuncie: el
+              texto aparece sin que nada más cambie de sitio. */}
+          <p aria-live="polite" className={resultado ? 'mt-2 text-muted' : 'sr-only'}>
+            {resultado}
+          </p>
+
           <div className="mt-3 flex gap-2">
+            {/*
+              «Sincronizar» sincroniza en los dos sentidos.
+              Antes solo llamaba a `flush()`, que vacía la cola de SALIDA: con la
+              cola vacía —el caso normal— no hacía absolutamente nada, ni siquiera
+              decirlo. Quien lo pulsa quiere lo contrario, traerse lo que hay en el
+              servidor, así que ahora sube y luego baja, y cuenta cómo ha ido.
+            */}
             <button
               type="button"
-              onClick={() => void flush()}
+              disabled={bajando}
+              onClick={() => {
+                setBajando(true)
+                setResultado(null)
+                void (async () => {
+                  try {
+                    await flush()
+                    const bajado = await pullMaster()
+                    setResultado(
+                      bajado.ok
+                        ? `Al día: ${bajado.filas} filas del servidor.`
+                        : `No se ha podido descargar: ${bajado.error}`,
+                    )
+                  } catch (err) {
+                    setResultado(err instanceof Error ? err.message : String(err))
+                  } finally {
+                    setBajando(false)
+                  }
+                })()
+              }}
               className="key key-accent flex-1 px-3 py-2 text-xs"
             >
-              Sincronizar
+              {bajando ? 'Sincronizando…' : 'Sincronizar'}
             </button>
             {rejected > 0 && (
               <button
@@ -114,6 +230,12 @@ export function SyncChip(): React.ReactElement {
               </button>
             )}
           </div>
+
+          {/* Aquí es donde se viene cuando «algo no va», así que aquí tiene que
+              estar. Antes solo se llegaba al diagnóstico desde la lista de
+              edificios vacía, o sea desde una de las pantallas que el propio
+              fallo deja en blanco. */}
+          <Diagnostico />
         </div>
       )}
     </div>

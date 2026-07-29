@@ -17,7 +17,16 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
-    "types": ["vite/client", "vitest/globals", "node", "vite-plugin-pwa/react"],
+    // `vite-plugin-pwa/client` declara `virtual:pwa-register`, que es el
+    // registro sin React: lo usa `src/sw.ts` para poder registrar el service
+    // worker antes de montar la interfaz.
+    "types": [
+      "vite/client",
+      "vitest/globals",
+      "node",
+      "vite-plugin-pwa/client",
+      "vite-plugin-pwa/react"
+    ],
     "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] }
   },
