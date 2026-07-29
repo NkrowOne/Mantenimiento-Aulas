@@ -242,7 +242,113 @@ negativo. Para corregir un recuento físico, registra un ajuste:
 ```sql
 insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, note)
 select gen_random_uuid(), id, 12, 'ajuste', now(), 'Recuento físico de julio'
-from stock_items where name = 'Cable HDMI Fibra 15 mts';
+from stock_items where name = 'Cable HDMI fibra 15 m';
+```
+
+### De dónde sale el consumo
+
+El material se apunta **en la incidencia**, no en el almacén: botón **Material**
+en la fila de la incidencia, se busca el artículo y se pone la cantidad. Así el
+movimiento nace sabiendo para qué fue y en qué sala, que es lo que permite
+contestar «cuánto material se llevó el edificio H». Se puede apuntar sin
+cobertura: va por la cola de salida como las revisiones.
+
+El `−` de la pestaña Almacén sigue estando y sirve para lo demás —una
+instalación programada, una sustitución preventiva—, pero ese consumo queda sin
+destino y por eso no aparece repartido por edificio.
+
+Dos consultas que ya tienen datos de verdad:
+
+```sql
+-- Qué se gasta más
+select * from material_consumption_ranking limit 10;
+
+-- Cuánto se gastó cada mes, que sustituye a las doce columnas de la hoja Bolsa
+select * from stock_monthly_consumption order by month desc, consumed desc;
+```
+
+### Un movimiento no se corrige: se contrapone
+
+`stock_movements` es un libro de asientos y está cerrado a solo-alta. Ni la
+aplicación ni la API dejan modificar ni borrar un movimiento: **para corregir un
+error se registra el contrario**, y las dos filas se quedan. Es lo que hace el
+botón «Deshacer» de la pantalla de Almacén.
+
+Si necesitas reparar algo a mano —un movimiento importado con la fecha mal— hay
+que desactivar el disparador a propósito, y eso se nota:
+
+```sql
+alter table stock_movements disable trigger stock_movements_solo_alta;
+-- … la reparación, anotando qué y por qué en import_fixes …
+alter table stock_movements enable trigger stock_movements_solo_alta;
+```
+
+### Las existencias no bajan de cero
+
+**No se puede gastar lo que no hay.** El `−` sale apagado en los artículos a
+cero, y si la cifra de la pantalla se ha quedado vieja —otro técnico gastó la
+última unidad hace un minuto— el servidor rechaza el movimiento y lo dice.
+
+Que el saldo sea una suma ya impedía el descuadre de teclear una cifra a mano,
+que es de donde salían los negativos de la hoja Bolsa. No impedía restar más de
+lo que hay: cuatro toques en un artículo a cero lo dejaban en −4, y el informe
+de consumo daba esa cifra por buena.
+
+Cuando un técnico te diga que el material está en el almacén pero la aplicación
+no le deja apuntarlo, **casi siempre falta registrar la compra que lo trajo**:
+
+```sql
+insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, note)
+select gen_random_uuid(), id, 20, 'compra', now(), 'Pedido de septiembre'
+from stock_items where name = 'Cable HDMI fibra 15 m';
+```
+
+La regla frena lo que empeora un saldo, nunca lo que lo arregla: si un artículo
+llegara a estar en negativo, las entradas que lo cuadran se aceptan igual. Para
+verlos —no debería haber ninguno—:
+
+```sql
+select name, on_hand from stock_levels where on_hand < 0;
+```
+
+### Cómo se escriben los nombres
+
+Los artículos se llaman siempre igual: siglas en mayúscula (`HDMI`, `USB`,
+`RS-232`, `DisplayPort`), longitudes en metros con la unidad separada (`10 m`,
+nunca `10mts` ni `10 metros`) y el resto en minúscula salvo marcas y modelos,
+que van tal cual (`iiyama T2454MSC`).
+
+No es manía de estilo: la lista venía de dos sitios —la hoja *Bolsa* y el texto
+libre de «Material Usado»— y llegó a tener 111 artículos donde hay 45. «Matriz
+HDMI» y «Matriz Hdmi» eran dos filas, el mismo cable de fibra estaba seis veces
+escrito de seis maneras, y el informe de consumo repartía su gasto entre todas.
+
+Hay un índice único sobre el nombre normalizado, así que **la base ya no deja
+crear «teclado» si existe «Teclado»**. Si al dar de alta un artículo salta un
+error de duplicado, es que ya está en la lista con otras mayúsculas o tildes:
+búscalo antes de insistir.
+
+Las 23 entradas que no llegaban a ser un artículo —«mts», «pulgadas», «cables
+de»— quedaron **archivadas**: no salen en la pestaña Almacén, pero siguen
+enlazadas a las incidencias que las citan. Para verlas:
+
+```sql
+select name from stock_items where not active order by name;
+```
+
+Si alguna sí era material y no está ya en la lista, ponle el nombre bueno y
+reactívala:
+
+```sql
+update stock_items set name = 'Canaleta de suelo', active = true
+where name = 'mts canaleta de suelo';
+```
+
+Cada fusión y cada renombrado quedó registrado con su nombre original:
+
+```sql
+select original, corrected, reason from import_fixes
+where source = 'Almacén' order by id;
 ```
 
 ### Umbrales de aviso
@@ -252,7 +358,7 @@ que nadie ha fijado**. Actívalos donde importe:
 
 ```sql
 update stock_items set min_threshold = 5
-where name in ('Lámpara Proyector NP44', 'Cable HDMI Fibra 15 mts');
+where name in ('Lámpara proyector NP44', 'Cable HDMI fibra 15 m');
 ```
 
 Los artículos por debajo salen en rojo y en el panel.

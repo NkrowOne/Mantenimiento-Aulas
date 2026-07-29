@@ -19,9 +19,32 @@ interface StockLevel {
  *
  * `on_hand` no es un campo editable sino `SUM(qty)` sobre los movimientos. Por
  * eso aquí no se "corrige el stock": se registra una entrada, una salida o un
- * ajuste, y el saldo se recalcula solo. Es lo que impide que vuelva a haber
- * saldos negativos como los de la hoja Bolsa.
+ * ajuste, y el saldo se recalcula solo.
+ *
+ * Eso descarta el descuadre de teclear una cifra a mano, que es de donde salían
+ * los negativos de la hoja Bolsa, pero no el de restar más de lo que hay: de
+ * eso se encarga el disparador `stock_movements_no_negativo`. Aquí el `−` sale
+ * apagado a cero, que es la mitad amable de la misma regla.
  */
+/**
+ * El texto del fallo, venga de donde venga.
+ *
+ * `fetch` lanza un `Error`; PostgREST devuelve un objeto pelado
+ * —`{ message, code, hint }`— que supabase-js reenvía tal cual. Preguntar solo
+ * por `instanceof Error` daba falso justo para los fallos del servidor, que son
+ * los únicos que traen algo que traducir.
+ */
+function mensajeDe(error: unknown): string {
+  if (error instanceof Error) return error.message
+  const m = (error as { message?: unknown } | null)?.message
+  return typeof m === 'string' ? m : ''
+}
+
+function codigoDe(error: unknown): string {
+  const c = (error as { code?: unknown } | null)?.code
+  return typeof c === 'string' ? c : ''
+}
+
 /**
  * ¿El fallo es de red o del servidor?
  *
@@ -29,8 +52,33 @@ interface StockLevel {
  * cobertura, o hablar con administración.
  */
 function esFalloDeRed(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-  return /fetch|network|failed to fetch|networkerror|load failed/i.test(error.message)
+  return /fetch|network|failed to fetch|networkerror|load failed/i.test(mensajeDe(error))
+}
+
+/**
+ * El movimiento dejaría el almacén en negativo.
+ *
+ * El botón `−` ya sale apagado a cero, así que esto salta cuando la cifra de la
+ * pantalla se ha quedado vieja: otro técnico gastó la última unidad hace un
+ * minuto. Sin distinguirlo, el mensaje que aparecía era «Solo un supervisor
+ * registra compras», que manda a pedir un permiso que no falta.
+ */
+function esSinExistencias(error: unknown): boolean {
+  return /no hay tantas unidades|en negativo/i.test(mensajeDe(error))
+}
+
+/**
+ * El nombre ya existe con otras mayúsculas o tildes.
+ *
+ * Lo frena el índice único sobre el nombre normalizado, que es lo que impide
+ * que vuelvan a convivir «Teclado» y «teclado». Sin traducirlo, el técnico ve
+ * `duplicate key value violates unique constraint "stock_items_norm_idx"` y
+ * concluye que la aplicación está rota, cuando lo que pasa es que el artículo
+ * que quiere crear ya está en la lista dos filas más arriba.
+ */
+function esDuplicado(error: unknown): boolean {
+  if (codigoDe(error) === '23505') return true
+  return /duplicate key|stock_items_norm_idx|already exists/i.test(mensajeDe(error))
 }
 
 export function StockPage({ role }: { role: Role }): React.ReactElement {
@@ -49,20 +97,40 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
     },
   })
 
-  type Movimiento = { itemId: string; qty: number; kind: 'compra' | 'consumo' | 'ajuste' }
+  /**
+   * El id viaja **dentro** del movimiento, no se genera al enviarlo.
+   *
+   * Se generaba dentro del `mutationFn`, así que cada reintento llevaba id
+   * nuevo. El caso para el que existe el botón «Reintentar» es justo el peor:
+   * la inserción llegó al servidor y se perdió la respuesta. Con id nuevo, ese
+   * reintento registraba un segundo consumo del mismo cable —y como el saldo es
+   * la suma y un movimiento ya no se puede borrar, para arreglarlo hace falta
+   * un tercero—. Naciendo el id con la pulsación, reenviarlo es no hacer nada.
+   */
+  type Movimiento = {
+    id: string
+    itemId: string
+    qty: number
+    kind: 'compra' | 'consumo' | 'ajuste'
+  }
   const [ultimo, setUltimo] = useState<Movimiento | null>(null)
 
   const move = useMutation({
     mutationFn: async (input: Movimiento) => {
-      const { data: user } = await supabase.auth.getUser()
-      const { error } = await supabase.from('stock_movements').insert({
-        id: uuidv7(),
-        stock_item_id: input.itemId,
-        qty: input.qty,
-        kind: input.kind,
-        occurred_at: new Date().toISOString(),
-        by_user: user.user?.id ?? null,
-      })
+      const { data } = await supabase.auth.getSession()
+      const { error } = await supabase.from('stock_movements').upsert(
+        {
+          id: input.id,
+          stock_item_id: input.itemId,
+          qty: input.qty,
+          kind: input.kind,
+          occurred_at: new Date().toISOString(),
+          by_user: data.session?.user.id ?? null,
+        },
+        // `ignoreDuplicates` y no un upsert normal: el reenvío tiene que ser un
+        // no-op, nunca una reescritura del asiento que ya está puesto.
+        { onConflict: 'id', ignoreDuplicates: true },
+      )
       if (error) throw error
     },
     onSuccess: (_data, input) => {
@@ -168,8 +236,16 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
           </div>
           {crear.isError && (
             <p className="mt-3 text-sm text-crit">
-              No se ha podido crear:{' '}
-              {crear.error instanceof Error ? crear.error.message : String(crear.error)}
+              {esDuplicado(crear.error) ? (
+                <>
+                  Ese artículo ya está en la lista, escrito con otras mayúsculas o tildes.
+                  Búscalo arriba en vez de crearlo otra vez.
+                </>
+              ) : (
+                <>
+                  No se ha podido crear: {mensajeDe(crear.error) || 'error desconocido'}
+                </>
+              )}
             </p>
           )}
           <button
@@ -238,19 +314,40 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
                     {/* Deshabilitados mientras vuela el anterior: la cifra no se
                         movía hasta que volvía el servidor, así que el técnico
                         pulsaba otra vez y se registraban dos movimientos. */}
+                    {/* Y a cero, el `−` no lleva a ningún sitio: el servidor lo
+                        rechaza. Enseñarlo pulsable es prometer algo que no va a
+                        pasar, y el técnico se entera cuatro toques después. */}
                     <button
                       type="button"
-                      disabled={move.isPending}
-                      onClick={() => move.mutate({ itemId: l.stock_item_id, qty: -1, kind: 'consumo' })}
+                      disabled={move.isPending || l.on_hand <= 0}
+                      onClick={() =>
+                        move.mutate({
+                          id: uuidv7(),
+                          itemId: l.stock_item_id,
+                          qty: -1,
+                          kind: 'consumo',
+                        })
+                      }
                       className="key key-quiet h-11 w-11"
-                      aria-label={`Consumir una unidad de ${l.name}`}
+                      aria-label={
+                        l.on_hand <= 0
+                          ? `No quedan unidades de ${l.name}`
+                          : `Consumir una unidad de ${l.name}`
+                      }
                     >
                       −
                     </button>
                     <button
                       type="button"
                       disabled={move.isPending}
-                      onClick={() => move.mutate({ itemId: l.stock_item_id, qty: 1, kind: 'compra' })}
+                      onClick={() =>
+                        move.mutate({
+                          id: uuidv7(),
+                          itemId: l.stock_item_id,
+                          qty: 1,
+                          kind: 'compra',
+                        })
+                      }
                       className="key key-quiet h-11 w-11"
                       aria-label={`Añadir una unidad de ${l.name}`}
                     >
@@ -322,7 +419,17 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
       */}
       {move.isError && (
         <div className="card mt-4 p-4">
-          {!navigator.onLine || esFalloDeRed(move.error) ? (
+          {esSinExistencias(move.error) ? (
+            <>
+              <p className="text-sm text-crit">
+                No quedan tantas unidades: el movimiento no se ha registrado.
+              </p>
+              <p className="mt-1 text-sm text-muted">
+                Las existencias no pueden quedar en negativo. Si el material está en el almacén
+                pero la cifra dice que no, falta por apuntar la compra que lo trajo.
+              </p>
+            </>
+          ) : !navigator.onLine || esFalloDeRed(move.error) ? (
             <>
               <p className="text-sm text-crit">
                 Sin conexión: el movimiento no se ha registrado.
@@ -356,7 +463,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
           <button
             type="button"
             onClick={() => {
-              move.mutate({ itemId: ultimo.itemId, qty: -ultimo.qty, kind: 'ajuste' })
+              move.mutate({ id: uuidv7(), itemId: ultimo.itemId, qty: -ultimo.qty, kind: 'ajuste' })
               setUltimo(null)
             }}
             className="key key-quiet min-h-11 shrink-0 px-3 text-sm"

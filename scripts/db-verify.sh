@@ -144,7 +144,8 @@ union all select 'salas', count(*) from rooms
 union all select 'equipos con S/N', count(*) from assets
 union all select 'incidencias', count(*) from incidents
 union all select '  sin sala asignada', count(*) from incidents where room_id is null
-union all select 'artículos de almacén', count(*) from stock_items
+union all select 'artículos de almacén', count(*) from stock_items where active
+union all select '  archivados', count(*) from stock_items where not active
 union all select 'correcciones registradas', count(*) from import_fixes
 union all select 'en cuarentena', count(*) from import_quarantine;" | sed 's/^/   /'
 
@@ -153,7 +154,10 @@ psql "$PGURL" -t -A -F'  ' -c "
 select 'lámparas por debajo del 20%', count(*) from alerts_lamp_low
 union all select 'incidencias estancadas', count(*) from alerts_stale_incidents
 union all select 'salas sin revisar', count(*) from alerts_overdue_rooms
-union all select 'stock bajo mínimo', count(*) from stock_levels where below_threshold;" | sed 's/^/   /'
+union all select 'stock bajo mínimo', count(*) from stock_levels where below_threshold
+union all select 'artículos en negativo', count(*) from stock_levels where on_hand < 0
+union all select 'consumos sin destino', count(*) from stock_movements
+  where kind = 'consumo' and incident_id is null and room_id is null;" | sed 's/^/   /'
 
 echo "▸ Pruebas de RLS e inmutabilidad"
 psql "$PGURL" -q -v ON_ERROR_STOP=1 -f supabase/rls-test.sql 2>&1 \

@@ -241,6 +241,8 @@ export interface StockMovement {
   kind: StockMovementKind
   incident_id: string | null
   inspection_id: string | null
+  /** Dónde se gastó. Sin esto el almacén sabe cuánto queda y no dónde fue. */
+  room_id: string | null
   occurred_at: string
   by_user: string | null
   note: string | null

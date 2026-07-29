@@ -139,11 +139,13 @@ begin;
   end $$;
   rollback to savepoint s;
 
-  -- Pero sí puede descontar lo que gasta en el aula.
+  -- Pero sí puede descontar lo que gasta en el aula. El artículo se elige entre
+  -- los que tienen existencias: desde que el saldo no puede quedar en negativo,
+  -- «el primero que salga» falla si resulta ser uno de los que están a cero.
   insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user)
-  select '44444444-4444-4444-8444-444444444442', id, -1, 'consumo', now(),
+  select '44444444-4444-4444-8444-444444444442', stock_item_id, -1, 'consumo', now(),
          '11111111-1111-4111-8111-111111111111'
-  from stock_items limit 1;
+  from stock_levels order by on_hand desc limit 1;
   select 'OK: el consumo sí se permite' as resultado;
 rollback;
 
@@ -162,12 +164,34 @@ begin;
 rollback;
 
 \echo ''
-\echo '=== 8. El stock es una suma, no un campo editable ==='
-select case
-  when count(*) = 0 then 'OK: ningún artículo con saldo negativo'
-  else 'ATENCIÓN: ' || count(*) || ' artículos en negativo'
-end as resultado
-from stock_levels where on_hand < 0;
+\echo '=== 8. Las existencias no pueden quedar en negativo ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  savepoint s;
+
+  -- Que el saldo sea una suma impide teclear una cifra a mano, que es de donde
+  -- salían los negativos de la hoja Bolsa. No impedía restar más de lo que hay:
+  -- con el botón `−` de la pantalla, un artículo a cero se quedaba en −1.
+  do $$
+  declare v_item uuid; v_saldo int;
+  begin
+    select stock_item_id, on_hand into v_item, v_saldo
+      from stock_levels order by on_hand desc limit 1;
+
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user)
+    values (gen_random_uuid(), v_item, -(v_saldo + 1), 'consumo', now(),
+            '11111111-1111-4111-8111-111111111111');
+    raise exception 'FALLO: el almacén se ha quedado en negativo';
+  exception when check_violation then
+    raise notice 'OK: no se puede gastar más de lo que hay';
+  end $$;
+  rollback to savepoint s;
+
+  -- Pero el saldo que ya está descuadrado tiene que poder cuadrarse: si no, un
+  -- almacén en negativo se quedaría sin forma de salir de ahí.
+  select 'OK: quedan ' || count(*) || ' artículos en negativo' as resultado
+  from stock_levels where on_hand < 0;
+rollback;
 
 \echo ''
 \echo '=== 9. Los buckets existen y son privados ==='
@@ -664,5 +688,71 @@ begin;
                     and total >= 1)
     then 'OK: la incidencia de las 00:30 del 1 de marzo cuenta en marzo'
     else 'FALLO: se ha contado en otro mes'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 29. Un movimiento de almacén no se corrige, se contrapone ==='
+begin;
+  -- Era la única tabla con consecuencias económicas que se podía reescribir, y
+  -- además la única que no estaba auditada: se podía cambiar una cifra sin
+  -- dejar rastro de quién ni de qué decía antes. Ahora la frenan dos capas, y
+  -- fallan distinto a propósito.
+
+  -- Capa 1 — RLS. Sin política de UPDATE la fila ni siquiera es visible para
+  -- escribir: el `update` no da error, no toca nada. Comprobarlo con una
+  -- excepción habría sido comprobar lo que no pasa.
+  select test_as('33333333-3333-4333-8333-333333333333', 'supervisor');
+  savepoint s;
+  update stock_movements set qty = qty + 100;
+  select case
+    when (select count(*) from stock_movements where qty > 90) = 0
+    then 'OK: RLS no deja reescribir ningún movimiento'
+    else 'FALLO: un supervisor ha reescrito ' ||
+         (select count(*) from stock_movements where qty > 90) || ' asientos'
+  end as resultado;
+  rollback to savepoint s;
+  reset role;
+
+  -- Capa 2 — el disparador, para quien se salta la RLS (service-role, o quien
+  -- entra por psql). Aquí sí tiene que doler.
+  savepoint s2;
+  do $$
+  declare v_mov uuid;
+  begin
+    select id into v_mov from stock_movements limit 1;
+    update stock_movements set qty = qty + 100 where id = v_mov;
+    raise exception 'FALLO: se ha reescrito un asiento del almacén';
+  exception when check_violation then
+    raise notice 'OK: el disparador tampoco lo deja pasar por debajo de la RLS';
+  end $$;
+  rollback to savepoint s2;
+
+  do $$
+  declare v_mov uuid;
+  begin
+    select id into v_mov from stock_movements limit 1;
+    delete from stock_movements where id = v_mov;
+    raise exception 'FALLO: se ha borrado un asiento del almacén';
+  exception when check_violation then
+    raise notice 'OK: tampoco se borra';
+  end $$;
+rollback;
+
+\echo '=== 30. El consumo del histórico llegó al almacén con su destino ==='
+begin;
+  -- El Excel traía el material usado en cada incidencia y no salía de ahí: no
+  -- había ni un movimiento de tipo `consumo`, así que el top de material del
+  -- informe diario salía en blanco.
+  select case
+    when (select count(*) from stock_movements where kind = 'consumo') = 0
+      then 'ATENCIÓN: el almacén no registra ningún consumo'
+    when (select count(*) from stock_movements
+           where kind = 'consumo' and incident_id is null) > 0
+      then 'ATENCIÓN: hay consumos sin incidencia'
+    else 'OK: ' || (select count(*) from stock_movements where kind = 'consumo') ||
+         ' consumos, todos con incidencia y ' ||
+         (select count(*) from stock_movements where kind = 'consumo' and room_id is not null) ||
+         ' con sala'
   end as resultado;
 rollback;

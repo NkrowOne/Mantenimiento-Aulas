@@ -32,6 +32,7 @@ import {
   stripParenthetical,
   cleanRoomRef,
 } from '../src/domain/normalize'
+import { canonAlmacen, esFragmentoAlmacen } from '../src/domain/almacen'
 import type { RoomCapabilities } from '../src/domain/types'
 
 // -----------------------------------------------------------------------------
@@ -543,7 +544,47 @@ function importIncidents(rows: unknown[][], sheet: string, hasObservacion: boole
 // Hoja 3 — Bolsa (stock)
 // -----------------------------------------------------------------------------
 
-const stockItems: Array<{ id: string; name: string; onHand: number }> = []
+const stockItems = new Map<string, { id: string; name: string; onHand: number; active: boolean }>()
+
+/**
+ * Da de alta un artículo con su nombre canónico.
+ *
+ * La clave es el nombre canónico normalizado, así que las seis grafías de un
+ * mismo cable entran una sola vez y con el saldo sumado. Sin esto la lista de
+ * almacén nacía con «Cable Hdmi 10mts Fibra», «cable hdmi Fibra 10mts» y
+ * «Cables Hdmi 10mts» como tres artículos distintos, y el informe de consumo
+ * repartía el gasto del cable entre las tres.
+ */
+function addStockItem(original: string, onHand: number, source: string): string {
+  const name = canonAlmacen(original)
+  const activo = !esFragmentoAlmacen(original)
+
+  if (name !== original) {
+    fixes.push({
+      source, rowRef: original, field: 'Artículo de almacén',
+      original, corrected: name,
+      reason: 'Nomenclatura unificada del almacén',
+    })
+  }
+  if (!activo) {
+    fixes.push({
+      source, rowRef: original, field: 'Artículo de almacén',
+      original, corrected: '(archivado)',
+      reason: 'No identifica un artículo: se archiva, pero sigue enlazado a las incidencias que lo citan',
+    })
+  }
+
+  const key = norm(name)
+  const id = uuidFor('stockitem', key)
+  const ya = stockItems.get(key)
+  if (ya) {
+    ya.onHand += onHand
+    ya.active = ya.active || activo
+  } else {
+    stockItems.set(key, { id, name, onHand, active: activo })
+  }
+  return id
+}
 
 function importStock(rows: unknown[][]): void {
   const cName = 0
@@ -567,7 +608,7 @@ function importStock(rows: unknown[][]): void {
       onHand = 0
     }
 
-    stockItems.push({ id: uuidFor('stockitem', norm(name)), name, onHand })
+    addStockItem(name, onHand, 'Bolsa 2026')
   }
 }
 
@@ -653,11 +694,67 @@ function emit(): void {
   }
 
   out.push('')
-  out.push('-- Artículos de almacén y saldo inicial')
-  for (const s of stockItems) {
+  // El material del histórico se resuelve aquí, antes de emitir nada: las seis
+  // grafías del mismo cable ("Cable Hdmi 10mts Fibra", "cable hdmi Fibra
+  // 10mts", "Cables Hdmi 10mts") acaban en un único artículo, y el que ya
+  // existe en la Bolsa lo absorbe en vez de duplicarse a su lado. Lo que no
+  // llega a ser un artículo —"mts", "pulgadas", una frase cortada— entra
+  // archivado: sigue enlazado a su incidencia pero no ensucia el almacén.
+  const materialItemId = new Map<string, string>()
+  for (const m of incidentMaterials) {
+    if (!m.itemName) continue
+    const key = norm(m.itemName)
+    if (!materialItemId.has(key)) {
+      materialItemId.set(key, addStockItem(m.itemName, 0, 'Material Usado'))
+    }
+  }
+
+  // Cuánto se llevó el histórico de cada artículo. Es el saldo de apertura: sin
+  // él, meter los consumos descontaría dos veces —la cifra de la Bolsa ya viene
+  // con el histórico restado— y medio almacén quedaría en negativo.
+  //
+  // Lo que quedó apuntado contra un artículo archivado no cuenta. «50 pulgadas»
+  // o «20 mts Fibra» son un monitor y un cable, pero el número que traen es de
+  // pulgadas y de metros, no de unidades: convertirlo en un consumo de 50
+  // unidades de «pulgadas» no es un dato incompleto, es falso —y se colocaba en
+  // cabeza del informe de material más consumido—. La línea se queda en
+  // `incident_materials` con su texto original y no toca el almacén.
+  const activo = new Map([...stockItems.values()].map((s) => [s.id, s.active]))
+  const consumidoPorItem = new Map<string, number>()
+  for (const m of incidentMaterials) {
+    if (!m.itemName || m.qty <= 0) continue
+    const id = materialItemId.get(norm(m.itemName))
+    if (!id) continue
+    if (!activo.get(id)) {
+      fixes.push({
+        source: 'Material Usado', rowRef: `${m.qty} ${m.itemName}`, field: 'Material Usado',
+        original: `${m.qty} ${m.itemName}`, corrected: '(sin movimiento de almacén)',
+        reason: 'Cantidad sin artículo identificable: queda en la incidencia pero no descuenta stock',
+      })
+      continue
+    }
+    consumidoPorItem.set(id, (consumidoPorItem.get(id) ?? 0) + m.qty)
+  }
+
+  // Un día antes de la primera incidencia: el almacén empieza lleno y se va
+  // gastando, que es lo que de verdad pasó.
+  const primeraIncidencia = incidents
+    .map((i) => i.openedAt)
+    .filter((d): d is Date => d instanceof Date)
+    .reduce<Date | null>((min, d) => (min === null || d < min ? d : min), null)
+  const apertura = new Date((primeraIncidencia ?? new Date('2025-01-01T00:00:00Z')).getTime() - 86_400_000)
+
+  out.push('-- Artículos de almacén, saldo de apertura y saldo inicial')
+  for (const s of stockItems.values()) {
     out.push(
-      `insert into stock_items (id, name) values (${sql(s.id)}, ${sql(s.name)}) on conflict (id) do nothing;`,
+      `insert into stock_items (id, name, active) values (${sql(s.id)}, ${sql(s.name)}, ${sql(s.active)}) on conflict (id) do nothing;`,
     )
+    const apertura_qty = consumidoPorItem.get(s.id) ?? 0
+    if (apertura_qty !== 0) {
+      out.push(
+        `insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, source, note) values (${sql(uuidFor('stockmov', `apertura|${s.id}`))}, ${sql(s.id)}, ${apertura_qty}, 'ajuste', ${sql(apertura)}, 'import', 'Saldo de apertura: las unidades que el histórico de incidencias consumió después') on conflict (id) do nothing;`,
+      )
+    }
     if (s.onHand !== 0) {
       out.push(
         `insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, source, note) values (${sql(uuidFor('stockmov', `inicial|${s.id}`))}, ${sql(s.id)}, ${s.onHand}, 'ajuste', '2026-01-01T00:00:00Z', 'import', 'Saldo inicial importado de Bolsa 2026') on conflict (id) do nothing;`,
@@ -683,32 +780,27 @@ function emit(): void {
   }
 
   out.push('')
-  out.push('-- Artículos citados en el histórico pero ausentes de la Bolsa')
-  //
-  // El id se deriva del nombre normalizado, así que dos grafías del mismo
-  // material ("Cable Hdmi 10mts Fibra" y "cable hdmi 10mts fibra") comparten id.
-  // Se emiten una sola vez y con `on conflict (id)`: con `on conflict (name)` la
-  // segunda grafía chocaba contra la clave primaria y tumbaba el seed entero.
-  const materialItems = new Map<string, { id: string; name: string }>()
-  for (const m of incidentMaterials) {
-    if (!m.itemName) continue
-    const key = norm(m.itemName)
-    if (!materialItems.has(key)) {
-      materialItems.set(key, { id: uuidFor('stockitem', key), name: m.itemName })
-    }
-  }
-  for (const item of materialItems.values()) {
-    out.push(
-      `insert into stock_items (id, name) values (${sql(item.id)}, ${sql(item.name)}) on conflict (id) do nothing;`,
-    )
-  }
-
-  out.push('')
   out.push('-- Material consumido por incidencia')
+  //
+  // Cada línea entra dos veces y las dos hacen falta: como `incident_materials`,
+  // que conserva el texto original y el número de serie, y como movimiento de
+  // almacén, que es lo que alimenta el saldo y los informes de consumo. Sin lo
+  // segundo el histórico existía pero el almacén no se enteraba: no había ni un
+  // solo movimiento de tipo `consumo` en toda la base, y el top de material del
+  // informe diario salía en blanco.
+  const salaDeIncidencia = new Map(incidents.map((i) => [i.id, i.roomId]))
+  const fechaDeIncidencia = new Map(incidents.map((i) => [i.id, i.openedAt]))
   for (const m of incidentMaterials) {
-    const itemId = m.itemName ? materialItems.get(norm(m.itemName))?.id ?? null : null
+    const itemId = m.itemName ? materialItemId.get(norm(m.itemName)) ?? null : null
     out.push(
       `insert into incident_materials (id, incident_id, stock_item_id, qty, serial, raw_text) values (${sql(m.id)}, ${sql(m.incidentId)}, ${sql(itemId)}, ${m.qty}, ${sql(m.serial)}, ${sql(m.raw)}) on conflict (id) do nothing;`,
+    )
+    if (!itemId || m.qty <= 0 || !activo.get(itemId)) continue
+    // La fecha es la de apertura y no la de resolución: el material se coge
+    // cuando se va a arreglar, y es la única de las dos que está siempre puesta.
+    const cuando = fechaDeIncidencia.get(m.incidentId) ?? null
+    out.push(
+      `insert into stock_movements (id, stock_item_id, qty, kind, incident_id, room_id, occurred_at, source, note) values (${sql(uuidFor('stockmov', `consumo|${m.id}`))}, ${sql(itemId)}, ${-m.qty}, 'consumo', ${sql(m.incidentId)}, ${sql(salaDeIncidencia.get(m.incidentId) ?? null)}, ${sql(cuando)}, 'import', ${sql(m.serial ? `N/S ${m.serial}` : null)}) on conflict (id) do nothing;`,
     )
   }
 
@@ -767,7 +859,7 @@ Importación completada → ${outPath}
   Zonas ...................... ${zones.size}
   Salas ...................... ${rooms.size}
   Equipos con nº de serie .... ${new Set(assets.map((a) => a.serial)).size}
-  Artículos de almacén ....... ${stockItems.length}
+  Artículos de almacén ....... ${stockItems.size}
   Revisiones históricas ...... ${inspectionsFromExcel.length}
   Incidencias ................ ${incidents.length}
   Materiales parseados ....... ${incidentMaterials.filter((m) => m.itemName).length}
