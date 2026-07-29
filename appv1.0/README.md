@@ -1,36 +1,84 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Mantenimiento de Aulas y Salas
 
-## Getting Started
+PWA para la gestión de mantenimiento de aulas y salas de reunión. Este documento describe la base técnica del proyecto; el contexto funcional completo está en [`docs/PLAN.md`](../docs/PLAN.md).
 
-First, run the development server:
+> Estado actual: esqueleto de proyecto (Fase 1). No incluye autenticación ni base de datos funcional todavía.
+
+## Requisitos
+
+- Node.js 20 o superior
+- npm 10 o superior
+
+## Instalación
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Comandos disponibles
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Comando | Descripción |
+|---|---|
+| `npm run dev` | Arranca el servidor de desarrollo en http://localhost:3000 |
+| `npm run build` | Genera la build de producción |
+| `npm run start` | Sirve la build de producción |
+| `npm run lint` | Ejecuta ESLint |
+| `npm run typecheck` | Comprueba los tipos con `tsc --noEmit` |
+| `npm run test` | Ejecuta los tests unitarios/integración con Vitest |
+| `npm run test:watch` | Ejecuta Vitest en modo observador |
+| `npm run test:e2e` | Ejecuta los tests end-to-end con Playwright |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Antes del primer `npm run test:e2e` es necesario instalar los navegadores de Playwright:
 
-## Learn More
+```bash
+npx playwright install
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Estructura inicial
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+src/
+├── app/              # Rutas (App Router de Next.js)
+│   ├── api/          # Endpoints de API (pendiente)
+│   ├── login/
+│   ├── dashboard/
+│   ├── rooms/
+│   ├── revisions/
+│   ├── incidents/
+│   ├── stock/
+│   ├── reports/
+│   ├── layout.tsx    # Layout general
+│   └── page.tsx      # Página de inicio
+├── components/
+│   ├── ui/           # Componentes de interfaz genéricos
+│   ├── layout/       # Componentes de estructura (cabecera, navegación...)
+│   ├── forms/        # Componentes de formularios
+│   └── feedback/     # Estados de carga, error, vacío...
+├── db/
+│   ├── schema/       # Esquema de base de datos (Drizzle, pendiente)
+│   ├── migrations/   # Migraciones (pendiente)
+│   └── index.ts      # Punto de entrada de la capa de datos
+├── lib/              # Utilidades transversales
+├── services/         # Lógica de negocio / casos de uso
+├── repositories/      # Acceso a datos
+├── hooks/            # Hooks de React reutilizables
+├── types/            # Tipos e interfaces compartidos
+├── validators/       # Esquemas de validación (Zod, pendiente)
+├── offline/          # Autoguardado, outbox y sincronización
+├── storage/          # Abstracción de almacenamiento de ficheros/fotos
+└── test/             # Configuración y utilidades de test (Vitest)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+e2e/                  # Tests end-to-end (Playwright)
+```
 
-## Deploy on Vercel
+Las carpetas todavía sin contenido llevan un `.gitkeep` para conservar la estructura en el repositorio.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Stack técnico de esta base
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Next.js** (App Router) + **React** + **TypeScript estricto**
+- **Tailwind CSS**
+- **Vitest** + **Testing Library** para tests unitarios/integración
+- **Playwright** para tests end-to-end
+- Alias de importación `@/*` → `src/*`
+
+No se ha añadido todavía autenticación, base de datos funcional ni lógica de negocio: esto se abordará en fases posteriores según [`docs/PLAN.md`](../docs/PLAN.md).
