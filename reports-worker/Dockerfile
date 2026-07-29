@@ -18,9 +18,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# `tsx` es dependencia de producción, no de desarrollo: con `--omit=dev` no se
+# instalaría y el `npx tsx` del CMD tendría que bajárselo del registro en cada
+# arranque en frío. Instalado aquí, el contenedor arranca —y ejecuta las altas
+# de usuario— sin depender de que alcance npm.
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev || npm install --omit=dev
 
+# Además del servidor, `src` trae la orden de altas de usuario
+# (`npm run admin -- crear …`): en un despliegue sobre plataforma este es el
+# único contenedor que puede ejecutarla. Ver `src/admin-user.ts`.
 COPY src ./src
 COPY tsconfig.json ./
 

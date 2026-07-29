@@ -80,6 +80,9 @@ va por el mismo origen que la PWA**, que es lo que permite que `kong.yml` no
 lleve plugin de CORS. Necesita `SUPABASE_UPSTREAM` en tiempo de ejecución y
 `VITE_SUPABASE_ANON_KEY` como argumento de construcción.
 
+Esa imagen lleva además la orden de altas de usuario (`alta`, ver *Usuarios*),
+que es lo único que necesita `SUPABASE_SERVICE_ROLE_KEY` en el servicio.
+
 ### El certificado, que es lo que decide si hay modo offline
 
 Sin HTTPS válido no hay service worker, y sin service worker no hay modo
@@ -104,6 +107,20 @@ npm run admin:user -- codigo --email ana@x.es      # si se pierde
 npm run admin:user -- rol    --email ana@x.es --rol supervisor
 npm run admin:user -- listar
 ```
+
+Sobre una plataforma no hay repositorio a mano, así que la imagen del servicio
+lleva las mismas órdenes dentro, como `alta`:
+
+```bash
+alta crear --email ana@x.es --nombre "Ana" --rol tecnico
+```
+
+Se ejecuta desde la terminal del servicio, en el panel de la plataforma. Pide
+`SUPABASE_SERVICE_ROLE_KEY` entre las variables del servicio —la URL de la API
+la saca de `SUPABASE_UPSTREAM`, la que ya usa el Caddyfile—, y **esa clave no
+llega al navegador**: en el bundle solo entran las variables `VITE_*`, y esta no
+lo es. El worker de informes, si lo tienes desplegado, responde a las mismas
+órdenes con `npm run admin -- …`.
 
 El código **es** la contraseña temporal. Al usarlo, la app la rota
 inmediatamente a una aleatoria fuerte que no se guarda en ningún sitio, así que
@@ -283,7 +300,7 @@ src/features/     pantallas por área funcional
 supabase/         migraciones, harness de pruebas y seed generado
 src/integrations/ puerto de tickets externos (ServiceNow en el futuro)
 scripts/          importador del Excel y verificación de base de datos
-reports-worker/   generador de informes PDF, con su Dockerfile
+reports-worker/   informes PDF y alta de usuarios, con su Dockerfile
 Caddyfile         TLS por DNS-01, PWA y proxy de API en un solo origen
 docker-compose.yml  Supabase self-hosted, Caddy y worker
 ```

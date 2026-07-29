@@ -68,6 +68,27 @@ npm run admin:user -- rol    --email ana@x.es --rol supervisor
 
 **El código solo se muestra una vez.** Si se pierde, genera otro con `codigo`.
 
+### Si el despliegue está sobre una plataforma (Skyway, Railway, Fly…)
+
+Ahí no hay repositorio ni `npm`: la imagen del servicio es Caddy sirviendo la
+PWA ya compilada, y por eso `npm run admin:user …` responde `sh: npm: not
+found`. Las mismas órdenes viajan dentro de la imagen como `alta`, y se
+escriben en la terminal del servicio, desde el panel:
+
+```bash
+alta listar
+alta crear  --email ana@x.es --nombre "Ana Ruiz" --rol tecnico
+alta codigo --email ana@x.es
+alta rol    --email ana@x.es --rol supervisor
+```
+
+Requisito único: que el servicio tenga `SUPABASE_SERVICE_ROLE_KEY` entre sus
+variables de entorno. La URL de la API la deduce de `SUPABASE_UPSTREAM`, que ya
+está puesta para que Caddy haga de proxy.
+
+Si además tienes desplegado el worker de informes, su terminal responde a lo
+mismo con `npm run admin -- …`.
+
 ### Los tres roles
 
 | Rol | Puede |
