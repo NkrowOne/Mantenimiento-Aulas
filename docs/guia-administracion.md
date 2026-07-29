@@ -245,6 +245,34 @@ select gen_random_uuid(), id, 12, 'ajuste', now(), 'Recuento físico de julio'
 from stock_items where name = 'Cable HDMI fibra 15 m';
 ```
 
+### Las existencias no bajan de cero
+
+**No se puede gastar lo que no hay.** El `−` sale apagado en los artículos a
+cero, y si la cifra de la pantalla se ha quedado vieja —otro técnico gastó la
+última unidad hace un minuto— el servidor rechaza el movimiento y lo dice.
+
+Que el saldo sea una suma ya impedía el descuadre de teclear una cifra a mano,
+que es de donde salían los negativos de la hoja Bolsa. No impedía restar más de
+lo que hay: cuatro toques en un artículo a cero lo dejaban en −4, y el informe
+de consumo daba esa cifra por buena.
+
+Cuando un técnico te diga que el material está en el almacén pero la aplicación
+no le deja apuntarlo, **casi siempre falta registrar la compra que lo trajo**:
+
+```sql
+insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, note)
+select gen_random_uuid(), id, 20, 'compra', now(), 'Pedido de septiembre'
+from stock_items where name = 'Cable HDMI fibra 15 m';
+```
+
+La regla frena lo que empeora un saldo, nunca lo que lo arregla: si un artículo
+llegara a estar en negativo, las entradas que lo cuadran se aceptan igual. Para
+verlos —no debería haber ninguno—:
+
+```sql
+select name, on_hand from stock_levels where on_hand < 0;
+```
+
 ### Cómo se escriben los nombres
 
 Los artículos se llaman siempre igual: siglas en mayúscula (`HDMI`, `USB`,

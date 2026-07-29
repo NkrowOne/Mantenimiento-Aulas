@@ -139,11 +139,13 @@ begin;
   end $$;
   rollback to savepoint s;
 
-  -- Pero sí puede descontar lo que gasta en el aula.
+  -- Pero sí puede descontar lo que gasta en el aula. El artículo se elige entre
+  -- los que tienen existencias: desde que el saldo no puede quedar en negativo,
+  -- «el primero que salga» falla si resulta ser uno de los que están a cero.
   insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user)
-  select '44444444-4444-4444-8444-444444444442', id, -1, 'consumo', now(),
+  select '44444444-4444-4444-8444-444444444442', stock_item_id, -1, 'consumo', now(),
          '11111111-1111-4111-8111-111111111111'
-  from stock_items limit 1;
+  from stock_levels order by on_hand desc limit 1;
   select 'OK: el consumo sí se permite' as resultado;
 rollback;
 
@@ -162,12 +164,34 @@ begin;
 rollback;
 
 \echo ''
-\echo '=== 8. El stock es una suma, no un campo editable ==='
-select case
-  when count(*) = 0 then 'OK: ningún artículo con saldo negativo'
-  else 'ATENCIÓN: ' || count(*) || ' artículos en negativo'
-end as resultado
-from stock_levels where on_hand < 0;
+\echo '=== 8. Las existencias no pueden quedar en negativo ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  savepoint s;
+
+  -- Que el saldo sea una suma impide teclear una cifra a mano, que es de donde
+  -- salían los negativos de la hoja Bolsa. No impedía restar más de lo que hay:
+  -- con el botón `−` de la pantalla, un artículo a cero se quedaba en −1.
+  do $$
+  declare v_item uuid; v_saldo int;
+  begin
+    select stock_item_id, on_hand into v_item, v_saldo
+      from stock_levels order by on_hand desc limit 1;
+
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user)
+    values (gen_random_uuid(), v_item, -(v_saldo + 1), 'consumo', now(),
+            '11111111-1111-4111-8111-111111111111');
+    raise exception 'FALLO: el almacén se ha quedado en negativo';
+  exception when check_violation then
+    raise notice 'OK: no se puede gastar más de lo que hay';
+  end $$;
+  rollback to savepoint s;
+
+  -- Pero el saldo que ya está descuadrado tiene que poder cuadrarse: si no, un
+  -- almacén en negativo se quedaría sin forma de salir de ahí.
+  select 'OK: quedan ' || count(*) || ' artículos en negativo' as resultado
+  from stock_levels where on_hand < 0;
+rollback;
 
 \echo ''
 \echo '=== 9. Los buckets existen y son privados ==='

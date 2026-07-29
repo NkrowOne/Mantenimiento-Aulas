@@ -19,9 +19,32 @@ interface StockLevel {
  *
  * `on_hand` no es un campo editable sino `SUM(qty)` sobre los movimientos. Por
  * eso aquí no se "corrige el stock": se registra una entrada, una salida o un
- * ajuste, y el saldo se recalcula solo. Es lo que impide que vuelva a haber
- * saldos negativos como los de la hoja Bolsa.
+ * ajuste, y el saldo se recalcula solo.
+ *
+ * Eso descarta el descuadre de teclear una cifra a mano, que es de donde salían
+ * los negativos de la hoja Bolsa, pero no el de restar más de lo que hay: de
+ * eso se encarga el disparador `stock_movements_no_negativo`. Aquí el `−` sale
+ * apagado a cero, que es la mitad amable de la misma regla.
  */
+/**
+ * El texto del fallo, venga de donde venga.
+ *
+ * `fetch` lanza un `Error`; PostgREST devuelve un objeto pelado
+ * —`{ message, code, hint }`— que supabase-js reenvía tal cual. Preguntar solo
+ * por `instanceof Error` daba falso justo para los fallos del servidor, que son
+ * los únicos que traen algo que traducir.
+ */
+function mensajeDe(error: unknown): string {
+  if (error instanceof Error) return error.message
+  const m = (error as { message?: unknown } | null)?.message
+  return typeof m === 'string' ? m : ''
+}
+
+function codigoDe(error: unknown): string {
+  const c = (error as { code?: unknown } | null)?.code
+  return typeof c === 'string' ? c : ''
+}
+
 /**
  * ¿El fallo es de red o del servidor?
  *
@@ -29,8 +52,19 @@ interface StockLevel {
  * cobertura, o hablar con administración.
  */
 function esFalloDeRed(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-  return /fetch|network|failed to fetch|networkerror|load failed/i.test(error.message)
+  return /fetch|network|failed to fetch|networkerror|load failed/i.test(mensajeDe(error))
+}
+
+/**
+ * El movimiento dejaría el almacén en negativo.
+ *
+ * El botón `−` ya sale apagado a cero, así que esto salta cuando la cifra de la
+ * pantalla se ha quedado vieja: otro técnico gastó la última unidad hace un
+ * minuto. Sin distinguirlo, el mensaje que aparecía era «Solo un supervisor
+ * registra compras», que manda a pedir un permiso que no falta.
+ */
+function esSinExistencias(error: unknown): boolean {
+  return /no hay tantas unidades|en negativo/i.test(mensajeDe(error))
 }
 
 /**
@@ -43,10 +77,8 @@ function esFalloDeRed(error: unknown): boolean {
  * que quiere crear ya está en la lista dos filas más arriba.
  */
 function esDuplicado(error: unknown): boolean {
-  const code = (error as { code?: string } | null)?.code
-  if (code === '23505') return true
-  if (!(error instanceof Error)) return false
-  return /duplicate key|stock_items_norm_idx|already exists/i.test(error.message)
+  if (codigoDe(error) === '23505') return true
+  return /duplicate key|stock_items_norm_idx|already exists/i.test(mensajeDe(error))
 }
 
 export function StockPage({ role }: { role: Role }): React.ReactElement {
@@ -191,8 +223,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
                 </>
               ) : (
                 <>
-                  No se ha podido crear:{' '}
-                  {crear.error instanceof Error ? crear.error.message : String(crear.error)}
+                  No se ha podido crear: {mensajeDe(crear.error) || 'error desconocido'}
                 </>
               )}
             </p>
@@ -263,12 +294,19 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
                     {/* Deshabilitados mientras vuela el anterior: la cifra no se
                         movía hasta que volvía el servidor, así que el técnico
                         pulsaba otra vez y se registraban dos movimientos. */}
+                    {/* Y a cero, el `−` no lleva a ningún sitio: el servidor lo
+                        rechaza. Enseñarlo pulsable es prometer algo que no va a
+                        pasar, y el técnico se entera cuatro toques después. */}
                     <button
                       type="button"
-                      disabled={move.isPending}
+                      disabled={move.isPending || l.on_hand <= 0}
                       onClick={() => move.mutate({ itemId: l.stock_item_id, qty: -1, kind: 'consumo' })}
                       className="key key-quiet h-11 w-11"
-                      aria-label={`Consumir una unidad de ${l.name}`}
+                      aria-label={
+                        l.on_hand <= 0
+                          ? `No quedan unidades de ${l.name}`
+                          : `Consumir una unidad de ${l.name}`
+                      }
                     >
                       −
                     </button>
@@ -347,7 +385,17 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
       */}
       {move.isError && (
         <div className="card mt-4 p-4">
-          {!navigator.onLine || esFalloDeRed(move.error) ? (
+          {esSinExistencias(move.error) ? (
+            <>
+              <p className="text-sm text-crit">
+                No quedan tantas unidades: el movimiento no se ha registrado.
+              </p>
+              <p className="mt-1 text-sm text-muted">
+                Las existencias no pueden quedar en negativo. Si el material está en el almacén
+                pero la cifra dice que no, falta por apuntar la compra que lo trajo.
+              </p>
+            </>
+          ) : !navigator.onLine || esFalloDeRed(move.error) ? (
             <>
               <p className="text-sm text-crit">
                 Sin conexión: el movimiento no se ha registrado.
