@@ -179,6 +179,39 @@ function reparto(): { email?: string; nombre?: string; rol?: string; sobrantes: 
   return { email, nombre, rol, sobrantes }
 }
 
+/**
+ * «Could not find the table 'public.profiles' in the schema cache».
+ *
+ * Es lo que responde PostgREST cuando no conoce una tabla, y no distingue los
+ * dos motivos posibles, que piden arreglos distintos: que el esquema no esté
+ * aplicado en esa base, o que esté y PostgREST siga con la caché de antes. El
+ * mensaje además habla de una «schema cache» que no aparece en ninguna guía de
+ * este repositorio, así que por sí solo no lleva a ninguna parte.
+ */
+function pistaDeEsquema(mensaje: string): string | null {
+  if (!/schema cache|PGRST205|does not exist/i.test(mensaje)) return null
+  return `
+  La API no encuentra las tablas de la aplicación. Solo puede ser una de dos:
+
+    1. Esa base no tiene el esquema aplicado. Desde la terminal de este mismo
+       servicio:  migrar
+       (necesita DATABASE_URL en el servicio, y del Postgres del despliegue;
+       si apunta a otra base, se planta sin tocar nada.)
+
+    2. El esquema está pero PostgREST arrancó antes que él y sigue con la caché
+       vieja. Reinicia el servicio de la API en el panel, o lanza en la base:
+       NOTIFY pgrst, 'reload schema';
+
+  Para saber cuál de las dos es, y confirmar que ya está: ${CLI} listar
+`
+}
+
+/** Imprime la pista solo cuando aplica. */
+function explicarEsquema(mensaje: string): void {
+  const pista = pistaDeEsquema(mensaje)
+  if (pista) console.error(pista)
+}
+
 function parseRole(value: string | undefined, fallback: Role = 'tecnico'): Role {
   if (!value) return fallback
   if (value === 'tecnico' || value === 'supervisor' || value === 'admin') return value
@@ -279,18 +312,54 @@ async function crear(): Promise<void> {
 
   const existente = await findUserByEmail(email)
   if (existente) {
-    // Lo que se haya escrito se aplica; lo que no, se deja como estaba. Un
-    // `crear` sin `--rol` no es una petición de degradar a nadie.
-    const cambios: { full_name?: string; role?: Role } = {}
-    if (nombre) cambios.full_name = nombre
-    if (rolPedido) cambios.role = rolPedido
-    if (Object.keys(cambios).length > 0) {
-      const { error } = await admin.from('profiles').update(cambios).eq('id', existente.id)
+    const { data: perfil, error: errorPerfil } = await admin
+      .from('profiles')
+      .select('full_name, role')
+      .eq('id', existente.id)
+      .maybeSingle()
+    if (errorPerfil) {
+      console.error('No se pudo leer el perfil:', errorPerfil.message)
+      explicarEsquema(errorPerfil.message)
+      process.exit(1)
+    }
+
+    if (perfil) {
+      // Lo que se haya escrito se aplica; lo que no, se deja como estaba. Un
+      // `crear` sin rol no es una petición de degradar a nadie.
+      const cambios: { full_name?: string; role?: Role } = {}
+      if (nombre) cambios.full_name = nombre
+      if (rolPedido) cambios.role = rolPedido
+      if (Object.keys(cambios).length > 0) {
+        const { error } = await admin.from('profiles').update(cambios).eq('id', existente.id)
+        if (error) {
+          console.error('No se pudo actualizar el perfil:', error.message)
+          explicarEsquema(error.message)
+          process.exit(1)
+        }
+      }
+    } else {
+      // Cuenta en GoTrue sin perfil: pasa cuando el usuario se creó ANTES de
+      // que existiera el esquema, porque `handle_new_user()` es un disparador
+      // de `insert on auth.users` y esa inserción ya ocurrió. Sin esto, el alta
+      // parecía irse arreglando y moría después al guardar el código, contra
+      // una clave ajena que no menciona el problema por ningún lado.
+      //
+      // Los valores por defecto son los mismos que pone el disparador, para que
+      // dé igual quién de los dos haya creado el perfil.
+      const { error } = await admin.from('profiles').insert({
+        id: existente.id,
+        email,
+        full_name: nombre ?? email.split('@')[0],
+        role: rolPedido ?? 'tecnico',
+      })
       if (error) {
-        console.error('No se pudo actualizar el perfil:', error.message)
+        console.error('No se pudo crear el perfil que le faltaba:', error.message)
+        explicarEsquema(error.message)
         process.exit(1)
       }
+      console.log(`\n  ${email} tenía cuenta pero no perfil; se lo he creado.`)
     }
+
     await nuevoCodigo(existente.id, email, true)
     return
   }
@@ -327,7 +396,18 @@ async function crear(): Promise<void> {
     .single()
 
   if (profile?.role !== role) {
-    await admin.from('profiles').update({ role, full_name: nombre }).eq('id', data.user.id)
+    const { error: errorPerfil } = await admin
+      .from('profiles')
+      .update({ role, full_name: nombre })
+      .eq('id', data.user.id)
+    if (errorPerfil) {
+      // La cuenta ya está creada en GoTrue, así que esto no se puede deshacer
+      // callando: sin perfil no hay rol, y sin rol RLS no le deja hacer nada.
+      console.error(`Usuario creado, pero su perfil no: ${errorPerfil.message}`)
+      explicarEsquema(errorPerfil.message)
+      console.error(`Cuando lo arregles, repite el mismo comando: ${CLI} crear ${email}`)
+      process.exit(1)
+    }
   }
 
   await storeCode(data.user.id, code)
@@ -528,6 +608,7 @@ async function quienResponde(url: string, clave: string): Promise<string> {
 
 run().catch(async (err) => {
   console.error(err instanceof Error ? err.message : err)
+  explicarEsquema(err instanceof Error ? err.message : String(err))
   if (esRespuestaNoJson(err)) {
     console.error(`
   La API ha contestado algo que no es JSON, así que ${VARIABLE_DE_LA_URL} no
