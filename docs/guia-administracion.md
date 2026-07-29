@@ -242,7 +242,47 @@ negativo. Para corregir un recuento físico, registra un ajuste:
 ```sql
 insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, note)
 select gen_random_uuid(), id, 12, 'ajuste', now(), 'Recuento físico de julio'
-from stock_items where name = 'Cable HDMI Fibra 15 mts';
+from stock_items where name = 'Cable HDMI fibra 15 m';
+```
+
+### Cómo se escriben los nombres
+
+Los artículos se llaman siempre igual: siglas en mayúscula (`HDMI`, `USB`,
+`RS-232`, `DisplayPort`), longitudes en metros con la unidad separada (`10 m`,
+nunca `10mts` ni `10 metros`) y el resto en minúscula salvo marcas y modelos,
+que van tal cual (`iiyama T2454MSC`).
+
+No es manía de estilo: la lista venía de dos sitios —la hoja *Bolsa* y el texto
+libre de «Material Usado»— y llegó a tener 111 artículos donde hay 45. «Matriz
+HDMI» y «Matriz Hdmi» eran dos filas, el mismo cable de fibra estaba seis veces
+escrito de seis maneras, y el informe de consumo repartía su gasto entre todas.
+
+Hay un índice único sobre el nombre normalizado, así que **la base ya no deja
+crear «teclado» si existe «Teclado»**. Si al dar de alta un artículo salta un
+error de duplicado, es que ya está en la lista con otras mayúsculas o tildes:
+búscalo antes de insistir.
+
+Las 23 entradas que no llegaban a ser un artículo —«mts», «pulgadas», «cables
+de»— quedaron **archivadas**: no salen en la pestaña Almacén, pero siguen
+enlazadas a las incidencias que las citan. Para verlas:
+
+```sql
+select name from stock_items where not active order by name;
+```
+
+Si alguna sí era material y no está ya en la lista, ponle el nombre bueno y
+reactívala:
+
+```sql
+update stock_items set name = 'Canaleta de suelo', active = true
+where name = 'mts canaleta de suelo';
+```
+
+Cada fusión y cada renombrado quedó registrado con su nombre original:
+
+```sql
+select original, corrected, reason from import_fixes
+where source = 'Almacén' order by id;
 ```
 
 ### Umbrales de aviso
@@ -252,7 +292,7 @@ que nadie ha fijado**. Actívalos donde importe:
 
 ```sql
 update stock_items set min_threshold = 5
-where name in ('Lámpara Proyector NP44', 'Cable HDMI Fibra 15 mts');
+where name in ('Lámpara proyector NP44', 'Cable HDMI fibra 15 m');
 ```
 
 Los artículos por debajo salen en rojo y en el panel.

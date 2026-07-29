@@ -33,6 +33,22 @@ function esFalloDeRed(error: unknown): boolean {
   return /fetch|network|failed to fetch|networkerror|load failed/i.test(error.message)
 }
 
+/**
+ * El nombre ya existe con otras mayúsculas o tildes.
+ *
+ * Lo frena el índice único sobre el nombre normalizado, que es lo que impide
+ * que vuelvan a convivir «Teclado» y «teclado». Sin traducirlo, el técnico ve
+ * `duplicate key value violates unique constraint "stock_items_norm_idx"` y
+ * concluye que la aplicación está rota, cuando lo que pasa es que el artículo
+ * que quiere crear ya está en la lista dos filas más arriba.
+ */
+function esDuplicado(error: unknown): boolean {
+  const code = (error as { code?: string } | null)?.code
+  if (code === '23505') return true
+  if (!(error instanceof Error)) return false
+  return /duplicate key|stock_items_norm_idx|already exists/i.test(error.message)
+}
+
 export function StockPage({ role }: { role: Role }): React.ReactElement {
   const qc = useQueryClient()
   const [filter, setFilter] = useState('')
@@ -168,8 +184,17 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
           </div>
           {crear.isError && (
             <p className="mt-3 text-sm text-crit">
-              No se ha podido crear:{' '}
-              {crear.error instanceof Error ? crear.error.message : String(crear.error)}
+              {esDuplicado(crear.error) ? (
+                <>
+                  Ese artículo ya está en la lista, escrito con otras mayúsculas o tildes.
+                  Búscalo arriba en vez de crearlo otra vez.
+                </>
+              ) : (
+                <>
+                  No se ha podido crear:{' '}
+                  {crear.error instanceof Error ? crear.error.message : String(crear.error)}
+                </>
+              )}
             </p>
           )}
           <button

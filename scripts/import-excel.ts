@@ -32,6 +32,7 @@ import {
   stripParenthetical,
   cleanRoomRef,
 } from '../src/domain/normalize'
+import { canonAlmacen, esFragmentoAlmacen } from '../src/domain/almacen'
 import type { RoomCapabilities } from '../src/domain/types'
 
 // -----------------------------------------------------------------------------
@@ -543,7 +544,47 @@ function importIncidents(rows: unknown[][], sheet: string, hasObservacion: boole
 // Hoja 3 — Bolsa (stock)
 // -----------------------------------------------------------------------------
 
-const stockItems: Array<{ id: string; name: string; onHand: number }> = []
+const stockItems = new Map<string, { id: string; name: string; onHand: number; active: boolean }>()
+
+/**
+ * Da de alta un artículo con su nombre canónico.
+ *
+ * La clave es el nombre canónico normalizado, así que las seis grafías de un
+ * mismo cable entran una sola vez y con el saldo sumado. Sin esto la lista de
+ * almacén nacía con «Cable Hdmi 10mts Fibra», «cable hdmi Fibra 10mts» y
+ * «Cables Hdmi 10mts» como tres artículos distintos, y el informe de consumo
+ * repartía el gasto del cable entre las tres.
+ */
+function addStockItem(original: string, onHand: number, source: string): string {
+  const name = canonAlmacen(original)
+  const activo = !esFragmentoAlmacen(original)
+
+  if (name !== original) {
+    fixes.push({
+      source, rowRef: original, field: 'Artículo de almacén',
+      original, corrected: name,
+      reason: 'Nomenclatura unificada del almacén',
+    })
+  }
+  if (!activo) {
+    fixes.push({
+      source, rowRef: original, field: 'Artículo de almacén',
+      original, corrected: '(archivado)',
+      reason: 'No identifica un artículo: se archiva, pero sigue enlazado a las incidencias que lo citan',
+    })
+  }
+
+  const key = norm(name)
+  const id = uuidFor('stockitem', key)
+  const ya = stockItems.get(key)
+  if (ya) {
+    ya.onHand += onHand
+    ya.active = ya.active || activo
+  } else {
+    stockItems.set(key, { id, name, onHand, active: activo })
+  }
+  return id
+}
 
 function importStock(rows: unknown[][]): void {
   const cName = 0
@@ -567,7 +608,7 @@ function importStock(rows: unknown[][]): void {
       onHand = 0
     }
 
-    stockItems.push({ id: uuidFor('stockitem', norm(name)), name, onHand })
+    addStockItem(name, onHand, 'Bolsa 2026')
   }
 }
 
@@ -654,9 +695,11 @@ function emit(): void {
 
   out.push('')
   out.push('-- Artículos de almacén y saldo inicial')
-  for (const s of stockItems) {
+  const emitidos = new Set<string>()
+  for (const s of stockItems.values()) {
+    emitidos.add(s.id)
     out.push(
-      `insert into stock_items (id, name) values (${sql(s.id)}, ${sql(s.name)}) on conflict (id) do nothing;`,
+      `insert into stock_items (id, name, active) values (${sql(s.id)}, ${sql(s.name)}, ${sql(s.active)}) on conflict (id) do nothing;`,
     )
     if (s.onHand !== 0) {
       out.push(
@@ -685,28 +728,32 @@ function emit(): void {
   out.push('')
   out.push('-- Artículos citados en el histórico pero ausentes de la Bolsa')
   //
-  // El id se deriva del nombre normalizado, así que dos grafías del mismo
-  // material ("Cable Hdmi 10mts Fibra" y "cable hdmi 10mts fibra") comparten id.
-  // Se emiten una sola vez y con `on conflict (id)`: con `on conflict (name)` la
-  // segunda grafía chocaba contra la clave primaria y tumbaba el seed entero.
-  const materialItems = new Map<string, { id: string; name: string }>()
+  // El id se deriva del nombre **canónico** normalizado, así que las seis
+  // grafías del mismo cable ("Cable Hdmi 10mts Fibra", "cable hdmi Fibra
+  // 10mts", "Cables Hdmi 10mts"…) acaban en un único artículo, y el que ya
+  // existe en la Bolsa lo absorbe en vez de duplicarse a su lado. Lo que no
+  // llega a ser un artículo —"mts", "pulgadas", una frase cortada— entra
+  // archivado: sigue enlazado a su incidencia pero no ensucia el almacén.
+  const materialItemId = new Map<string, string>()
   for (const m of incidentMaterials) {
     if (!m.itemName) continue
     const key = norm(m.itemName)
-    if (!materialItems.has(key)) {
-      materialItems.set(key, { id: uuidFor('stockitem', key), name: m.itemName })
+    if (!materialItemId.has(key)) {
+      materialItemId.set(key, addStockItem(m.itemName, 0, 'Material Usado'))
     }
   }
-  for (const item of materialItems.values()) {
+  // Se emiten todos juntos —Bolsa e histórico— porque ya son la misma lista.
+  for (const item of stockItems.values()) {
+    if (emitidos.has(item.id)) continue
     out.push(
-      `insert into stock_items (id, name) values (${sql(item.id)}, ${sql(item.name)}) on conflict (id) do nothing;`,
+      `insert into stock_items (id, name, active) values (${sql(item.id)}, ${sql(item.name)}, ${sql(item.active)}) on conflict (id) do nothing;`,
     )
   }
 
   out.push('')
   out.push('-- Material consumido por incidencia')
   for (const m of incidentMaterials) {
-    const itemId = m.itemName ? materialItems.get(norm(m.itemName))?.id ?? null : null
+    const itemId = m.itemName ? materialItemId.get(norm(m.itemName)) ?? null : null
     out.push(
       `insert into incident_materials (id, incident_id, stock_item_id, qty, serial, raw_text) values (${sql(m.id)}, ${sql(m.incidentId)}, ${sql(itemId)}, ${m.qty}, ${sql(m.serial)}, ${sql(m.raw)}) on conflict (id) do nothing;`,
     )
@@ -767,7 +814,7 @@ Importación completada → ${outPath}
   Zonas ...................... ${zones.size}
   Salas ...................... ${rooms.size}
   Equipos con nº de serie .... ${new Set(assets.map((a) => a.serial)).size}
-  Artículos de almacén ....... ${stockItems.length}
+  Artículos de almacén ....... ${stockItems.size}
   Revisiones históricas ...... ${inspectionsFromExcel.length}
   Incidencias ................ ${incidents.length}
   Materiales parseados ....... ${incidentMaterials.filter((m) => m.itemName).length}
