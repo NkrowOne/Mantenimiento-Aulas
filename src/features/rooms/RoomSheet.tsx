@@ -1,22 +1,32 @@
 /**
  * Ficha de sala.
  *
- * La pantalla del prototipo que nunca llegó a construirse, y la que sostiene una
- * pieza que hoy falta del todo: **registrar sin que nada haya fallado**.
+ * La pantalla del prototipo que nunca llegó a construirse, y la que sostiene dos
+ * piezas que faltaban.
  *
- * Toda la aplicación asumía que un registro nace de una revisión que sale mal.
- * Pero lo que hoy acaba en la columna de observaciones del Excel —un soporte
- * flojo, una pizarra abombada, una lámpara al 12 % que todavía funciona, o la
- * petición de instalar una cámara— no es una revisión que falla: es alguien que
- * pasa por delante y ve algo. Sin un sitio donde ponerlo, se pierde. Y se
- * pierde exactamente igual que se pierde hoy.
- *
+ * **Una — registrar sin que nada haya fallado.** Toda la aplicación asumía que un
+ * registro nace de una revisión que sale mal. Pero la petición de instalar una
+ * cámara no es una revisión que falla: es alguien que pasa por delante y ve algo.
  * Por eso el botón está aquí y está siempre disponible, no colgando de un bloque
  * en FALLA. Y por eso **basta la sala para guardar**: nada obliga a teclear de
  * pie en un pasillo. Lo aplazado aparece sin completar en Incidencias, que es
  * la contrapartida honesta de permitir aplazar — y no una pestaña propia: un
  * destino permanente en la barra para algo que casi siempre está vacío enseña a
  * no pulsarlo.
+ *
+ * **Dos — leer las observaciones.** Se escribían en cada revisión, debajo de las
+ * fotos, se guardaban en `inspections.notes` y no se pintaban en ningún sitio:
+ * exactamente el mismo destino que la columna de texto libre del Excel de la que
+ * se venía huyendo. Ahora se leen aquí, que es donde alguien pregunta «qué se ha
+ * dicho de esta aula». Y no en la pestaña de Incidencias: eso es la lista de lo
+ * que hay que arreglar, y una nota de seguimiento no es trabajo pendiente.
+ *
+ * Lo que sí es trabajo pendiente entra por su camino. Un equipo que falla se
+ * marca en la revisión, en su propia fila, y eso abre una incidencia. El
+ * formulario de aquí es para lo que no cabe en una revisión —una avería que se ve
+ * de paso, un trabajo que se pide— y por eso ya no ofrece «observación»: tenerla
+ * aquí era una segunda puerta para lo mismo, y las dos puertas se llenaban a
+ * medias.
  */
 
 import { useState } from 'react'
@@ -36,6 +46,8 @@ interface TimelineRow {
   kind: 'incidencia' | 'solicitud' | 'observacion' | 'revision_ok' | 'revision_ko'
     | 'material' | 'equipo' | 'inventario'
   title: string
+  /** La letra pequeña del evento: la nota de la revisión, la descripción, la resolución. */
+  detail: string | null
   ref: string | null
   who: string | null
   state: string
@@ -58,6 +70,29 @@ interface Reincidencia {
   desde: string
   hasta: string
 }
+
+/** Una observación escrita en una revisión, tal y como se lee aquí. */
+interface Observacion {
+  ref_id: string
+  at: string
+  who: string | null
+  texto: string
+}
+
+/**
+ * Lo que se puede registrar a mano desde la ficha.
+ *
+ * Sin `observacion`, y es el cambio de fondo de esta pantalla. Una observación se
+ * escribe en la revisión, debajo de las fotos, con el aula delante; ofrecerla
+ * también aquí era una segunda puerta al mismo dato, y con dos puertas ninguna de
+ * las dos se llena entera. Este formulario queda para lo que de verdad hay que
+ * atender: una avería vista de paso y un trabajo que se pide.
+ *
+ * El tipo `IncidentKind` sigue teniendo los tres: hay observaciones importadas
+ * del Excel y borradores de antes de este cambio, y quitarlo del vocabulario
+ * dejaría esas filas sin nombre.
+ */
+const TIPOS_REGISTRABLES: IncidentKind[] = ['incidencia', 'solicitud']
 
 /** Cómo se marca cada cosa en la línea de tiempo. Nunca solo el color. */
 const MARCA: Record<TimelineRow['kind'], { punto: string; texto: string }> = {
@@ -136,6 +171,45 @@ export function RoomSheet({
         .order('veces', { ascending: false })
       if (error) throw error
       return (data ?? []) as Reincidencia[]
+    },
+  })
+
+  /*
+   * Las observaciones de las revisiones.
+   *
+   * Se escriben debajo de las fotos, en el aula, y hasta ahora acababan en
+   * `inspections.notes` sin que ninguna pantalla las leyera: guardadas y
+   * perdidas, que es el destino de la columna de texto libre del Excel.
+   *
+   * Sale de `room_timeline` y no de `inspections` por dos motivos. La vista ya
+   * resuelve el nombre de quien lo escribió con un `join` —desde el cliente
+   * serían dos consultas— y ya está filtrada por RLS igual que el resto de la
+   * ficha. Y el filtro va en el servidor: pedir las últimas treinta filas del
+   * histórico y quedarse con las que traen nota daría tres observaciones en un
+   * aula con mucho movimiento, porque las treinta se las come el material.
+   *
+   * `detail` es la nota de la revisión. Solo revisiones: las observaciones
+   * importadas del Excel son incidencias de tipo `observacion` y siguen leyéndose
+   * en el histórico de abajo, con su marca.
+   */
+  const { data: observaciones } = useQuery({
+    queryKey: ['room-notes', room.id],
+    queryFn: async (): Promise<Observacion[]> => {
+      const { data, error } = await supabase
+        .from('room_timeline')
+        .select('ref_id, at, who, detail')
+        .eq('room_id', room.id)
+        .in('kind', ['revision_ok', 'revision_ko'])
+        .not('detail', 'is', null)
+        .order('at', { ascending: false })
+        .limit(12)
+      if (error) throw error
+      return (data ?? []).map((o) => ({
+        ref_id: o['ref_id'] as string,
+        at: o['at'] as string,
+        who: (o['who'] as string | null) ?? null,
+        texto: (o['detail'] as string | null) ?? '',
+      }))
     },
   })
 
@@ -298,7 +372,10 @@ export function RoomSheet({
             onClick={() => setAbierto((v) => !v)}
             className="key key-quiet min-h-11 flex-1 px-3 text-sm"
           >
-            {abierto ? 'Cancelar' : 'Registrar algo'}
+            {/* Dice qué abre, no «registrar algo». Los dos tipos que quedan
+                caben en el propio botón, y con ellos delante nadie usa este
+                formulario para apuntar una nota de seguimiento. */}
+            {abierto ? 'Cancelar' : 'Incidencia o solicitud'}
           </button>
         </div>
 
@@ -320,10 +397,10 @@ export function RoomSheet({
               Registrar en {room.name || displayRoomCode(room.code)}
             </h2>
 
-            {/* Los tres tipos, a la vista y sin desplegable: son tres y se elige
+            {/* Los dos tipos, a la vista y sin desplegable: son dos y se elige
                 uno de pie. Un `select` aquí serían dos toques y una lista. */}
             <div className="mt-2 flex gap-2">
-              {(Object.keys(INCIDENT_KIND_LABELS) as IncidentKind[]).map((k) => (
+              {TIPOS_REGISTRABLES.map((k) => (
                 <button
                   key={k}
                   type="button"
@@ -346,22 +423,28 @@ export function RoomSheet({
               className="mt-3 w-full rounded-ctl border border-line bg-surface p-3 text-sm"
             />
 
-            {/* Una observación no genera ticket en ningún sitio, así que pedirle
-                el código sería pedir algo que no existe. */}
-            {kind !== 'observacion' && (
-              <label className="mt-3 block text-sm">
-                <span className="text-muted">Código de ticket externo</span>
-                <input
-                  value={codigo}
-                  onChange={(e) => setCodigo(e.target.value)}
-                  placeholder="I260728_0001"
-                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-sm"
-                />
-              </label>
-            )}
+            {/* Los dos tipos que quedan pueden llevar ticket externo, así que el
+                campo ya no se esconde para ninguno. */}
+            <label className="mt-3 block text-sm">
+              <span className="text-muted">Código de ticket externo</span>
+              <input
+                value={codigo}
+                onChange={(e) => setCodigo(e.target.value)}
+                placeholder="I260728_0001"
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-sm"
+              />
+            </label>
 
-            <p className="mt-3 text-xs text-muted">
+            <p className="mt-3 text-xs leading-relaxed text-muted">
               Basta la sala para guardar. Lo demás se completa después, desde Incidencias.
+            </p>
+            {/* La frontera, dicha donde se cruza. Sin esto, este cuadro de texto
+                acaba llevándose las notas de seguimiento y la lista de trabajo se
+                llena de cosas que nadie tiene que arreglar. */}
+            <p className="mt-2 text-xs leading-relaxed text-muted">
+              Un equipo que no funciona se marca en la revisión, en su fila: eso abre la incidencia
+              y la deja asociada al aparato. Y las observaciones van en la revisión, debajo de las
+              fotos — se leen más abajo, en esta misma ficha.
             </p>
 
             {registrar.isError && (
@@ -410,6 +493,51 @@ export function RoomSheet({
           </ul>
         </section>
 
+        {/*
+          Las observaciones, antes del histórico y solo si hay alguna.
+
+          Van en su propia sección y no confundidas entre las filas de la línea de
+          tiempo porque se vienen a leer: son frases escritas por alguien que
+          estuvo en el aula, y una frase encajada en una lista de eventos con su
+          punto de color y su fecha se lee como metadato en vez de como lo que
+          dice. Aquí se leen enteras, sin recortar, con quién y cuándo debajo.
+
+          Cuando no hay ninguna no se dibuja nada: un «sin observaciones» es
+          ruido en una ficha que ya tiene seis bloques.
+        */}
+        {(observaciones ?? []).length > 0 && (
+          <section aria-labelledby="sec-obs" className="mt-8">
+            <div className="section-head">
+              <h2 id="sec-obs" className="eyebrow">Observaciones</h2>
+              <span className="rounded-tag bg-raised px-2 py-0.5 text-xs font-medium text-muted">
+                {observaciones?.length}
+              </span>
+            </div>
+            <p className="mb-3 max-w-prose text-sm leading-relaxed text-muted">
+              Lo que se ha ido apuntando en las revisiones de esta sala. No son averías: lo que hay
+              que arreglar está en Incidencias.
+            </p>
+            <ul className="divide-y divide-line-soft border-y border-line bg-surface px-4">
+              {(observaciones ?? []).map((o) => (
+                <li key={o.ref_id} className="py-4">
+                  {/* `whitespace-pre-line`: quien escribe tres cosas las escribe
+                      en tres líneas, y aplastarlas en un párrafo pierde justo la
+                      separación que le costó poner con el móvil en una mano. */}
+                  <p className="whitespace-pre-line text-sm leading-relaxed">{o.texto}</p>
+                  <p className="mt-1.5 font-mono text-xs text-muted">
+                    {[fechaCorta(o.at), o.who].filter(Boolean).join(' · ')}
+                  </p>
+                </li>
+              ))}
+            </ul>
+            {observaciones?.length === 12 && (
+              <p className="mt-2 text-xs text-muted">
+                Las 12 más recientes. El resto está en el histórico de la sala.
+              </p>
+            )}
+          </section>
+        )}
+
         <section aria-labelledby="sec-hist" className="mt-8">
           <div className="section-head">
             <h2 id="sec-hist" className="eyebrow">Historial</h2>
@@ -441,7 +569,17 @@ export function RoomSheet({
                       </span>
                     )}
                   </p>
-                  <p className="font-mono text-xs text-muted">
+                  {/* El detalle se pinta. La vista lo traía —la nota de la
+                      revisión, la descripción de la incidencia, la resolución— y
+                      esta lista lo tiraba: un evento decía «Revisión con
+                      incidencias» y no lo que se vio. `line-clamp-3` porque aquí
+                      es contexto; la observación entera se lee arriba. */}
+                  {h.detail && (
+                    <p className="mt-0.5 line-clamp-3 text-xs leading-relaxed text-muted">
+                      {h.detail}
+                    </p>
+                  )}
+                  <p className="mt-0.5 font-mono text-xs text-muted">
                     {[fechaCorta(h.at), h.who, h.ref].filter(Boolean).join(' · ')}
                   </p>
                 </div>

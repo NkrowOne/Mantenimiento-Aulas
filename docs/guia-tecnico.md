@@ -68,9 +68,20 @@ siempre: el buscador de arriba y la lista de edificios.
 
 Al tocar un aula en la lista se abre **su ficha**, no el formulario. Es la
 pantalla que contesta a lo que uno se pregunta llegando a la puerta: cuándo se
-revisó, qué hay registrado, qué queda abierto y qué le ha pasado antes. Y es
-donde se **registra sin que nada haya fallado** —una observación, una
-solicitud—, que es lo que hoy se pierde en la columna de texto libre del Excel.
+revisó, qué hay registrado, qué queda abierto y qué le ha pasado antes.
+
+Dos cosas viven aquí:
+
+- **Las observaciones** de todas las revisiones del aula, en su propia sección y
+  enteras. Es lo que se ha ido apuntando pasando por delante —el mando está en
+  el cajón, la persiana cuesta— y es lo que hoy se pierde en la columna de texto
+  libre del Excel. Se escriben en la revisión, debajo de las fotos; se leen aquí.
+- **«Incidencia o solicitud»**, para registrar sin estar revisando: una avería
+  que ves de paso, o un trabajo que hay que pedir —«instalar una cámara»—.
+
+> **Un equipo que no funciona no se apunta aquí.** Se marca en la revisión, en su
+> propia línea: así la incidencia queda pegada a ese aparato, con su número de
+> serie. Este formulario es para lo que no cabe en una revisión.
 
 Arriba del todo, el botón grande: **«Revisar esta aula»**. Al salir de la
 revisión vuelves a la ficha.
@@ -111,7 +122,21 @@ revisión vuelves a la ficha.
 
    Haz una foto. A quien vaya a repararlo le ahorra un viaje.
 
-5. **Guardar y siguiente sala** te lleva directo a la siguiente sin volver atrás.
+   **Al guardar, cada equipo en falla pasa a la pestaña Incidencias y se queda
+   ahí hasta que alguien lo resuelve.** Ya no hay que apuntarlo dos veces: marcar
+   «Incidencia» en la línea del aparato es abrir la incidencia, y queda asociada a
+   ese aparato con lo que hayas escrito y su gravedad. La barra de abajo te lo
+   dice antes de guardar.
+
+   Si ese mismo proyector ya tenía una incidencia abierta de la ronda anterior,
+   **no se abre otra**: la que hay sigue contando los días que lleva sin
+   arreglarse, que es el dato que hace falta.
+
+5. **Fotos y observaciones**, al final. Aquí van las notas que **no** son una
+   avería: se leen después en la ficha del aula. Lo que no funciona va arriba, en
+   su equipo — si lo escribes solo aquí, nadie recibe un parte de trabajo.
+
+6. **Guardar y siguiente sala** te lleva directo a la siguiente sin volver atrás.
 
 ### Si el inventario no cuadra
 

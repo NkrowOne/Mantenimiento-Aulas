@@ -255,9 +255,24 @@ export function InspectionPage({
           qué hay que comprobar, qué equipos hay, y qué historia arrastran. */}
       <HistorialSala roomId={room.id} />
 
+      {/*
+        Fotos y observaciones, y la frontera dicha en voz alta.
+
+        Este campo y el formulario de registro de la ficha se estaban usando para
+        lo mismo, y no son lo mismo: un equipo que falla se marca
+        arriba, en su fila, y eso abre una incidencia que alguien tiene que
+        cerrar. Aquí van las notas que no son un fallo —«el mando aparece en el
+        cajón», «la persiana cuesta»— y se leen luego en la ficha de la sala. Sin
+        esta frase, la mitad de las averías acababa escrita en un cuadro de texto
+        que no le pide nada a nadie.
+      */}
       <div className="border-t border-line px-4">
         <div className="section-tail py-4">
           <p className="eyebrow mb-2">Fotos y observaciones</p>
+          <p className="mb-3 max-w-prose text-xs leading-relaxed text-muted">
+            Lo que no funciona se marca arriba, en su equipo: eso abre una incidencia. Aquí van las
+            observaciones que no son una avería — se consultan después en la ficha de la sala.
+          </p>
 
           <input
             ref={fileInput}
@@ -332,6 +347,32 @@ export function InspectionPage({
           <span role="status" className="shrink-0 text-muted">
             {saving ? 'Guardando…' : 'Guardado'}
           </span>
+        </div>
+
+        {/*
+          Qué va a pasar al pulsar Guardar, dicho antes de pulsar.
+
+          Cerrar la revisión manda los equipos en falla a Incidencias, y eso es un
+          parte de trabajo que alguien tendrá que cerrar: no puede ser una sorpresa.
+          Va aquí y no repetido en cada fila —con cuatro equipos en falla serían
+          cuatro veces la misma frase— y solo cuando hay algo que anunciar.
+
+          Se dice «pasan a Incidencias» y no «se abren N incidencias» porque las
+          dos cosas no son lo mismo: si ese proyector ya tenía una abierta de la
+          ronda anterior, no se abre otra. La frase es cierta en los dos casos, y
+          prometer un número que luego no cuadra es peor que no darlo.
+        */}
+        <div className="collapse-y" data-open={incidents.length > 0}>
+          <div>
+            {incidents.length > 0 && (
+              <p className="pb-2 text-xs leading-relaxed text-crit">
+                {incidents.length === 1 ? '1 equipo en falla' : `${incidents.length} equipos en falla`}
+                : al guardar pasa{incidents.length === 1 ? '' : 'n'} a Incidencias y sigue
+                {incidents.length === 1 ? '' : 'n'} ahí hasta que alguien lo
+                {incidents.length === 1 ? '' : 's'} resuelva.
+              </p>
+            )}
+          </div>
         </div>
 
         <div className="flex gap-2">

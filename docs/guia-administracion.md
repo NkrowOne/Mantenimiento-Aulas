@@ -112,6 +112,38 @@ mismo con `npm run admin -- …`.
 Un cambio de rol tarda hasta una hora en aplicarse, o es inmediato si la persona
 cierra y vuelve a entrar con su PIN. El rol viaja dentro del token.
 
+### Qué entra en la pestaña de Incidencias, y qué no
+
+Conviene saberlo antes de mirar el número: **un equipo marcado «Falla» en una
+revisión abre una incidencia**, sola, en cuanto el técnico cierra la revisión.
+Antes ese fallo se quedaba dentro de la revisión y no se lo pedía a nadie.
+
+Consecuencias prácticas:
+
+- **El recuento de incidencias abiertas sube** en cuanto esto se despliega. No es
+  que se hayan roto más cosas: es que las averías que ya estaban registradas
+  ahora se ven. Y solo un `supervisor` puede cerrarlas, así que la cola es suya.
+- **No se duplican por ronda.** Si el proyector sigue roto la semana siguiente,
+  la revisión no abre una segunda: la que hay sigue contando los días. La
+  incidencia guarda de qué comprobación salió, en `incidents.check_key`.
+- **Las observaciones no entran.** Se escriben en la revisión, debajo de las
+  fotos, viven en `inspections.notes` y se leen en la ficha del aula. La pestaña
+  de Incidencias es la lista de lo que hay que arreglar; una nota de seguimiento
+  no lo es. Las observaciones importadas del Excel siguen en el histórico de cada
+  sala, con su marca, y siguen puntuando en el índice de fiabilidad.
+- **Las solicitudes sí entran**, marcadas como tal: son trabajo pedido y no hay
+  otro sitio donde reclamarlas.
+
+```sql
+-- Las averías que ha abierto la revisión, con el aparato al que apuntan
+select i.opened_at, r.code, i.title, i.severity, a.serial
+from incidents i
+join rooms r on r.id = i.room_id
+left join assets a on a.id = i.asset_id
+where i.opened_from_inspection_id is not null and i.state <> 'resuelta'
+order by i.opened_at;
+```
+
 ### Dar de baja a alguien
 
 ```sql

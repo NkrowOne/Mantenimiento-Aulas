@@ -258,8 +258,19 @@ export type IncidentState = 'borrador' | 'abierta' | 'en_curso' | 'resuelta'
  * seguimiento. Meterlas en el mismo saco que una avería haría que las salas
  * mejor atendidas salieran como las peores solo por estar bien atendidas.
  *
- * La observación es además la pieza que hoy falta del todo: en el Excel vive en
- * una columna de texto libre y no se le sigue la pista a ninguna.
+ * Dónde nace cada una, que es lo que se aprendió usándolo:
+ *
+ *  - `incidencia` — un equipo marcado «Falla» en la revisión la abre sola, y esa
+ *    es la vía principal. También se puede abrir a mano desde la ficha de la
+ *    sala, para la avería que se ve de paso sin estar revisando.
+ *  - `solicitud` — a mano, desde la ficha.
+ *  - `observacion` — **ya no se crea**. Se escribe en la revisión, debajo de las
+ *    fotos, y vive en `inspections.notes`; se lee en la ficha del aula. El valor
+ *    se queda en el vocabulario porque hay cientos importadas del Excel, y
+ *    quitarlo dejaría esas filas sin nombre en el histórico.
+ *
+ * La frontera importa porque decide qué entra en la pestaña de Incidencias: eso
+ * es la lista de lo que hay que arreglar, y una nota de seguimiento no lo es.
  */
 export type IncidentKind = 'incidencia' | 'solicitud' | 'observacion'
 
@@ -274,6 +285,15 @@ export interface Incident {
   room_id: string | null
   asset_id: string | null
   opened_from_inspection_id: string | null
+  /**
+   * De qué comprobación de la revisión salió: `asset:<uuid>` o `red`.
+   *
+   * `opened_from_inspection_id` dice de qué revisión nació, pero no de qué fila,
+   * y esa es justo la pregunta que evita apuntar la misma avería en cada ronda:
+   * «¿este proyector ya tiene una incidencia abierta?». Nulo en lo que se
+   * registra a mano desde la ficha de la sala y en todo lo importado.
+   */
+  check_key: string | null
   /** El `I260203_0051` que ya usáis hoy en el Excel y en ServiceNow. */
   external_ref: string | null
   /** Nulo mientras sea borrador: para guardar basta la sala. */

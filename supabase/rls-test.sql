@@ -1236,3 +1236,89 @@ begin;
     else 'FALLO: un técnico lee app_config'
   end as resultado;
 rollback;
+
+\echo '=== 45. Un equipo que falla en la revisión abre incidencia, y sigue abierta ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active order by created_at limit 1 \gset
+  select id as equipo from assets where room_id = :'sala' limit 1 \gset
+
+  -- La revisión, en el mismo orden que la hace el dispositivo: nace borrador,
+  -- se le escriben las comprobaciones y se cierra al final. Al revés no se
+  -- puede, y a propósito: a una revisión cerrada no se le añaden filas.
+  insert into inspections (id, room_id, by_user, occurred_at, status)
+  values ('77777777-7777-4777-8777-777777777781', :'sala',
+          '11111111-1111-4111-8111-111111111111', now(), 'borrador');
+
+  insert into inspection_checks (id, inspection_id, check_key, result, severity, note)
+  values ('77777777-7777-4777-8777-777777777782',
+          '77777777-7777-4777-8777-777777777781',
+          'asset:' || :'equipo', 'incidencia', 'alta', 'No da imagen');
+
+  update inspections set status = 'completa', overall = 'con_incidencias'
+   where id = '77777777-7777-4777-8777-777777777781';
+
+  -- Y la incidencia que abre el cliente al cerrarla. Lo que se afirma es que el
+  -- TÉCNICO puede insertarla: si la política se lo negara, el fallo se quedaría
+  -- para siempre dentro de la revisión, que es el problema que esto arregla.
+  insert into incidents (id, room_id, asset_id, opened_from_inspection_id, check_key,
+                         title, description, severity, state, kind, opened_at, opened_by)
+  values ('77777777-7777-4777-8777-777777777783', :'sala', :'equipo',
+          '77777777-7777-4777-8777-777777777781', 'asset:' || :'equipo',
+          'Proyector: No da imagen', 'No da imagen', 'alta', 'abierta', 'incidencia',
+          now(), '11111111-1111-4111-8111-111111111111');
+
+  select case
+    when (select count(*) from incidents
+           where opened_from_inspection_id = '77777777-7777-4777-8777-777777777781'
+             and state = 'abierta' and asset_id = :'equipo') = 1
+     -- Y cuenta en la sala: el recuento de la ficha sale de aquí.
+     and (select open_incidents from room_overview where room_id = :'sala') >= 1
+    then 'OK: la avería sale de la revisión y cuenta en la sala'
+    else 'FALLO: el fallo del equipo no llegó a ser incidencia'
+  end as resultado;
+
+  -- Y no la cierra quien la abrió: cerrar sigue siendo del supervisor, que es
+  -- lo que hace que «hasta que se solucione» signifique algo.
+  do $$
+  begin
+    update incidents set state = 'resuelta', resolved_at = now()
+     where id = '77777777-7777-4777-8777-777777777783';
+    if found then raise exception 'FALLO: el técnico cerró su propia incidencia'; end if;
+    raise notice 'OK: sigue abierta hasta que la cierre un supervisor';
+  end $$;
+
+  -- El técnico ve la suya en la lista de trabajo, y la observación de la
+  -- revisión NO está ahí: vive en `inspections.notes`.
+  select case
+    when (select count(*) from incidents
+           where id = '77777777-7777-4777-8777-777777777783'
+             and kind = 'incidencia') = 1
+    then 'OK: entra como incidencia, no como observación'
+    else 'FALLO: la avería no entró como incidencia'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 46. La observación de una revisión se lee en la ficha, no en Incidencias ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active order by created_at limit 1 \gset
+
+  insert into inspections (id, room_id, by_user, occurred_at, status, overall, notes)
+  values ('77777777-7777-4777-8777-777777777791', :'sala',
+          '11111111-1111-4111-8111-111111111111', now(), 'completa', 'ok',
+          'El mando aparece en el cajón de la mesa');
+
+  select case
+    -- La ficha la pide así: revisiones de esta sala que traen nota.
+    when (select count(*) from room_timeline
+           where room_id = :'sala' and kind in ('revision_ok', 'revision_ko')
+             and detail = 'El mando aparece en el cajón de la mesa') = 1
+     -- Y no ha nacido ninguna incidencia por escribirla.
+     and (select count(*) from incidents
+           where opened_from_inspection_id = '77777777-7777-4777-8777-777777777791') = 0
+    then 'OK: la observación se consulta en la sala y no abre nada'
+    else 'FALLO: la observación no se puede consultar, o abrió una incidencia'
+  end as resultado;
+rollback;
