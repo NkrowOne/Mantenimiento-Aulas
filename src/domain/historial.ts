@@ -169,3 +169,49 @@ export function diaDe(iso: string): string {
     year: 'numeric',
   })
 }
+
+/**
+ * Los atajos de fecha, que son los que se piden en voz alta.
+ *
+ * Viven aquí y no dentro de una pantalla porque los usan dos —la pestaña
+ * Historial y el listado completo de revisiones—, y las dos consultan al
+ * servidor con el valor que sale de aquí: si cada una redondeara a su manera,
+ * «este curso» empezaría en un día distinto según la pestaña desde la que se
+ * pregunte.
+ */
+export type Atajo = 'todo' | '7d' | '30d' | 'curso'
+
+export const ATAJOS: Array<{ id: Atajo; label: string }> = [
+  { id: 'todo', label: 'Todo' },
+  { id: '7d', label: '7 días' },
+  { id: '30d', label: '30 días' },
+  { id: 'curso', label: 'Este curso' },
+]
+
+/**
+ * Desde cuándo mira cada atajo. `null` es «desde siempre».
+ *
+ * **Se redondea al principio del día**, y no es cosmético: este valor entra en
+ * la clave de la consulta. Devolviendo el instante exacto, cada redibujado
+ * producía una clave distinta —«hace 30 días» cambia cada milisegundo—, la
+ * consulta se daba por caducada y la pantalla se quedaba recargando en bucle.
+ * Con el corte en el día, la clave es la misma durante toda la jornada y la
+ * caché sirve para algo.
+ */
+export function desdeDe(atajo: Atajo, ahora = new Date()): string | null {
+  const dias = atajo === '7d' ? 7 : atajo === '30d' ? 30 : null
+
+  if (dias !== null) {
+    const d = new Date(ahora.getTime() - dias * 86_400_000)
+    return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString()
+  }
+
+  if (atajo === 'curso') {
+    // El curso académico empieza en septiembre: en marzo, «este curso» es desde
+    // septiembre del año pasado. Es como lo cuenta quien pide el dato.
+    const año = ahora.getMonth() >= 8 ? ahora.getFullYear() : ahora.getFullYear() - 1
+    return new Date(Date.UTC(año, 8, 1)).toISOString()
+  }
+
+  return null
+}

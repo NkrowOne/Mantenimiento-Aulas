@@ -312,12 +312,13 @@ npm run informe:ia
 | Área | Estado |
 |---|---|
 | Esquema append-only, vistas y alertas | ✅ verificado contra Postgres 16 |
-| RLS, roles y auditoría | ✅ 46 bloques en verde, incluida exposición pública |
+| RLS, roles y auditoría | ✅ 54 bloques en verde, incluida exposición pública |
 | Importador del Excel | ✅ 276 salas, 283 incidencias, 669 equipos |
 | Núcleo offline (Dexie + cola de salida) | ✅ |
 | Login con PIN que cifra la sesión | ✅ lógica probada |
 | Flujo de revisión de salas | ✅ un equipo en «Falla» abre incidencia y sigue abierta hasta que se resuelve |
-| Fotos con compresión | ✅ |
+| Ficha de cada revisión y listado completo | ✅ qué falló aparato por aparato, notas enteras, fotos, medidas y el histórico de incidencias |
+| Fotos con compresión | ✅ se hacen en el aula y se leen en la ficha de la revisión, con URL firmada |
 | Panel con alertas y gráficos | ✅ paleta validada en claro y oscuro |
 | Incidencias, almacén y depuración de datos | ✅ la pestaña es la lista de trabajo; las observaciones se leen en la ficha del aula |
 | Panel de administración: validar equipos, agrupar el catálogo, equipamiento por defecto y alta/baja de salas y edificios | ✅ |
@@ -344,7 +345,7 @@ Lo verificado y lo que no, sin adornos.
 **Comprobado de forma automática** (`npm run verify:all` y `npm run db:verify`):
 
 - 162 pruebas de lógica de dominio y cifrado del PIN.
-- 51 bloques de pruebas de RLS contra Postgres real, en los dos escenarios de despliegue,
+- 54 bloques de pruebas de RLS contra Postgres real, en los dos escenarios de despliegue,
   incluidas las de exposición pública.
 - La aplicación **arranca en un navegador real**, pinta y no da errores de
   consola (`npm run smoke`).

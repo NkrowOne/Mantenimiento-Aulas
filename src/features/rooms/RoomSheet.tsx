@@ -39,12 +39,15 @@ import { RoomPlate } from '@/components/RoomPlate'
 import { DoorPlate } from '@/components/DoorPlate'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaCorta } from '@/domain/fechas'
+import { useFichaRevision } from '@/features/inspection/useFichaRevision'
 import { INCIDENT_KIND_LABELS, type IncidentKind, type Room } from '@/domain/types'
 
 interface TimelineRow {
   at: string
   kind: 'incidencia' | 'solicitud' | 'observacion' | 'revision_ok' | 'revision_ko'
     | 'material' | 'equipo' | 'inventario'
+  /** El identificador de lo que pasó. En una revisión es su id, y con él se abre su ficha. */
+  ref_id: string
   title: string
   /** La letra pequeña del evento: la nota de la revisión, la descripción, la resolución. */
   detail: string | null
@@ -132,6 +135,9 @@ export function RoomSheet({
   onImprimir,
 }: Props): React.ReactElement {
   const qc = useQueryClient()
+  /* La ficha de una revisión anterior, que es lo que contesta «¿qué se vio la
+     última vez?» — la pregunta con la que se entra en esta pantalla. */
+  const { abrir: abrirRevision, ficha } = useFichaRevision()
   const [abierto, setAbierto] = useState(false)
   const [kind, setKind] = useState<IncidentKind>('incidencia')
   const [texto, setTexto] = useState('')
@@ -527,6 +533,17 @@ export function RoomSheet({
                   <p className="mt-1.5 font-mono text-xs text-muted">
                     {[fechaCorta(o.at), o.who].filter(Boolean).join(' · ')}
                   </p>
+                  {/* Y de la nota a la revisión que la escribió. Una observación
+                      suelta se lee a medias: «la pizarra sigue igual» significa
+                      una cosa si ese día todo lo demás iba bien y otra si
+                      cayeron tres equipos. */}
+                  <button
+                    type="button"
+                    onClick={() => abrirRevision(o.ref_id)}
+                    className="mt-1 min-h-11 text-xs text-accent underline-offset-4 hover:underline"
+                  >
+                    Ver la revisión en la que se escribió
+                  </button>
                 </li>
               ))}
             </ul>
@@ -548,7 +565,16 @@ export function RoomSheet({
             </p>
           )}
           <ul className="mt-2 space-y-3">
-            {(historial ?? []).map((h, i) => (
+            {(historial ?? []).map((h, i) => {
+              /*
+               * Las revisiones se abren; el resto, no.
+               *
+               * Detrás de una revisión hay nueve comprobaciones, sus notas y sus
+               * fotos, y esta fila solo enseña el titular. Detrás de un consumo de
+               * cable no hay nada más que lo que ya dice.
+               */
+              const esRevision = h.kind === 'revision_ok' || h.kind === 'revision_ko'
+              return (
               <li key={`${h.at}-${i}`} className="flex gap-3">
                 <span
                   aria-hidden
@@ -582,15 +608,27 @@ export function RoomSheet({
                   <p className="mt-0.5 font-mono text-xs text-muted">
                     {[fechaCorta(h.at), h.who, h.ref].filter(Boolean).join(' · ')}
                   </p>
+                  {esRevision && (
+                    <button
+                      type="button"
+                      onClick={() => abrirRevision(h.ref_id)}
+                      className="mt-1 min-h-11 text-xs text-accent underline-offset-4 hover:underline"
+                    >
+                      Ver la ficha de esta revisión
+                    </button>
+                  )}
                 </div>
               </li>
-            ))}
+              )
+            })}
             {historial?.length === 0 && (
               <li className="text-sm text-muted">Todavía no hay nada registrado en esta sala.</li>
             )}
           </ul>
         </section>
       </div>
+
+      {ficha}
     </div>
   )
 }

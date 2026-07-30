@@ -8,6 +8,7 @@ import {
   type EventoSala,
   type Familia,
 } from '@/domain/historial'
+import { useFichaRevision } from '@/features/inspection/useFichaRevision'
 import { LineaTiempo } from './LineaTiempo'
 
 /**
@@ -40,6 +41,14 @@ const LIMITE = 60
 export function HistorialSala({ roomId }: { roomId: string }): React.ReactElement {
   const [open, setOpen] = useState(false)
   const [familia, setFamilia] = useState<Familia | null>(null)
+  /*
+   * Y desde aquí se abre la ficha de una revisión anterior.
+   *
+   * Es el caso que justifica todo el panel: el técnico tiene el proyector
+   * apagado delante y ve que en marzo hubo otra revisión con incidencias. Lo que
+   * necesita saber es qué se vio entonces y qué se hizo — no que existió.
+   */
+  const { abrir, ficha } = useFichaRevision()
 
   const { data, isPending, isError, refetch } = useQuery({
     queryKey: ['room-timeline', roomId],
@@ -163,7 +172,7 @@ export function HistorialSala({ roomId }: { roomId: string }): React.ReactElemen
               </p>
             )}
 
-            {visibles.length > 0 && <LineaTiempo eventos={visibles} />}
+            {visibles.length > 0 && <LineaTiempo eventos={visibles} onRevision={abrir} />}
 
             {eventos.length === LIMITE && (
               <p className="pt-2 text-xs text-muted">
@@ -173,6 +182,8 @@ export function HistorialSala({ roomId }: { roomId: string }): React.ReactElemen
           </div>
         </div>
       </div>
+
+      {ficha}
     </section>
   )
 }

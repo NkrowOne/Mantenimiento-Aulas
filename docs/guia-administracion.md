@@ -665,6 +665,41 @@ Sale de la vista `room_timeline`, que **no guarda nada nuevo**: lee de las
 tablas que ya existen. Por eso no puede desincronizarse ni contradecir a las
 otras pantallas.
 
+### La ficha de una revisión, y el listado completo
+
+La pestaña abre en **Actividad** —la línea de tiempo de siempre— y tiene al lado
+**Revisiones**, que es la lista de todas: filtrable por resultado (con
+incidencias, sin incidencias, **sin cerrar**), edificio, sala y fechas, y con el
+nombre de lo que falló en cada fila.
+
+Y cada revisión tiene su **ficha**, que se abre desde ese listado, desde la línea
+de tiempo, desde el histórico de dentro de la revisión y desde la ficha del aula.
+Trae lo que antes se guardaba y no se leía en ninguna parte:
+
+| Qué se ve | De dónde sale |
+|---|---|
+| Qué falló, con el aparato, su serie, la gravedad y la nota de quien lo marcó | `inspection_checks` + `assets` |
+| Cuántas veces había fallado eso mismo antes en esa sala | `incidents.check_key` |
+| La incidencia que abrió, su estado y su resolución | `incidents.opened_from_inspection_id` |
+| Las observaciones completas | `inspections.notes` |
+| Las fotos | `attachments` + bucket `fotos`, con URL firmada de 5 minutos |
+| Las medidas tomadas: horas de lámpara, Mbps | `inspection_checks.measure` |
+| Los dos relojes, y el desfase cuando se revisó sin cobertura | `occurred_at` / `recorded_at` |
+| El histórico de incidencias de la sala, marcando las que abrió esa revisión | `incidents` |
+
+Sale de dos vistas nuevas, `inspection_overview` e `inspection_check_detail`, y
+valen lo mismo que `room_timeline`: **no guardan nada**, leen de las tablas que
+ya existen.
+
+Dos detalles que conviene saber al leer una ficha:
+
+- **Un borrador no es una revisión sin incidencias.** Sale como «sin cerrar», en
+  naranja, y la sala sigue contando como pendiente. Antes no había ninguna
+  pantalla en la que se pudiera ver que un borrador existía.
+- **Lo importado del Excel no trae comprobaciones.** Llegó con su resultado y sin
+  filas, así que la ficha lo dice —«con incidencias, sin comprobaciones
+  guardadas»— en vez de enseñar una lista vacía que se leería como «todo bien».
+
 ## 8. Informes
 
 **El automático sale los viernes a las 07:00**, con la semana de trabajo entera

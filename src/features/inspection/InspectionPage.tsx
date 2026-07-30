@@ -6,7 +6,8 @@ import { RoomInventory } from '@/features/inventory/RoomInventory'
 import { HistorialSala } from '@/features/history/HistorialSala'
 import { PHOTO_ACCEPT, capturePhoto } from '@/lib/photos'
 import { db } from '@/db/dexie'
-import { type CheckKey, type Room, type Severity } from '@/domain/types'
+import { SEVERIDADES } from '@/domain/revision'
+import { type CheckKey, type Room } from '@/domain/types'
 import { displayRoomCode } from '@/domain/normalize'
 import { useInspection } from './useInspection'
 
@@ -21,12 +22,6 @@ interface Props {
   /** Abrir la ficha de la sala desde la placa, sin salir del flujo. */
   onFicha: () => void
 }
-
-const SEVERITIES: Array<{ value: Severity; label: string }> = [
-  { value: 'baja', label: 'Leve' },
-  { value: 'media', label: 'Molesta' },
-  { value: 'alta', label: 'Impide la clase' },
-]
 
 export function InspectionPage({
   room,
@@ -183,7 +178,10 @@ export function InspectionPage({
                   <div className="pb-3">
                     <p className="eyebrow mb-2">Gravedad</p>
                     <div className="grid grid-cols-3 gap-2">
-                      {SEVERITIES.map((s) => (
+                      {/* Las gravedades salen de `domain/revision`: aquí se eligen y en la
+                          ficha de la revisión se leen, y con una copia en cada sitio las
+                          dos acaban diciendo cosas distintas. */}
+                      {SEVERIDADES.map((s) => (
                         <button
                           key={s.value}
                           type="button"

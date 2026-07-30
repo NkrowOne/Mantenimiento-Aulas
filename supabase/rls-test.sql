@@ -1530,3 +1530,147 @@ begin;
     raise notice 'OK: %', sqlerrm;
   end $$;
 rollback;
+
+\echo ''
+\echo '=== 52. La ficha de una revisión dice QUÉ falló, con nombre y con serie ==='
+--
+-- Es la prueba del agujero que tapan `inspection_overview` e
+-- `inspection_check_detail`: hasta ahora una revisión cerrada dejaba sus filas en
+-- cuatro tablas y lo único legible era «Revisión con incidencias».
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active limit 1 \gset
+
+  insert into assets (id, asset_type_id, room_id, label, serial, created_by)
+  values ('cccccccc-cccc-4ccc-8ccc-ccccccccccc1', public.asset_type_id('Proyector'),
+          :'sala', 'Proyector del atril', 'SN-4417',
+          '11111111-1111-4111-8111-111111111111');
+
+  -- El mismo aparato ya falló hace un año. Es lo que convierte la ficha en un
+  -- diagnóstico en vez de un parte suelto.
+  insert into incidents (id, room_id, check_key, title, severity, state, opened_at, opened_by)
+  values (gen_random_uuid(), :'sala', 'asset:cccccccc-cccc-4ccc-8ccc-ccccccccccc1',
+          'No daba imagen', 'alta', 'abierta', now() - interval '1 year',
+          '11111111-1111-4111-8111-111111111111');
+
+  -- La revisión: nace borrador —es lo único que RLS deja escribir— y se cierra.
+  insert into inspections (id, room_id, by_user, occurred_at, status, notes)
+  values ('cccccccc-cccc-4ccc-8ccc-ccccccccccca', :'sala',
+          '11111111-1111-4111-8111-111111111111', now(), 'borrador',
+          'El mando aparece en el cajón.');
+
+  insert into inspection_checks (id, inspection_id, check_key, result, severity, note)
+  values (gen_random_uuid(), 'cccccccc-cccc-4ccc-8ccc-ccccccccccca',
+          'asset:cccccccc-cccc-4ccc-8ccc-ccccccccccc1', 'incidencia', 'alta',
+          'Parpadea y se apaga');
+  insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
+  values (gen_random_uuid(), 'cccccccc-cccc-4ccc-8ccc-ccccccccccca', 'red', 'ok', 94.3, 'Mbps');
+  -- Una comprobación de las de antes del inventario: su nombre lo pone el
+  -- cliente, y la vista tiene que devolverla sin intentar convertirla en equipo.
+  insert into inspection_checks (id, inspection_id, check_key, result)
+  values (gen_random_uuid(), 'cccccccc-cccc-4ccc-8ccc-ccccccccccca', 'pantallas', 'na');
+
+  update inspections set status = 'completa', overall = 'con_incidencias'
+  where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccca';
+
+  insert into incidents (id, room_id, asset_id, opened_from_inspection_id, check_key,
+                         title, severity, state, opened_at, opened_by)
+  values (gen_random_uuid(), :'sala', 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1',
+          'cccccccc-cccc-4ccc-8ccc-ccccccccccca',
+          'asset:cccccccc-cccc-4ccc-8ccc-ccccccccccc1',
+          'Proyector del atril: parpadea', 'alta', 'abierta', now(),
+          '11111111-1111-4111-8111-111111111111');
+
+  insert into attachments (id, entity_type, entity_id, storage_path, taken_at, by_user)
+  values (gen_random_uuid(), 'inspection', 'cccccccc-cccc-4ccc-8ccc-ccccccccccca',
+          'inspection/cccccccc-cccc-4ccc-8ccc-ccccccccccca/foto.jpg', now(),
+          '11111111-1111-4111-8111-111111111111');
+
+  select case
+    when (select count(*) from inspection_check_detail
+           where inspection_id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccca') = 3
+     and (select asset_label from inspection_check_detail
+           where inspection_id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccca'
+             and result = 'incidencia') = 'Proyector del atril'
+     and (select serial from inspection_check_detail
+           where inspection_id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccca'
+             and result = 'incidencia') = 'SN-4417'
+     and (select note from inspection_check_detail
+           where inspection_id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccca'
+             and result = 'incidencia') = 'Parpadea y se apaga'
+    then 'OK: el fallo tiene nombre, número de serie y la nota de quien lo vio'
+    else 'FALLO: la ficha no resuelve qué falló'
+  end as resultado;
+
+  -- La medida tomada en el aula, que hasta ahora no se leía en ninguna pantalla.
+  select case
+    when (select measure || ' ' || measure_unit from inspection_check_detail
+           where inspection_id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccca'
+             and check_key = 'red') = '94.3 Mbps'
+     -- Y la clave antigua no se intenta convertir en uuid: sale sin aparato.
+     and (select asset_id from inspection_check_detail
+           where inspection_id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccca'
+             and check_key = 'pantallas') is null
+    then 'OK: la medida se lee y la comprobación antigua no rompe la vista'
+    else 'FALLO: la vista pierde la medida o tropieza con una clave antigua'
+  end as resultado;
+
+  select case
+    when (select fallos_previos from inspection_check_detail
+           where inspection_id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccca'
+             and result = 'incidencia') = 1
+     and (select incident_state from inspection_check_detail
+           where inspection_id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccca'
+             and result = 'incidencia') = 'abierta'
+    then 'OK: es la segunda vez, y la incidencia que abrió sigue abierta'
+    else 'FALLO: la ficha no cuenta la reincidencia ni la incidencia que abrió'
+  end as resultado;
+
+  select case
+    when (select total = 3 and ok = 1 and fallos = 1 and na = 1
+                 and fotos = 1 and incidencias = 1 and sin_resolver = 1
+                 and notes = 'El mando aparece en el cajón.'
+                 and fallos_detalle -> 0 ->> 'label' = 'Proyector del atril'
+          from inspection_overview where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccca')
+    then 'OK: el listado cuadra y dice el nombre de lo que falló'
+    else 'FALLO: el listado de revisiones no cuadra'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 53. Un borrador abandonado no se lee como una revisión limpia ==='
+--
+-- El listado tiene un corte para ellos justamente porque una sala con un
+-- borrador a medias parece revisada y no lo está.
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active limit 1 \gset
+
+  insert into inspections (id, room_id, by_user, occurred_at, status)
+  values ('cccccccc-cccc-4ccc-8ccc-ccccccccccc2', :'sala',
+          '11111111-1111-4111-8111-111111111111', now(), 'borrador');
+
+  select case
+    when (select status = 'borrador' and overall is null and total = 0
+          from inspection_overview where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc2')
+     -- Y no lo pesca el corte de «sin incidencias», que es el que se leería como
+     -- «esta sala está bien».
+     and not exists (select 1 from inspection_overview
+                      where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc2'
+                        and status = 'completa' and overall = 'ok')
+    then 'OK: sale como sin cerrar y fuera de las que salieron bien'
+    else 'FALLO: un borrador se cuela entre las revisiones cerradas'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 54. Y las dos vistas de la ficha respetan RLS ==='
+begin;
+  set local role anon;
+  select case
+    when (select count(*) from inspection_overview) = 0
+     and (select count(*) from inspection_check_detail) = 0
+    then 'OK: sin sesión no se lee ninguna revisión'
+    else 'FALLO: las vistas de la ficha se leen sin sesión'
+  end as resultado;
+rollback;

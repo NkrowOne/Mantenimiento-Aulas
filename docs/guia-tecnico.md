@@ -234,6 +234,28 @@ tercera vez** — y eso cambia lo que hay que hacer.
 Esta parte necesita cobertura. La revisión no; si estás en un sótano, revisa
 igual y el histórico lo miras al salir.
 
+### Abrir una revisión de antes
+
+En el histórico, **las revisiones se pueden tocar**. Se abre su ficha, y ahí está
+lo que hasta ahora no se podía ver:
+
+- **Qué falló**, aparato por aparato, con su número de serie, la gravedad y lo
+  que escribió quien lo marcó.
+- Si eso **ya había fallado antes** en esa sala y cuántas veces.
+- La incidencia que abrió, en qué estado está y cómo se resolvió.
+- Las **observaciones enteras**, sin recortar.
+- Las **fotos**, que se ven tocándolas.
+- Lo demás comprobado, con las medidas que se tomaron (horas de lámpara, Mbps).
+
+Es la diferencia entre saber que en marzo hubo «una revisión con incidencias» y
+saber que en marzo el mismo proyector ya parpadeaba, que se cambió la lámpara y
+que la foto de entonces se ve igual que lo que tienes delante.
+
+Y en la pestaña **Historial** hay un botón **Revisiones** con todas: se filtra
+por resultado —con incidencias, sin incidencias, sin cerrar—, edificio, sala y
+fechas. Cada fila dice el nombre de lo que falló, así que se recorre una semana
+de trabajo sin abrir nada.
+
 ### Se guarda solo
 
 No hay que acordarse de guardar. Cada cosa que tocas se guarda al instante en el

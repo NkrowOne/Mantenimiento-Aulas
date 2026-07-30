@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { cantidadLegible, diaDe, fechaLegible, subtipoLegible, type EventoSala } from './historial'
-import { desdeDe } from '@/features/history/HistorialPage'
+import {
+  cantidadLegible,
+  desdeDe,
+  diaDe,
+  fechaLegible,
+  subtipoLegible,
+  type EventoSala,
+} from './historial'
 
 const evento = (p: Partial<EventoSala>): EventoSala => ({
   ref_id: 'x',
