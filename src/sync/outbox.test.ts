@@ -18,10 +18,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const upsert = vi.fn()
 const uploadFoto = vi.fn()
+/** Lo que contesta el servidor cuando se le pregunta cómo está una fila. */
+const maybeSingle = vi.fn()
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
-    from: () => ({ upsert }),
+    from: () => ({ upsert, select: () => ({ eq: () => ({ maybeSingle }) }) }),
     storage: { from: () => ({ upload: uploadFoto }) },
     auth: {
       getSession: () => Promise.resolve({ data: { session: { user: { id: 'u1' } } } }),
@@ -76,6 +78,7 @@ beforeEach(async () => {
   await db.inspections.clear()
   upsert.mockReset().mockResolvedValue({ error: null, status: 201 })
   uploadFoto.mockReset().mockResolvedValue({ error: null })
+  maybeSingle.mockReset().mockResolvedValue({ data: null })
 })
 
 describe('flush', () => {
@@ -190,6 +193,81 @@ describe('flush', () => {
         onConflict: 'id',
         ignoreDuplicates: false,
       })
+    })
+
+    /*
+     * Y la fila de la revisión SÍ pisa, cerrada o no, porque su segundo envío no
+     * es un reintento: es el cierre.
+     *
+     * La cola sube la revisión dos veces —borrador mientras se rellena, completa
+     * al terminar—. Ignorando duplicados, ese segundo envío se convierte en un
+     * «no hagas nada» sobre la fila que ya está y la revisión se queda en
+     * borrador en el servidor para siempre: invisible en el histórico de la sala,
+     * en la fiabilidad, en el informe y en la lista de revisiones de la ficha.
+     * El técnico ve su trabajo guardado en el iPad y en el servidor no hay nada.
+     */
+    it('la revisión al cerrarse SÍ pisa la que ya está: ese envío es el cierre', async () => {
+      await db.inspections.put({ id: 'insp-1', status: 'completa' } as never)
+      await db.outbox.add(
+        entrada({ entity: 'inspection', id: 'insp-1', payload: { id: 'insp-1', status: 'completa' } }),
+      )
+
+      await flush()
+
+      expect(upsert).toHaveBeenCalledWith(expect.anything(), {
+        onConflict: 'id',
+        ignoreDuplicates: false,
+      })
+    })
+
+    /*
+     * Y el otro lado del cierre: cuando la respuesta se pierde por el camino.
+     *
+     * El cierre es un UPDATE de verdad y el servidor solo lo permite mientras la
+     * revisión siga siendo borrador —así no se reescribe un registro cerrado—. El
+     * reintento llega a una fila ya cerrada y vuelve un 42501, que es permanente:
+     * la entrada se quedaba rechazada para siempre enseñando «sin enviar» por una
+     * revisión que sí estaba guardada.
+     */
+    it('el reintento del cierre no se rechaza si la revisión ya está cerrada arriba', async () => {
+      upsert.mockResolvedValue({
+        error: { message: 'new row violates row-level security policy' },
+        status: 403,
+      })
+      maybeSingle.mockResolvedValue({ data: { status: 'completa' } })
+
+      const cierre = entrada({
+        entity: 'inspection',
+        id: 'insp-2',
+        payload: { id: 'insp-2', status: 'completa' },
+      })
+      await db.outbox.add(cierre)
+
+      const parte = await flush()
+
+      expect(parte.subidos).toBe(1)
+      expect(parte.rechazados).toBe(0)
+      expect(await db.outbox.get(cierre.id)).toBeUndefined()
+    })
+
+    it('pero si arriba sigue en borrador, el rechazo es real y se queda a la vista', async () => {
+      upsert.mockResolvedValue({
+        error: { message: 'new row violates row-level security policy' },
+        status: 403,
+      })
+      maybeSingle.mockResolvedValue({ data: { status: 'borrador' } })
+
+      const cierre = entrada({
+        entity: 'inspection',
+        id: 'insp-3',
+        payload: { id: 'insp-3', status: 'completa' },
+      })
+      await db.outbox.add(cierre)
+
+      const parte = await flush()
+
+      expect(parte.rechazados).toBe(1)
+      expect((await db.outbox.get(cierre.id))?.status).toBe('rechazado')
     })
 
     it('una foto que ya estaba en el almacén cuenta como subida, no como error', async () => {

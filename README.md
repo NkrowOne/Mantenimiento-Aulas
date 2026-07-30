@@ -391,15 +391,16 @@ filas: sin eso, arreglar una errata movería la fecha de «última revisión»,
 penalizaría la fiabilidad del aula y sumaría una revisión al informe del viernes.
 Las dos versiones se leen en la ficha del aula.
 
-**El permiso y la inmutabilidad son dos cosas distintas, también en las
-comprobaciones.** La política de `inspection_checks` exigía que la revisión
-siguiera en borrador para poder escribirlas, y la cola de salida sube la revisión
-antes que sus filas: una revisión hecha sin cobertura llegaba **cerrada y vacía**,
-con sus comprobaciones rechazadas con un 42501 (prueba 56). Ahora el permiso es de
-quien firma la revisión y la inmutabilidad la impone un trigger, que deja pasar el
-reenvío idéntico de la cola y bloquea cualquier cambio real — al supervisor
-incluido, que era la puerta de atrás por la que se podía reescribir lo comprobado
-de una revisión congelada.
+**El cierre de una revisión es un UPDATE, y su reintento no.** La cola sube la
+revisión dos veces —como borrador mientras se rellena y como `completa` al
+cerrarla— y esa segunda vez tiene que pisar la primera: tratarla como un reenvío
+la deja **en borrador en el servidor para siempre**, o sea invisible en el
+histórico, en la fiabilidad, en el informe y en la lista de revisiones de la ficha
+(prueba 57 y `outbox.test.ts`). Y cuando la respuesta de ese cierre se pierde, el
+reintento choca contra la inmutabilidad y volvía un 42501 permanente: eso lo
+reconcilia `yaEstabaCerrada()` preguntando si ya está cerrada arriba, y no una
+política más ancha — la fila cerrada tiene que seguir fuera del alcance de un
+UPDATE, que es la primera de las dos capas que vigila la prueba 3.
 
 **Nada se corrige en silencio.** La importación registró 18 arreglos en
 `import_fixes` con su valor original (fechas de 2005, `29-01-026`, resoluciones

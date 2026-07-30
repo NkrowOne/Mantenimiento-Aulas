@@ -1776,6 +1776,7 @@ begin;
   end as resultado;
 rollback;
 
+
 \echo ''
 \echo '=== 56. La revisión hecha sin cobertura llega ENTERA ==='
 begin;
@@ -1800,67 +1801,62 @@ begin;
     else 'FALLO: la revisión llegó al servidor sin lo que se comprobó'
   end as resultado;
 
-  -- Y el reenvío idéntico —lo que hace la cola al cerrar, y el reintento cuando
-  -- se pierde una respuesta— no puede volver rojo el indicador de sincronización.
+  -- Y el reenvío que hace la cola al cerrar: sobre una revisión cerrada va con
+  -- «no pises lo que ya está», así que no puede volver rojo el indicador.
   do $$
   begin
     insert into inspection_checks (id, inspection_id, check_key, result)
     values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeec1',
             'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1', 'red', 'ok')
-    on conflict (id) do update set result = excluded.result;
-    raise notice 'OK: el reenvío idéntico pasa sin ruido';
+    on conflict (id) do nothing;
+    raise notice 'OK: el reenvío de la cola pasa sin ruido';
   exception when others then
     raise exception 'FALLO: el reenvío de la cola se rechaza (%)', sqlerrm;
   end $$;
 rollback;
 
 \echo ''
-\echo '=== 57. …pero lo comprobado no se puede reescribir ni borrar ==='
+\echo '=== 57. El cierre de una revisión pisa el borrador que ya subió ==='
 begin;
   select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
   select id as sala from rooms where active limit 1 \gset
 
-  insert into inspections (id, room_id, by_user, occurred_at, status, overall)
+  -- El borrador sube en cuanto hay red…
+  insert into inspections (id, room_id, by_user, occurred_at, status, notes)
   values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2', :'sala',
-          '11111111-1111-4111-8111-111111111111', now(), 'completa', 'con_incidencias');
-  insert into inspection_checks (id, inspection_id, check_key, result, severity)
-  values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeec2',
-          'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2', 'red', 'incidencia', 'alta');
+          '11111111-1111-4111-8111-111111111111', now(), 'borrador', 'lo que vi');
 
-  -- Cambiar el resultado de una revisión cerrada es exactamente lo que corregir
-  -- viene a resolver: se hace añadiendo una versión, no reescribiendo esta.
-  do $$
-  begin
-    update inspection_checks set result = 'ok', severity = null
-     where id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeec2';
-    raise exception 'FALLO: se reescribió una comprobación cerrada';
-  exception when check_violation then
-    raise notice 'OK: lo comprobado no se reescribe';
-  end $$;
+  -- …y al cerrar, la cola manda la MISMA fila con `completa`. Ese envío tiene que
+  -- pisar el borrador: si no, la revisión se queda en borrador en el servidor y no
+  -- existe para nadie —ni en el histórico, ni en la fiabilidad, ni en el informe—.
+  insert into inspections (id, room_id, by_user, occurred_at, status, overall, notes)
+  select id, room_id, by_user, occurred_at, 'completa', 'ok', notes
+    from inspections where id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2'
+  on conflict (id) do update
+    set status = excluded.status, overall = excluded.overall, notes = excluded.notes;
 
+  select case
+    when (select status from inspections
+           where id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2')::text = 'completa'
+    then 'OK: el cierre pisa el borrador que ya estaba arriba'
+    else 'FALLO: la revisión se queda en borrador en el servidor'
+  end as resultado;
+
+  -- Y a partir de ahí queda fuera de su alcance: el reintento del cierre —cuando
+  -- la respuesta se pierde— choca aquí a propósito, y lo reconcilia el cliente
+  -- preguntando si ya está cerrada (ver `yaEstabaCerrada` en outbox.ts). La base
+  -- no abre la puerta, que es lo que mantiene las dos capas de la prueba 3.
   do $$
   declare n int;
   begin
-    delete from inspection_checks where id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeec2';
+    update inspections set notes = 'otra cosa'
+     where id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2';
     get diagnostics n = row_count;
-    if n > 0 then raise exception 'FALLO: se borró una comprobación cerrada'; end if;
-    raise notice 'OK: y tampoco se borra';
-  end $$;
-
-  -- Y el supervisor tampoco, que era la puerta de atrás: la fila de la revisión
-  -- estaba congelada para él y sus comprobaciones no.
-  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
-  do $$
-  begin
-    update inspection_checks set note = 'por la puerta de atrás'
-     where id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeec2';
-    raise exception 'FALLO: el supervisor reescribió una comprobación cerrada';
-  exception when check_violation then
-    raise notice 'OK: ni el supervisor: para eso está corregir la revisión';
+    if n > 0 then raise exception 'FALLO: se reescribió una revisión cerrada'; end if;
+    raise notice 'OK: cerrada, queda fuera del alcance del técnico';
   end $$;
 rollback;
 
-\echo ''
 \echo '=== 58. Las comprobaciones de otro no se tocan ==='
 begin;
   select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');

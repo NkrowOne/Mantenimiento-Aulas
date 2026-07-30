@@ -24,7 +24,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db } from '@/db/dexie'
+import { db, leerBytesDeFoto } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { fechaCorta } from '@/domain/fechas'
 
@@ -95,9 +95,14 @@ export function FotosDeRevision({
   })
 
   /*
-   * Y las que esperan en el dispositivo. Se leen los `Blob` y se convierten en
-   * URL de objeto, que hay que revocar: sin eso, cada redibujado deja una copia
-   * de la imagen en memoria hasta recargar la aplicación.
+   * Y las que esperan en el dispositivo, que son las de hoy.
+   *
+   * De la fila de la cola sale el estado; **los bytes viven aparte**, en
+   * `photoBlobs`, y se leen con `leerBytesDeFoto`. No es un detalle de
+   * organización: un `Blob` sacado de IndexedDB es el que WebKit ya no sabe
+   * volver a guardar, y meterlo en una fila que cambia de estado fue lo que
+   * paraba la sincronización entera. Aquí se pide un Blob nuevo, hecho en
+   * memoria, que solo va a la etiqueta `<img>`.
    */
   const pendientes = useLiveQuery(
     async () =>
@@ -109,21 +114,36 @@ export function FotosDeRevision({
   )
 
   const [locales, setLocales] = useState<Foto[]>([])
-  const urlsVivas = useRef<string[]>([])
 
   useEffect(() => {
-    const nuevas = pendientes.map((p) => ({
-      id: p.id,
-      url: URL.createObjectURL(p.blob),
-      takenAt: p.takenAt,
-      pendiente: true,
-    }))
-    urlsVivas.current = nuevas.map((f) => f.url)
-    setLocales(nuevas)
+    let vivo = true
+    const urls: string[] = []
+
+    void (async () => {
+      const nuevas: Foto[] = []
+      for (const p of pendientes) {
+        const bytes = await leerBytesDeFoto(p.id)
+        // Sin bytes la foto es irrecuperable en este dispositivo, y la cola ya lo
+        // dice a su manera —sale como rechazada—. Aquí simplemente no se pinta un
+        // hueco roto.
+        if (!bytes) continue
+        const url = URL.createObjectURL(bytes)
+        urls.push(url)
+        nuevas.push({ id: p.id, url, takenAt: p.takenAt, pendiente: true })
+      }
+
+      // La lectura es asíncrona: si el bloque se cerró mientras leía, lo que se
+      // ha creado se revoca aquí, que es donde se sabe que ya no lo espera nadie.
+      if (!vivo) {
+        for (const url of urls) URL.revokeObjectURL(url)
+        return
+      }
+      setLocales(nuevas)
+    })()
 
     return () => {
-      for (const url of urlsVivas.current) URL.revokeObjectURL(url)
-      urlsVivas.current = []
+      vivo = false
+      for (const url of urls) URL.revokeObjectURL(url)
     }
   }, [pendientes])
 
