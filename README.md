@@ -294,14 +294,14 @@ producción lo levanta `docker compose up reports-worker` y lo despierta
 | Área | Estado |
 |---|---|
 | Esquema append-only, vistas y alertas | ✅ verificado contra Postgres 16 |
-| RLS, roles y auditoría | ✅ 40 bloques en verde, incluida exposición pública |
+| RLS, roles y auditoría | ✅ 42 bloques en verde, incluida exposición pública |
 | Importador del Excel | ✅ 276 salas, 283 incidencias, 669 equipos |
 | Núcleo offline (Dexie + cola de salida) | ✅ |
 | Login con PIN que cifra la sesión | ✅ lógica probada |
-| Flujo de revisión de salas | ✅ |
+| Flujo de revisión de salas | ✅ un equipo en «Falla» abre incidencia y sigue abierta hasta que se resuelve |
 | Fotos con compresión | ✅ |
 | Panel con alertas y gráficos | ✅ paleta validada en claro y oscuro |
-| Incidencias, almacén y depuración de datos | ✅ |
+| Incidencias, almacén y depuración de datos | ✅ la pestaña es la lista de trabajo; las observaciones se leen en la ficha del aula |
 | Panel de administración: validar equipos, agrupar el catálogo, equipamiento por defecto y alta/baja de salas y edificios | ✅ |
 | Worker de informes PDF | ✅ PDF real generado y revisado |
 | Buckets de Storage y sus políticas | ✅ 3 pruebas de RLS propias |

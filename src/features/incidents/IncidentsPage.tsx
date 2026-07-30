@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { displayRoomCode, norm } from '@/domain/normalize'
 import { MaterialUsado } from './MaterialUsado'
 import { Borradores } from './Borradores'
-import type { IncidentState } from '@/domain/types'
+import { INCIDENT_KIND_LABELS, type IncidentKind, type IncidentState } from '@/domain/types'
 
 interface IncidentRow {
   id: string
@@ -14,10 +14,35 @@ interface IncidentRow {
   description: string | null
   severity: string
   state: IncidentState
+  kind: IncidentKind
   opened_at: string
   resolved_at: string | null
   external_ref: string | null
   room_id: string | null
+  /** Salió de una revisión: un equipo marcado «Falla» en el aula. */
+  opened_from_inspection_id: string | null
+}
+
+/**
+ * Lo que se lee de una gravedad, con las mismas palabras que se eligen en el
+ * aula: la revisión ofrece «Leve · Molesta · Impide la clase», y quien despacha
+ * la lista tiene que leer lo que el técnico pulsó, no la clave de la enumeración.
+ *
+ * Va en texto teñido y no en otra etiqueta con fondo. La fila ya tiene una a la
+ * izquierda con el estado, y dos rectángulos de color pegados compiten entre
+ * ellos sin que ninguno gane: el estado se reconoce por la forma, la gravedad se
+ * lee.
+ */
+const SEVERITY_LABEL: Record<string, string> = {
+  alta: 'Impide la clase',
+  media: 'Molesta',
+  baja: 'Leve',
+}
+
+const SEVERITY_STYLE: Record<string, string> = {
+  alta: 'font-semibold text-crit',
+  media: 'text-warn',
+  baja: '',
 }
 
 const STATE_STYLE: Record<IncidentState, string> = {
@@ -83,6 +108,22 @@ export function IncidentsPage(): React.ReactElement {
         // salen arriba en su propia sección. Mezclarlos aquí llenaría la lista
         // de «(sin describir)» y enterraría lo que sí hay que atender.
         .neq('state', 'borrador')
+        /*
+         * Y las observaciones tampoco.
+         *
+         * Esta pestaña es la lista de lo que hay que arreglar: lo que entra aquí
+         * es algo que alguien tiene que ir a resolver. Una observación —«el mando
+         * está en el cajón», «la persiana cuesta»— no es eso, y mezclarlas hacía
+         * que la lista dejara de ser una lista de trabajo: con veinte notas de
+         * seguimiento por medio, el proyector roto es una fila más y nadie
+         * distingue lo que urge de lo que solo se apuntó.
+         *
+         * No desaparecen: se escriben en la revisión, debajo de las fotos, y se
+         * consultan en la ficha del aula, que es donde significan algo. Las
+         * solicitudes sí se quedan —«instalar una cámara» es trabajo pedido, va
+         * marcado como tal y no hay otro sitio donde reclamarlo—.
+         */
+        .neq('kind', 'observacion')
         .order('opened_at', { ascending: false })
         .limit(LIMITE)
       if (!showResolved) q = q.neq('state', 'resuelta')
@@ -100,6 +141,10 @@ export function IncidentsPage(): React.ReactElement {
     return (incidents ?? []).filter(
       (i) =>
         norm(i.title).includes(q) ||
+        // La descripción entra en la búsqueda desde que se pinta: buscar «no da
+        // imagen» y no encontrar la fila que lo dice literalmente en pantalla es
+        // la clase de detalle que hace que nadie vuelva a usar el buscador.
+        norm(i.description ?? '').includes(q) ||
         norm(i.external_ref ?? '').includes(q) ||
         norm(i.room_id ? (salas?.get(i.room_id) ?? '') : '').includes(q),
     )
@@ -185,9 +230,42 @@ export function IncidentsPage(): React.ReactElement {
                   <p className="mt-0.5 text-xs text-muted">
                     {sala && <span className="font-mono font-semibold text-ink-2">{sala} · </span>}
                     {i.external_ref && <span className="font-mono">{i.external_ref} · </span>}
+                    {/* La gravedad, en palabras: es lo que decide qué se atiende
+                        primero, y «alta» a secas no dice qué está en juego.
+
+                        Solo en las averías. Una solicitud lleva gravedad en la
+                        tabla porque la columna es obligatoria, pero «Molesta»
+                        aplicado a «instalar una cámara» no significa nada: es un
+                        valor por defecto disfrazado de dato. */}
+                    {i.kind === 'incidencia' && (
+                      <>
+                        <span className={SEVERITY_STYLE[i.severity] ?? ''}>
+                          {SEVERITY_LABEL[i.severity] ?? i.severity}
+                        </span>
+                        {' · '}
+                      </>
+                    )}
+                    {/* Una solicitud no es una avería y no puede leerse igual.
+                        La incidencia no se marca: es el caso normal de esta
+                        lista, y etiquetar lo normal solo añade ruido. */}
+                    {i.kind !== 'incidencia' && INCIDENT_KIND_LABELS[i.kind] && (
+                      <>{INCIDENT_KIND_LABELS[i.kind]} · </>
+                    )}
+                    {/* De dónde salió. «De la revisión» dice que alguien estuvo
+                        delante del aparato y lo vio fallar, que es información
+                        distinta de haberlo apuntado desde el escritorio. */}
+                    {i.opened_from_inspection_id && <>de la revisión · </>}
                     abierta hace{' '}
                     <span className={stale ? 'font-semibold text-crit' : ''}>{days} días</span>
                   </p>
+                  {/* Lo que el técnico escribió en el aula. Estaba guardado y no
+                      se pintaba en ningún sitio: quien tiene que arreglarlo leía
+                      «Proyector» y tenía que ir a preguntar. */}
+                  {i.description && (
+                    <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-muted">
+                      {i.description}
+                    </p>
+                  )}
                 </div>
 
                 {i.state !== 'resuelta' && (

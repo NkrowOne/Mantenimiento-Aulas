@@ -213,6 +213,35 @@ export async function pullMaster(): Promise<ResultadoPull> {
 
   const todasVacias = fallos.length === 0 && vacias.length === consultas.length
 
+  /*
+   * Y las incidencias que alguien ya resolvió.
+   *
+   * No pasa por `podar` porque necesita lo contrario que las tres de arriba: la
+   * consulta pide solo las que NO están resueltas, así que la respuesta vacía es
+   * la buena noticia —no queda ninguna abierta— y hay que actuar sobre ella. Con
+   * `podar`, que se planta ante una respuesta vacía, la incidencia resuelta se
+   * quedaba en el dispositivo con su estado de ayer para siempre.
+   *
+   * Y eso no era cosmético desde que la revisión abre incidencias: el espejo es
+   * lo que responde a «¿este proyector ya tiene una abierta?». Con una resuelta
+   * fosilizada dentro, la respuesta era «sí» eternamente y el aparato no volvía a
+   * aparecer en Incidencias por mucho que siguiera roto.
+   *
+   * Dos salvaguardas. Nunca sobre un error ni sobre la firma de RLS bloqueando
+   * —todas las tablas vacías—, que borraría por un token mal emitido. Y nunca lo
+   * que está en la cola de salida: una incidencia recién abierta en un aula sin
+   * cobertura todavía no está en la respuesta del servidor, y esto la borraría
+   * antes de que llegue a subir.
+   */
+  const incidencias = de('incidents')
+  if (!incidencias.error && !todasVacias) {
+    const vivas = new Set((incidencias.data ?? []).map((i) => i['id'] as string))
+    const enCola = new Set((await db.outbox.toCollection().primaryKeys()) as string[])
+    const locales = (await db.incidents.toCollection().primaryKeys()) as string[]
+    const cerradas = locales.filter((id) => !vivas.has(id) && !enCola.has(id))
+    if (cerradas.length > 0) await db.incidents.bulkDelete(cerradas)
+  }
+
   const error =
     fallos.length > 0
       ? `${fallos[0]?.tabla}: ${fallos[0]?.mensaje}${

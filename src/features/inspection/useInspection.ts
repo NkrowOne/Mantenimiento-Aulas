@@ -9,14 +9,17 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { v7 as uuidv7 } from 'uuid'
 import { db, enqueue } from '@/db/dexie'
 import { flush } from '@/sync/outbox'
 import { norm } from '@/domain/normalize'
 import { resolveType } from '@/domain/inventory'
+import { incidenciasDeRevision } from '@/domain/incidencias'
 import {
   LAMP_MEASURE,
+  LEGACY_CHECK_LABELS,
   ROOM_CHECKS,
   ROOM_CHECK_HINTS,
   ROOM_CHECK_LABELS,
@@ -139,6 +142,7 @@ export interface InspectionDraft {
 }
 
 export function useInspection(room: Room | null, userId: string | null) {
+  const qc = useQueryClient()
   const [draft, setDraft] = useState<InspectionDraft | null>(null)
   const [saving, setSaving] = useState(false)
   const localTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -375,6 +379,21 @@ export function useInspection(room: Room | null, userId: string | null) {
     [scheduleSave],
   )
 
+  /**
+   * Cómo se llama una comprobación.
+   *
+   * Sale de las filas que la revisión tiene delante, y si no está —un equipo que
+   * se retiró entre el borrador y el cierre— cae en los nombres de las
+   * comprobaciones antiguas. La última red es la propia clave: preferible un
+   * título con `asset:1f2e…` que una incidencia que nadie abre por no tener
+   * nombre.
+   */
+  const etiquetaDe = useCallback(
+    (key: CheckKey): string =>
+      rows.find((r) => r.key === key)?.label ?? LEGACY_CHECK_LABELS[key] ?? key,
+    [rows],
+  )
+
   /** Cierra la revisión. A partir de aquí es inmutable, también en el servidor. */
   const complete = useCallback(async (): Promise<Inspection | null> => {
     if (!draft) return null
@@ -392,6 +411,28 @@ export function useInspection(room: Room | null, userId: string | null) {
 
     await db.inspections.put(inspection)
     await db.checks.bulkPut([...draft.checks.values()])
+
+    /*
+     * Y los equipos que fallan se convierten en incidencias.
+     *
+     * Esta es la pieza que faltaba. Antes, marcar «Falla» dejaba una fila en
+     * `inspection_checks` y nada más: la avería no salía en la pestaña de
+     * Incidencias, no contaba en el aula y nadie tenía que cerrarla. La
+     * aplicación sabía que el proyector estaba roto y no se lo pedía a nadie.
+     *
+     * Se decide con el espejo local —que guarda las incidencias sin resolver— así
+     * que funciona igual dentro de un sótano: si ese equipo ya tiene una abierta,
+     * no se abre otra, y la revisión de la ronda siguiente no duplica nada.
+     */
+    const abiertas = await db.incidents.where('room_id').equals(inspection.room_id).toArray()
+    const nuevas = incidenciasDeRevision({
+      inspection,
+      checks: [...draft.checks.values()],
+      etiquetaDe,
+      abiertas,
+      nuevoId: uuidv7,
+    })
+    if (nuevas.length > 0) await db.incidents.bulkPut(nuevas)
 
     /*
      * Y la sala se marca revisada **en local**, no solo en el servidor.
@@ -417,13 +458,39 @@ export function useInspection(room: Room | null, userId: string | null) {
       for (const check of draft.checks.values()) {
         await enqueue('inspection_check', check.id, check)
       }
+      // Detrás de la revisión y de sus comprobaciones a propósito: la incidencia
+      // apunta a la revisión de la que salió, y el orden de subida de la cola
+      // —`ORDER`, en outbox.ts— ya coloca `incident` después de `inspection` y de
+      // `asset`, así que un equipo dado de alta y averiado en la misma visita
+      // llega en el orden que la clave ajena necesita.
+      for (const inc of nuevas) {
+        await enqueue('incident', inc.id, inc)
+      }
     })
     sucias.current = new Set()
     void flush()
 
+    /*
+     * Y lo que el servidor ya no puede responder igual se marca como caduco.
+     *
+     * Las pantallas de consulta cachean un minuto, que está bien para navegar y
+     * es exactamente lo peor aquí: el técnico cierra la revisión, entra en la
+     * ficha del aula y no ve ni la observación que acaba de escribir ni la
+     * incidencia que acaba de abrir. Parecería que no se guardó.
+     *
+     * Se marcan por prefijo de clave —todas las salas— y no solo esta: al
+     * encadenar salas se cierran varias seguidas, y acertar con la sala de cada
+     * una obligaría a llevar la cuenta. Marcar caduco no dispara ninguna
+     * consulta: solo hace que la próxima pantalla que se abra pida datos frescos.
+     */
+    void qc.invalidateQueries({ queryKey: ['room-timeline'] })
+    void qc.invalidateQueries({ queryKey: ['room-notes'] })
+    void qc.invalidateQueries({ queryKey: ['room-reliability'] })
+    if (nuevas.length > 0) void qc.invalidateQueries({ queryKey: ['incidents'] })
+
     setDraft(null)
     return inspection
-  }, [draft])
+  }, [draft, etiquetaDe, qc])
 
   // `assets`, `types` y `typesById` se devuelven además de usarse aquí: la
   // página los necesita para el bloque de inventario y antes montaba SU PROPIA

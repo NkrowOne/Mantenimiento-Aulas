@@ -489,10 +489,31 @@ async function main(): Promise<void> {
           description: null,
           severity: 'media',
           state: 'abierta',
+          kind: 'incidencia',
           opened_at: '2026-07-20T09:00:00Z',
           resolved_at: null,
           external_ref: 'I260720_0031',
           room_id: null,
+          opened_from_inspection_id: null,
+        },
+        /*
+         * Y una nacida de una revisión, que es el caso normal desde que marcar
+         * «Falla» en un equipo abre incidencia. Está aquí para que la captura
+         * enseñe las tres cosas que antes no se veían: la gravedad en palabras,
+         * la marca de que alguien lo vio en el aula, y la nota que escribió.
+         */
+        {
+          id: 'i2',
+          title: 'Proyector: no enciende, el led parpadea en rojo',
+          description: 'No enciende, el led parpadea en rojo. Probado con otro cable.',
+          severity: 'alta',
+          state: 'abierta',
+          kind: 'incidencia',
+          opened_at: '2026-07-28T08:20:00Z',
+          resolved_at: null,
+          external_ref: null,
+          room_id: null,
+          opened_from_inspection_id: 'rev-1',
         },
       ])
     }
