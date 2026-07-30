@@ -11,6 +11,8 @@ const REVISION: Inspection = {
   status: 'completa',
   overall: 'con_incidencias',
   notes: null,
+  corrects: null,
+  corrected_at: null,
 }
 
 const PROYECTOR = assetCheckKey('equipo-proyector')

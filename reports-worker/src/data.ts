@@ -182,14 +182,33 @@ function limites(sql: postgres.Sql, p: Periodo): { desde: postgres.Fragment; has
 
 const num = (v: unknown): number => Number(v ?? 0)
 
+/*
+ * Las revisiones se cuentan por VISITA, no por fila.
+ *
+ * Desde que una revisión se puede corregir, la misma visita al aula puede tener
+ * varias filas en `inspections`: la original y las correcciones que la
+ * reemplazan. `inspections_vigentes` ya deja fuera las corregidas, y
+ * `count(distinct coalesce(corrects, id))` cierra el caso raro de dos
+ * correcciones simultáneas de la misma revisión —las dos apuntan a ella, así que
+ * la visita se cuenta una vez—.
+ *
+ * Sin esto, el informe del viernes diría que el equipo hizo 42 revisiones la
+ * semana en que hizo 38 y corrigió cuatro, y el número de un informe firmado no
+ * se puede permitir eso.
+ *
+ * Se escribe en cada consulta y no en un ayudante: son cinco sitios, con alias
+ * distintos, y esconder un `count` dentro de una función deja las consultas
+ * diciendo menos de lo que hacen.
+ */
+
 async function contadores(sql: postgres.Sql, p: Periodo): Promise<Contadores> {
   const { desde, hasta } = limites(sql, p)
   const [c] = await sql<Array<Record<string, string>>>`
     select
-      (select count(*) from inspections
-         where status = 'completa' and occurred_at >= ${desde} and occurred_at < ${hasta})        as revisiones,
-      (select count(distinct room_id) from inspections
-         where status = 'completa' and occurred_at >= ${desde} and occurred_at < ${hasta})        as salas_revisadas,
+      (select count(distinct coalesce(corrects, id)) from inspections_vigentes
+         where occurred_at >= ${desde} and occurred_at < ${hasta})                                as revisiones,
+      (select count(distinct room_id) from inspections_vigentes
+         where occurred_at >= ${desde} and occurred_at < ${hasta})                                as salas_revisadas,
       (select count(*) from incidents
          where state <> 'borrador' and opened_at >= ${desde} and opened_at < ${hasta})          as registros,
       (select count(*) from incidents
@@ -266,9 +285,10 @@ export async function loadReportData(
       select generate_series(${period.start}::date, ${period.end}::date, interval '1 day')::date as dia
     ),
     rev as (
-      select public.dia_local(occurred_at) as dia, count(*) as n
-      from inspections
-      where status = 'completa' and occurred_at >= ${desde} and occurred_at < ${hasta}
+      select public.dia_local(occurred_at) as dia,
+             count(distinct coalesce(corrects, id)) as n
+      from inspections_vigentes
+      where occurred_at >= ${desde} and occurred_at < ${hasta}
       group by 1
     ),
     abre as (
@@ -306,10 +326,10 @@ export async function loadReportData(
     ),
     revisadas as (
       select z.building_id as id, count(distinct i.room_id) as n
-      from inspections i
+      from inspections_vigentes i
       join rooms r on r.id = i.room_id
       join zones z on z.id = r.zone_id
-      where i.status = 'completa' and i.occurred_at >= ${desde} and i.occurred_at < ${hasta}
+      where i.occurred_at >= ${desde} and i.occurred_at < ${hasta}
       group by z.building_id
     ),
     abiertas as (
@@ -457,11 +477,16 @@ export async function loadReportData(
    * recibe estas filas sin nombres (ver `ia.ts`). No es un ranking: un técnico
    * con seis revisiones y otro con dos pueden haber trabajado lo mismo si el
    * segundo ha estado desmontando una botonera toda la tarde.
+   *
+   * Una visita corregida se le apunta a quien firmó la versión que vale. Si la
+   * corrigió un compañero, la visita cuenta para él y no para quien la hizo; es
+   * una distorsión pequeña y consciente, y contarla dos veces —una por versión—
+   * mentiría en el total, que es el número que sí se lee como una medida.
    */
   const equipo = await sql<Array<{ nombre: string; revisiones: string; registros: string }>>`
     with rev as (
-      select by_user, count(*) as n from inspections
-      where status = 'completa' and by_user is not null and occurred_at >= ${desde} and occurred_at < ${hasta}
+      select by_user, count(distinct coalesce(corrects, id)) as n from inspections_vigentes
+      where by_user is not null and occurred_at >= ${desde} and occurred_at < ${hasta}
       group by by_user
     ),
     reg as (
@@ -512,11 +537,10 @@ export async function loadReportData(
         where c.inspection_id = ins.id and c.result = 'incidencia')           as fallos,
       (select count(*) from incidents i
         where i.opened_from_inspection_id = ins.id and i.state <> 'borrador') as aperturas
-    from inspections ins
+    from inspections_vigentes ins
     join room_overview ro on ro.room_id = ins.room_id
     left join profiles p on p.id = ins.by_user
-    where ins.status = 'completa'
-      and ins.occurred_at >= ${desde} and ins.occurred_at < ${hasta}
+    where ins.occurred_at >= ${desde} and ins.occurred_at < ${hasta}
     order by ins.occurred_at
     limit ${TOPE_FILAS}
   `
@@ -612,9 +636,8 @@ export async function loadReportData(
 
   const [totales] = await sql<Array<{ revisiones: string; eventos: string }>>`
     select
-      (select count(*) from inspections
-        where status = 'completa'
-          and occurred_at >= ${desde} and occurred_at < ${hasta})                     as revisiones,
+      (select count(distinct coalesce(corrects, id)) from inspections_vigentes
+        where occurred_at >= ${desde} and occurred_at < ${hasta})                      as revisiones,
       (select count(*) from incidents
         where state <> 'borrador' and opened_at >= ${desde} and opened_at < ${hasta})
       + (select count(*) from incidents

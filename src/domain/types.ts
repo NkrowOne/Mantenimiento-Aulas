@@ -159,6 +159,23 @@ export interface Inspection {
   status: 'borrador' | 'completa'
   overall: 'ok' | 'con_incidencias' | null
   notes: string | null
+  /**
+   * A qué revisión reemplaza esta, si es una corrección.
+   *
+   * Es la pieza que evita que arreglar un error cueste una revisión nueva. La
+   * corregida no se toca —sigue congelada, con su fecha y su firma— y esta pasa
+   * a ser la que cuenta: la que sale en el histórico, en la fiabilidad de la
+   * sala y en el informe. Las dos se pueden leer.
+   *
+   * `occurred_at` se conserva a propósito: el aula se visitó el día que se
+   * visitó, y corregir la errata el jueves no puede hacer que parezca revisada
+   * el jueves. Cuándo se corrigió va en `corrected_at`.
+   *
+   * Anulable, y en un borrador guardado antes de esta versión llega `undefined`:
+   * es una revisión normal, que es exactamente lo que significa el nulo.
+   */
+  corrects: string | null
+  corrected_at: string | null
 }
 
 export interface InspectionCheck {
