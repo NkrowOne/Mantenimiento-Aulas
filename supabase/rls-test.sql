@@ -1234,6 +1234,8 @@ begin;
     when (select count(*) from app_config) = 0
     then 'OK: app_config sigue invisible para un técnico'
     else 'FALLO: un técnico lee app_config'
+  end as resultado;
+rollback;
 
 \echo '=== 45. Un equipo que falla en la revisión abre incidencia, y sigue abierta ==='
 begin;
