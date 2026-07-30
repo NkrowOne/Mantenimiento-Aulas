@@ -93,6 +93,28 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
+    /*
+     * Qué versión es esta, dentro del bundle.
+     *
+     * `salud.json` ya lo publica, pero eso responde «qué hay en el servidor», y
+     * la pregunta que hace falta cuando algo no cuadra es otra: **qué está
+     * ejecutando ESTE iPad**. Con `registerType: 'prompt'` las dos pueden no
+     * coincidir durante días —el service worker nuevo espera a que alguien pulse
+     * «Actualizar»—, así que un dispositivo puede estar enseñando un fallo que
+     * se arregló hace horas.
+     *
+     * Sin esto no hay forma de distinguirlo desde el aparato, que es donde
+     * ocurre: se diagnostica a ciegas un código que ni siquiera es el que está
+     * corriendo. Pasó, y costó varias vueltas.
+     */
+    define: {
+      __BUILD__: JSON.stringify(
+        process.env['VITE_COMMIT']?.slice(0, 7) ??
+          // Sin commit a mano, la hora de compilación distingue despliegues
+          // igual de bien para lo que hace falta aquí.
+          new Date().toISOString().slice(0, 16).replace('T', ' '),
+      ),
+    },
     plugins: [
       react(),
       saludJson(construccion),
