@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { pullMaster } from '@/sync/pull'
 import { identifyAsset, modelLabel, resolveModel, resolveType } from '@/domain/inventory'
 import { norm, displayRoomCode } from '@/domain/normalize'
-import { fechaCorta } from '@/domain/fechas'
+import { diaEnMadrid, diaMasDias, fechaCorta } from '@/domain/fechas'
 import {
   ASSET_STATUS_LABELS,
   type Asset,
@@ -56,6 +56,21 @@ const SIN_MODELO = '__sin_modelo__'
 const SIN_SERIE = '__sin_serie__'
 const SIN_VALIDAR = '__sin_validar__'
 const SIN_FECHA = '__sin_fecha__'
+/*
+ * Y los dos de la garantía.
+ *
+ * `warranty_until` se podía escribir desde el primer día y no había forma de
+ * preguntar por él: un dato que solo se escribe es un dato que nadie rellena, y
+ * la pregunta que lo justifica —«¿esto lo arreglamos nosotros o lo manda el
+ * fabricante?»— llega siempre con el aparato ya roto y con prisa.
+ *
+ * `EN_GARANTIA` es el que se usa con la avería delante. `GARANTIA_PRONTO` es el
+ * que se mira una vez al trimestre: los 90 días son el margen en el que todavía
+ * se puede reclamar algo que va justo antes de que deje de poderse.
+ */
+const EN_GARANTIA = '__en_garantia__'
+const GARANTIA_PRONTO = '__garantia_pronto__'
+const DIAS_DE_AVISO = 90
 
 export function EquiposPage({ role, userId }: { role: Role; userId: string | null }): React.ReactElement {
   const [texto, setTexto] = useState('')
@@ -135,6 +150,10 @@ export function EquiposPage({ role, userId }: { role: Role; userId: string | nul
 
   const visibles = useMemo(() => {
     const q = norm(consulta)
+    /* Se resuelven una vez por filtrado y no por fila: son 1.094 equipos y
+       `Intl.DateTimeFormat` no es gratis. */
+    const hoy = diaEnMadrid()
+    const limiteAviso = diaMasDias(DIAS_DE_AVISO)
     const out = filas.filter((f) => {
       if (q && !f.busqueda.includes(q)) return false
       if (edificio && f.edificioId !== edificio) return false
@@ -144,6 +163,22 @@ export function EquiposPage({ role, userId }: { role: Role; userId: string | nul
       if (pega === SIN_SERIE && f.asset.serial) return false
       if (pega === SIN_VALIDAR && f.asset.confirmed && !f.ident.modeloSinValidar) return false
       if (pega === SIN_FECHA && f.asset.installed_at) return false
+      /* Se comparan cadenas `AAAA-MM-DD` y no fechas: `warranty_until` es un
+         `date` sin hora, y convertirlo a `Date` lo mete en un huso —el aparato
+         dejaría de estar en garantía a las 02:00 del día anterior en verano. */
+      if (pega === EN_GARANTIA && !(f.asset.warranty_until && f.asset.warranty_until >= hoy)) {
+        return false
+      }
+      if (
+        pega === GARANTIA_PRONTO &&
+        !(
+          f.asset.warranty_until &&
+          f.asset.warranty_until >= hoy &&
+          f.asset.warranty_until <= limiteAviso
+        )
+      ) {
+        return false
+      }
       return true
     })
 
@@ -401,6 +436,8 @@ export function EquiposPage({ role, userId }: { role: Role; userId: string | nul
             [SIN_SERIE, 'Sin nº de serie'],
             [SIN_FECHA, 'Sin fecha de instalación'],
             [SIN_VALIDAR, 'Sin validar'],
+            [EN_GARANTIA, 'En garantía'],
+            [GARANTIA_PRONTO, `Garantía acaba en ${DIAS_DE_AVISO} días`],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -718,6 +755,15 @@ function FilaEquipo({
 
         <span className="hidden w-28 shrink-0 truncate text-xs text-muted lg:block">
           {asset.installed_at ? fechaCorta(asset.installed_at) : 'no consta'}
+          {/* Y la garantía debajo, solo si queda. Filtrar por «en garantía» sin
+              que la columna diga hasta cuándo obliga a abrir cada fila para saber
+              cuál de los doce corre más prisa. Vencida no se pinta: sería ruido
+              en el 90% de las filas y no cambia ninguna decisión. */}
+          {asset.warranty_until && asset.warranty_until >= diaEnMadrid() && (
+            <span className="block text-[0.625rem] text-ok">
+              garantía → {fechaCorta(asset.warranty_until)}
+            </span>
+          )}
         </span>
 
         <span className="flex w-20 shrink-0 items-center justify-end gap-1">

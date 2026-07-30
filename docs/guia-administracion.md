@@ -450,6 +450,20 @@ seleccionan los que son iguales y se les pone el modelo de una vez. Esa pantalla
 también exporta a CSV lo que se esté viendo, que es lo que permite cruzarlo con
 una factura o con el listado del proveedor.
 
+Las chapas de arriba son la lista de tareas: **Sin modelo**, **Sin nº de serie**,
+**Sin fecha de instalación** y **Sin validar** dicen qué queda por rellenar, y las
+dos de la garantía contestan la pregunta que llega con el aparato ya roto:
+
+| Chapa | Para qué |
+|---|---|
+| **En garantía** | Con la avería delante: ¿lo arreglamos nosotros o lo manda el fabricante? La fila enseña hasta cuándo, así que se ve de un golpe cuál corre prisa |
+| **Garantía acaba en 90 días** | Una vez al trimestre. Es el margen para reclamar algo que va justo, antes de que deje de poderse |
+
+La garantía se escribe en cada equipo —en «Más detalles», desde el aula o desde
+esta pantalla— y hasta ahora era un dato que solo se podía escribir: no había
+forma de preguntar por él, y un dato que solo se escribe es un dato que nadie
+rellena.
+
 ```sql
 -- Qué queda por hacer
 select count(*) filter (where asset_model_id is null) as sin_modelo,

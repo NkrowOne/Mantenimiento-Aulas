@@ -74,6 +74,24 @@ export function diaEnMadrid(instante = new Date()): string {
 }
 
 /**
+ * El día de Madrid que cae N días después, como `AAAA-MM-DD`.
+ *
+ * Para comparar contra columnas `date` —una garantía, un vencimiento— sin
+ * convertirlas a `Date`. Es la trampa que esto evita: `new Date('2026-10-15')` es
+ * medianoche UTC, así que en verano el aparato deja de estar en garantía a las
+ * 02:00 del día anterior. Comparando cadenas `AAAA-MM-DD` el día es el día.
+ *
+ * Se apoya en UTC para sumar: los días naturales de Madrid no son todos de 24
+ * horas —el de marzo tiene 23 y el de octubre 25— pero la fecha de partida ya
+ * está normalizada a las 12:00, así que ninguno de los dos saltos la mueve de día.
+ */
+export function diaMasDias(dias: number, instante = new Date()): string {
+  const hoy = diaEnMadrid(instante)
+  const [a, m, d] = hoy.split('-').map(Number)
+  return diaEnMadrid(new Date(Date.UTC(a!, m! - 1, d!, 12) + dias * 86_400_000))
+}
+
+/**
  * Para leer, no para ordenar: `18 jul 2026`.
  *
  * En la zona del campus y no en la del dispositivo, que es lo mismo que hace

@@ -132,6 +132,55 @@ async function main(): Promise<void> {
     (await page.locator('input[autocomplete="username"]').count()) > 0,
   )
 
+  /*
+   * El segundo dispositivo.
+   *
+   * Es la ruta que existe precisamente para que nadie tenga que pedir un código
+   * cuando ya tiene la aplicación en el iPad, así que es también la que más se va
+   * a usar y la que se rompe sin que nadie lo note: el alta con código seguiría
+   * funcionando perfectamente y esta se quedaría inalcanzable detrás de un enlace
+   * que ya no cambia nada.
+   *
+   * Solo se comprueba el marcado y el camino de vuelta —vincular necesita
+   * servidor, y aquí no hay ninguno—. Lo que pasa contra la base lo cubren los
+   * bloques 52 a 56 de `rls-test.sql`.
+   */
+  console.log('\n▸ El segundo dispositivo, sin código')
+  await page.getByRole('button', { name: 'Entra con tu PIN' }).click()
+
+  await check('se llega desde el alta con un solo toque', async () =>
+    (await page.getByText('Usar mi cuenta aquí').count()) > 0,
+  )
+  await check('ya no pide el código de alta', async () =>
+    (await page.getByText('Código de alta').count()) === 0,
+  )
+  await check('sigue pidiendo el correo y el PIN', async () =>
+    (await page.locator('input[type="email"]').count()) > 0 &&
+    (await page.locator('input[inputmode="numeric"]').count()) > 0,
+  )
+  await check('dice que la conexión hace falta una sola vez', async () =>
+    (await page.getByText(/una sola vez/i).count()) > 0,
+  )
+  await check('el botón dice a dónde lleva', async () =>
+    (await page.getByRole('button', { name: 'Entrar en este dispositivo' }).count()) > 0,
+  )
+  /*
+   * Y aquí el PIN «débil» NO se rechaza, al contrario que en el alta con código.
+   *
+   * Es deliberado y merece una prueba, porque es exactamente el detalle que un
+   * refactor bienintencionado unificaría: en el alta el PIN se ELIGE y `1111` se
+   * puede rechazar; aquí se teclea uno que ya existe, y negarle la entrada a
+   * alguien por una decisión que ya tomó hace un año lo deja fuera de su propia
+   * cuenta sin ninguna salida desde este dispositivo.
+   */
+  await page.locator('input[type="email"]').fill('tecnico@test.local')
+  await page.locator('input[inputmode="numeric"]').fill('1111')
+  await page.getByRole('button', { name: 'Entrar en este dispositivo' }).click()
+  await check('no juzga el PIN que ya existe: lo lleva al servidor', async () => {
+    await page.waitForTimeout(300)
+    return (await page.getByText(/dígitos distintos/i).count()) === 0
+  })
+
   console.log('\n▸ Pantalla de desbloqueo diario')
   // Se inyecta una sesión sellada falsa para que la aplicación pinte la
   // pantalla de PIN en vez de la de alta. Solo se comprueba el marcado: el
