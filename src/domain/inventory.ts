@@ -126,6 +126,112 @@ export function labelAvailable(assetsInRoom: Asset[], label: string, exceptId?: 
   )
 }
 
+// -----------------------------------------------------------------------------
+// El vocabulario que ya existe, para no volver a teclearlo
+// -----------------------------------------------------------------------------
+
+/**
+ * Un valor que ya se usa en el parque, con cuántas veces aparece.
+ *
+ * El recuento no es adorno: es el orden. Si de 41 proyectores 30 son un
+ * «NEC NP44», ese tiene que salir primero — es el que va a teclear la siguiente
+ * persona, y ponerlo detrás de una rareza que aparece una vez convierte la ayuda
+ * en una lista que hay que leer.
+ */
+export interface Sugerencia {
+  valor: string
+  veces: number
+}
+
+/** Qué campo del equipo se está autocompletando. */
+export type CampoDeEquipo = 'model' | 'label'
+
+/**
+ * Lo que ya se ha escrito para este tipo de equipo, en todo el parque.
+ *
+ * Corregir un equipo pedía teclear el modelo entero a mano, y son cadenas como
+ * `Epson EB-1485Fi` escritas de pie con una mano: se teclean mal, se teclean con
+ * mayúsculas distintas, y a partir de ahí el mismo proyector cuenta como dos
+ * modelos en cualquier informe que agrupe. Lo que arregla eso no es validar más:
+ * es ofrecer lo que ya está escrito.
+ *
+ * Sale del espejo local —el dispositivo tiene los equipos de las 276 salas—, así
+ * que funciona sin cobertura, igual que el resto de la revisión.
+ *
+ * Va aparte del filtrado por lo tecleado a propósito: esto recorre el parque
+ * entero y solo cambia cuando cambia el inventario; lo otro corre en cada tecla.
+ *
+ * `label` mira también fuera de la sala, y ahí está su valor: «Pantalla del
+ * atril» se inventa en un aula y a partir de ese momento se ofrece en las demás,
+ * que es como una plantilla que nadie ha tenido que mantener.
+ */
+export function vocabularioDeTipo(
+  assets: Asset[],
+  assetTypeId: string,
+  campo: CampoDeEquipo,
+): Sugerencia[] {
+  const veces = new Map<string, { valor: string; n: number }>()
+
+  for (const asset of assets) {
+    if (asset.asset_type_id !== assetTypeId) continue
+    // Un equipo retirado sigue aportando vocabulario: el modelo que se instaló
+    // durante seis años no deja de ser el modelo que se escribe.
+    const valor = (asset[campo] ?? '').trim()
+    if (!valor) continue
+
+    const clave = norm(valor)
+    const previo = veces.get(clave)
+    // Se conserva la primera grafía vista y se cuentan todas: `NEC np44` y
+    // `NEC NP44` son el mismo modelo mal escrito dos veces, y ofrecer las dos
+    // sería ofrecer el problema.
+    if (previo) previo.n += 1
+    else veces.set(clave, { valor, n: 1 })
+  }
+
+  return [...veces.values()]
+    .map((v) => ({ valor: v.valor, veces: v.n }))
+    .sort((a, b) => b.veces - a.veces || a.valor.localeCompare(b.valor, 'es', { numeric: true }))
+}
+
+/**
+ * Qué se ofrece con lo que hay tecleado.
+ *
+ * Con el campo vacío se ofrece lo más frecuente, y eso es deliberado: el caso
+ * que ahorra trabajo de verdad es el técnico delante de un proyector cuyo modelo
+ * no ha tecleado todavía. Esperar a que escriba tres letras para ayudarle es
+ * ayudarle cuando ya ha hecho el trabajo.
+ */
+export function sugerenciasDe(
+  vocabulario: Sugerencia[],
+  query: string,
+  opciones?: { excluir?: string[]; limit?: number },
+): Sugerencia[] {
+  const q = norm(query)
+  const fuera = new Set((opciones?.excluir ?? []).map(norm).filter(Boolean))
+  const limit = opciones?.limit ?? 5
+
+  const candidatos = vocabulario.filter((s) => {
+    const v = norm(s.valor)
+    // Lo que ya está escrito en el campo no se ofrece: sería una fila que al
+    // pulsarla no hace nada.
+    if (fuera.has(v)) return false
+    return q === '' || v.includes(q)
+  })
+
+  // Con el campo vacío manda la frecuencia, que es el orden con el que llega.
+  if (q === '') return candidatos.slice(0, limit)
+
+  // Y con algo tecleado, lo que empieza por ello antes de lo que solo lo
+  // contiene. `sort` es estable, así que dentro de cada grupo sigue mandando la
+  // frecuencia.
+  return candidatos
+    .sort((a, b) => {
+      const score = (s: Sugerencia): number => (norm(s.valor).startsWith(q) ? 0 : 1)
+      return score(a) - score(b)
+    })
+    .slice(0, limit)
+}
+
 /** El nombre del tipo tal y como debe verse, siguiendo las fusiones. */
 export function resolveType(types: Map<string, AssetType>, id: string): AssetType | null {
   const seen = new Set<string>()
