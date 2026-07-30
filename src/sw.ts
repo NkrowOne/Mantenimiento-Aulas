@@ -38,6 +38,7 @@ export function registrarServiceWorker(): void {
 
   actualizar = registerSW({
     onNeedRefresh() {
+      enEspera = true
       hayVersionNueva = true
       anunciar()
     },
@@ -61,8 +62,36 @@ export async function aplicarActualizacion(): Promise<void> {
   await actualizar?.(true)
 }
 
-/** «Ahora no»: se esconde el aviso, el service worker sigue esperando. */
+/** ¿Hay una versión esperando a que alguien la active? */
+export function hayActualizacionEnEspera(): boolean {
+  return enEspera
+}
+
+/*
+ * Lo pospuesto sigue esperando, y se vuelve a ofrecer.
+ *
+ * `posponerActualizacion()` ponía `hayVersionNueva` a false y ahí se acababa
+ * todo: nada volvía a ponerlo a true, porque `onNeedRefresh` solo se dispara
+ * cuando se INSTALA un service worker nuevo, y ya estaba instalado. Así que
+ * «Ahora no» significaba en la práctica «nunca», y un iPad podía quedarse meses
+ * con la versión de la que se pospuso una vez.
+ *
+ * Eso convirtió un arreglo urgente en algo que no llegaba: la avería seguía a la
+ * vista en el aula horas después de estar corregida y desplegada, y desde el
+ * dispositivo no había manera de saberlo. Ahora se distingue lo que hay —
+ * `enEspera`— de lo que se está enseñando ahora mismo, y al volver a primer
+ * plano se vuelve a ofrecer.
+ */
+let enEspera = false
+
 export function posponerActualizacion(): void {
   hayVersionNueva = false
+  anunciar()
+}
+
+/** Vuelve a ofrecer lo que quedó pospuesto. La llama `main.tsx` al volver al frente. */
+export function reofrecerActualizacion(): void {
+  if (!enEspera || hayVersionNueva) return
+  hayVersionNueva = true
   anunciar()
 }

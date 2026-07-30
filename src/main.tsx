@@ -2,7 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from './App'
-import { registrarServiceWorker } from './sw'
+import { reofrecerActualizacion, registrarServiceWorker } from './sw'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -43,6 +43,18 @@ for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
  * todos modos para que la versión que lo arregla pueda llegar.
  */
 registrarServiceWorker()
+
+/*
+ * Y al volver a primer plano se vuelve a ofrecer lo que se pospuso.
+ *
+ * «Ahora no» tiene que significar ahora no, no nunca. Va aquí y no dentro de la
+ * interfaz por lo mismo que el registro: esto debe seguir funcionando con la
+ * aplicación bloqueada, que es justo cuando un dispositivo atascado necesita el
+ * arreglo que trae la versión nueva.
+ */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') reofrecerActualizacion()
+})
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

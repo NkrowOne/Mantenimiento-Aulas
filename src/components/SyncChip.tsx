@@ -4,6 +4,7 @@ import { pendingSummary } from '@/db/dexie'
 import { flush, getUltimoErrorSync, onSyncState, retryRejected, type SyncState } from '@/sync/outbox'
 import { pullMaster, ultimoPull } from '@/sync/pull'
 import { exportarPendientes, ofrecerFichero } from '@/sync/rescate'
+import { aplicarActualizacion, onVersionNueva } from '@/sw'
 import { Diagnostico } from '@/features/admin/Diagnostico'
 
 /**
@@ -39,6 +40,10 @@ export function SyncChip(): React.ReactElement {
   const ultimo = useLiveQuery(() => ultimoPull(), [], null)
 
   useEffect(() => onSyncState(setState), [])
+
+  // Si hay versión nueva esperando, este panel es donde hace falta saberlo.
+  const [hayActualizacion, setHayActualizacion] = useState(false)
+  useEffect(() => onVersionNueva(setHayActualizacion), [])
 
   /*
    * Cerrar tocando fuera, y con Escape.
@@ -167,6 +172,31 @@ export function SyncChip(): React.ReactElement {
 
           {state === 'error' && getUltimoErrorSync() && (
             <p className="mt-2 break-words font-mono text-xs text-crit">{getUltimoErrorSync()}</p>
+          )}
+
+          {/*
+            La versión nueva, ofrecida DONDE se está viendo el fallo.
+            El aviso de abajo se puede posponer, y se pospone: es una barra que
+            estorba. Pero cuando lo que hay delante es un error de
+            sincronización, actualizar suele ser literalmente el arreglo — el
+            fallo se corrigió, se desplegó, y este dispositivo sigue con el
+            código de antes porque nadie pulsó el botón. Pasó, y tuvo a gente de
+            campo mirando una avería ya resuelta.
+          */}
+          {hayActualizacion && (
+            <div className="mt-3 rounded-ctl border border-accent/30 bg-accent-tint p-3">
+              <p className="text-sm">
+                Hay una versión nueva sin instalar.
+                {state === 'error' && ' Puede que sea justo lo que arregla esto.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => void aplicarActualizacion()}
+                className="key key-accent mt-2 min-h-11 w-full px-3 text-sm"
+              >
+                Actualizar ahora
+              </button>
+            </div>
           )}
 
           {stuck && (
@@ -316,6 +346,17 @@ export function SyncChip(): React.ReactElement {
               edificios vacía, o sea desde una de las pantallas que el propio
               fallo deja en blanco. */}
           <Diagnostico />
+
+          {/*
+            Qué versión ejecuta ESTE dispositivo.
+            `salud.json` dice qué hay en el servidor, que no es lo mismo: con
+            `registerType: 'prompt'` un iPad puede llevar días con la anterior.
+            Sin este dato, diagnosticar desde una captura de pantalla es
+            adivinar si el código que falla es siquiera el que está corriendo.
+          */}
+          <p className="mt-3 border-t border-line pt-2 text-right font-mono text-[10px] text-muted">
+            versión {__BUILD__}
+          </p>
         </div>
       )}
     </div>

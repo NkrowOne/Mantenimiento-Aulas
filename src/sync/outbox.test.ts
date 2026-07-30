@@ -242,6 +242,26 @@ describe('flush', () => {
     expect(uploadFoto).not.toHaveBeenCalled()
   })
 
+  it('una entrada que revienta la base local no abandona al resto de la cola', async () => {
+    // Un fallo de la base local —cuota, base cerrada— subía hasta el `catch` de
+    // `flush()` y se llevaba por delante todo lo que viniera detrás.
+    const rota = entrada({ createdAt: 1 })
+    const buena = entrada({ createdAt: 2 })
+    await db.outbox.bulkAdd([rota, buena])
+
+    const updateReal = db.outbox.update.bind(db.outbox)
+    vi.spyOn(db.outbox, 'update')
+      .mockImplementationOnce(() => Promise.reject(new Error('DatabaseClosedError')) as never)
+      // El resto de la pasada usa la implementación de verdad.
+      .mockImplementation(updateReal as never)
+
+    const parte = await flush()
+    vi.restoreAllMocks()
+
+    expect(parte.subidos).toBe(1)
+    expect(await db.outbox.get(buena.id)).toBeUndefined()
+  })
+
   it('sube los tipos antes que los equipos que los usan', async () => {
     const vistos: string[] = []
     upsert.mockImplementation((payload: { id: string }) => {

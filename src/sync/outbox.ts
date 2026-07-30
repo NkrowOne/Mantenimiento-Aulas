@@ -399,9 +399,22 @@ export interface ResultadoFlush {
  * el backoff protege del reintento automático, no de una orden explícita.
  */
 export async function flush(opciones: { forzar?: boolean } = {}): Promise<ResultadoFlush> {
+  /*
+   * El parte final no puede ser lo que haga fallar a `flush()`.
+   *
+   * Va fuera del `try`, y a `flush()` la llaman doce sitios con `void` y sin
+   * `.catch()`. Si el resumen reventara —lee la base local, que es justo lo que
+   * falla en los dispositivos con problemas— `flush()` rechazaría y eso sería un
+   * unhandled rejection en cada uno de esos doce sitios, por un número que solo
+   * sirve para enseñarlo.
+   */
   const parte = async (subidos: number): Promise<ResultadoFlush> => {
-    const resumen = await pendingSummary()
-    return { subidos, pendientes: resumen.total, rechazados: resumen.rejected }
+    try {
+      const resumen = await pendingSummary()
+      return { subidos, pendientes: resumen.total, rechazados: resumen.rejected }
+    } catch {
+      return { subidos, pendientes: 0, rechazados: 0 }
+    }
   }
 
   if (running) return parte(0)
@@ -442,8 +455,21 @@ export async function flush(opciones: { forzar?: boolean } = {}): Promise<Result
       .filter((e) => e.status === 'pendiente' && toca(e.nextAttemptAt))
       .sort((a, b) => ORDER[a.entity] - ORDER[b.entity] || a.createdAt - b.createdAt)
 
+    /*
+     * Cada entrada con su fallo acotado, igual que las fotos.
+     *
+     * Solo estaban protegidos los errores que devuelve el servidor; un fallo de
+     * la propia base local —la escritura de estado, un `DatabaseClosedError`,
+     * la cuota llena— seguía subiendo hasta el `catch` de abajo y abandonaba
+     * todo lo que viniera detrás en la cola. Una entrada mala no puede decidir
+     * por las otras diecinueve.
+     */
     for (const entry of due) {
-      if (await pushEntry(entry)) subidos += 1
+      try {
+        if (await pushEntry(entry)) subidos += 1
+      } catch (err) {
+        console.error('pushEntry', entry.entity, err)
+      }
     }
 
     /*
