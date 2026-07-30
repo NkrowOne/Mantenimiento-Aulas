@@ -3,7 +3,21 @@ import { spawn } from 'node:child_process'
 
 const TOKEN = 'un-token-de-prueba-suficientemente-largo'
 const env = { ...process.env, WORKER_TOKEN: TOKEN, DATABASE_URL: 'postgresql://postgres@127.0.0.1:5433/postgres', PORT: '8099', NODE_ENV: '' }
-const proc = spawn('npx', ['tsx', 'src/server.ts'], { cwd: 'reports-worker', env, stdio: ['ignore','pipe','pipe'] })
+/*
+ * `detached`, para poder matarlo de verdad al terminar.
+ *
+ * `spawn('npx', …)` crea DOS procesos: npx y el tsx que él lanza. El `kill()`
+ * del final solo alcanzaba al primero, así que el worker se quedaba vivo
+ * escuchando en el 8099 después de cada ejecución. La siguiente no conseguía
+ * enlazar el puerto y sus peticiones iban al proceso viejo —con el código
+ * anterior y con su conexión a la base ya caducada—: fallaba una prueba de cada
+ * tres, siempre distinta, y siempre parecía un fallo del endpoint.
+ *
+ * Con grupo de procesos propio se mata al grupo entero y no queda nada detrás.
+ */
+const proc = spawn('npx', ['tsx', 'src/server.ts'], {
+  cwd: 'reports-worker', env, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
+})
 proc.stdout.on('data', d => process.stdout.write('  [worker] ' + d))
 proc.stderr.on('data', d => process.stderr.write('  [worker!] ' + d))
 
@@ -44,6 +58,11 @@ await check('el error no filtra la traza interna', async () => {
   const txt = await r.text()
   if (/at |\/home\/|postgres|Error:/.test(txt)) throw new Error('filtra: ' + txt.slice(0,120))
 })
-proc.kill()
+// Al grupo, no al proceso: ver el comentario del `spawn`.
+try {
+  process.kill(-proc.pid, 'SIGKILL')
+} catch {
+  proc.kill('SIGKILL')
+}
 console.log(fallos === 0 ? '\n✓ El endpoint del worker se comporta' : `\n✗ ${fallos} fallos`)
 process.exit(fallos === 0 ? 0 : 1)

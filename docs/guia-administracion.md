@@ -107,7 +107,7 @@ mismo con `npm run admin -- …`.
 |---|---|
 | `tecnico` | Revisar salas, abrir incidencias, consumir material del almacén |
 | `supervisor` | Además: cerrar incidencias, registrar compras y generar informes |
-| `admin` | Además: editar edificios y salas, gestionar usuarios, pestaña Datos |
+| `admin` | Además: editar edificios y salas, gestionar usuarios, pestaña Datos y configurar la clave de la IA de los informes |
 
 Un cambio de rol tarda hasta una hora en aplicarse, o es inmediato si la persona
 cierra y vuelve a entrar con su PIN. El rol viaja dentro del token.
@@ -527,14 +527,61 @@ otras pantallas.
 
 ## 8. Informes
 
-Se emiten solos: **diario a las 07:00** y **semanal los lunes a las 07:30**.
-Quedan archivados en la pestaña **Informes**, con descarga.
+**El automático sale los viernes a las 07:00**, con la semana de trabajo entera
+—de lunes a viernes—. Queda archivado en la pestaña **Informes**, con descarga.
 
-Para uno a medida, elige rango de fechas y pulsa Generar.
+Cualquier otro se pide a mano desde esa misma pantalla. Se elige:
+
+| Qué se elige | Para qué sirve |
+|---|---|
+| **Periodo** | Semana en curso, semana pasada, mes en curso, mes pasado, ayer, o dos fechas cualesquiera. Debajo se lee qué días va a cubrir antes de pedirlo |
+| **Secciones** | Las trece del informe, entre ellas la lista de todas las revisiones hechas y el diario de lo que pasó cada día. «Reparto del trabajo» lleva nombres de personas y por eso hay que marcarla a mano |
+| **Análisis con IA** | Si se desmarca, el informe sale con el análisis calculado |
+| **Escrito para** | Dirección (estado, tendencia y decisiones) o equipo técnico (qué salas tocar y con qué material) |
+| **En qué fijarse** | Una instrucción libre para la redacción: «céntrate en el edificio H». No cambia ninguna cifra |
+| **Nota en portada** | Un texto que se imprime tal cual bajo el título. No pasa por la IA |
+
+Genera y espera: la pantalla avisa cuando el PDF está. Con IA suele tardar entre
+veinte segundos y un minuto.
 
 **Un informe emitido no se regenera nunca: se versiona.** Si los datos cambian
-después, el PDF del lunes sigue diciendo lo que decía el lunes. Es lo que le da
-valor como registro.
+después, el PDF del viernes sigue diciendo lo que decía el viernes. Es lo que le
+da valor como registro.
+
+### El análisis con IA
+
+Lo que hay que tener claro antes de activarlo:
+
+> **Las cifras las calcula la base de datos. La IA solo escribe el texto.**
+
+Ni un número del informe sale del modelo. Si en su redacción aparece una cifra de
+tres dígitos que no está en los datos —o dos fórmulas de las que delatan a un
+texto generado— se tira el texto entero y se emite con el análisis calculado.
+
+**El PDF no dice en ninguna parte que se haya usado IA.** Es un documento del
+servicio que habla del estado del campus, y va limpio. Si necesitas saber cómo se
+redactó un informe concreto, está en la pantalla de Informes: cada entrada del
+archivo lo indica debajo de su periodo.
+
+**Sin clave, el informe sale igual.** El análisis lo escriben las reglas del
+sistema: es un texto completo, con su párrafo de entrada y su lista de cosas que
+hacer, no un hueco con un aviso.
+
+Para activarlo hacen falta dos cosas: una clave de
+[Google AI Studio](https://aistudio.google.com/apikey) —es de pago por uso; un
+informe semanal cuesta céntimos— y ponerla en un sitio:
+
+- **En el servidor**, en `GEMINI_API_KEY` del `.env`. Es lo preferible.
+- **Desde la aplicación**, en Informes → «Poner la clave de Gemini», con perfil
+  de administrador. Sirve cuando no hay acceso al servidor. Se guarda en
+  `app_config`, que solo leen los administradores y el worker.
+
+Si están las dos, manda la del servidor. La clave no se muestra nunca, ni
+recortada: la pantalla solo dice si hay una guardada.
+
+El modelo (`gemini-3.6-flash`) y cuánto se le deja pensar (`high`) se cambian en
+la misma pantalla. Bajar el razonamiento sale más barato y se nota: el análisis
+pasa de agrupar avisos a parafrasearlos.
 
 ## 9. Ajustes que quizá quieras cambiar
 
@@ -548,10 +595,20 @@ porque se compilan dentro:
 En base de datos, sin reconstruir nada:
 
 ```sql
--- Cambiar la hora de los informes
-select cron.unschedule('informe-diario');
-select cron.schedule('informe-diario', '0 6 * * *',
-                     $$select public.request_report('diario')$$);
+-- Cambiar el día o la hora del informe automático.
+--
+-- Se programan tres disparos (05:00, 06:00 y 07:00) y la función comprueba qué
+-- hora es DE VERDAD en Madrid antes de hacer nada: `pg_cron` interpreta sus
+-- horarios en `cron.timezone`, que aquí es Europe/Madrid pero en un Postgres
+-- gestionado suele quedarse en GMT. Exactamente uno de los tres cae a las 07:00
+-- peninsulares en cualquiera de los dos casos y en los dos horarios del año.
+--
+-- Para moverlo a otro día, cambia el 5 (viernes) del final: 1 es lunes.
+select cron.schedule('informe-semanal', '0 5,6,7 * * 5',
+                     $$select public.informe_semanal_programado()$$);
+
+-- Y para cambiar la HORA hay que tocar las dos cosas: los disparos de arriba y
+-- la comprobación de dentro de `informe_semanal_programado()`.
 ```
 
 Los umbrales de las alertas (lámpara al 20%, incidencia estancada a los 7 días,
