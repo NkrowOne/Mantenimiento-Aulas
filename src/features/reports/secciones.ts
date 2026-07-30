@@ -35,6 +35,16 @@ export const SECCIONES: SeccionInfo[] = [
     detalle: 'Los hallazgos del periodo, redactados',
   },
   {
+    clave: 'revisiones',
+    etiqueta: 'Revisiones del periodo',
+    detalle: 'Cada revisión hecha: sala, hora, quién y cómo salió',
+  },
+  {
+    clave: 'eventos',
+    etiqueta: 'Diario del periodo',
+    detalle: 'Día a día: altas, cierres, material, inventarios y equipos',
+  },
+  {
     clave: 'edificios',
     etiqueta: 'Dónde está el trabajo',
     detalle: 'Reparto por edificio y cobertura de la ronda',

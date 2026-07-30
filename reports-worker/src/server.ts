@@ -228,17 +228,48 @@ const server = createServer((req, res) => {
       return
     }
 
-    // Con tope: `for await` sin límite acumula en memoria lo que le manden.
+    /*
+     * El cuerpo, con tope y sin dejar el socket a medias.
+     *
+     * Dos cosas que hay que hacer a la vez y que se estorban:
+     *
+     *  1. NO acumular en memoria lo que le manden. De ahí el tope: pasado
+     *     `MAX_BODY` se sigue leyendo pero ya no se guarda nada.
+     *  2. NO matar el socket. Antes se respondía 413 y se salía del `for await`,
+     *     y salir antes de tiempo de un iterador de un `Readable` lo DESTRUYE:
+     *     Node cierra la conexión de golpe. Con `keep-alive` —lo que da por
+     *     hecho cualquier cliente moderno— la siguiente petición ya iba encolada
+     *     en ese mismo socket y moría con un «fetch failed» que no tenía nada
+     *     que ver con ella. En `npm run worker:test` fallaba una de cada tres
+     *     veces, siempre la prueba de después, y siempre parecía otra cosa.
+     *
+     * Así que se drena el cuerpo entero descartándolo y se contesta al final,
+     * con `Connection: close` para que el cliente no reutilice esta conexión.
+     * El corte a lo bruto se reserva para quien insista de verdad: a partir de
+     * diez veces el tope ya no es un cliente torpe, y ahí sí se corta.
+     */
+    const TOPE_DURO = MAX_BODY * 10
     const chunks: Buffer[] = []
     let bytes = 0
+    let excedido = false
+
     for await (const chunk of req) {
       bytes += (chunk as Buffer).length
       if (bytes > MAX_BODY) {
-        res.writeHead(413).end('Cuerpo demasiado grande')
-        req.destroy()
-        return
+        excedido = true
+        if (bytes > TOPE_DURO) {
+          res.writeHead(413, { Connection: 'close' }).end('Cuerpo demasiado grande')
+          req.destroy()
+          return
+        }
+        continue
       }
       chunks.push(chunk as Buffer)
+    }
+
+    if (excedido) {
+      res.writeHead(413, { Connection: 'close' }).end('Cuerpo demasiado grande')
+      return
     }
 
     let body: {

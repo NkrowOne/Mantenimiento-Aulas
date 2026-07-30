@@ -32,8 +32,8 @@
 import { ANCHO_MEDIO, ANCHO_TOTAL, actividadDiaria, barrasHorizontales, tendencia } from './charts.js'
 import type { ReportData } from './data.js'
 import { type Indicador, type Lectura, dias as textoDias, indicadores, plural, porcentaje } from './analisis.js'
-import { type Opciones, type Seccion, tiene } from './opciones.js'
-import { etiquetaDia } from './periods.js'
+import { SECCIONES_POR_DEFECTO, type Opciones, type Seccion, tiene } from './opciones.js'
+import { etiquetaDia, nombreDia } from './periods.js'
 
 // La paleta de la aplicación, para que el PDF y la pantalla sean el mismo producto.
 const ACENTO = '#046A78'
@@ -79,6 +79,15 @@ export function nombreEdificio(code: string, name: string): string {
 /** Igual con las salas: en muchas, el código ES el nombre. */
 function nombreSala(code: string, name: string): string {
   return name.trim().toUpperCase() === code.trim().toUpperCase() ? '' : name.trim()
+}
+
+/** Corta por palabra entera y avisa con puntos suspensivos. */
+function recorta(t: string, n: number): string {
+  const limpio = t.trim().replace(/\s+/g, ' ')
+  if (limpio.length <= n) return limpio
+  const corte = limpio.slice(0, n - 1)
+  const ultimo = corte.lastIndexOf(' ')
+  return `${ultimo > n * 0.6 ? corte.slice(0, ultimo) : corte}…`
 }
 
 function esc(value: unknown): string {
@@ -428,6 +437,196 @@ function seccionEdificios(d: ReportData, conTendencia: boolean): string {
   </section>`
 }
 
+/**
+ * Las revisiones del periodo, una por línea.
+ *
+ * El día se escribe solo cuando cambia, como en un libro de registro. Repetirlo
+ * treinta y una veces convierte la primera columna en un muro y hace más difícil
+ * ver dónde empieza cada jornada, que es justo lo que se viene a mirar.
+ */
+function seccionRevisiones(d: ReportData): string {
+  if (!d.revisiones.length) {
+    return `
+  <section class="bloque evitar">
+    ${rotulo('Revisiones del periodo')}
+    ${vacio('No se ha completado ninguna revisión en el periodo.')}
+  </section>`
+  }
+
+  /*
+   * El histórico importado no trae autor: sin esto, la tabla de una semana de
+   * datos antiguos era una columna entera de guiones. Se enseña cuando hay algo
+   * que enseñar, que es la misma regla que con las secciones vacías.
+   */
+  const conAutor = d.revisiones.some((r) => r.quien)
+
+  let diaAnterior = ''
+  const filas = d.revisiones
+    .map((r) => {
+      const nuevoDia = r.dia !== diaAnterior
+      diaAnterior = r.dia
+      const n = nombreSala(r.room, r.name)
+      const salida =
+        r.resultado === 'ok'
+          ? '<span class="tenue">sin incidencias</span>'
+          : `<span style="color:${WARN}">${
+              r.fallos ? plural(r.fallos, 'fallo') : 'con incidencias'
+            }</span>${r.aperturas ? ` · ${plural(r.aperturas, 'registro')} abierto${r.aperturas === 1 ? '' : 's'}` : ''}`
+
+      return `<tr${nuevoDia ? ' class="jornada"' : ''}>
+      <td class="mono tenue">${nuevoDia ? esc(etiquetaDia(r.dia)) : ''}</td>
+      <td class="mono tenue">${esc(r.hora)}</td>
+      <td><span class="mono">${esc(r.building)} ${esc(r.room)}</span>${
+        n ? ` <span class="tenue">${esc(n)}</span>` : ''
+      }</td>
+      ${conAutor ? `<td>${r.quien ? esc(r.quien) : '<span class="tenue">—</span>'}</td>` : ''}
+      <td>${salida}</td>
+    </tr>`
+    })
+    .join('')
+
+  const fuera = d.revisionesTotal - d.revisiones.length
+
+  return `
+  <section class="bloque">
+    ${rotulo('Revisiones del periodo', plural(d.revisionesTotal, 'revisión', 'revisiones'))}
+    <table class="datos">
+      <thead><tr>
+        <th style="width:8%">Día</th><th style="width:8%">Hora</th>
+        <th style="width:${conAutor ? '34' : '52'}%">Sala</th>
+        ${conAutor ? '<th style="width:24%">Quién</th>' : ''}
+        <th>Resultado</th>
+      </tr></thead>
+      <tbody>${filas}</tbody>
+    </table>
+    ${
+      fuera > 0
+        ? `<p class="apunte">Y ${plural(fuera, 'revisión', 'revisiones')} más, fuera de la tabla.
+           El listado completo está en el histórico de cada sala.</p>`
+        : ''
+    }
+  </section>`
+}
+
+/** Cómo se llama cada cosa que pasa, en la columna del diario. */
+function etiquetaEvento(tipo: string, subtipo: string): string {
+  if (tipo === 'apertura') {
+    if (subtipo === 'solicitud') return 'Solicitud'
+    if (subtipo === 'observacion') return 'Observación'
+    return 'Incidencia'
+  }
+  if (tipo === 'cierre') return 'Cierre'
+  if (tipo === 'material') {
+    if (subtipo === 'consumo') return 'Material'
+    if (subtipo === 'compra') return 'Compra'
+    if (subtipo === 'devolucion') return 'Devolución'
+    return 'Ajuste'
+  }
+  if (tipo === 'inventario') return 'Inventario'
+  return 'Equipo'
+}
+
+/**
+ * El diario del periodo: qué pasó, en orden y por días.
+ *
+ * Las revisiones no se repiten aquí —tienen su tabla— pero sí se cuentan en la
+ * cabecera de cada jornada, para que un día con seis revisiones y ningún evento
+ * no aparezca como un día en blanco.
+ *
+ * Va agrupado por día y no como una sola tabla de cien filas porque la pregunta
+ * que se le hace a un diario es «¿qué pasó el miércoles?», y para responderla en
+ * una tabla plana hay que buscar dónde cambia la fecha.
+ */
+function seccionEventos(d: ReportData, conRevisiones: boolean): string {
+  const porDia = new Map<string, ReportData['eventos']>()
+  for (const e of d.eventos) {
+    const lista = porDia.get(e.dia) ?? []
+    lista.push(e)
+    porDia.set(e.dia, lista)
+  }
+
+  // Todos los días del periodo con algo que contar: eventos o revisiones.
+  const dias = d.serieDiaria
+    .filter((s) => porDia.has(s.dia) || s.revisiones > 0)
+    .map((s) => s.dia)
+
+  if (!dias.length) {
+    return `
+  <section class="bloque evitar">
+    ${rotulo('Diario del periodo')}
+    ${vacio('Ni un movimiento registrado en el periodo.')}
+  </section>`
+  }
+
+  const jornada = (dia: string): string => {
+    const s = d.serieDiaria.find((x) => x.dia === dia)
+    const resumen = [
+      s?.revisiones ? plural(s.revisiones, 'revisión', 'revisiones') : '',
+      s?.abiertas ? plural(s.abiertas, 'abierta') : '',
+      s?.resueltas ? plural(s.resueltas, 'cerrada') : '',
+    ]
+      .filter(Boolean)
+      .join(' · ')
+
+    const eventos = porDia.get(dia) ?? []
+
+    return `
+    <div class="dia">
+      <div class="dia-cab">
+        <span class="dia-fecha">${esc(nombreDia(dia))}</span>
+        ${resumen ? `<span class="dia-res">${esc(resumen)}</span>` : ''}
+      </div>
+      ${
+        eventos.length
+          ? `<table class="datos diario">
+        <tbody>
+          ${eventos
+            .map((e) => {
+              // El detalle importado repite el título tal cual en muchas filas:
+              // imprimirlo dos veces solo gasta papel.
+              const detalle =
+                e.detalle && e.detalle.trim() !== e.titulo.trim() ? e.detalle.trim() : ''
+              // Sin el separador colgando: con cantidad y sin autor salía «1 ud ·».
+              const cola = [
+                e.cantidad !== null && e.cantidad !== 0 ? `${Math.abs(e.cantidad)} ud` : '',
+                e.quien ?? '',
+              ]
+                .filter(Boolean)
+                .join(' · ')
+              return `<tr>
+            <td class="mono tenue" style="width:7%">${esc(e.hora)}</td>
+            <td style="width:13%"><span class="tag">${esc(etiquetaEvento(e.tipo, e.subtipo))}</span></td>
+            <td class="mono" style="width:14%">${esc(`${e.building} ${e.room}`.trim())}</td>
+            <td>${esc(recorta(e.titulo, 90))}${
+              detalle ? `<span class="ev-det">${esc(recorta(detalle, 110))}</span>` : ''
+            }</td>
+            <td class="tenue" style="width:16%">${esc(cola)}</td>
+          </tr>`
+            })
+            .join('')}
+        </tbody>
+      </table>`
+          : `<p class="vacio">Solo revisiones: ningún registro nuevo ni consumo de material.</p>`
+      }
+    </div>`
+  }
+
+  const fuera = d.eventosTotal - d.eventos.length
+
+  return `
+  <section class="bloque">
+    ${rotulo('Diario del periodo', `${plural(d.eventosTotal, 'movimiento')}${conRevisiones ? ', aparte de las revisiones' : ''}`)}
+    ${dias.map(jornada).join('')}
+    ${
+      fuera > 0
+        ? `<p class="apunte">Y ${plural(fuera, 'movimiento')} más, fuera del diario: se ha cortado
+           al ${d.eventos.length} para que el informe siga siendo un informe. Están todos en el
+           histórico de cada sala.</p>`
+        : ''
+    }
+  </section>`
+}
+
 /** La tendencia por su cuenta, cuando se pide sin el reparto por edificio. */
 function seccionTendencia(d: ReportData): string {
   if (d.porMes.length < 2) return ''
@@ -641,7 +840,10 @@ function colofon(d: ReportData, o: Opciones, pie: Pie): string {
       `${plural(d.sinSala, 'registro')} del periodo no tienen sala asignada, así que cuentan en los totales y no en el desglose por edificio.`,
     )
   }
-  if (o.secciones.length < 10) {
+  // Contra el conjunto por defecto, no contra un número escrito a mano: al
+  // añadir dos secciones nuevas, el «< 10» de antes habría marcado como parcial
+  // hasta el informe completo.
+  if (o.secciones.length < SECCIONES_POR_DEFECTO.length) {
     partes.push('Informe parcial: se han pedido solo algunas secciones.')
   }
 
@@ -680,6 +882,8 @@ export function renderReport(
   const secciones: Array<[Seccion, string]> = [
     ['actividad', seccionActividad(d)],
     ['analisis', seccionAnalisis(l)],
+    ['revisiones', seccionRevisiones(d)],
+    ['eventos', seccionEventos(d, tiene(o, 'revisiones'))],
     ['edificios', seccionEdificios(d, tiene(o, 'tendencia'))],
     ['tendencia', tendenciaSola ? seccionTendencia(d) : ''],
     ['salas', seccionSalas(d)],
@@ -899,6 +1103,37 @@ export function renderReport(
   table.cifras td { padding: 1.7mm 0; border-bottom: 0.5pt solid ${HAIR}; }
   table.cifras td.num {
     text-align: right; font-variant-numeric: tabular-nums; font-weight: 600;
+  }
+
+  /* ── Diario y revisiones ── */
+  /* Un filete fino donde empieza cada jornada: separa el bloque del día sin
+     necesidad de dejar aire, que en una tabla de treinta filas se come media
+     página. */
+  table.datos tr.jornada td { border-top: 0.5pt solid ${LINE}; padding-top: 2.6mm; }
+  table.datos tr.jornada:first-child td { border-top: 0; }
+
+  /* La jornada SÍ se puede partir. Prohibirlo empujaba el día entero a la
+     página siguiente y dejaba media en blanco. Lo que no se parte es la
+     cabecera de su primera fila: un «miércoles 19» al pie de una página, con
+     sus movimientos en la siguiente, es peor que el corte. */
+  .dia { margin-bottom: 5mm; }
+  .dia-cab {
+    display: flex; align-items: baseline; gap: 3mm;
+    border-bottom: 0.5pt solid ${LINE}; padding-bottom: 1.2mm; margin-bottom: 1.5mm;
+    page-break-after: avoid;
+  }
+  .dia-fecha { font-size: 9pt; font-weight: 600; }
+  .dia-res { font-size: 8pt; color: ${MUTED}; }
+  table.diario td { padding-top: 1.4mm; padding-bottom: 1.4mm; border-bottom: 0; }
+  table.diario tr:not(:last-child) td { border-bottom: 0.5pt solid ${HAIR}; }
+  .tag {
+    display: inline-block; font-size: 6.8pt; text-transform: uppercase;
+    letter-spacing: .07em; color: ${MUTED}; border: 0.5pt solid ${LINE};
+    border-radius: 2px; padding: 0.3mm 1.2mm; white-space: nowrap;
+  }
+  .ev-det {
+    display: block; font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 8pt; color: ${MUTED}; line-height: 1.4; margin-top: 0.4mm;
   }
 
   /* ── Medidor ── */

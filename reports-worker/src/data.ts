@@ -106,9 +106,56 @@ export interface ReportData {
   olvidadas: Array<{ building: string; room: string; dias: number | null }>
   equipo: Array<{ nombre: string; revisiones: number; registros: number }>
 
+  /**
+   * Cada revisión hecha en el periodo, con su sala, su hora y su resultado.
+   *
+   * Es el registro del trabajo, no un agregado: «31 revisiones» dice cuánto se
+   * hizo y no dice qué se hizo. Un supervisor que quiere saber si se pasó por el
+   * CRAI el martes necesita las filas, no el total.
+   */
+  revisiones: Array<{
+    dia: string
+    hora: string
+    building: string
+    room: string
+    name: string
+    quien: string | null
+    resultado: string
+    fallos: number
+    aperturas: number
+  }>
+  /** Cuántas hubo en total, para decirlo cuando la tabla se corta. */
+  revisionesTotal: number
+
+  /** Todo lo demás que pasó, en orden: altas, cierres, material, inventarios, equipos. */
+  eventos: Array<{
+    dia: string
+    hora: string
+    tipo: string
+    subtipo: string
+    titulo: string
+    detalle: string | null
+    cantidad: number | null
+    ref: string | null
+    building: string
+    room: string
+    quien: string | null
+  }>
+  eventosTotal: number
+
   /** Registros del periodo cuya sala no se pudo identificar (el histórico importado los trae). */
   sinSala: number
 }
+
+/**
+ * Tope de filas de las dos tablas largas.
+ *
+ * Una semana normal cabe entera. Un informe de un trimestre no, y ahí hay que
+ * elegir entre cortar o imprimir cuarenta páginas de listado. Se corta, y se
+ * dice cuántas se han quedado fuera: una tabla truncada en silencio se lee como
+ * si eso fuera todo lo que pasó.
+ */
+const TOPE_FILAS = 150
 
 /**
  * Los dos extremos del periodo como instantes.
@@ -433,6 +480,153 @@ export async function loadReportData(
     limit 12
   `
 
+  /*
+   * LAS REVISIONES, UNA A UNA.
+   *
+   * `fallos` son las comprobaciones que salieron mal dentro de la revisión y
+   * `aperturas` los registros que nacieron de ella. No son lo mismo y la
+   * diferencia importa: tres comprobaciones malas que se arreglaron ahí mismo
+   * dejan la sala en «con incidencias» sin abrir nada, y eso es trabajo hecho,
+   * no trabajo pendiente.
+   */
+  const revisiones = await sql<
+    Array<{
+      dia: string
+      hora: string
+      building: string
+      room: string
+      name: string
+      quien: string | null
+      resultado: string
+      fallos: string
+      aperturas: string
+    }>
+  >`
+    select
+      to_char(public.dia_local(ins.occurred_at), 'YYYY-MM-DD')                as dia,
+      to_char(ins.occurred_at at time zone 'Europe/Madrid', 'HH24:MI')        as hora,
+      ro.building_code as building, ro.room_code as room, ro.room_name as name,
+      p.full_name as quien,
+      coalesce(ins.overall::text, 'ok') as resultado,
+      (select count(*) from inspection_checks c
+        where c.inspection_id = ins.id and c.result = 'incidencia')           as fallos,
+      (select count(*) from incidents i
+        where i.opened_from_inspection_id = ins.id and i.state <> 'borrador') as aperturas
+    from inspections ins
+    join room_overview ro on ro.room_id = ins.room_id
+    left join profiles p on p.id = ins.by_user
+    where ins.status = 'completa'
+      and ins.occurred_at >= ${desde} and ins.occurred_at < ${hasta}
+    order by ins.occurred_at
+    limit ${TOPE_FILAS}
+  `
+
+  /*
+   * EL DIARIO.
+   *
+   * Se arma aquí y no se lee de `room_timeline`, que ya une casi lo mismo, por
+   * dos motivos. El primero es que esa vista exige sala —hace `join rooms`— y
+   * deja fuera precisamente los registros huérfanos del histórico, que también
+   * pasaron. El segundo es que en ella una apertura y un cierre solo se
+   * distinguen por si el título empieza por «Resuelta:», y de una cadena de
+   * texto no se cuelga la lectura de un informe.
+   *
+   * Las revisiones no entran: tienen su propia tabla y su recuento en la
+   * cabecera de cada día. Repetirlas aquí llenaría el diario de una sola cosa.
+   */
+  const eventos = await sql<
+    Array<{
+      dia: string
+      hora: string
+      tipo: string
+      subtipo: string
+      titulo: string
+      detalle: string | null
+      cantidad: string | null
+      ref: string | null
+      building: string | null
+      room: string | null
+      quien: string | null
+    }>
+  >`
+    with e as (
+      select 'apertura' as tipo, i.kind::text as subtipo, i.opened_at as at,
+             coalesce(i.title, '(sin describir)') as titulo,
+             nullif(i.description, '') as detalle, null::int as cantidad,
+             i.external_ref as ref, i.room_id, i.opened_by as by_user
+      from incidents i
+      where i.state <> 'borrador'
+        and i.opened_at >= ${desde} and i.opened_at < ${hasta}
+
+      union all
+
+      select 'cierre', i.kind::text, i.resolved_at,
+             coalesce(i.title, '(sin describir)'),
+             nullif(i.resolution, ''), null::int,
+             i.external_ref, i.room_id, i.resolved_by
+      from incidents i
+      where i.state = 'resuelta'
+        and i.resolved_at >= ${desde} and i.resolved_at < ${hasta}
+
+      union all
+
+      select 'material', sm.kind::text, sm.occurred_at,
+             si.name, nullif(sm.note, ''), sm.qty,
+             null, sm.room_id, sm.by_user
+      from stock_movements sm
+      join stock_items si on si.id = sm.stock_item_id
+      where sm.occurred_at >= ${desde} and sm.occurred_at < ${hasta}
+
+      union all
+
+      select 'inventario', 'levantamiento', v.occurred_at,
+             'Inventario confirmado',
+             coalesce(nullif(v.note, ''), v.asset_count || ' equipos en la sala'), null::int,
+             null, v.room_id, v.by_user
+      from room_inventories v
+      where v.occurred_at >= ${desde} and v.occurred_at < ${hasta}
+
+      union all
+
+      select 'equipo', ae.kind::text, ae.occurred_at,
+             coalesce(a.label, t.name, 'Equipo'),
+             nullif(ae.meta ->> 'nota', ''), null::int,
+             a.serial, coalesce(ae.room_id, a.room_id), ae.by_user
+      from asset_events ae
+      join assets a on a.id = ae.asset_id
+      left join asset_types t on t.id = a.asset_type_id
+      where ae.occurred_at >= ${desde} and ae.occurred_at < ${hasta}
+    )
+    select
+      to_char(public.dia_local(e.at), 'YYYY-MM-DD')                  as dia,
+      to_char(e.at at time zone 'Europe/Madrid', 'HH24:MI')          as hora,
+      e.tipo, e.subtipo, e.titulo, e.detalle, e.cantidad, e.ref,
+      ro.building_code as building, ro.room_code as room,
+      p.full_name as quien
+    from e
+    left join room_overview ro on ro.room_id = e.room_id
+    left join profiles p on p.id = e.by_user
+    order by e.at
+    limit ${TOPE_FILAS}
+  `
+
+  const [totales] = await sql<Array<{ revisiones: string; eventos: string }>>`
+    select
+      (select count(*) from inspections
+        where status = 'completa'
+          and occurred_at >= ${desde} and occurred_at < ${hasta})                     as revisiones,
+      (select count(*) from incidents
+        where state <> 'borrador' and opened_at >= ${desde} and opened_at < ${hasta})
+      + (select count(*) from incidents
+        where state = 'resuelta' and resolved_at >= ${desde} and resolved_at < ${hasta})
+      + (select count(*) from stock_movements
+        where occurred_at >= ${desde} and occurred_at < ${hasta})
+      + (select count(*) from room_inventories
+        where occurred_at >= ${desde} and occurred_at < ${hasta})
+      + (select count(*) from asset_events
+        where occurred_at >= ${desde} and occurred_at < ${hasta})                     as eventos
+  `
+
   const [sinSala] = await sql<Array<{ total: string }>>`
     select count(*) as total from incidents
     where room_id is null and state <> 'borrador' and opened_at >= ${desde} and opened_at < ${hasta}
@@ -526,6 +720,32 @@ export async function loadReportData(
       revisiones: num(r.revisiones),
       registros: num(r.registros),
     })),
+    revisiones: revisiones.map((r) => ({
+      dia: r.dia,
+      hora: r.hora,
+      building: r.building,
+      room: r.room,
+      name: r.name,
+      quien: r.quien,
+      resultado: r.resultado,
+      fallos: num(r.fallos),
+      aperturas: num(r.aperturas),
+    })),
+    revisionesTotal: num(totales?.revisiones),
+    eventos: eventos.map((e) => ({
+      dia: e.dia,
+      hora: e.hora,
+      tipo: e.tipo,
+      subtipo: e.subtipo,
+      titulo: e.titulo,
+      detalle: e.detalle,
+      cantidad: e.cantidad === null ? null : num(e.cantidad),
+      ref: e.ref,
+      building: e.building ?? '—',
+      room: e.room ?? '',
+      quien: e.quien,
+    })),
+    eventosTotal: num(totales?.eventos),
     sinSala: num(sinSala?.total),
   }
 }

@@ -202,6 +202,12 @@ export function nombrePeriodo(p: Periodo): string {
   return `del ${a.d} al ${b.d} de ${MESES[a.m - 1]} de ${a.y}`
 }
 
+/** «miércoles 19 de noviembre», para la cabecera de una jornada del diario. */
+export function nombreDia(iso: string): string {
+  const { d, m } = partes(iso)
+  return `${DIAS[diaDeLaSemana(iso) - 1]} ${d} de ${MESES[m - 1]}`
+}
+
 /** `L 27`, `M 28`… para el eje del gráfico diario, que no cabe más. */
 export function etiquetaDia(iso: string): string {
   const inicial = ['L', 'M', 'X', 'J', 'V', 'S', 'D'][diaDeLaSemana(iso) - 1]

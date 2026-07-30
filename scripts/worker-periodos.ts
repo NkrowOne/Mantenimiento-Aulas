@@ -12,6 +12,7 @@
 import {
   diasDelPeriodo,
   etiquetaDia,
+  nombreDia,
   nombreComparacion,
   nombrePeriodo,
   periodFor,
@@ -181,6 +182,11 @@ comprueba(
   'jueves 30 de julio de 2026',
 )
 comprueba('el eje del gráfico usa la inicial del día', etiquetaDia('2026-07-29'), 'X 29')
+comprueba(
+  'la cabecera de una jornada del diario va en palabras',
+  nombreDia('2026-07-29'),
+  'miércoles 29 de julio',
+)
 comprueba(
   'la comparación se nombra en palabras',
   nombreComparacion({ start: '2026-07-27', end: '2026-07-31' }),

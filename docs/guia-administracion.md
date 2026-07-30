@@ -535,7 +535,7 @@ Cualquier otro se pide a mano desde esa misma pantalla. Se elige:
 | Qué se elige | Para qué sirve |
 |---|---|
 | **Periodo** | Semana en curso, semana pasada, mes en curso, mes pasado, ayer, o dos fechas cualesquiera. Debajo se lee qué días va a cubrir antes de pedirlo |
-| **Secciones** | Las once del informe. «Reparto del trabajo» lleva nombres de personas y por eso hay que marcarla a mano |
+| **Secciones** | Las trece del informe, entre ellas la lista de todas las revisiones hechas y el diario de lo que pasó cada día. «Reparto del trabajo» lleva nombres de personas y por eso hay que marcarla a mano |
 | **Análisis con IA** | Si se desmarca, el informe sale con el análisis calculado |
 | **Escrito para** | Dirección (estado, tendencia y decisiones) o equipo técnico (qué salas tocar y con qué material) |
 | **En qué fijarse** | Una instrucción libre para la redacción: «céntrate en el edificio H». No cambia ninguna cifra |

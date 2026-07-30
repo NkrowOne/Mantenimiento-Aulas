@@ -399,6 +399,13 @@ de lunes a viernes. Cualquier otro se pide a mano desde la pantalla de Informes,
 eligiendo periodo, secciones, para quién está escrito y si el análisis lo
 redacta la IA. Un informe emitido no se regenera nunca: se versiona.
 
+Lleva las dos cosas que hacen falta para responder «¿cómo vamos?» y «¿qué se ha
+hecho?»: el **estado** —indicadores con su variación, cobertura por edificio,
+lámparas al límite, incidencias sin cerrar— y el **registro del periodo**, que
+son la lista de todas las revisiones completadas (sala, hora, quién y cómo
+salió) y el diario cronológico de lo que ocurrió cada día: altas, cierres,
+material consumido, inventarios y cambios de equipo.
+
 ### El análisis lo escribe una IA; las cifras, no
 
 La regla que hace que este documento se pueda firmar:

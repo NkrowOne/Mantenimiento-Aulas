@@ -17,6 +17,8 @@ export const SECCIONES = [
   'resumen',
   'actividad',
   'analisis',
+  'revisiones',
+  'eventos',
   'edificios',
   'tendencia',
   'salas',

@@ -110,6 +110,21 @@ function datos(): ReportData {
     reincidentes: [{ building: 'H', room: '1.13', item: 'Cable HDMI fibra 15 m', veces: 3 }],
     olvidadas: [{ building: 'CRAI', room: '0.7', dias: null }],
     equipo: [{ nombre: 'Ana Pérez', revisiones: 18, registros: 6 }],
+    revisiones: [
+      {
+        dia: '2026-07-27', hora: '09:14', building: 'H', room: '1.13', name: '1.13',
+        quien: 'Ana Pérez', resultado: 'con_incidencias', fallos: 2, aperturas: 1,
+      },
+    ],
+    revisionesTotal: 31,
+    eventos: [
+      {
+        dia: '2026-07-27', hora: '09:31', tipo: 'apertura', subtipo: 'incidencia',
+        titulo: 'No duplica la imagen en el monitor', detalle: null, cantidad: null,
+        ref: 'I260727_0011', building: 'H', room: '1.13', quien: 'Ana Pérez',
+      },
+    ],
+    eventosTotal: 34,
     sinSala: 1,
   }
 }
