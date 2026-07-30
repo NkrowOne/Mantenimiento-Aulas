@@ -23,10 +23,11 @@
     "backup": "bash scripts/backup.sh",
     "smoke": "tsx scripts/smoke.ts",
     "check:contrast": "tsx scripts/check-contrast.ts",
+    "check:migraciones": "tsx scripts/check-migraciones.ts",
     "worker:test": "node scripts/worker-test.mjs",
     "worker:periodos": "tsx scripts/worker-periodos.ts",
     "informe:ia": "tsx scripts/informe-ia.ts",
-    "verify:all": "npm test && npm run typecheck && npm run check:contrast && npm run worker:periodos && npm run informe:ia && npm run build && npm run smoke"
+    "verify:all": "npm test && npm run typecheck && npm run check:contrast && npm run check:migraciones && npm run worker:periodos && npm run informe:ia && npm run build && npm run smoke"
   },
   "dependencies": {
     "@fontsource-variable/instrument-sans": "^5.3.0",
