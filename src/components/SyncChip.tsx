@@ -146,6 +146,15 @@ export function SyncChip(): React.ReactElement {
               : `${pending} sin subir${summary?.photos ? ` · ${summary.photos} fotos` : ''}`}
           </p>
 
+          {/* El motivo del que lleva más esperando. Un contador que no baja y
+              no dice nada obliga a adivinar, y desde un iPad no hay dónde
+              mirar: ni consola, ni red, ni registro. */}
+          {pending > 0 && rejected === 0 && summary?.motivoPendiente && (
+            <p className="mt-1 break-words font-mono text-xs text-muted">
+              {summary.motivoPendiente}
+            </p>
+          )}
+
           {ultimo && (
             <p className={`mt-1 ${ultimo.ok ? 'text-muted' : 'text-crit'}`}>
               {ultimo.ok
@@ -193,6 +202,10 @@ export function SyncChip(): React.ReactElement {
               cola vacía —el caso normal— no hacía absolutamente nada, ni siquiera
               decirlo. Quien lo pulsa quiere lo contrario, traerse lo que hay en el
               servidor, así que ahora sube y luego baja, y cuenta cómo ha ido.
+
+              `forzar` porque pulsar el botón es la orden explícita de intentarlo
+              ahora: sin él, lo que estuviera esperando su turno de backoff ni se
+              tocaba y el panel contestaba «Al día» con la cola intacta detrás.
             */}
             <button
               type="button"
@@ -202,13 +215,29 @@ export function SyncChip(): React.ReactElement {
                 setResultado(null)
                 void (async () => {
                   try {
-                    await flush()
+                    const subido = await flush({ forzar: true })
                     const bajado = await pullMaster()
-                    setResultado(
-                      bajado.ok
-                        ? `Al día: ${bajado.filas} filas del servidor.`
-                        : `No se ha podido descargar: ${bajado.error}`,
-                    )
+
+                    /*
+                       La subida se cuenta en voz alta. Antes solo se hablaba de
+                       la bajada, así que la pantalla decía «Al día: 1466 filas»
+                       mientras la cabecera seguía marcando pendientes: dos
+                       afirmaciones que se contradicen, y el técnico se queda sin
+                       saber cuál de las dos vale.
+                     */
+                    const subida =
+                      subido.subidos > 0 ? `Subidos ${subido.subidos}.` : null
+                    const queda =
+                      subido.pendientes > 0
+                        ? `Quedan ${subido.pendientes} por subir.`
+                        : subido.subidos > 0
+                          ? 'No queda nada por subir.'
+                          : null
+                    const descarga = bajado.ok
+                      ? `Al día: ${bajado.filas} filas del servidor.`
+                      : `No se ha podido descargar: ${bajado.error}`
+
+                    setResultado([subida, queda, descarga].filter(Boolean).join(' '))
                   } catch (err) {
                     setResultado(err instanceof Error ? err.message : String(err))
                   } finally {
