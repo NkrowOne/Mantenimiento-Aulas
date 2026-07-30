@@ -273,7 +273,7 @@ Levanta un Postgres desechable, emula lo mínimo de Supabase, aplica las
 migraciones, carga los datos reales y ejecuta las pruebas de RLS.
 
 ```bash
-npm test          # 36 pruebas de lógica de dominio
+npm test          # 124 pruebas de lógica de dominio
 npm run typecheck
 npm run build
 ```
@@ -294,7 +294,7 @@ producción lo levanta `docker compose up reports-worker` y lo despierta
 | Área | Estado |
 |---|---|
 | Esquema append-only, vistas y alertas | ✅ verificado contra Postgres 16 |
-| RLS, roles y auditoría | ✅ 13 pruebas en verde, incluida exposición pública |
+| RLS, roles y auditoría | ✅ 40 bloques en verde, incluida exposición pública |
 | Importador del Excel | ✅ 276 salas, 283 incidencias, 669 equipos |
 | Núcleo offline (Dexie + cola de salida) | ✅ |
 | Login con PIN que cifra la sesión | ✅ lógica probada |
@@ -302,6 +302,7 @@ producción lo levanta `docker compose up reports-worker` y lo despierta
 | Fotos con compresión | ✅ |
 | Panel con alertas y gráficos | ✅ paleta validada en claro y oscuro |
 | Incidencias, almacén y depuración de datos | ✅ |
+| Panel de administración: validar equipos, agrupar el catálogo, equipamiento por defecto y alta/baja de salas y edificios | ✅ |
 | Worker de informes PDF | ✅ PDF real generado y revisado |
 | Buckets de Storage y sus políticas | ✅ 3 pruebas de RLS propias |
 | Despliegue: Compose, Caddy, claves, copias | ✅ |
@@ -322,8 +323,8 @@ Lo verificado y lo que no, sin adornos.
 
 **Comprobado de forma automática** (`npm run verify:all` y `npm run db:verify`):
 
-- 36 pruebas de lógica de dominio y cifrado del PIN.
-- 13 pruebas de RLS contra Postgres real, en los dos escenarios de despliegue,
+- 124 pruebas de lógica de dominio y cifrado del PIN.
+- 40 bloques de pruebas de RLS contra Postgres real, en los dos escenarios de despliegue,
   incluidas las de exposición pública.
 - La aplicación **arranca en un navegador real**, pinta y no da errores de
   consola (`npm run smoke`).
@@ -338,7 +339,7 @@ Lo verificado y lo que no, sin adornos.
 | **Ningún iPad ha abierto la aplicación** | Todo lo específico de iOS —límite de canvas, HEIC, `persist()`— sale de documentación, no de un dispositivo |
 | **El worker de informes como servicio HTTP** | Solo se ha probado el render por línea de comandos, no el endpoint que llama `pg_cron` |
 | **`admin-user.ts` contra un GoTrue real** | La lógica es directa, pero nunca ha hablado con el servicio |
-| **Cero pruebas de interfaz** | Las 36 pruebas cubren dominio y criptografía. No hay ninguna de componentes |
+| **Cero pruebas de interfaz** | Las 124 pruebas cubren dominio y criptografía. No hay ninguna de componentes |
 | **Sin linter configurado** | Se retiró el script `lint` porque no existía configuración y fallaba siempre |
 
 Nada de esto es un fallo conocido: es trabajo de verificación pendiente. La

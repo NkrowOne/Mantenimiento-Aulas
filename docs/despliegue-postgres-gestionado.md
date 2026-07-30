@@ -8,7 +8,7 @@ todo —Postgres incluido— en tu propia máquina. Aquí la base de datos es de
 proveedor y los servicios son piezas sueltas apuntando a ella.
 
 > **Verificado**: `npm run db:verify -- --gestionado` reproduce este escenario
-> sobre un Postgres desnudo, sin la imagen de Supabase, y ejecuta las 13 pruebas
+> sobre un Postgres desnudo, sin la imagen de Supabase, y ejecuta las 40 pruebas
 > de RLS. Los pasos de abajo son los que hacen que eso funcione.
 
 ---

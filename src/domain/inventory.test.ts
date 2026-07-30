@@ -33,6 +33,7 @@ function asset(label: string, extra: Partial<Asset> = {}): Asset {
     model: null,
     status: 'instalado',
     created_at: null,
+    confirmed: true,
     ...extra,
   }
 }

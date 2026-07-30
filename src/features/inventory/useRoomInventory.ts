@@ -97,6 +97,11 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
         model: null,
         status: 'instalado',
         created_at: new Date().toISOString(),
+        // Lo apunta quien está en el aula, así que nace sin validar. Igual que
+        // con `confirmed` de los tipos, no se envía al servidor: allí el defecto
+        // ya es ese, y omitirlo garantiza que un alta reenviada no pueda
+        // devolver a la bandeja un equipo que el coordinador ya confirmó.
+        confirmed: false,
       }
 
       await db.assets.put(asset)

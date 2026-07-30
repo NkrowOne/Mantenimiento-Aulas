@@ -2,6 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { AssetTypeTray } from './AssetTypeTray'
+import { EquipoPorDefecto } from './EquipoPorDefecto'
+import { EquiposPendientes } from './EquiposPendientes'
+import { MaestroSalas } from './MaestroSalas'
 import { UsersPage } from './UsersPage'
 
 interface ProvisionalBuilding {
@@ -20,12 +23,21 @@ interface QuarantineRow {
 }
 
 /**
- * Depuración de los datos importados.
+ * El panel de administración.
  *
- * El importador no adivina. Cuando el Excel dice `BC` y no existe tal edificio,
- * inventarse que es el CRAI metería datos falsos en el inventario. En su lugar
- * el edificio entra marcado y aquí se resuelve con un clic: fusionarlo con el
- * correcto o confirmarlo como propio.
+ * Está ordenado por con qué frecuencia se entra a cada cosa, que no es lo mismo
+ * que por importancia:
+ *
+ *  1. **Usuarios y roles** — lo que se viene a buscar cuando algo va mal.
+ *  2. **Equipos y tipos sin validar** — lo único que crece solo: cada ronda de
+ *     revisiones deja trabajo aquí.
+ *  3. **Equipamiento por defecto y maestro** — se tocan cuando cambia el campus.
+ *  4. **Depuración de la importación** — importante, pero se hace una vez.
+ *
+ * Lo de abajo del todo es lo que resuelve que el importador no adivine. Cuando
+ * el Excel dice `BC` y no existe tal edificio, inventarse que es el CRAI metería
+ * datos falsos en el inventario. En su lugar el edificio entra marcado y aquí se
+ * resuelve con un clic: fusionarlo con el correcto o confirmarlo como propio.
  */
 export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
   const qc = useQueryClient()
@@ -120,6 +132,13 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
       */}
       <UsersPage yo={yo} />
 
+      {/* Lo que llega solo, y por eso va antes que nada de lo que hay debajo. */}
+      <EquiposPendientes />
+      <AssetTypeTray />
+
+      <EquipoPorDefecto />
+      <MaestroSalas />
+
       <section>
         <h1 className="text-xl font-semibold">Edificios sin identificar</h1>
         <p className="mt-1 text-sm text-muted">Están en el histórico pero no en el maestro.</p>
@@ -202,8 +221,6 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
 
         {quarantine?.length === 0 && <p className="mt-4 text-sm text-muted">Nada pendiente de revisar.</p>}
       </section>
-
-      <AssetTypeTray />
     </div>
   )
 }
