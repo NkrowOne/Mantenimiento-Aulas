@@ -168,7 +168,16 @@ aquí**, sin salir de la revisión.
   No teclees el número.
 - **Corregir.** Cada equipo tiene su botón: cambiar el nombre —«Pantalla 2» se
   puede reescribir a «Pantalla del atril», que dice mucho más—, apuntar modelo y
-  número de serie, marcarlo **averiado**, o **retirarlo** de la sala.
+  número de serie, o marcarlo **averiado**.
+- **Sacar de la sala.** No lo quitas tú: lo **pides**, y dices a dónde va.
+  - **Dar de baja** — está roto o ya no sirve.
+  - **Devolver al almacén** — funciona y te lo llevas a la estantería. Esta es
+    la que hay que elegir cuando el aparato se va contigo: es lo que hace que la
+    unidad vuelva a contar en el almacén en vez de perderse.
+
+  El equipo **se queda en la sala** hasta que un coordinador lo autorice, y
+  mientras tanto sale marcado «retirada pedida». Si te has equivocado, ahí mismo
+  tienes **«Ya no hace falta»**.
 
 Todo esto funciona sin cobertura, igual que el resto.
 

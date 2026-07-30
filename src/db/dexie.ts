@@ -13,6 +13,7 @@
 import Dexie, { type EntityTable } from 'dexie'
 import type {
   Asset,
+  AssetRemoval,
   AssetType,
   Attachment,
   Building,
@@ -38,6 +39,7 @@ export interface OutboxEntry {
     | 'asset_event'
     | 'asset_type'
     | 'asset'
+    | 'asset_removal'
     | 'room_inventory'
   op: 'upsert'
   payload: Record<string, unknown>
@@ -84,6 +86,12 @@ export class AulasDB extends Dexie {
   // aquí para revisar y escribe aquí al dar de alta un elemento en el aula.
   assets!: EntityTable<Asset, 'id'>
 
+  /* Las retiradas por autorizar. Se espejan para que el aula pueda enseñar
+     «retirada solicitada» junto al equipo sin preguntarle nada a la red: sin
+     eso, el técnico que la firmó ayer no tiene forma de saber si llegó a
+     firmarse, y la vuelve a pedir. */
+  assetRemovals!: EntityTable<AssetRemoval, 'id'>
+
   // Lo que el técnico produce. La UI lee SIEMPRE de aquí, nunca espera a la red.
   inspections!: EntityTable<Inspection, 'id'>
   checks!: EntityTable<InspectionCheck, 'id'>
@@ -125,6 +133,12 @@ export class AulasDB extends Dexie {
     // ofrecer «sale del almacén» con la cifra delante, también sin cobertura.
     this.version(3).stores({
       stockLevels: 'stock_item_id, name',
+    })
+
+    // Y las retiradas por autorizar, indexadas por equipo: la lista de la sala
+    // pregunta «¿este tiene una solicitud viva?» una vez por fila.
+    this.version(4).stores({
+      assetRemovals: 'id, asset_id, state',
     })
   }
 }

@@ -289,11 +289,47 @@ agrupado por sala y con quién y cuándo. «Micrófono Jabra» puede ser un tipo
 perfectamente validado y aun así ser mentira que haya uno en el 2.4.
 
 - **Validar** — uno, los de una sala, o los de la lista entera.
-- **No está** — lo retira del inventario. Deja de contar en la sala y se queda
-  en su histórico, que es donde tiene que quedarse.
+- **No está** — **lo borra de la sala**. Un equipo sin validar es una propuesta,
+  y una propuesta rechazada no tiene por qué dejar un aparato retirado en el
+  histórico de una sala donde nunca hubo nada. Queda la fila de auditoría con
+  quién lo descartó, que es todo lo que hay que conservar. Si de él ya colgaba
+  algo firmado —una revisión que lo comprobó, una incidencia que lo señala— el
+  servidor lo retira en vez de borrarlo, y lo dice.
+
+Un equipo **ya validado** no sale por aquí: para ese está la solicitud de
+retirada, más abajo.
 
 Lo que carga una máquina —el importador, el equipamiento por defecto— nace
 validado: no es la propuesta de nadie que haya estado en el aula.
+
+### Retiradas por autorizar — ¿este aparato sale de la sala?
+
+Quitar un equipo **no** lo hace el técnico: lo **pide**. En el aula elige a dónde
+va, y hasta que alguien lo autorice el equipo sigue en la sala y sigue contando
+en las revisiones, porque sigue estando ahí.
+
+| Destino | Qué hace al autorizarse |
+|---|---|
+| **Dar de baja** | El aparato se ha muerto. Sale del inventario, conserva la sala en la que estuvo, y la baja queda en su histórico |
+| **Devolver al almacén** | Está bien y vuelve a la estantería. Sale del inventario, se queda sin sala y **suma una unidad al almacén** |
+
+La segunda es la que faltaba: con un solo botón de «retirar», cada equipo que
+volvía al almacén era una unidad que el sistema perdía — el aula dejaba de
+tenerla y el almacén no la ingresaba nunca.
+
+`Datos → Retiradas por autorizar` enseña el aparato, la sala, quién lo pide, por
+qué y —si vuelve al almacén— **en qué artículo va a caer la unidad, antes de
+autorizar**. Si ese tipo de equipo no tiene artículo de almacén, lo dice en
+naranja: la retirada se hará igual y el ingreso no, así que hay que enlazarlo en
+`Almacén` y ajustar a mano.
+
+Autorizar hace cuatro cosas en una sola operación —retira el equipo, deja el
+evento en el histórico de la sala, ingresa la unidad y cierra la solicitud—
+porque a medias quedaría un aparato retirado que nadie ingresó. **No retirarlo**
+cierra la solicitud y deja el equipo donde está.
+
+Solo puede haber una solicitud viva por equipo, y quien la firmó puede
+retirarla mientras nadie la haya decidido.
 
 ### Tipos sin validar — ¿cómo se llama esa clase de aparato?
 

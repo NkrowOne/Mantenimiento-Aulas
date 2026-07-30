@@ -20,6 +20,7 @@ const TABLE: Record<OutboxEntry['entity'], string> = {
   asset_event: 'asset_events',
   asset_type: 'asset_types',
   asset: 'assets',
+  asset_removal: 'asset_removals',
   room_inventory: 'room_inventories',
 }
 
@@ -35,7 +36,10 @@ const ORDER: Record<OutboxEntry['entity'], number> = {
   asset_event: 5,
   stock_movement: 6,
   room_inventory: 7,
-  attachment: 8,
+  // Detrás del equipo al que apunta: pedir la retirada de un aparato que
+  // todavía no ha subido chocaría contra su clave ajena.
+  asset_removal: 8,
+  attachment: 9,
 }
 
 export type SyncState = 'inactivo' | 'sincronizando' | 'sin-conexion' | 'error'
@@ -108,10 +112,17 @@ function isPermanentFailure(status: number | undefined): boolean {
  * chocaría contra una política que no existe y volvería como un error que no lo
  * es.
  */
+/*
+ * Y una solicitud de retirada, por lo mismo que el levantamiento: la firma el
+ * técnico y la decide otro. Un reenvío que se convirtiera en UPDATE chocaría
+ * contra una política que no existe —decidir se hace por RPC— y, peor, podría
+ * devolver a «pendiente» una retirada que un coordinador ya autorizó.
+ */
 const IGNORE_DUPLICATES = new Set<OutboxEntry['entity']>([
   'asset_type',
   'stock_movement',
   'asset_event',
+  'asset_removal',
   'room_inventory',
 ])
 

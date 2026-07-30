@@ -232,6 +232,48 @@ export const ASSET_STATUS_LABELS: Record<AssetStatus, string> = {
 }
 
 /**
+ * A dónde va un equipo que sale de una sala.
+ *
+ * Los dos destinos no son la misma cosa, y esa es toda la razón de que exista
+ * la pregunta: el aparato que **se ha muerto** desaparece, y el que está bien y
+ * vuelve a la estantería **suma una unidad al almacén**. Con un solo botón de
+ * «retirar», cada equipo que volvía al almacén era una unidad que el sistema
+ * perdía — el aula dejaba de tenerla y el almacén no la ingresaba nunca.
+ */
+export type RemovalDestino = 'baja' | 'almacen'
+
+export const REMOVAL_DESTINO_LABELS: Record<RemovalDestino, string> = {
+  baja: 'Dar de baja',
+  almacen: 'Devolver al almacén',
+}
+
+export const REMOVAL_DESTINO_HINTS: Record<RemovalDestino, string> = {
+  baja: 'Está roto o ya no sirve. Sale del inventario y no vuelve.',
+  almacen: 'Funciona y se lleva a la estantería. Suma una unidad al almacén.',
+}
+
+export type RemovalState = 'pendiente' | 'aprobada' | 'rechazada'
+
+/**
+ * La petición de sacar un equipo de una sala.
+ *
+ * Es una solicitud y no un acto porque quitar inventario no puede ser un toque
+ * sin vuelta atrás: el equipo sigue en la sala —marcado— hasta que un
+ * coordinador la autoriza. Se firma en el aula, sin cobertura, y sube por la
+ * cola de salida como todo lo demás.
+ */
+export interface AssetRemoval {
+  id: string
+  asset_id: string
+  room_id: string | null
+  destino: RemovalDestino
+  reason: string | null
+  state: RemovalState
+  requested_at: string
+  requested_by: string | null
+}
+
+/**
  * Lo que una sala lleva por defecto.
  *
  * `building_id: null` es el ámbito global —vale para todas las salas— y con

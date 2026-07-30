@@ -1322,3 +1322,195 @@ begin;
     else 'FALLO: la observación no se puede consultar, o abrió una incidencia'
   end as resultado;
 rollback;
+
+\echo ''
+\echo '=== 47. Sacar un equipo de una sala es una solicitud, no un toque ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  savepoint s;
+
+  -- Un equipo cuyo tipo SÍ tiene artículo de almacén: es el caso que importa,
+  -- porque es el que tiene que acabar sumando una unidad.
+  select a.id as equipo, a.room_id as sala
+    from assets a
+    join stock_items si on si.asset_type_id = a.asset_type_id and si.active
+   where a.room_id is not null and a.status <> 'retirado'
+   limit 1 \gset
+
+  insert into asset_removals (id, asset_id, room_id, destino, reason, requested_at, requested_by)
+  values ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', :'equipo', :'sala', 'almacen',
+          'Sobra en el aula', now(), '11111111-1111-4111-8111-111111111111');
+
+  select case
+    when (select status from assets where id = :'equipo') <> 'retirado'
+     and (select count(*) from asset_removal_queue where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1') = 1
+    then 'OK: pedida, y el equipo sigue en la sala mientras tanto'
+    else 'FALLO: la solicitud ha retirado el equipo por su cuenta'
+  end as resultado;
+
+  -- No puede firmarla en nombre de otro, ni colarla ya aprobada.
+  do $$
+  begin
+    insert into asset_removals (id, asset_id, room_id, destino, requested_at, requested_by, state)
+    select gen_random_uuid(), a.id, a.room_id, 'baja', now(),
+           '11111111-1111-4111-8111-111111111111', 'aprobada'
+      from assets a where a.room_id is not null and a.status <> 'retirado' limit 1;
+    raise exception 'FALLO: se coló una retirada ya aprobada';
+  exception when insufficient_privilege then
+    raise notice 'OK: RLS no deja autoaprobarse una retirada';
+  end $$;
+
+  -- Ni autorizarla.
+  do $$
+  begin
+    perform public.decide_asset_removal('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', true, null);
+    raise exception 'FALLO: un técnico autorizó su propia retirada';
+  exception when insufficient_privilege then
+    raise notice 'OK: autorizar es cosa del coordinador';
+  end $$;
+  rollback to savepoint s;
+rollback;
+
+\echo ''
+\echo '=== 48. Autorizada al almacén: el equipo sale y la unidad entra ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select a.id as equipo, a.room_id as sala
+    from assets a
+    join stock_items si on si.asset_type_id = a.asset_type_id and si.active
+   where a.room_id is not null and a.status <> 'retirado'
+   limit 1 \gset
+  select si.id as item
+    from assets a join stock_items si on si.asset_type_id = a.asset_type_id and si.active
+   where a.id = :'equipo' limit 1 \gset
+  select on_hand as antes from stock_levels where stock_item_id = :'item' \gset
+
+  insert into asset_removals (id, asset_id, room_id, destino, requested_at, requested_by)
+  values ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', :'equipo', :'sala', 'almacen', now(),
+          '11111111-1111-4111-8111-111111111111');
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  -- En su propia sentencia: dentro de un mismo `select`, lo que escriba la
+  -- función no lo ven las subconsultas de al lado.
+  select public.decide_asset_removal('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', true, 'De acuerdo') as fin \gset
+
+  select case
+    when :'fin' = 'almacen'
+     and (select status from assets where id = :'equipo') = 'retirado'
+     and (select room_id from assets where id = :'equipo') is null
+     and (select on_hand from stock_levels where stock_item_id = :'item') = :'antes'::int + 1
+    then 'OK: fuera del aula y ' || :'antes' || ' → ' ||
+         (select on_hand from stock_levels where stock_item_id = :'item') || ' en el almacén'
+    else 'FALLO: la retirada al almacén no ha cuadrado'
+  end as resultado;
+
+  -- Y la baja queda en el histórico de LA SALA, aunque el equipo ya no tenga
+  -- sala: por eso la solicitud se guarda su `room_id`.
+  select case
+    when (select count(*) from room_timeline
+           where room_id = :'sala' and kind = 'equipo' and subkind = 'baja') >= 1
+    then 'OK: la baja se lee en el histórico de la sala'
+    else 'FALLO: la baja no aparece en ninguna sala'
+  end as resultado;
+
+  -- Y no se puede decidir dos veces: la segunda ingresaría otra unidad.
+  do $$
+  begin
+    perform public.decide_asset_removal('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', true, null);
+    raise exception 'FALLO: se autorizó dos veces la misma retirada';
+  exception when others then
+    if sqlerrm like 'FALLO%' then raise; end if;
+    raise notice 'OK: %', sqlerrm;
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 49. Dos retiradas vivas del mismo equipo: imposible ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as equipo, room_id as sala from assets
+   where room_id is not null and status <> 'retirado' limit 1 \gset
+
+  insert into asset_removals (id, asset_id, room_id, destino, requested_at, requested_by)
+  values (gen_random_uuid(), :'equipo', :'sala', 'baja', now(),
+          '11111111-1111-4111-8111-111111111111');
+
+  -- Dos técnicos pidiendo lo mismo la misma mañana retirarían dos veces el
+  -- mismo aparato y, con destino almacén, ingresarían dos unidades que no hay.
+  do $$
+  declare v_a uuid; v_r uuid;
+  begin
+    select id, room_id into v_a, v_r from assets
+     where room_id is not null and status <> 'retirado' limit 1;
+    insert into asset_removals (id, asset_id, room_id, destino, requested_at, requested_by)
+    values (gen_random_uuid(), v_a, v_r, 'almacen', now(),
+            '11111111-1111-4111-8111-111111111111');
+    raise exception 'FALLO: dos retiradas vivas para el mismo equipo';
+  exception when unique_violation then
+    raise notice 'OK: el índice deja una sola solicitud viva por equipo';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 50. Lo que no se autoriza se borra de la sala ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active limit 1 \gset
+
+  insert into assets (id, asset_type_id, room_id, label, created_by)
+  values ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', public.asset_type_id('Proyector'),
+          :'sala', 'Proyector que no está', '11111111-1111-4111-8111-111111111111');
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  select public.reject_asset('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1') as fin \gset
+
+  select case
+    when :'fin' = 'borrado'
+     and (select count(*) from assets where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1') = 0
+     and exists (select 1 from audit_log
+                  where table_name = 'assets' and op = 'DELETE'
+                    and (old_data ->> 'id') = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1'
+                    and by_user is not null)
+    then 'OK: borrado de la sala, y con quién lo descartó en la auditoría'
+    else 'FALLO: el rechazo no ha borrado el equipo'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 51. …pero no se borra lo que ya se firmó, ni lo ya validado ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active limit 1 \gset
+
+  insert into assets (id, asset_type_id, room_id, label, created_by)
+  values ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', public.asset_type_id('Pantalla'),
+          :'sala', 'Pantalla ya revisada', '11111111-1111-4111-8111-111111111111');
+  insert into inspections (id, room_id, by_user, occurred_at, status)
+  values ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbba', :'sala',
+          '11111111-1111-4111-8111-111111111111', now(), 'borrador');
+  insert into inspection_checks (id, inspection_id, check_key, result)
+  values (gen_random_uuid(), 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbba',
+          'asset:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', 'ok');
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  select public.reject_asset('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2') as fin \gset
+
+  select case
+    when :'fin' = 'retirado'
+     and (select status from assets where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2') = 'retirado'
+    then 'OK: con una revisión detrás se retira en vez de borrarse'
+    else 'FALLO: se ha borrado un equipo que una revisión ya había comprobado'
+  end as resultado;
+
+  -- Y un equipo ya validado no sale por esta puerta: para eso está la solicitud.
+  do $$
+  declare v_id uuid;
+  begin
+    select id into v_id from assets where confirmed and room_id is not null limit 1;
+    perform public.reject_asset(v_id);
+    raise exception 'FALLO: descartó un equipo ya validado';
+  exception when others then
+    if sqlerrm like 'FALLO%' then raise; end if;
+    raise notice 'OK: %', sqlerrm;
+  end $$;
+rollback;

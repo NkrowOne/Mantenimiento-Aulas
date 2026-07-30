@@ -9,9 +9,16 @@
 import { useCallback } from 'react'
 import { v7 as uuidv7 } from 'uuid'
 import { db, enqueue } from '@/db/dexie'
+import { supabase } from '@/lib/supabase'
 import { flush } from '@/sync/outbox'
 import { assetTypeId, nextLabel } from '@/domain/inventory'
-import type { Asset, AssetStatus, AssetType } from '@/domain/types'
+import type {
+  Asset,
+  AssetRemoval,
+  AssetStatus,
+  AssetType,
+  RemovalDestino,
+} from '@/domain/types'
 
 export interface AddResult {
   ok: boolean
@@ -206,6 +213,64 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
   )
 
   /**
+   * Pedir que un equipo salga de la sala.
+   *
+   * Antes esto era un botón que retiraba el aparato en el acto. Un toque, y el
+   * inventario perdía una fila sin que nadie pudiera decir que no y sin que el
+   * almacén se enterara de que un proyector perfectamente bueno acababa de
+   * volver a la estantería.
+   *
+   * Ahora es una **solicitud**: el equipo se queda donde está —marcado, que es
+   * la verdad: todavía está ahí— hasta que un coordinador la autoriza. Y con el
+   * destino delante, porque «se ha roto» y «me lo llevo al almacén» son dos
+   * cosas distintas y solo la segunda suma una unidad a las existencias.
+   *
+   * Se firma en el aula y sin cobertura, como todo lo demás: es justo donde se
+   * ve que un aparato sobra.
+   */
+  const solicitarRetirada = useCallback(
+    async (asset: Asset, destino: RemovalDestino, motivo?: string): Promise<AddResult> => {
+      const yaHay = await db.assetRemovals
+        .where('asset_id')
+        .equals(asset.id)
+        .filter((r) => r.state === 'pendiente')
+        .first()
+      if (yaHay) return { ok: false, error: 'Ya hay una retirada pedida para este equipo.' }
+
+      const solicitud: AssetRemoval = {
+        id: uuidv7(),
+        asset_id: asset.id,
+        room_id: asset.room_id,
+        destino,
+        reason: motivo?.trim() || null,
+        state: 'pendiente',
+        requested_at: new Date().toISOString(),
+        requested_by: userId,
+      }
+
+      await db.assetRemovals.put(solicitud)
+      await enqueue('asset_removal', solicitud.id, solicitud)
+      void flush()
+
+      return { ok: true }
+    },
+    [userId],
+  )
+
+  /** Deshacerla mientras nadie la haya decidido. Equivocarse al pulsar no puede
+      costar una visita al coordinador. */
+  const cancelarRetirada = useCallback(async (solicitudId: string): Promise<void> => {
+    await db.assetRemovals.delete(solicitudId)
+    // Si todavía estaba esperando a subir, se va con ella y no llega a existir.
+    await db.outbox.delete(solicitudId)
+    const { error } = await supabase.from('asset_removals').delete().eq('id', solicitudId)
+    // Sin cobertura el borrado remoto falla y no pasa nada: o la solicitud nunca
+    // subió —y acaba de morir en la cola— o subió y el coordinador la verá. Es
+    // preferible a bloquear el gesto esperando a la red.
+    if (error) console.warn('cancelarRetirada', error.message)
+  }, [])
+
+  /**
    * «He mirado el aula y esto es todo lo que hay.»
    *
    * Es lo que saca a una sala de la lista de pendientes, y por eso tiene que
@@ -244,7 +309,15 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
     [roomId, userId],
   )
 
-  return { addAsset, addAssetConOrigen, confirmarInventario, patchAsset, setStatus }
+  return {
+    addAsset,
+    addAssetConOrigen,
+    cancelarRetirada,
+    confirmarInventario,
+    patchAsset,
+    setStatus,
+    solicitarRetirada,
+  }
 }
 
 /**
