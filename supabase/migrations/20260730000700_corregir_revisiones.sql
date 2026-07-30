@@ -654,8 +654,14 @@ comment on view room_inspections is
 -- comprobaciones a tamaño de un curso —200.000 filas, 21 MB— el planificador
 -- reparte `inspection_check_detail` entre dos trabajadores y la función que estaba
 -- ahí para que una clave rara no rompiera la vista era justo la que la rompía:
+-- Postgres aborta la consulta diciendo que no se puede abrir una subtransacción
+-- dentro de una operación paralela, y el aviso no menciona ni la vista ni el
+-- paralelismo.
 --
---   ERROR: cannot start subtransactions during a parallel operation
+-- (El mensaje exacto no se copia aquí, ni de ejemplo: el servidor registra estas
+-- migraciones enteras en su log, así que un texto que imite un fallo reaparece en
+-- cualquier búsqueda que se haga sobre ese log después. Ya costó una vuelta de
+-- diagnóstico en este proyecto, y está contado en `20260730000600`.)
 --
 -- No salía con un rol normal por casualidad —la RLS mete `auth_role()`, que es
 -- `parallel unsafe`, y eso serializaba el plan—, así que aparecía únicamente
