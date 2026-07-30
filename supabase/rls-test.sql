@@ -1530,3 +1530,425 @@ begin;
     raise notice 'OK: %', sqlerrm;
   end $$;
 rollback;
+\echo ''
+\echo '=== 52. La bóveda del PIN no se lee ni se escribe desde la API ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  -- Es la afirmación que sostiene todo el diseño de la vinculación: si el dueño
+  -- pudiera descargarse su propio sobre, un dispositivo con la sesión robada se
+  -- lo llevaría y probaría los 10.000 PIN sin conexión, sin contador y sin
+  -- bloqueo. La tabla no tiene ni una política a propósito.
+  select case
+    when (select count(*) from pin_vaults) = 0
+    then 'OK: la bóveda es ilegible desde una sesión de usuario'
+    else 'FALLO: pin_vaults se puede leer con RLS puesta'
+  end as resultado;
+
+  savepoint s;
+  do $$
+  begin
+    insert into pin_vaults (profile_id, kdf_salt, kdf_iterations, verifier_hash, wrapped_iv, wrapped_secret)
+    values ('11111111-1111-4111-8111-111111111111', 'x', 310000, 'x', 'x', 'x');
+    raise exception 'FALLO: se pudo escribir la bóveda a mano';
+  exception when insufficient_privilege then
+    raise notice 'OK: la bóveda solo se escribe por su función';
+  end $$;
+  rollback to savepoint s;
+rollback;
+
+\echo ''
+\echo '=== 53. Vincular un dispositivo: el PIN correcto abre, el falso cuenta ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  -- Lo que haría el cliente tras entrar con el código: derivar y guardar.
+  select public.guardar_boveda('c2FsLWRlLXBydWViYQ==', 310000, 'VERIFICADOR-BUENO', 'aXY=', 'c29icmU=');
+
+  select case
+    when (select (public.estado_boveda() ->> 'existe')::boolean)
+    then 'OK: la bóveda queda escrita y el dueño sabe que existe'
+    else 'FALLO: estado_boveda no la ve'
+  end as resultado;
+
+  -- Y NO puede leer el sobre por esa vía: `estado_boveda` solo devuelve metadatos.
+  select case
+    when public.estado_boveda() ? 'iv' or public.estado_boveda() ? 'secreto'
+    then 'FALLO: estado_boveda devuelve el sobre'
+    else 'OK: estado_boveda no enseña el sobre, solo si lo hay'
+  end as resultado;
+
+  -- Desde aquí, como lo haría un dispositivo nuevo: sin sesión.
+  set local role anon;
+  select set_config('request.jwt.claims', null, true);
+
+  select case
+    when (public.parametros_de_vinculacion('tecnico@test.local') ->> 'salt') = 'c2FsLWRlLXBydWViYQ=='
+    then 'OK: el paso 1 devuelve el salt de esa cuenta'
+    else 'FALLO: el paso 1 no encuentra la bóveda'
+  end as resultado;
+
+  -- Anti-enumeración: un correo que no existe contesta igual de bien formado.
+  select case
+    when length(public.parametros_de_vinculacion('nadie@test.local') ->> 'salt') = 24
+     and (public.parametros_de_vinculacion('nadie@test.local') ->> 'salt')
+         = (public.parametros_de_vinculacion('nadie@test.local') ->> 'salt')
+    then 'OK: un correo desconocido recibe un salt falso, estable y de la misma forma'
+    else 'FALLO: se puede distinguir un correo dado de alta de uno que no'
+  end as resultado;
+
+  select case
+    when public.vincular_dispositivo(
+           'tecnico@test.local', 'VERIFICADOR-BUENO',
+           'dispositivo-de-prueba-1', 'iPad · Safari', 'agente'
+         ) ->> 'secreto' = 'c29icmU='
+    then 'OK: el verificador bueno canjea el sobre'
+    else 'FALLO: no devuelve el sobre'
+  end as resultado;
+
+  -- El fallo se DEVUELVE, no se lanza, y sin el sobre dentro.
+  select case
+    when (public.vincular_dispositivo(
+            'tecnico@test.local', 'VERIFICADOR-MALO', 'dispositivo-de-prueba-2'
+          ) ->> 'ok')::boolean = false
+     and not (public.vincular_dispositivo(
+            'tecnico@test.local', 'VERIFICADOR-MALO', 'dispositivo-de-prueba-2'
+          ) ? 'secreto')
+    then 'OK: el verificador incorrecto no obtiene nada'
+    else 'FALLO: un verificador incorrecto obtuvo el sobre'
+  end as resultado;
+
+  -- Y un correo que no existe contesta EXACTAMENTE lo mismo que un PIN mal
+  -- puesto: si el mensaje cambiara, esto sería un detector de correos.
+  select case
+    when public.vincular_dispositivo('nadie@test.local', 'X', 'dispositivo-de-prueba-3') ->> 'mensaje'
+       = public.vincular_dispositivo('tecnico@test.local', 'X', 'dispositivo-de-prueba-3') ->> 'mensaje'
+    then 'OK: un correo desconocido y un PIN erróneo contestan igual'
+    else 'FALLO: la respuesta distingue si el correo existe'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 54. Cinco intentos fallidos bloquean, y el tope de tres se respeta ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select public.guardar_boveda('c2FsLWRlLXBydWViYQ==', 310000, 'BUENO', 'aXY=', 'c29icmU=');
+
+  set local role anon;
+  select set_config('request.jwt.claims', null, true);
+
+  do $$
+  declare i int; v jsonb;
+  begin
+    for i in 1..5 loop
+      v := public.vincular_dispositivo('tecnico@test.local', 'MALO', 'dispositivo-x');
+    end loop;
+
+    -- El quinto fallo tiene que devolver «bloqueado». Que el contador sobreviva
+    -- a los cinco intentos es TODO lo que separa este diseño de uno en el que
+    -- diez mil pruebas cuestan lo que diez mil peticiones.
+    if v ->> 'motivo' = 'bloqueado' then
+      raise notice 'OK: al quinto fallo la cuenta queda bloqueada un rato';
+    else
+      raise exception 'FALLO: la fuerza bruta no encuentra ningún freno (motivo: %)', v ->> 'motivo';
+    end if;
+
+    -- Y con el PIN bueno tampoco entra mientras dure el bloqueo: si el
+    -- verificador correcto lo saltara, bastaría con acertar dentro de la ventana.
+    v := public.vincular_dispositivo('tecnico@test.local', 'BUENO', 'dispositivo-x');
+    if v ->> 'motivo' = 'bloqueado' then
+      raise notice 'OK: el bloqueo vale también para el PIN correcto';
+    else
+      raise exception 'FALLO: el bloqueo no se aplica al verificador correcto';
+    end if;
+  end $$;
+rollback;
+
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  do $$
+  declare i int;
+  begin
+    for i in 1..public.max_dispositivos() loop
+      perform public.registrar_dispositivo('dispositivo-tope-' || i, 'iPad', 'agente');
+    end loop;
+
+    begin
+      perform public.registrar_dispositivo('dispositivo-tope-uno-de-mas', 'iPad', 'agente');
+      raise exception 'FALLO: entró un dispositivo por encima del tope';
+    exception when check_violation then
+      raise notice 'OK: el cuarto dispositivo no entra';
+    end;
+
+    -- Volver a entrar en uno que YA está no consume hueco. Sin esto, el tope se
+    -- agotaría solo volviendo a darse de alta en el mismo iPad.
+    perform public.registrar_dispositivo('dispositivo-tope-1', 'iPad', 'agente');
+    raise notice 'OK: repetir el alta del mismo aparato no gasta un hueco';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 55. Revocar es del dueño o del coordinador, y se puede deshacer con otro alta ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select (public.registrar_dispositivo('dispositivo-a-revocar', 'iPad', 'agente') ->> 'id') as disp \gset
+
+  select case
+    when (public.latido_dispositivo('dispositivo-a-revocar') ->> 'revocado')::boolean = false
+    then 'OK: el latido dice que sigue vivo'
+    else 'FALLO: nace revocado'
+  end as resultado;
+
+  select public.revocar_dispositivo(:'disp', 'prueba');
+
+  select case
+    when (public.latido_dispositivo('dispositivo-a-revocar') ->> 'revocado')::boolean
+    then 'OK: tras revocarlo, el propio dispositivo se entera al sincronizar'
+    else 'FALLO: el dispositivo revocado no se entera'
+  end as resultado;
+
+  -- Un técnico no revoca los de otro.
+  do $$
+  declare v_otro uuid;
+  begin
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', '22222222-2222-4222-8222-222222222222', 'app_role', 'supervisor')::text, true);
+    v_otro := (public.registrar_dispositivo('dispositivo-del-super', 'Mac', 'agente') ->> 'id')::uuid;
+
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', '11111111-1111-4111-8111-111111111111', 'app_role', 'tecnico')::text, true);
+    begin
+      perform public.revocar_dispositivo(v_otro);
+      raise exception 'FALLO: un técnico revocó el dispositivo de otro';
+    exception when insufficient_privilege then
+      raise notice 'OK: nadie revoca los dispositivos de otro';
+    end;
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 56. Un código de alta nuevo caduca la bóveda ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select public.guardar_boveda('c2FsLWRlLXBydWViYQ==', 310000, 'BUENO', 'aXY=', 'c29icmU=');
+
+  -- Lo que hace `alta codigo <email>`: rota la contraseña de GoTrue y registra
+  -- el código. La bóveda envuelve la contraseña ANTERIOR, así que a partir de
+  -- aquí contiene algo que ya no abre nada.
+  reset role;
+  insert into enrollment_codes (profile_id, code_hash, expires_at)
+  values ('11111111-1111-4111-8111-111111111111', 'hash', now() + interval '24 hours');
+
+  set local role anon;
+  select set_config('request.jwt.claims', null, true);
+  select case
+    when public.vincular_dispositivo(
+           'tecnico@test.local', 'BUENO', 'dispositivo-tras-codigo') ->> 'motivo' = 'caducada'
+    then 'OK: la bóveda caducada lo dice en vez de devolver una contraseña muerta'
+    else 'FALLO: se vinculó con una bóveda caducada'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 57. El id de un modelo sale de su nombre, aquí y en el cliente ==='
+begin;
+  -- Es lo que hace converger dos altas offline del mismo modelo. Si esto se
+  -- rompe, el catálogo se duplica y nadie sabe por qué.
+  select case
+    when public.uuid_v5('9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d', 'PROYECTOR')
+         = '925deb9d-e971-5587-9707-21ae01c5bab2'::uuid
+    then 'OK: uuid_v5 coincide con el del cliente'
+    else 'FALLO: uuid_v5 ya no es gemelo del de uuid.v5() en JavaScript'
+  end as resultado;
+
+  select case
+    when public.asset_model_id(public.asset_type_id('Ordenador'), 'Lenovo', 'U3302')
+         = public.asset_model_id(public.asset_type_id('Ordenador'), '  LENOVO ', 'u3302')
+    then 'OK: tildes, espacios y mayúsculas dan el mismo modelo'
+    else 'FALLO: el id del modelo depende de cómo se escriba'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 58. Un técnico propone modelos; validarlos y fusionarlos es del coordinador ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select public.asset_type_id('Proyector') as tipo \gset
+
+  insert into asset_models (id, asset_type_id, brand, model, created_by)
+  values (public.asset_model_id(:'tipo', 'Epson', 'EB-992F'), :'tipo', 'Epson', 'EB-992F',
+          '11111111-1111-4111-8111-111111111111');
+
+  select case
+    when (select not confirmed from asset_models
+           where id = public.asset_model_id(:'tipo', 'Epson', 'EB-992F'))
+    then 'OK: el modelo apuntado desde el aula nace sin validar'
+    else 'FALLO: nace validado'
+  end as resultado;
+
+  savepoint s;
+  do $$
+  begin
+    insert into asset_models (id, asset_type_id, brand, model, confirmed)
+    values (gen_random_uuid(), public.asset_type_id('Proyector'), 'X', 'AUTOVALIDADO', true);
+    raise exception 'FALLO: un técnico se auto-validó un modelo';
+  exception when insufficient_privilege then
+    raise notice 'OK: nadie cuela un modelo ya validado';
+  end $$;
+  rollback to savepoint s;
+
+  do $$
+  begin
+    perform public.confirm_asset_models(array[public.asset_model_id(
+      public.asset_type_id('Proyector'), 'Epson', 'EB-992F')]);
+    raise exception 'FALLO: un técnico validó un modelo';
+  exception when insufficient_privilege then
+    raise notice 'OK: validar modelos es cosa del coordinador';
+  end $$;
+
+  -- Y el mismo modelo, dos veces, no cabe: es el índice único que hace que dos
+  -- altas sin cobertura converjan en vez de duplicarse.
+  savepoint s2;
+  do $$
+  begin
+    insert into asset_models (id, asset_type_id, brand, model)
+    values (gen_random_uuid(), public.asset_type_id('Proyector'), 'EPSON', 'eb-992f');
+    raise exception 'FALLO: entró un duplicado de grafía';
+  exception when unique_violation then
+    raise notice 'OK: la base impide el duplicado de grafía';
+  end $$;
+  rollback to savepoint s2;
+rollback;
+
+\echo ''
+\echo '=== 59. Fusionar modelos mueve sus equipos y deja lápida ==='
+begin;
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  select public.asset_type_id('Proyector') as tipo \gset
+  select id as sala from rooms where active order by created_at limit 1 \gset
+
+  -- Nombres inventados a propósito: los reales («ME403U», «ME-403U») ya los ha
+  -- creado el relleno a partir del Excel, y chocarían contra su propia clave.
+  insert into asset_models (id, asset_type_id, brand, model, confirmed) values
+    (public.asset_model_id(:'tipo', '', 'ZZ-403U'),  :'tipo', '',    'ZZ-403U', true),
+    (public.asset_model_id(:'tipo', 'NEC', 'ZZ403U'), :'tipo', 'NEC', 'ZZ403U',  true);
+
+  insert into assets (id, asset_type_id, room_id, label, asset_model_id, confirmed)
+  values ('88888888-8888-4888-8888-888888888881', :'tipo', :'sala', 'Proyector fusión',
+          public.asset_model_id(:'tipo', '', 'ZZ-403U'), true);
+
+  select public.merge_asset_model(
+    public.asset_model_id(:'tipo', '', 'ZZ-403U'),
+    public.asset_model_id(:'tipo', 'NEC', 'ZZ403U')) as movidos \gset
+
+  select case
+    when :'movidos'::int = 1
+     and (select asset_model_id from assets where id = '88888888-8888-4888-8888-888888888881')
+         = public.asset_model_id(:'tipo', 'NEC', 'ZZ403U')
+     and (select merged_into is not null and not active from asset_models
+           where id = public.asset_model_id(:'tipo', '', 'ZZ-403U'))
+     and (select 'ZZ-403U' = any(aliases) from asset_models
+           where id = public.asset_model_id(:'tipo', 'NEC', 'ZZ403U'))
+    then 'OK: el equipo se mueve, el absorbido queda de lápida y su nombre de alias'
+    else 'FALLO: la fusión de modelos no ha dejado las cosas en su sitio'
+  end as resultado;
+
+  -- Y no se fusionan modelos de tipos distintos: dejaría un proyector con
+  -- modelo de pantalla, que no lo detecta nadie después.
+  do $$
+  declare v_pantalla uuid;
+  begin
+    v_pantalla := public.asset_model_id(public.asset_type_id('Pantalla'), 'Sony', 'ZZ-BZ30L');
+    insert into asset_models (id, asset_type_id, brand, model, confirmed)
+    values (v_pantalla, public.asset_type_id('Pantalla'), 'Sony', 'ZZ-BZ30L', true);
+    perform public.merge_asset_model(
+      public.asset_model_id(public.asset_type_id('Proyector'), 'NEC', 'ZZ403U'), v_pantalla);
+    raise exception 'FALLO: se fusionaron modelos de tipos distintos';
+  exception when others then
+    if sqlerrm like 'FALLO%' then raise; end if;
+    raise notice 'OK: no se fusionan modelos de tipos distintos';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 60. La fecha de instalación se pone sola y se renueva al cambiar de sala ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select public.asset_type_id('Pantalla') as tipo \gset
+  -- Por `id` y no por `created_at`: el seed las inserta todas a la vez, así que
+  -- ordenar por fecha son 276 empates y las dos consultas pueden devolver LA
+  -- MISMA sala. Entonces «cambiar de sala» no cambia de sala y la prueba falla
+  -- por su propio enunciado.
+  select id as sala_a from rooms where active order by id limit 1 \gset
+  select id as sala_b from rooms where active order by id offset 1 limit 1 \gset
+
+  -- Sin fecha: la pone el disparador.
+  insert into assets (id, asset_type_id, room_id, label)
+  values ('88888888-8888-4888-8888-888888888882', :'tipo', :'sala_a', 'Pantalla fecha');
+
+  select case
+    when (select installed_at is not null from assets where id = '88888888-8888-4888-8888-888888888882')
+    then 'OK: un alta con sala se fecha sola'
+    else 'FALLO: el equipo entra sin fecha de instalación'
+  end as resultado;
+
+  -- Con fecha: se respeta. Es el caso del levantamiento —«esto lleva aquí desde
+  -- 2019»— y el del iPad que sube horas después con su hora real.
+  insert into assets (id, asset_type_id, room_id, label, installed_at)
+  values ('88888888-8888-4888-8888-888888888883', :'tipo', :'sala_a', 'Pantalla antigua',
+          '2019-09-01T10:00:00Z');
+
+  select case
+    when (select installed_at from assets where id = '88888888-8888-4888-8888-888888888883')
+         = '2019-09-01T10:00:00Z'::timestamptz
+    then 'OK: la fecha que manda el dispositivo se respeta'
+    else 'FALLO: el disparador pisa la fecha del levantamiento'
+  end as resultado;
+
+  update assets set room_id = :'sala_b' where id = '88888888-8888-4888-8888-888888888883';
+
+  select case
+    when (select installed_at from assets where id = '88888888-8888-4888-8888-888888888883')
+         > '2020-01-01T00:00:00Z'::timestamptz
+    then 'OK: al cambiar de sala, la instalación es de hoy'
+    else 'FALLO: un traslado conserva la fecha de la sala anterior'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 61. asset_overview identifica el equipo entero, siguiendo las fusiones ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select public.asset_type_id('Ordenador') as tipo \gset
+  select id as sala from rooms where active order by created_at limit 1 \gset
+
+  reset role;
+  insert into asset_models (id, asset_type_id, brand, model, confirmed)
+  values (public.asset_model_id(:'tipo', 'Lenovo', 'ZZ3302'), :'tipo', 'Lenovo', 'ZZ3302', true)
+  on conflict (id) do nothing;
+
+  insert into assets (id, asset_type_id, room_id, label, serial, asset_model_id, confirmed)
+  values ('88888888-8888-4888-8888-888888888884', :'tipo', :'sala', 'Ordenador 2', 'SN-PRUEBA',
+          public.asset_model_id(:'tipo', 'Lenovo', 'ZZ3302'), true);
+
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select case
+    when (select identidad from asset_overview where id = '88888888-8888-4888-8888-888888888884')
+         = 'Ordenador Lenovo ZZ3302'
+     and (select serial from asset_overview where id = '88888888-8888-4888-8888-888888888884')
+         = 'SN-PRUEBA'
+    then 'OK: «Ordenador Lenovo ZZ3302 · SN-PRUEBA» sale resuelto del servidor'
+    else 'FALLO: asset_overview no identifica el equipo'
+  end as resultado;
+
+  -- Y un anónimo no lo ve: la vista es `security_invoker`, así que hereda la RLS
+  -- de `assets` en vez de saltársela.
+  set local role anon;
+  select set_config('request.jwt.claims', null, true);
+  select case
+    when (select count(*) from asset_overview) = 0
+    then 'OK: sin token, la vista de inventario está vacía'
+    else 'FALLO: asset_overview se lee sin autenticar'
+  end as resultado;
+rollback;

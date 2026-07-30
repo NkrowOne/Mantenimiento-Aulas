@@ -19,6 +19,7 @@ const TABLE: Record<OutboxEntry['entity'], string> = {
   attachment: 'attachments',
   asset_event: 'asset_events',
   asset_type: 'asset_types',
+  asset_model: 'asset_models',
   asset: 'assets',
   asset_removal: 'asset_removals',
   room_inventory: 'room_inventories',
@@ -28,18 +29,24 @@ const TABLE: Record<OutboxEntry['entity'], string> = {
 const ORDER: Record<OutboxEntry['entity'], number> = {
   // Un tipo tiene que existir antes que el elemento que lo usa, y el elemento
   // antes que la comprobación que lo nombra.
+  //
+  // El modelo se cuela entre los dos, y no es cosmético: `assets.asset_model_id`
+  // es una clave ajena, así que un equipo con modelo nuevo que suba antes que su
+  // modelo se rechaza con un 4xx —permanente, según `isPermanentFailure`— y se
+  // queda en la cola como error. Con este orden, el modelo siempre llega antes.
   asset_type: 0,
-  asset: 1,
-  inspection: 2,
-  inspection_check: 3,
-  incident: 4,
-  asset_event: 5,
-  stock_movement: 6,
-  room_inventory: 7,
+  asset_model: 1,
+  asset: 2,
+  inspection: 3,
+  inspection_check: 4,
+  incident: 5,
+  asset_event: 6,
+  stock_movement: 7,
+  room_inventory: 8,
   // Detrás del equipo al que apunta: pedir la retirada de un aparato que
   // todavía no ha subido chocaría contra su clave ajena.
-  asset_removal: 8,
-  attachment: 9,
+  asset_removal: 9,
+  attachment: 10,
 }
 
 export type SyncState = 'inactivo' | 'sincronizando' | 'sin-conexion' | 'error'
@@ -113,6 +120,16 @@ function isPermanentFailure(status: number | undefined): boolean {
  * es.
  */
 /*
+ * Y un modelo de equipo, por exactamente lo mismo que un tipo: su id sale de
+ * (tipo, marca, modelo), así que dos técnicos sin cobertura que registren el
+ * mismo «Epson EB-992F» envían la misma fila. Con un upsert normal la segunda
+ * sería un UPDATE, que el técnico no puede hacer —la política de `asset_models`
+ * reserva la escritura al coordinador—, y volvería como un error que no lo es.
+ *
+ * Y protege lo mismo: que un alta repetida no devuelva a «sin validar» un modelo
+ * que el coordinador ya validó.
+ */
+/*
  * Y una solicitud de retirada, por lo mismo que el levantamiento: la firma el
  * técnico y la decide otro. Un reenvío que se convirtiera en UPDATE chocaría
  * contra una política que no existe —decidir se hace por RPC— y, peor, podría
@@ -120,6 +137,7 @@ function isPermanentFailure(status: number | undefined): boolean {
  */
 const IGNORE_DUPLICATES = new Set<OutboxEntry['entity']>([
   'asset_type',
+  'asset_model',
   'stock_movement',
   'asset_event',
   'asset_removal',

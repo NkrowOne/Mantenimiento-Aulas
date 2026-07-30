@@ -38,15 +38,23 @@ import { supabase } from '@/lib/supabase'
 import { RoomPlate } from '@/components/RoomPlate'
 import { DoorPlate } from '@/components/DoorPlate'
 import { displayRoomCode } from '@/domain/normalize'
+import { identifyAsset } from '@/domain/inventory'
 import { fechaCorta } from '@/domain/fechas'
-import { INCIDENT_KIND_LABELS, type IncidentKind, type Room } from '@/domain/types'
+import { INCIDENT_KIND_LABELS, type AssetModel, type IncidentKind, type Room } from '@/domain/types'
 
 interface TimelineRow {
   at: string
   kind: 'incidencia' | 'solicitud' | 'observacion' | 'revision_ok' | 'revision_ko'
     | 'material' | 'equipo' | 'inventario'
   title: string
-  /** La letra pequeña del evento: la nota de la revisión, la descripción, la resolución. */
+  /**
+   * Lo que se dijo, o de qué aparato se está hablando.
+   *
+   * La letra pequeña del evento: la nota de la revisión, la descripción de la
+   * incidencia, la resolución. Y en las filas de equipo lo rellena
+   * `room_timeline` con marca, modelo y número de serie: es lo que separa
+   * «Pantalla 2 — alta» de algo que se puede cruzar con una factura.
+   */
   detail: string | null
   ref: string | null
   who: string | null
@@ -143,9 +151,16 @@ export function RoomSheet({
   const equipos = useLiveQuery(async () => {
     const assets = await db.assets.where('room_id').equals(room.id).toArray()
     const tipos = new Map((await db.assetTypes.toArray()).map((t) => [t.id, t]))
+    const modelos = new Map<string, AssetModel>(
+      (await db.assetModels.toArray()).map((m) => [m.id, m]),
+    )
     return assets
-      .map((a) => ({ ...a, tipo: tipos.get(a.asset_type_id)?.name ?? 'Sin tipo' }))
-      .sort((x, y) => x.tipo.localeCompare(y.tipo, 'es'))
+      .map((a) => ({ ...a, id: a.id, ident: identifyAsset(a, tipos, modelos) }))
+      .sort(
+        (x, y) =>
+          x.ident.tipo.localeCompare(y.ident.tipo, 'es') ||
+          x.ident.etiqueta.localeCompare(y.ident.etiqueta, 'es', { numeric: true }),
+      )
   }, [room.id])
 
   const { data: fiabilidad } = useQuery({
@@ -474,14 +489,31 @@ export function RoomSheet({
           <ul className="divide-y divide-line">
             {(equipos ?? []).map((a) => (
               <li key={a.id} className="flex items-center gap-3 py-2 text-sm">
-                <span className="flex-1">
-                  {a.label || a.tipo}
-                  <span className="block font-mono text-xs text-muted">
-                    {[a.model, a.serial].filter(Boolean).join(' · ') || 'Sin modelo ni serie'}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{a.ident.etiqueta}</span>
+                  {/*
+                    Marca, modelo y número de serie, que es lo que se viene a
+                    mirar a la ficha: «¿qué proyector hay en el 2.4?» no se
+                    contesta con «un proyector».
+                  */}
+                  <span className="block truncate font-mono text-xs text-muted">
+                    {a.ident.ficha || 'Sin modelo ni serie'}
                   </span>
+                  {/* Desde cuándo está puesto. Sin esto, un inventario es una
+                      lista; con esto, es algo con lo que planificar. */}
+                  {a.installed_at && (
+                    <span className="block text-xs text-muted">
+                      Instalado el {fechaCorta(a.installed_at)}
+                    </span>
+                  )}
                 </span>
+                {a.ident.modeloSinValidar && (
+                  <span className="shrink-0 rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
+                    modelo sin validar
+                  </span>
+                )}
                 {a.status !== 'instalado' && (
-                  <span className="rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
+                  <span className="shrink-0 rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
                     {a.status}
                   </span>
                 )}
@@ -570,8 +602,9 @@ export function RoomSheet({
                     )}
                   </p>
                   {/* El detalle se pinta. La vista lo traía —la nota de la
-                      revisión, la descripción de la incidencia, la resolución— y
-                      esta lista lo tiraba: un evento decía «Revisión con
+                      revisión, la descripción de la incidencia, la resolución, y
+                      en las filas de equipo la marca, el modelo y el número de
+                      serie— y esta lista lo tiraba: un evento decía «Revisión con
                       incidencias» y no lo que se vio. `line-clamp-3` porque aquí
                       es contexto; la observación entera se lee arriba. */}
                   {h.detail && (
@@ -580,6 +613,7 @@ export function RoomSheet({
                     </p>
                   )}
                   <p className="mt-0.5 font-mono text-xs text-muted">
+
                     {[fechaCorta(h.at), h.who, h.ref].filter(Boolean).join(' · ')}
                   </p>
                 </div>

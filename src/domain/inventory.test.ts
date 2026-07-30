@@ -21,6 +21,8 @@ function type(name: string, extra: Partial<AssetType> = {}): AssetType {
     confirmed: true,
     aliases: [],
     merged_into: null,
+    active: true,
+    spec_fields: [],
     ...extra,
   }
 }
@@ -33,6 +35,11 @@ function asset(label: string, extra: Partial<Asset> = {}): Asset {
     label,
     serial: null,
     model: null,
+    asset_model_id: null,
+    installed_at: null,
+    warranty_until: null,
+    specs: {},
+    notes: null,
     status: 'instalado',
     created_at: null,
     confirmed: true,

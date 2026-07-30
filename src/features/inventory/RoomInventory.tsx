@@ -1,19 +1,24 @@
 import { useId, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { useConfirmar } from '@/components/Confirmar'
 import { db } from '@/db/dexie'
 import {
+  identifyAsset,
   labelAvailable,
   resolveType,
   searchCatalog,
   sugerenciasDe,
   vocabularioDeTipo,
+  type AssetIdentity,
   type Sugerencia,
 } from '@/domain/inventory'
+import { fechaCorta } from '@/domain/fechas'
 import {
   ASSET_STATUS_LABELS,
   REMOVAL_DESTINO_HINTS,
   REMOVAL_DESTINO_LABELS,
   type Asset,
+  type AssetModel,
   type AssetRemoval,
   type AssetType,
   type RemovalDestino,
@@ -21,7 +26,9 @@ import {
 import { typeRank } from '@/features/inspection/useInspection'
 import { LevantarInventario } from './LevantarInventario'
 import { OrigenDelEquipo } from './OrigenDelEquipo'
-import { useRoomInventory, type Origen } from './useRoomInventory'
+import { SelectorDeModelo } from './SelectorDeModelo'
+import { CamposPropios } from './CamposPropios'
+import { useRoomInventory, type AltaDeEquipo, type ModeloElegido } from './useRoomInventory'
 
 /**
  * El inventario de la sala, dentro de la propia revisión.
@@ -51,9 +58,17 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
   const [fixing, setFixing] = useState<string | null>(null)
   /* Lo que se va a añadir, esperando a que se diga de dónde sale. */
   const [eligiendo, setEligiendo] = useState<{ nombre: string; tipo: AssetType | null } | null>(null)
+  const { pedir, dialogo } = useConfirmar()
 
-  const { addAssetConOrigen, cancelarRetirada, confirmarInventario, patchAsset, setStatus, solicitarRetirada } =
-    useRoomInventory(roomId, userId)
+  const {
+    addAssetConOrigen,
+    cancelarRetirada,
+    confirmarInventario,
+    patchAsset,
+    setModelo,
+    setStatus,
+    solicitarRetirada,
+  } = useRoomInventory(roomId, userId)
 
   /* Las retiradas vivas de esta sala, por equipo. Del espejo: la marca tiene que
      verse en el aula sin cobertura, o quien la pidió ayer la vuelve a pedir. */
@@ -64,6 +79,14 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
     },
     [],
     new Map<string, AssetRemoval>(),
+  )
+
+  /* El catálogo de modelos, para poder decir «Lenovo U3302» y no «Ordenador».
+     Sale del espejo, así que se lee igual en un sótano. */
+  const modelos = useLiveQuery(() => db.assetModels.toArray(), [], [])
+  const modelosById = useMemo(
+    () => new Map<string, AssetModel>(modelos.map((m) => [m.id, m])),
+    [modelos],
   )
 
   /* Cuándo se confirmó por última vez que el inventario de esta sala está
@@ -105,10 +128,11 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
   const hits = searchCatalog(types, query)
   const raw = query.trim()
 
-  async function add(origen: Origen): Promise<void> {
+  async function add(alta: AltaDeEquipo): Promise<void> {
     if (!eligiendo) return
     const { nombre, tipo } = eligiendo
-    const result = await addAssetConOrigen(nombre, tipo, origen)
+    const result = await addAssetConOrigen(nombre, tipo, alta)
+    const { origen } = alta
 
     setEligiendo(null)
     setQuery('')
@@ -240,7 +264,7 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                 roomId={roomId}
                 inventariando={levantadoEl === null}
                 onCancelar={() => setEligiendo(null)}
-                onConfirmar={(origen) => void add(origen)}
+                onConfirmar={(alta) => void add(alta)}
               />
             )}
 
@@ -250,20 +274,30 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
               {live.map((asset) => {
                 const type = resolveType(typesById, asset.asset_type_id)
                 const pending = type ? !type.confirmed : false
-                const detail = [asset.model, asset.serial].filter(Boolean).join(' · ')
+                const id = identifyAsset(asset, typesById, modelosById)
 
                 return (
                   <li key={asset.id} className="py-2">
                     <div className="flex items-center gap-2">
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">
-                          {asset.label ?? type?.name ?? 'Equipo'}
-                        </span>
+                        <span className="block truncate text-sm font-medium">{id.etiqueta}</span>
+                        {/*
+                          Marca, modelo y número de serie, en la segunda línea y
+                          en este orden. Es lo que contesta «¿cuál de los dos
+                          ordenadores es?» sin abrir nada: antes ponía el texto
+                          libre del modelo, que en la mitad de los equipos estaba
+                          vacío y en la otra mitad decía «M403H *».
+                        */}
                         <span className="block truncate text-xs text-muted">
-                          {detail || 'Sin modelo ni serie'}
+                          {id.ficha || 'Sin modelo ni serie'}
                         </span>
                       </span>
 
+                      {id.modeloSinValidar && !pending && (
+                        <span className="shrink-0 rounded-tag bg-warn-tint px-1.5 py-0.5 text-[0.6875rem] font-medium text-warn">
+                          Modelo sin validar
+                        </span>
+                      )}
                       {pending && (
                         <span className="shrink-0 rounded-tag bg-warn-tint px-1.5 py-0.5 text-[0.6875rem] font-medium text-warn">
                           Sin validar
@@ -285,6 +319,7 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                       <button
                         type="button"
                         onClick={() => setFixing(fixing === asset.id ? null : asset.id)}
+                        aria-expanded={fixing === asset.id}
                         className="key key-quiet min-h-11 shrink-0 px-3 text-xs"
                       >
                         Corregir
@@ -293,27 +328,65 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
 
                     {/* Se monta solo al abrirlo. Una sala de ocho equipos tenía
                         ocho formularios completos —24 campos y 16 botones— vivos
-                        dentro de un panel que nace cerrado. */}
-                    <div className="collapse-y" data-open={fixing === asset.id}>
+                        dentro de un panel que nace cerrado.
+                        `inert` cuando está plegado: sin él, el tabulador entra en
+                        un formulario de alto cero y el foco se va a un sitio que
+                        no se ve. */}
+                    <div className="collapse-y" data-open={fixing === asset.id} inert={fixing !== asset.id}>
                       <div>
                         {fixing === asset.id && (
                           <AssetFixer
                             asset={asset}
                             assetsInRoom={assets}
                             retirada={retiradas.get(asset.id) ?? null}
-                            typeName={type?.name ?? null}
+                            tipo={type}
+                            identidad={id}
                             onPatch={(patch) => void patchAsset(asset, patch)}
+                            onModelo={(m) => void setModelo(asset, m)}
                             onStatus={(status) => void setStatus(asset, status)}
+                            /*
+                              Pedir la retirada pasa por el diálogo y no solo por
+                              el panel, y lo que se enseña ahí es el aparato
+                              entero —tipo, marca, modelo y número de serie—. Es
+                              justo la decisión donde importa: «¿Retirar el
+                              Ordenador de la sala?» en un aula con dos no dice
+                              cuál, y quien autoriza al otro lado tampoco lo
+                              sabrá. Con la baja se sube el listón a teclear una
+                              palabra: dar de baja no se deshace.
+                            */
                             onSolicitar={(destino, motivo) => {
-                              void solicitarRetirada(asset, destino, motivo).then((r) =>
-                                setNote(
-                                  r.ok
-                                    ? `Retirada pedida para «${asset.label ?? 'el equipo'}». Sigue en la sala hasta que la autoricen.`
-                                    : (r.error ?? 'No se pudo pedir la retirada.'),
-                                ),
-                              )
+                              const baja = destino === 'baja'
+                              void pedir({
+                                titulo: baja
+                                  ? `¿Pedir la baja de «${id.etiqueta}»?`
+                                  : `¿Pedir la retirada de «${id.etiqueta}»?`,
+                                detalle: id.ficha ? `${id.completo} · ${id.ficha}` : id.completo,
+                                consecuencias: baja
+                                  ? [
+                                      'Al autorizarla, el equipo sale del inventario de la sala.',
+                                      'Se da por perdido: no vuelve al almacén ni suma existencias.',
+                                      'El equipo y su historial se conservan: no se borra nada.',
+                                    ]
+                                  : [
+                                      'Al autorizarla, el equipo sale de la sala y entra en el almacén.',
+                                      'Hasta entonces sigue contando en las revisiones de esta sala.',
+                                      'El equipo y su historial se conservan: no se borra nada.',
+                                    ],
+                                confirmar: baja ? 'Pedir la baja' : 'Pedir la retirada',
+                                tono: baja ? 'crit' : 'warn',
+                                escribir: baja ? 'BAJA' : undefined,
+                              }).then((si) => {
+                                if (!si) return
+                                void solicitarRetirada(asset, destino, motivo).then((r) =>
+                                  setNote(
+                                    r.ok
+                                      ? `Retirada pedida para «${id.etiqueta}»${id.ficha ? ` (${id.ficha})` : ''}. Sigue en la sala hasta que la autoricen.`
+                                      : (r.error ?? 'No se pudo pedir la retirada.'),
+                                  ),
+                                )
+                              })
                             }}
-                            onCancelar={(id) => void cancelarRetirada(id)}
+                            onCancelar={(solicitudId) => void cancelarRetirada(solicitudId)}
                           />
                         )}
                       </div>
@@ -339,6 +412,8 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
           </div>
         </div>
       </div>
+
+      {dialogo}
     </section>
   )
 }
@@ -350,19 +425,25 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
  * es: el técnico que está delante sabe que una es la del atril, y esa palabra
  * vale más que el número.
  *
- * Y el nombre y el modelo se autocompletan con lo que ya está escrito en el
- * parque. Al alta se buscaba en el catálogo antes de crear —es lo que impide que
- * se llene de sinónimos— y al corregir no se buscaba nada: los dos campos que más
- * se teclean estaban en blanco, a mano, de pie y con una mano. Así es como
- * `Epson EB-1485Fi` se convierte en cuatro modelos distintos que ningún informe
- * vuelve a agrupar.
+ * El nombre se autocompleta con lo que ya está escrito en el parque. Al alta se
+ * buscaba en el catálogo antes de crear —es lo que impide que se llene de
+ * sinónimos— y al corregir no se buscaba nada: el campo que más se teclea estaba
+ * en blanco, a mano, de pie y con una mano.
+ *
+ * Y el modelo ya no es un campo de texto: es el catálogo. Es el cambio que hace
+ * que el inventario pueda contestar «¿cuántos EB-992F tenemos?», y de paso el
+ * que impide que el mismo aparato entre como «ME403U», «ME-403U» y «ME403U *»
+ * desde tres aulas distintas. Por eso aquí ya no hay sugerencias de modelo: no
+ * se sugiere lo que se elige de una lista.
  */
 function AssetFixer({
   asset,
   assetsInRoom,
   retirada,
-  typeName,
+  tipo,
+  identidad,
   onPatch,
+  onModelo,
   onStatus,
   onSolicitar,
   onCancelar,
@@ -371,16 +452,20 @@ function AssetFixer({
   assetsInRoom: Asset[]
   /** La solicitud viva de este equipo, si la hay. */
   retirada: AssetRemoval | null
-  /** Cómo se llama su tipo. Es el primer nombre que le toca a un equipo. */
-  typeName: string | null
+  /** Su tipo: de ahí sale el primer nombre que le toca y sus campos propios. */
+  tipo: AssetType | null
+  /** Tipo, marca, modelo y serie ya resueltos, para no volver a cruzarlos aquí. */
+  identidad: AssetIdentity
   onPatch: (patch: Partial<Asset>) => void
+  onModelo: (modelo: ModeloElegido | null) => void
   onStatus: (status: 'averiado') => void
   onSolicitar: (destino: RemovalDestino, motivo: string) => void
   onCancelar: (solicitudId: string) => void
 }): React.ReactElement {
   const [label, setLabel] = useState(asset.label ?? '')
-  const [model, setModel] = useState(asset.model ?? '')
   const [serial, setSerial] = useState(asset.serial ?? '')
+  const [notes, setNotes] = useState(asset.notes ?? '')
+  const [mas, setMas] = useState(false)
   const [pidiendo, setPidiendo] = useState(false)
   /* El almacén por defecto: la retirada que más se pierde hoy es justo la del
      aparato que está bien y vuelve a la estantería sin que nadie lo ingrese. */
@@ -403,11 +488,6 @@ function AssetFixer({
     [] as Asset[],
   )
 
-  const vocModelo = useMemo(
-    () => vocabularioDeTipo(delTipo, asset.asset_type_id, 'model'),
-    [delTipo, asset.asset_type_id],
-  )
-
   /*
    * El vocabulario de nombres lleva delante el del propio tipo.
    *
@@ -417,9 +497,10 @@ function AssetFixer({
    */
   const vocEtiqueta = useMemo(() => {
     const delParque = vocabularioDeTipo(delTipo, asset.asset_type_id, 'label')
-    if (!typeName || delParque.some((s) => s.valor === typeName)) return delParque
-    return [...delParque, { valor: typeName, veces: 0 }]
-  }, [delTipo, asset.asset_type_id, typeName])
+    const nombreTipo = tipo?.name ?? null
+    if (!nombreTipo || delParque.some((s) => s.valor === nombreTipo)) return delParque
+    return [...delParque, { valor: nombreTipo, veces: 0 }]
+  }, [delTipo, asset.asset_type_id, tipo])
 
   /*
    * Y las que ya están cogidas en ESTA sala se caen de la lista.
@@ -441,14 +522,35 @@ function AssetFixer({
     [vocEtiqueta, label, assetsInRoom, asset.id],
   )
 
-  const sugModelo = useMemo(
-    () => sugerenciasDe(vocModelo, model, { excluir: [model] }),
-    [vocModelo, model],
+  /*
+   * El número de serie es único en TODA la base, no por sala.
+   *
+   * Sin este aviso, teclear uno que ya existe se acepta aquí, se sube, y el
+   * servidor lo rechaza horas después y a kilómetros del aula, donde ya no hay
+   * forma de saber cuál de los dos aparatos era. Se avisa y no se bloquea: quien
+   * está delante lee la pegatina mejor que esta comprobación, y puede ser que el
+   * duplicado sea el equipo viejo, mal apuntado.
+   */
+  const serialRepetido = useLiveQuery(
+    async () => {
+      const s = serial.trim()
+      if (!s) return null
+      const otros = await db.assets.where('serial').equals(s).toArray()
+      const choca = otros.find((a) => a.id !== asset.id && a.status !== 'retirado')
+      if (!choca) return null
+      const sala = choca.room_id ? await db.rooms.get(choca.room_id) : null
+      return sala ? `${sala.code} — ${sala.name}` : 'otro equipo'
+    },
+    [serial, asset.id],
+    null,
   )
+
+  /** `AAAA-MM-DD` para el campo de fecha, o vacío si no consta. */
+  const instalado = asset.installed_at ? asset.installed_at.slice(0, 10) : ''
 
   return (
     <div className="mt-2 rounded-ctl border border-line bg-sunken p-3">
-      <div className="grid gap-2">
+      <div className="grid gap-3">
         <CampoSugerido
           etiqueta="Nombre en esta sala"
           valor={label}
@@ -466,46 +568,123 @@ function AssetFixer({
           inputClassName="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
         />
         {clash && (
-          <p className="text-xs text-crit">
+          <p className="-mt-2 text-xs text-crit">
             Ya hay otro equipo con ese nombre en esta sala.
           </p>
         )}
 
-        {/* El modelo va a lo ancho y ya no compartiendo fila con la serie: su
-            lista de sugerencias tiene que caber, y `Epson EB-1485Fi` en media
-            pantalla de móvil sale recortado justo por donde se distinguen dos
-            modelos. La serie no la acompaña porque no se sugiere. */}
-        <CampoSugerido
-          etiqueta="Modelo"
-          valor={model}
-          onValor={setModel}
-          onCommit={(v) => v.trim() !== (asset.model ?? '') && onPatch({ model: v.trim() || null })}
-          sugerencias={sugModelo}
-          inputClassName="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
-          inputProps={{ autoCapitalize: 'off', autoCorrect: 'off', enterKeyHint: 'done' }}
-        />
+        <div className="text-xs text-muted">
+          Marca y modelo
+          <div className="mt-1">
+            <SelectorDeModelo
+              typeId={asset.asset_type_id}
+              value={asset.asset_model_id}
+              onChange={onModelo}
+              autoFocus={false}
+            />
+          </div>
+          {/* Lo que se escribió a mano antes de que existiera el catálogo. Se
+              enseña mientras no haya modelo elegido: es la pista de qué hay que
+              elegir, y tirarla dejaría el aparato sin ninguna. */}
+          {!asset.asset_model_id && asset.model?.trim() && (
+            <p className="mt-1 text-xs text-muted">
+              Antes ponía «{asset.model.trim()}». Elígelo del catálogo o créalo.
+            </p>
+          )}
+        </div>
 
-        <label className="text-xs text-muted">
-          Nº de serie
-          {/* Un número de serie no es una frase: sin esto iOS lo capitaliza y
-              el corrector reescribe cadenas alfanuméricas cortas.
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="text-xs text-muted">
+            Nº de serie
+            {/* Un número de serie no es una frase: sin esto iOS lo capitaliza y
+                el corrector reescribe cadenas alfanuméricas cortas.
 
-              Y no se autocompleta, a diferencia de los dos de arriba. No es un
-              olvido: una serie identifica UN aparato, así que toda sugerencia
-              sería la de otro equipo y aceptarla sería duplicar una identidad.
-              Aquí ayudar de más hace daño. */}
-          <input
-            type="text"
-            value={serial}
-            autoCapitalize="characters"
-            autoCorrect="off"
-            spellCheck={false}
-            enterKeyHint="done"
-            onChange={(e) => setSerial(e.target.value)}
-            onBlur={() => serial.trim() !== (asset.serial ?? '') && onPatch({ serial: serial.trim() || null })}
-            className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 font-mono text-sm text-ink"
-          />
-        </label>
+                Y no se autocompleta, a diferencia del nombre. No es un olvido:
+                una serie identifica UN aparato, así que toda sugerencia sería la
+                de otro equipo y aceptarla sería duplicar una identidad. Aquí
+                ayudar de más hace daño. */}
+            <input
+              type="text"
+              value={serial}
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="done"
+              onChange={(e) => setSerial(e.target.value)}
+              onBlur={() => serial.trim() !== (asset.serial ?? '') && onPatch({ serial: serial.trim() || null })}
+              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 font-mono text-sm text-ink"
+            />
+          </label>
+
+          <label className="text-xs text-muted">
+            Instalado el
+            <input
+              type="date"
+              value={instalado}
+              onChange={(e) =>
+                onPatch({
+                  installed_at: e.target.value
+                    ? new Date(`${e.target.value}T12:00:00`).toISOString()
+                    : null,
+                })
+              }
+              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+            />
+          </label>
+        </div>
+
+        {serialRepetido && (
+          <p className="-mt-1 text-xs text-warn">
+            Ese número de serie ya está en {serialRepetido}. Si es el mismo aparato, tráelo con
+            «De otra sala» en vez de darlo de alta otra vez.
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setMas((v) => !v)}
+          aria-expanded={mas}
+          className="text-left text-xs text-muted underline-offset-4 hover:underline"
+        >
+          {mas ? 'Menos detalles' : 'Más detalles: garantía, observaciones…'}
+        </button>
+
+        <div className="collapse-y" data-open={mas} inert={!mas}>
+          <div className="grid gap-2">
+            <label className="text-xs text-muted">
+              Garantía hasta
+              <input
+                type="date"
+                value={asset.warranty_until ?? ''}
+                onChange={(e) => onPatch({ warranty_until: e.target.value || null })}
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+              />
+            </label>
+
+            <CamposPropios
+              campos={(tipo?.spec_fields ?? []).filter((c) => c.en !== 'modelo')}
+              valores={asset.specs ?? {}}
+              onChange={(specs) => onPatch({ specs })}
+            />
+
+            <label className="text-xs text-muted">
+              Observaciones
+              <textarea
+                value={notes}
+                rows={2}
+                onChange={(e) => setNotes(e.target.value)}
+                onBlur={() => notes.trim() !== (asset.notes ?? '') && onPatch({ notes: notes.trim() || null })}
+                className="mt-1 w-full rounded-ctl border border-line bg-surface px-2 py-1.5 text-sm text-ink"
+              />
+            </label>
+
+            {asset.installed_at && (
+              <p className="text-xs text-muted">
+                Puesto en esta sala el {fechaCorta(asset.installed_at)}.
+              </p>
+            )}
+          </div>
+        </div>
 
         <div className="flex gap-2">
           <button
@@ -538,6 +717,13 @@ function AssetFixer({
         {pidiendo && retirada === null && (
           <div className="rounded-ctl border border-line bg-surface p-3">
             <p className="text-xs font-medium">¿A dónde va?</p>
+            {/* Y de qué aparato estamos hablando. En un aula con dos ordenadores
+                «Sacar de la sala» no dice cuál, y el que firma la solicitud es
+                el único que tiene la pegatina delante: si aquí no consta el
+                modelo y la serie, al otro lado ya no hay forma de saberlo. */}
+            <p className="mt-1 text-xs text-muted">
+              {identidad.ficha ? `${identidad.completo} · ${identidad.ficha}` : identidad.completo}
+            </p>
 
             <div role="radiogroup" aria-label="Destino del equipo" className="mt-2 grid gap-2">
               {(['baja', 'almacen'] as RemovalDestino[]).map((d) => (

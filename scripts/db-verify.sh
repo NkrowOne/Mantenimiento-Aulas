@@ -133,6 +133,12 @@ if [ -f supabase/seed.sql ]; then
   # cuando el relleno de inventario se ejecutó no había ni una sala. Ahora sí.
   echo "▸ Materializando el inventario de las salas"
   psql "$PGURL" -t -A -c "select public.backfill_room_assets() || ' elementos creados'" | sed 's/^/   /'
+
+  # Y el catálogo de marcas y modelos, que se deduce del texto libre que trae el
+  # Excel. Mismo motivo que el de arriba: cuando corrió su migración no había ni
+  # un equipo del que deducirlo.
+  echo "▸ Deduciendo el catálogo de modelos"
+  psql "$PGURL" -t -A -c "select public.backfill_asset_models()" | sed 's/^/   /'
 fi
 
 echo "▸ Recuento"

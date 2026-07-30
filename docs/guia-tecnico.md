@@ -10,13 +10,37 @@ Administración te da **tu email** y un **código de alta** de doce caracteres,
 tipo `KP4M-2XQR-B7NH`. Caduca a las 24 horas y solo vale una vez.
 
 1. Abre la dirección de la aplicación en Safari o Chrome.
-2. Escribe tu email y el código.
+2. Deja la pestaña **«Con código»**, y escribe tu email y el código.
 3. **Elige un PIN de 4 a 8 dígitos.** Es el que usarás a diario.
 
 El PIN no lo sabe nadie más, ni siquiera administración. Si lo olvidas, se pide
 un código nuevo y se vuelve a empezar: tu trabajo ya registrado no se pierde.
 
-Evita `1234`, `0000` y secuencias: la aplicación no las acepta.
+Evita `1234`, `0000` y secuencias: la aplicación no las acepta. Y si puedes,
+**pon seis dígitos en vez de cuatro**: se teclea igual de rápido y protege cien
+veces más.
+
+## Usarla en otro dispositivo
+
+Puedes tener la aplicación en **hasta tres aparatos** —el iPad del trabajo, tu
+móvil, el ordenador— y para el segundo y el tercero **no hace falta pedir otro
+código**.
+
+1. Abre la aplicación en el aparato nuevo.
+2. Elige la pestaña **«Con mi PIN»**.
+3. Escribe tu email y el PIN de siempre.
+
+Esa primera vez necesita conexión; a partir de ahí funciona sin cobertura como
+cualquier otro.
+
+Los tuyos los ves tocando **«Aulas · tecnico»**, arriba a la izquierda: salen con
+su nombre y cuándo se conectó cada uno, y desde ahí puedes **retirar** el que ya
+no uses —al cambiar de móvil, por ejemplo— para dejar el hueco libre. Si has
+perdido uno, dilo a administración además de retirarlo.
+
+Ahí mismo está **cambiar el PIN**. Un aviso que ahorra una llamada: los aparatos
+que ya están dentro siguen abriéndose con el PIN anterior hasta que los vuelvas a
+dar de alta; el nuevo es el que vale para añadir dispositivos.
 
 ## El día a día
 
@@ -138,6 +162,17 @@ revisión vuelves a la ficha.
 
 6. **Guardar y siguiente sala** te lleva directo a la siguiente sin volver atrás.
 
+### Qué aparato es cada uno
+
+Debajo del nombre de cada equipo sale **la marca, el modelo y el número de
+serie**: «Lenovo U3302 · S/N 2440634LG». Es lo que contesta «¿cuál de los dos
+ordenadores estoy marcando?» sin salir de la revisión.
+
+Si pone **«Sin modelo ni serie»** es que nadie se lo ha puesto todavía. Cuando
+tengas un minuto delante del aparato, mira la pegatina y añádelo desde
+«Corregir»: se tarda menos en apuntarlo que en volver a preguntárselo el mes que
+viene.
+
 ### Si el inventario no cuadra
 
 Abajo del todo, **«Equipos de la sala»**. Se abre tocándolo y sirve para el día
@@ -164,21 +199,41 @@ aquí**, sin salir de la revisión.
   Créalo y sigue: el equipo queda dado de alta y usable al momento, y el
   coordinador lo confirma después. **No esperes a preguntar** — lo que no se
   apunta en el momento no se apunta.
+- **Qué aparato es.** En el mismo paso, antes de darle a «Añadir», te pide
+  **marca y modelo, número de serie y desde cuándo está puesto**. Escribe tres
+  letras —`epson`, `eb-99`— y sale la lista; si no está, «Crear» te lo parte solo
+  en marca y modelo y lo das de alta ahí mismo, en naranja, como con los tipos.
+
+  Todo es opcional. Si la pegatina no se lee, déjalo en blanco y añade el equipo:
+  un aparato apuntado sin modelo vale infinitamente más que uno sin apuntar.
+
+  **La fecha viene puesta a hoy**, que es lo correcto cuando acabas de
+  instalarlo. Si el aparato lleva años ahí —levantando inventario, casi siempre—
+  cámbiala: es lo que hace que el inventario diga desde cuándo está y no cuándo
+  se apuntó.
 - **El número.** Si ya había una pantalla, la nueva se llama «Pantalla 2» sola.
   No teclees el número.
 - **Corregir.** Cada equipo tiene su botón: cambiar el nombre —«Pantalla 2» se
-  puede reescribir a «Pantalla del atril», que dice mucho más—, apuntar modelo y
-  número de serie, o marcarlo **averiado**.
+  puede reescribir a «Pantalla del atril», que dice mucho más—, elegir marca y
+  modelo, apuntar el número de serie y la fecha, marcarlo **averiado**, o
+  **pedir que se saque** de la sala. En «Más detalles» están la garantía, las
+  observaciones y lo propio de cada tipo (los lúmenes de un proyector, la RAM de
+  un ordenador).
 
-  **El nombre y el modelo se autocompletan.** Toca el campo y salen los que ya
-  están escritos en el resto del campus para ese tipo de aparato, el más repetido
-  primero y con en cuántos equipos está. Tócalo o dale a la tecla de retorno y se
-  guarda. No hace falta escribir nada para que salgan: el caso normal es
-  precisamente que el modelo esté en blanco.
+  Si tecleas un número de serie que ya está en otra aula, te avisa: casi siempre
+  significa que ese aparato se movió y hay que traerlo con **«De otra sala»** en
+  vez de darlo de alta otra vez.
 
-  Úsalo siempre que puedas en vez de teclearlo. Tres personas escribiendo
-  `Epson EB-1485Fi` a mano acaban dejando tres modelos distintos, y a partir de
-  ahí ningún informe vuelve a agruparlos.
+  **El nombre se autocompleta.** Toca el campo y salen los que ya están escritos
+  en el resto del campus para ese tipo de aparato, el más repetido primero y con
+  en cuántos equipos está. Tócalo o dale a la tecla de retorno y se guarda. No
+  hace falta escribir nada para que salgan.
+
+  **La marca y el modelo se eligen de la lista**, no se teclean. Es a propósito:
+  tres personas escribiendo `Epson EB-1485Fi` a mano acaban dejando tres modelos
+  distintos, y a partir de ahí ningún informe vuelve a agruparlos. Si el equipo
+  traía un modelo escrito a mano de antes, te lo enseña debajo —«Antes ponía
+  ME403U»— para que lo busques en el catálogo o lo crees.
 
   > El **número de serie no se autocompleta**, y es a propósito: identifica a un
   > aparato concreto, así que cualquier sugerencia sería la de otro equipo.
