@@ -189,6 +189,46 @@ npm run admin:user -- codigo ana@x.es                         -- código nuevo
 Si el dispositivo se perdió **con la sesión cerrada**, no hay urgencia: sin el
 PIN los datos guardados son ilegibles.
 
+### Un dispositivo que no consigue subir su cola
+
+La lámpara de la cabecera marca pendientes y el número no baja. Antes de tocar
+nada: **el trabajo no se ha perdido**. Vive en el dispositivo y no lo borra ni
+cerrar sesión, ni fallar el PIN cinco veces, ni recargar. Lo que pasa es que
+mientras no suba existe en un solo sitio, y eso es lo que hay que resolver.
+
+**Primero, poner el trabajo a salvo.** En el dispositivo, pulsa la lámpara →
+**Guardar copia de lo pendiente**. Sale un fichero `pendientes-aulas-….json`
+con todos los cambios y las fotos dentro; mándalo por AirDrop o correo. No
+necesita red del servidor ni permisos: es local. A partir de ese momento el
+trabajo ya no depende de ese iPad.
+
+**Después, meterlo por otro lado.** En un equipo con sesión de administrador:
+`Datos → Recuperar trabajo de un dispositivo → Elegir fichero de copia`. Se
+vuelve a encolar y se sube con esa sesión. Importar dos veces la misma copia no
+duplica nada: el identificador de cada fila se genera al pulsar, no al enviar, y
+es la clave de idempotencia.
+
+**Y luego, por qué no subía.** Abre la lámpara: debajo del contador sale el
+motivo del último intento, y `Ver diagnóstico del servidor` dice si es cosa de
+permisos. Los dos casos habituales:
+
+- *Amarillo, «N pendientes»* — no es rechazo del servidor: o no hay línea, o la
+  cola está esperando su turno de reintento. **Sincronizar** lo intenta ya, sin
+  esperar.
+- *Rojo, «N sin enviar»* — el servidor los ha rechazado. El motivo sale escrito
+  debajo. **Reintentar** los devuelve a la cola una vez arreglada la causa
+  (normalmente un rol o un perfil desactivado: mira el diagnóstico).
+
+Cerrar sesión no borra nada, pero **para la subida en seco**: sin sesión no se
+puede mandar nada al servidor. Si alguien cierra sesión creyendo que así se
+guarda, está haciendo justo lo contrario. La aplicación avisa cuando quedan
+cambios sin subir.
+
+Conviene además que la aplicación esté **instalada en la pantalla de inicio**.
+iOS puede desalojar el almacenamiento de un sitio que lleve siete días sin
+abrirse; instalada, no. La aplicación pide almacenamiento persistente al
+arrancar, pero eso lo concede iOS por heurística y no es una garantía.
+
 ## 3. Editar edificios, salas y equipamiento
 
 Las altas y las bajas se hacen **desde la aplicación**, en `Datos → Salas y

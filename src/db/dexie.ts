@@ -189,6 +189,8 @@ export interface PendingSummary {
   oldestAt: number | null
   /** Por qué se rechazó lo último que se rechazó. */
   ultimoMotivo: string | null
+  /** Qué falló el último intento de lo más viejo que sigue esperando. */
+  motivoPendiente: string | null
 }
 
 /**
@@ -218,10 +220,29 @@ export async function pendingSummary(): Promise<PendingSummary> {
   const colaViva = pendientes + enviando
   const fotosVivas = fotosPend + fotosSubiendo
 
-  // Solo se busca la más antigua si hay algo esperando: es una consulta más, y
-  // con la cola vacía —el caso normal— no aporta nada.
-  const oldest =
-    colaViva > 0 ? ((await db.outbox.orderBy('createdAt').first())?.createdAt ?? null) : null
+  /*
+   * Solo se busca la más antigua si hay algo esperando: es una consulta más, y
+   * con la cola vacía —el caso normal— no aporta nada.
+   *
+   * Y se saltan las rechazadas. Antes cogía la primera por fecha fuera cual
+   * fuera su estado, así que una entrada rechazada —que ya se queja por su
+   * cuenta y no se va a mover sola— se quedaba de por vida como «la más
+   * antigua» y mantenía encendido el aviso de «N atascados» aunque todo lo que
+   * de verdad estaba en cola acabara de encolarse.
+   */
+  const masViejo =
+    colaViva > 0
+      ? ((await db.outbox
+          .orderBy('createdAt')
+          .filter((e) => e.status !== 'rechazado')
+          .first()) ?? null)
+      : null
+  const oldest = masViejo?.createdAt ?? null
+
+  // Sale gratis: es la fila que ya se ha leído. Y contesta la pregunta que la
+  // cifra sola no contesta —«¿por qué sigue ahí?»—, que es justo la que se hace
+  // quien mira el panel porque el número no baja.
+  const motivoPendiente = masViejo?.lastError ?? null
 
   // Igual que la fecha del más antiguo: solo se busca si hay algo rechazado,
   // que es la excepción. «N rechazados. Avisa a administración» sin decir de qué
@@ -237,6 +258,7 @@ export async function pendingSummary(): Promise<PendingSummary> {
     photos: fotosVivas,
     oldestAt: oldest,
     ultimoMotivo,
+    motivoPendiente,
   }
 }
 
