@@ -257,6 +257,20 @@ async function main(): Promise<void> {
   // con el mismo texto.
   await page.getByRole('button', { name: /Lab Criminología/ }).first().click()
   await page.waitForTimeout(800)
+  await shot('ficha')
+
+  /*
+   * Y de la ficha a la revisión, con su botón.
+   *
+   * Esto faltaba y por eso el recorrido se paraba en seco: la lista dejó de
+   * abrir el formulario y pasó a abrir la FICHA de la sala, pero aquí se seguía
+   * dando por hecho lo primero. La captura llamada «revision» era en realidad la
+   * ficha, y el clic siguiente esperaba unos tri-estados que en esa pantalla no
+   * existen. Un `nth(1)` sobre cero elementos: treinta segundos de espera y un
+   * tiempo agotado que no menciona la causa.
+   */
+  await page.getByRole('button', { name: 'Revisar esta sala' }).click()
+  await page.waitForTimeout(800)
   await shot('revision')
 
   // Y cómo queda tras marcar una incidencia y usar la vía rápida.

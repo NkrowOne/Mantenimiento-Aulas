@@ -169,6 +169,19 @@ aquí**, sin salir de la revisión.
 - **Corregir.** Cada equipo tiene su botón: cambiar el nombre —«Pantalla 2» se
   puede reescribir a «Pantalla del atril», que dice mucho más—, apuntar modelo y
   número de serie, o marcarlo **averiado**.
+
+  **El nombre y el modelo se autocompletan.** Toca el campo y salen los que ya
+  están escritos en el resto del campus para ese tipo de aparato, el más repetido
+  primero y con en cuántos equipos está. Tócalo o dale a la tecla de retorno y se
+  guarda. No hace falta escribir nada para que salgan: el caso normal es
+  precisamente que el modelo esté en blanco.
+
+  Úsalo siempre que puedas en vez de teclearlo. Tres personas escribiendo
+  `Epson EB-1485Fi` a mano acaban dejando tres modelos distintos, y a partir de
+  ahí ningún informe vuelve a agruparlos.
+
+  > El **número de serie no se autocompleta**, y es a propósito: identifica a un
+  > aparato concreto, así que cualquier sugerencia sería la de otro equipo.
 - **Sacar de la sala.** No lo quitas tú: lo **pides**, y dices a dónde va.
   - **Dar de baja** — está roto o ya no sirve.
   - **Devolver al almacén** — funciona y te lo llevas a la estantería. Esta es
@@ -179,7 +192,8 @@ aquí**, sin salir de la revisión.
   mientras tanto sale marcado «retirada pedida». Si te has equivocado, ahí mismo
   tienes **«Ya no hace falta»**.
 
-Todo esto funciona sin cobertura, igual que el resto.
+Todo esto funciona sin cobertura, igual que el resto: las sugerencias salen de la
+copia que el dispositivo ya tiene del inventario del campus.
 
 ### Un aula que nadie ha inventariado
 

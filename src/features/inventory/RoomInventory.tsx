@@ -1,7 +1,14 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
-import { labelAvailable, resolveType, searchCatalog } from '@/domain/inventory'
+import {
+  labelAvailable,
+  resolveType,
+  searchCatalog,
+  sugerenciasDe,
+  vocabularioDeTipo,
+  type Sugerencia,
+} from '@/domain/inventory'
 import {
   ASSET_STATUS_LABELS,
   REMOVAL_DESTINO_HINTS,
@@ -294,6 +301,7 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                             asset={asset}
                             assetsInRoom={assets}
                             retirada={retiradas.get(asset.id) ?? null}
+                            typeName={type?.name ?? null}
                             onPatch={(patch) => void patchAsset(asset, patch)}
                             onStatus={(status) => void setStatus(asset, status)}
                             onSolicitar={(destino, motivo) => {
@@ -341,11 +349,19 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
  * La etiqueta se puede reescribir porque «Pantalla 2» no dice cuál de las dos
  * es: el técnico que está delante sabe que una es la del atril, y esa palabra
  * vale más que el número.
+ *
+ * Y el nombre y el modelo se autocompletan con lo que ya está escrito en el
+ * parque. Al alta se buscaba en el catálogo antes de crear —es lo que impide que
+ * se llene de sinónimos— y al corregir no se buscaba nada: los dos campos que más
+ * se teclean estaban en blanco, a mano, de pie y con una mano. Así es como
+ * `Epson EB-1485Fi` se convierte en cuatro modelos distintos que ningún informe
+ * vuelve a agrupar.
  */
 function AssetFixer({
   asset,
   assetsInRoom,
   retirada,
+  typeName,
   onPatch,
   onStatus,
   onSolicitar,
@@ -355,6 +371,8 @@ function AssetFixer({
   assetsInRoom: Asset[]
   /** La solicitud viva de este equipo, si la hay. */
   retirada: AssetRemoval | null
+  /** Cómo se llama su tipo. Es el primer nombre que le toca a un equipo. */
+  typeName: string | null
   onPatch: (patch: Partial<Asset>) => void
   onStatus: (status: 'averiado') => void
   onSolicitar: (destino: RemovalDestino, motivo: string) => void
@@ -371,59 +389,123 @@ function AssetFixer({
 
   const clash = label.trim() !== '' && !labelAvailable(assetsInRoom, label, asset.id)
 
+  /*
+   * Los equipos de ese mismo tipo en todo el parque.
+   *
+   * Consulta por el índice `asset_type_id` y no `db.assets.toArray()`: son 1.094
+   * equipos en el espejo y de ellos interesan los cuarenta que son proyectores.
+   * Y solo se lanza al abrir este bloque —el formulario se monta al pulsar
+   * «Corregir»—, así que una sala de ocho equipos no dispara ocho consultas.
+   */
+  const delTipo = useLiveQuery(
+    async () => db.assets.where('asset_type_id').equals(asset.asset_type_id).toArray(),
+    [asset.asset_type_id],
+    [] as Asset[],
+  )
+
+  const vocModelo = useMemo(
+    () => vocabularioDeTipo(delTipo, asset.asset_type_id, 'model'),
+    [delTipo, asset.asset_type_id],
+  )
+
+  /*
+   * El vocabulario de nombres lleva delante el del propio tipo.
+   *
+   * Es el nombre que le toca al primero de su clase en una sala, y en un parque
+   * recién inventariado puede que no haya ningún otro nombre escrito todavía: sin
+   * esto, el campo que más se corrige sería justo el que no ofrece nada.
+   */
+  const vocEtiqueta = useMemo(() => {
+    const delParque = vocabularioDeTipo(delTipo, asset.asset_type_id, 'label')
+    if (!typeName || delParque.some((s) => s.valor === typeName)) return delParque
+    return [...delParque, { valor: typeName, veces: 0 }]
+  }, [delTipo, asset.asset_type_id, typeName])
+
+  /*
+   * Y las que ya están cogidas en ESTA sala se caen de la lista.
+   *
+   * `labelAvailable` espeja el índice único de la base, así que ofrecer «Pantalla
+   * 2» en una sala que ya tiene una «Pantalla 2» sería ofrecer una sugerencia que
+   * al pulsarla enciende un error en rojo. La ayuda no puede llevar a la trampa.
+   */
+  const sugEtiqueta = useMemo(
+    () =>
+      sugerenciasDe(vocEtiqueta, label, {
+        excluir: [
+          label,
+          ...assetsInRoom
+            .filter((a) => a.id !== asset.id && a.status !== 'retirado')
+            .map((a) => a.label ?? ''),
+        ],
+      }),
+    [vocEtiqueta, label, assetsInRoom, asset.id],
+  )
+
+  const sugModelo = useMemo(
+    () => sugerenciasDe(vocModelo, model, { excluir: [model] }),
+    [vocModelo, model],
+  )
+
   return (
     <div className="mt-2 rounded-ctl border border-line bg-sunken p-3">
       <div className="grid gap-2">
-        <label className="text-xs text-muted">
-          Nombre en esta sala
-          <input
-            type="text"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            onBlur={() => {
-              const next = label.trim()
-              if (next && !clash && next !== asset.label) onPatch({ label: next })
-            }}
-            className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
-          />
-        </label>
+        <CampoSugerido
+          etiqueta="Nombre en esta sala"
+          valor={label}
+          onValor={setLabel}
+          /* El choque se recalcula con el valor que se confirma y no con el del
+             render: elegir una sugerencia cambia el estado y lo lee en la misma
+             pasada, cuando `clash` todavía habla del texto anterior. */
+          onCommit={(v) => {
+            const next = v.trim()
+            if (next && next !== asset.label && labelAvailable(assetsInRoom, next, asset.id)) {
+              onPatch({ label: next })
+            }
+          }}
+          sugerencias={sugEtiqueta}
+          inputClassName="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+        />
         {clash && (
           <p className="text-xs text-crit">
             Ya hay otro equipo con ese nombre en esta sala.
           </p>
         )}
 
-        <div className="grid grid-cols-2 gap-2">
-          <label className="text-xs text-muted">
-            Modelo
-            <input
-              type="text"
-              value={model}
-              autoCapitalize="off"
-              autoCorrect="off"
-              enterKeyHint="done"
-              onChange={(e) => setModel(e.target.value)}
-              onBlur={() => model.trim() !== (asset.model ?? '') && onPatch({ model: model.trim() || null })}
-              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
-            />
-          </label>
-          <label className="text-xs text-muted">
-            Nº de serie
-            {/* Un número de serie no es una frase: sin esto iOS lo capitaliza y
-                el corrector reescribe cadenas alfanuméricas cortas. */}
-            <input
-              type="text"
-              value={serial}
-              autoCapitalize="characters"
-              autoCorrect="off"
-              spellCheck={false}
-              enterKeyHint="done"
-              onChange={(e) => setSerial(e.target.value)}
-              onBlur={() => serial.trim() !== (asset.serial ?? '') && onPatch({ serial: serial.trim() || null })}
-              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 font-mono text-sm text-ink"
-            />
-          </label>
-        </div>
+        {/* El modelo va a lo ancho y ya no compartiendo fila con la serie: su
+            lista de sugerencias tiene que caber, y `Epson EB-1485Fi` en media
+            pantalla de móvil sale recortado justo por donde se distinguen dos
+            modelos. La serie no la acompaña porque no se sugiere. */}
+        <CampoSugerido
+          etiqueta="Modelo"
+          valor={model}
+          onValor={setModel}
+          onCommit={(v) => v.trim() !== (asset.model ?? '') && onPatch({ model: v.trim() || null })}
+          sugerencias={sugModelo}
+          inputClassName="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+          inputProps={{ autoCapitalize: 'off', autoCorrect: 'off', enterKeyHint: 'done' }}
+        />
+
+        <label className="text-xs text-muted">
+          Nº de serie
+          {/* Un número de serie no es una frase: sin esto iOS lo capitaliza y
+              el corrector reescribe cadenas alfanuméricas cortas.
+
+              Y no se autocompleta, a diferencia de los dos de arriba. No es un
+              olvido: una serie identifica UN aparato, así que toda sugerencia
+              sería la de otro equipo y aceptarla sería duplicar una identidad.
+              Aquí ayudar de más hace daño. */}
+          <input
+            type="text"
+            value={serial}
+            autoCapitalize="characters"
+            autoCorrect="off"
+            spellCheck={false}
+            enterKeyHint="done"
+            onChange={(e) => setSerial(e.target.value)}
+            onBlur={() => serial.trim() !== (asset.serial ?? '') && onPatch({ serial: serial.trim() || null })}
+            className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 font-mono text-sm text-ink"
+          />
+        </label>
 
         <div className="flex gap-2">
           <button
@@ -534,6 +616,144 @@ function AssetFixer({
             </button>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Un campo de texto que ofrece lo que ya está escrito.
+ *
+ * Tres decisiones que no son de estilo:
+ *
+ * **La lista va en el flujo, no flotando.** Este formulario vive dentro de un
+ * `collapse-y`, y eso lleva `overflow: hidden` para poder animar la altura: un
+ * desplegable posicionado en absoluto saldría cortado por el borde del panel.
+ * Empujar el contenido hacia abajo es además lo que ya hace el campo de alta, así
+ * que las dos ayudas de la misma pantalla se comportan igual.
+ *
+ * **Se abre al enfocar, con el campo vacío.** Es justamente el caso que ahorra
+ * trabajo: el técnico delante de un proyector cuyo modelo no ha escrito todavía.
+ * Esperar a que teclee tres letras es ayudarle cuando ya ha hecho el trabajo.
+ *
+ * **La sugerencia no deja escapar el foco.** `preventDefault` en `pointerdown`
+ * evita el `blur`, y hace falta: sin él, tocar «Epson EB-1485Fi» disparaba primero
+ * el guardado de lo que hubiera a medio teclear —`Epso`— y luego el de la
+ * sugerencia. Dos escrituras, y la primera con un modelo que no existe metida en
+ * el histórico del equipo.
+ */
+function CampoSugerido({
+  etiqueta,
+  valor,
+  onValor,
+  onCommit,
+  sugerencias,
+  inputClassName,
+  inputProps,
+}: {
+  etiqueta: string
+  valor: string
+  onValor: (v: string) => void
+  /** Confirmar. Al salir del campo y al elegir una sugerencia. */
+  onCommit: (v: string) => void
+  sugerencias: Sugerencia[]
+  inputClassName: string
+  inputProps?: React.InputHTMLAttributes<HTMLInputElement>
+}): React.ReactElement {
+  const [abierto, setAbierto] = useState(false)
+  const listaId = useId()
+  const desplegada = abierto && sugerencias.length > 0
+
+  /* La última confirmación, para no repetirla. Elegir una sugerencia confirma, y
+     el `blur` que llega detrás confirmaría otra vez el mismo valor. */
+  const confirmado = useRef(valor)
+
+  function confirmar(v: string): void {
+    if (v === confirmado.current) return
+    confirmado.current = v
+    onCommit(v)
+  }
+
+  function elegir(s: Sugerencia): void {
+    onValor(s.valor)
+    confirmar(s.valor)
+    setAbierto(false)
+  }
+
+  return (
+    <div>
+      <label className="block text-xs text-muted">
+        {etiqueta}
+        <input
+          type="text"
+          role="combobox"
+          aria-expanded={desplegada}
+          aria-controls={listaId}
+          aria-autocomplete="list"
+          value={valor}
+          onChange={(e) => {
+            onValor(e.target.value)
+            setAbierto(true)
+          }}
+          onFocus={() => setAbierto(true)}
+          onBlur={() => {
+            setAbierto(false)
+            confirmar(valor)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && desplegada) {
+              e.preventDefault()
+              setAbierto(false)
+              return
+            }
+            // La tecla de retorno acepta la primera sugerencia, igual que en el
+            // campo de alta de ahí arriba: el mismo gesto en la misma pantalla.
+            const primera = sugerencias[0]
+            if (e.key === 'Enter' && desplegada && primera) {
+              e.preventDefault()
+              elegir(primera)
+            }
+          }}
+          className={inputClassName}
+          {...inputProps}
+        />
+      </label>
+
+      {/* La caja que colapsa va por fuera y el `listbox` por dentro, pegado a
+          sus opciones: ARIA pide que las opciones sean hijas de la lista, y con
+          los dos envoltorios de la animación en medio dejaban de serlo. */}
+      <div className="collapse-y" data-open={desplegada} inert={!desplegada}>
+        <div>
+          <div
+            id={listaId}
+            role="listbox"
+            aria-label={`Sugerencias para ${etiqueta}`}
+            className="flex flex-col gap-1 pt-1"
+          >
+            {desplegada &&
+              sugerencias.map((s) => (
+                <button
+                  key={s.valor}
+                  type="button"
+                  role="option"
+                  aria-selected={false}
+                  onPointerDown={(e) => e.preventDefault()}
+                  onClick={() => elegir(s)}
+                  className="key key-quiet flex min-h-11 items-center justify-between gap-2 px-3 py-2 text-left text-sm"
+                >
+                  <span className="min-w-0 flex-1 truncate">{s.valor}</span>
+                  {/* Cuántos equipos lo llevan ya. Es la razón por la que está
+                      arriba en la lista, y verla es lo que permite fiarse de
+                      ella en vez de leerse las cinco. */}
+                  {s.veces > 1 && (
+                    <span className="shrink-0 text-xs font-normal text-muted">
+                      {s.veces} equipos
+                    </span>
+                  )}
+                </button>
+              ))}
+          </div>
+        </div>
       </div>
     </div>
   )

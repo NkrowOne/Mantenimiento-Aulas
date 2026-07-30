@@ -6,6 +6,8 @@ import {
   nextLabel,
   resolveType,
   searchCatalog,
+  sugerenciasDe,
+  vocabularioDeTipo,
 } from './inventory'
 import type { Asset, AssetType } from './types'
 
@@ -145,5 +147,104 @@ describe('resolveType', () => {
       [b.id, { ...b, merged_into: a.id }],
     ])
     expect(() => resolveType(types, a.id)).not.toThrow()
+  })
+})
+
+describe('vocabularioDeTipo', () => {
+  const PROY = assetTypeId('Proyector')
+  const parque: Asset[] = [
+    asset('Proyector', { id: 'p1', asset_type_id: PROY, model: 'NEC NP44', room_id: 'r1' }),
+    asset('Proyector', { id: 'p2', asset_type_id: PROY, model: 'NEC NP44', room_id: 'r2' }),
+    asset('Proyector del atril', { id: 'p3', asset_type_id: PROY, model: 'Epson EB-1485Fi', room_id: 'r3' }),
+    // Otro tipo: su vocabulario no puede colarse en el del proyector.
+    asset('Pantalla', { id: 'x1', model: 'Samsung QM85', room_id: 'r1' }),
+  ]
+
+  it('ordena por lo más repetido: es lo que va a teclear el siguiente', () => {
+    expect(vocabularioDeTipo(parque, PROY, 'model')).toEqual([
+      { valor: 'NEC NP44', veces: 2 },
+      { valor: 'Epson EB-1485Fi', veces: 1 },
+    ])
+  })
+
+  it('no mezcla el vocabulario de otros tipos de equipo', () => {
+    const modelos = vocabularioDeTipo(parque, PROY, 'model').map((s) => s.valor)
+    expect(modelos).not.toContain('Samsung QM85')
+  })
+
+  it('junta las grafías que solo cambian en mayúsculas o tildes', () => {
+    // Es el problema que viene a arreglar: ofrecer las dos sería ofrecerlo.
+    const conRuido = [
+      ...parque,
+      asset('Proyector', { id: 'p4', asset_type_id: PROY, model: 'nec np44', room_id: 'r4' }),
+    ]
+    const nec = vocabularioDeTipo(conRuido, PROY, 'model').find((s) => s.veces === 3)
+    expect(nec).toEqual({ valor: 'NEC NP44', veces: 3 })
+  })
+
+  it('sirve también para los nombres de sala, que es de donde salen las plantillas', () => {
+    expect(vocabularioDeTipo(parque, PROY, 'label')).toEqual([
+      { valor: 'Proyector', veces: 2 },
+      { valor: 'Proyector del atril', veces: 1 },
+    ])
+  })
+
+  it('ignora los vacíos en vez de ofrecer una sugerencia en blanco', () => {
+    const flojo = [
+      asset('Proyector', { id: 'p9', asset_type_id: PROY, model: '   ' }),
+      asset('Proyector 2', { id: 'p8', asset_type_id: PROY, model: null }),
+    ]
+    expect(vocabularioDeTipo(flojo, PROY, 'model')).toEqual([])
+  })
+})
+
+describe('sugerenciasDe', () => {
+  const voc = [
+    { valor: 'NEC NP44', veces: 30 },
+    { valor: 'Epson EB-1485Fi', veces: 4 },
+    { valor: 'Epson EB-685W', veces: 2 },
+  ]
+
+  it('con el campo vacío ofrece lo más frecuente: es el caso que ahorra trabajo', () => {
+    expect(sugerenciasDe(voc, '').map((s) => s.valor)).toEqual([
+      'NEC NP44',
+      'Epson EB-1485Fi',
+      'Epson EB-685W',
+    ])
+  })
+
+  it('filtra por lo tecleado, sin importar tildes ni mayúsculas', () => {
+    expect(sugerenciasDe(voc, 'epson').map((s) => s.valor)).toEqual([
+      'Epson EB-1485Fi',
+      'Epson EB-685W',
+    ])
+  })
+
+  it('lo que empieza por lo tecleado va antes de lo que solo lo contiene', () => {
+    const conAmbos = [
+      { valor: 'Cañón corto NEC', veces: 9 },
+      { valor: 'NEC NP44', veces: 1 },
+    ]
+    expect(sugerenciasDe(conAmbos, 'nec').map((s) => s.valor)).toEqual([
+      'NEC NP44',
+      'Cañón corto NEC',
+    ])
+  })
+
+  it('no ofrece lo que ya está escrito en el campo', () => {
+    expect(sugerenciasDe(voc, 'NEC NP44', { excluir: ['NEC NP44'] })).toEqual([])
+  })
+
+  it('deja excluir lo que en esta sala haría choque de nombre', () => {
+    const nombres = [{ valor: 'Pantalla', veces: 5 }, { valor: 'Pantalla del atril', veces: 2 }]
+    expect(sugerenciasDe(nombres, '', { excluir: ['pantalla'] }).map((s) => s.valor)).toEqual([
+      'Pantalla del atril',
+    ])
+  })
+
+  it('corta la lista para que no tape el formulario', () => {
+    const muchos = Array.from({ length: 20 }, (_, i) => ({ valor: `M${i}`, veces: 1 }))
+    expect(sugerenciasDe(muchos, '')).toHaveLength(5)
+    expect(sugerenciasDe(muchos, '', { limit: 3 })).toHaveLength(3)
   })
 })
