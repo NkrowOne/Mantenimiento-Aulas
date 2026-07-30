@@ -274,14 +274,17 @@ grant execute on function public.merge_asset_type(uuid, uuid) to authenticated;
 -- -----------------------------------------------------------------------------
 
 -- Solo sin confirmar: nadie se auto-valida un tipo colándolo con confirmed=true.
+drop policy if exists "personal propone tipos de equipo" on asset_types;
 create policy "personal propone tipos de equipo" on asset_types
   for insert to authenticated
   with check (public.is_staff() and confirmed = false);
 
+drop policy if exists "supervisor gestiona tipos de equipo" on asset_types;
 create policy "supervisor gestiona tipos de equipo" on asset_types
   for update to authenticated
   using (public.is_supervisor()) with check (public.is_supervisor());
 
+drop policy if exists "personal da de alta equipos" on assets;
 create policy "personal da de alta equipos" on assets
   for insert to authenticated
   with check (public.is_staff());
@@ -289,6 +292,7 @@ create policy "personal da de alta equipos" on assets
 -- El técnico corrige la etiqueta y marca averiado, retirado o movido. Es el
 -- trabajo del que vuelve del aula, y hacerle pedir permiso para eso significa
 -- que la corrección no se hace nunca.
+drop policy if exists "personal corrige equipos de la sala" on assets;
 create policy "personal corrige equipos de la sala" on assets
   for update to authenticated
   using (public.is_staff()) with check (public.is_staff());

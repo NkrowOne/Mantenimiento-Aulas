@@ -30,7 +30,7 @@ vi.mock('@/lib/supabase', () => ({
   },
 }))
 
-const { db } = await import('@/db/dexie')
+const { db, guardarBytesDeFoto } = await import('@/db/dexie')
 const { flush } = await import('@/sync/outbox')
 
 /** El entorno de pruebas es Node: no hay `navigator.onLine` y sin él no sube nada. */
@@ -51,9 +51,29 @@ function entrada(over: Partial<Awaited<ReturnType<typeof db.outbox.get>>> = {}) 
   }
 }
 
+/** Una foto en cola: bytes en su tabla, fila de estado en la suya. */
+async function encolarFoto(over: Record<string, unknown> = {}): Promise<string> {
+  const id = crypto.randomUUID()
+  await guardarBytesDeFoto(id, new Blob(['jpeg']))
+  await db.photos.put({
+    id,
+    entityType: 'incident',
+    entityId: 'i1',
+    takenAt: new Date(0).toISOString(),
+    attempts: 0,
+    nextAttemptAt: 0,
+    status: 'pendiente',
+    lastError: null,
+    ...over,
+  })
+  return id
+}
+
 beforeEach(async () => {
   await db.outbox.clear()
   await db.photos.clear()
+  await db.photoBlobs.clear()
+  await db.inspections.clear()
   upsert.mockReset().mockResolvedValue({ error: null, status: 201 })
   uploadFoto.mockReset().mockResolvedValue({ error: null })
 })
@@ -71,23 +91,15 @@ describe('flush', () => {
   })
 
   it('rescata también las fotos colgadas en «subiendo»', async () => {
-    await db.photos.add({
-      id: crypto.randomUUID(),
-      entityType: 'incident',
-      entityId: 'i1',
-      blob: new Blob(['foto']),
-      takenAt: new Date(0).toISOString(),
-      attempts: 0,
-      nextAttemptAt: 0,
-      status: 'subiendo',
-      lastError: null,
-    })
+    const id = await encolarFoto({ status: 'subiendo' })
 
     const parte = await flush()
 
     expect(uploadFoto).toHaveBeenCalledTimes(1)
     expect(parte.subidos).toBe(1)
     expect(await db.photos.count()).toBe(0)
+    // Y sus bytes se van con ella: la cola es un búfer, no un archivo.
+    expect(await db.photoBlobs.get(id)).toBeUndefined()
   })
 
   it('un fallo de red que LANZA no deja la entrada en vuelo ni abandona la cola', async () => {
@@ -144,6 +156,90 @@ describe('flush', () => {
     upsert.mockClear()
     await flush({ forzar: true })
     expect(upsert).not.toHaveBeenCalled()
+  })
+
+  /*
+   * El modelo de escritura del servidor es de una sola vez, y la cola hacía
+   * upsert siempre. El registro de la base traía 234 rechazos por esto en tres
+   * horas y media de trabajo de campo.
+   */
+  describe('reenvíos sobre tablas que solo aceptan altas', () => {
+    it('las comprobaciones de una revisión CERRADA se reenvían sin pisar', async () => {
+      await db.inspections.put({ id: 'insp-1', status: 'completa' } as never)
+      await db.outbox.add(
+        entrada({ entity: 'inspection_check', payload: { id: 'c1', inspection_id: 'insp-1' } }),
+      )
+
+      await flush()
+
+      expect(upsert).toHaveBeenCalledWith(expect.anything(), {
+        onConflict: 'id',
+        ignoreDuplicates: true,
+      })
+    })
+
+    it('pero las de un BORRADOR sí pisan: el técnico aún las está cambiando', async () => {
+      await db.inspections.put({ id: 'insp-1', status: 'borrador' } as never)
+      await db.outbox.add(
+        entrada({ entity: 'inspection_check', payload: { id: 'c1', inspection_id: 'insp-1' } }),
+      )
+
+      await flush()
+
+      expect(upsert).toHaveBeenCalledWith(expect.anything(), {
+        onConflict: 'id',
+        ignoreDuplicates: false,
+      })
+    })
+
+    it('una foto que ya estaba en el almacén cuenta como subida, no como error', async () => {
+      // El bucket no tiene política de UPDATE a propósito, así que reintentar
+      // una foto que ya llegó devolvía un 409 que se leía como rechazo.
+      uploadFoto.mockResolvedValue({ error: { message: 'The resource already exists' } })
+      await encolarFoto()
+
+      const parte = await flush()
+
+      expect(parte.subidos).toBe(1)
+      expect(await db.photos.count()).toBe(0)
+    })
+  })
+
+  it('una foto rota no impide que suba el trabajo de campo', async () => {
+    // Los partes de revisión son el registro; la foto es la prueba que lo
+    // acompaña. Si se cae algo en una pasada, se cae lo segundo y solo eso.
+    uploadFoto.mockRejectedValue(new Error('Blob detached'))
+    const buena = entrada()
+    await db.outbox.add(buena)
+    await encolarFoto()
+
+    const parte = await flush()
+
+    expect(parte.subidos).toBe(1)
+    expect(await db.outbox.get(buena.id)).toBeUndefined()
+  })
+
+  it('una foto sin bytes se marca rechazada, en vez de reintentarse para siempre', async () => {
+    // Pasa si iOS descartó el fichero de respaldo del Blob: los bytes no están
+    // en ninguna parte y repetir la foto es la única salida.
+    const id = crypto.randomUUID()
+    await db.photos.put({
+      id,
+      entityType: 'incident',
+      entityId: 'i1',
+      takenAt: new Date(0).toISOString(),
+      attempts: 0,
+      nextAttemptAt: 0,
+      status: 'pendiente',
+      lastError: null,
+    })
+
+    await flush()
+
+    const foto = await db.photos.get(id)
+    expect(foto?.status).toBe('rechazado')
+    expect(foto?.lastError).toMatch(/repetirla/)
+    expect(uploadFoto).not.toHaveBeenCalled()
   })
 
   it('sube los tipos antes que los equipos que los usan', async () => {

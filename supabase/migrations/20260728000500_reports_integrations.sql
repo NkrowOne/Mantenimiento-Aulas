@@ -93,6 +93,7 @@ insert into app_config (key, value) values
 on conflict (key) do nothing;
 
 alter table app_config enable row level security;
+drop policy if exists "admin gestiona configuración" on app_config;
 create policy "admin gestiona configuración" on app_config
   for all to authenticated
   using (public.is_admin()) with check (public.is_admin());
@@ -213,8 +214,10 @@ create index external_tickets_unlinked_idx on external_tickets(source)
 
 alter table external_tickets enable row level security;
 
+drop policy if exists "personal lee tickets externos" on external_tickets;
 create policy "personal lee tickets externos" on external_tickets
   for select to authenticated using (public.is_staff());
+drop policy if exists "supervisor enlaza tickets" on external_tickets;
 create policy "supervisor enlaza tickets" on external_tickets
   for all to authenticated
   using (public.is_supervisor()) with check (public.is_supervisor());

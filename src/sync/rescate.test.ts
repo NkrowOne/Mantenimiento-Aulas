@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { db } from '@/db/dexie'
+import { db, guardarBytesDeFoto, leerBytesDeFoto } from '@/db/dexie'
 import {
   cuantoTrae,
   exportarPendientes,
@@ -16,17 +16,20 @@ import {
  * que no tener copia: da por salvado lo que no lo está.
  */
 
-const foto = (id: string, contenido: string) => ({
-  id,
-  entityType: 'inspection' as const,
-  entityId: 'insp-1',
-  blob: new Blob([contenido], { type: 'image/jpeg' }),
-  takenAt: '2026-07-30T09:00:00.000Z',
-  attempts: 3,
-  nextAttemptAt: 9_999_999_999_999,
-  status: 'pendiente' as const,
-  lastError: 'sin cobertura',
-})
+/** Encola una foto como lo hace `capturePhoto`: bytes aparte, fila de estado después. */
+async function encolarFoto(id: string, contenido: string): Promise<void> {
+  await guardarBytesDeFoto(id, new Blob([contenido], { type: 'image/jpeg' }))
+  await db.photos.put({
+    id,
+    entityType: 'inspection',
+    entityId: 'insp-1',
+    takenAt: '2026-07-30T09:00:00.000Z',
+    attempts: 3,
+    nextAttemptAt: 9_999_999_999_999,
+    status: 'pendiente',
+    lastError: 'sin cobertura',
+  })
+}
 
 const entrada = (id: string, over = {}) => ({
   id,
@@ -44,12 +47,13 @@ const entrada = (id: string, over = {}) => ({
 beforeEach(async () => {
   await db.outbox.clear()
   await db.photos.clear()
+  await db.photoBlobs.clear()
 })
 
 describe('copia de rescate', () => {
   it('saca la cola entera y la devuelve intacta, fotos incluidas', async () => {
     await db.outbox.add(entrada('e1'))
-    await db.photos.add(foto('f1', 'bytes-de-la-foto'))
+    await encolarFoto('f1', 'bytes-de-la-foto')
 
     const copia = await exportarPendientes(Date.UTC(2026, 6, 30, 11, 48))
     expect(copia.entradas).toBe(1)
@@ -59,6 +63,7 @@ describe('copia de rescate', () => {
     // El dispositivo se pierde: se vacía y se recupera desde el fichero.
     await db.outbox.clear()
     await db.photos.clear()
+    await db.photoBlobs.clear()
 
     const lectura = leerCopia(await copia.blob.text())
     expect(lectura.ok).toBe(true)
@@ -70,16 +75,17 @@ describe('copia de rescate', () => {
     const vuelta = await db.outbox.get('e1')
     expect(vuelta?.payload['notes']).toBe('proyector con la lámpara fundida')
 
-    const fotoVuelta = await db.photos.get('f1')
-    expect(await fotoVuelta?.blob.text()).toBe('bytes-de-la-foto')
+    expect(await db.photos.get('f1')).toBeDefined()
+    expect(await (await leerBytesDeFoto('f1'))?.text()).toBe('bytes-de-la-foto')
   })
 
   it('lo importado entra listo para subir, sin arrastrar el backoff del viaje anterior', async () => {
     await db.outbox.add(entrada('e1'))
-    await db.photos.add(foto('f1', 'x'))
+    await encolarFoto('f1', 'x')
     const copia = await exportarPendientes()
     await db.outbox.clear()
     await db.photos.clear()
+    await db.photoBlobs.clear()
 
     const lectura = leerCopia(await copia.blob.text())
     if (!lectura.ok) throw new Error('la copia debería leerse')

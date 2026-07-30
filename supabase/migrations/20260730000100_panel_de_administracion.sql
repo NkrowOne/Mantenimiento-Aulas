@@ -286,9 +286,11 @@ alter table asset_defaults enable row level security;
 
 -- Lee todo el personal: el cliente lo espeja para poder decir, dentro del aula
 -- y sin cobertura, qué debería haber aquí y no está.
+drop policy if exists "personal lee equipamiento por defecto" on asset_defaults;
 create policy "personal lee equipamiento por defecto" on asset_defaults
   for select to authenticated using (public.is_staff());
 
+drop policy if exists "admin gestiona equipamiento por defecto" on asset_defaults;
 create policy "admin gestiona equipamiento por defecto" on asset_defaults
   for all to authenticated
   using (public.is_admin()) with check (public.is_admin());

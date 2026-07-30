@@ -62,11 +62,13 @@ create index if not exists room_inventories_room_idx
 
 alter table room_inventories enable row level security;
 
+drop policy if exists "personal lee levantamientos" on room_inventories;
 create policy "personal lee levantamientos" on room_inventories
   for select to authenticated using (public.is_staff());
 
 -- Lo levanta quien está en el aula. Y no se corrige: si al día siguiente
 -- aparece un proyector que no se vio, se levanta otra vez y la serie lo cuenta.
+drop policy if exists "personal levanta inventario" on room_inventories;
 create policy "personal levanta inventario" on room_inventories
   for insert to authenticated
   with check (public.is_staff() and by_user = (select auth.uid()));

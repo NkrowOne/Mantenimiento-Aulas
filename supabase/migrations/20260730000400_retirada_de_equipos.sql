@@ -129,11 +129,13 @@ create index if not exists asset_removals_cola_idx
 
 alter table asset_removals enable row level security;
 
+drop policy if exists "personal lee solicitudes de retirada" on asset_removals;
 create policy "personal lee solicitudes de retirada" on asset_removals
   for select to authenticated using (public.is_staff());
 
 -- La firma quien está en el aula, y solo la suya. `state` cerrado a 'pendiente'
 -- para que nadie se autoapruebe una retirada colándola ya aprobada.
+drop policy if exists "personal solicita retiradas" on asset_removals;
 create policy "personal solicita retiradas" on asset_removals
   for insert to authenticated
   with check (
@@ -144,6 +146,7 @@ create policy "personal solicita retiradas" on asset_removals
 
 -- Y puede retirar lo que pidió mientras nadie lo haya decidido: equivocarse al
 -- pulsar no puede costar una visita al coordinador.
+drop policy if exists "personal cancela su solicitud" on asset_removals;
 create policy "personal cancela su solicitud" on asset_removals
   for delete to authenticated
   using (public.is_staff() and requested_by = (select auth.uid()) and state = 'pendiente');

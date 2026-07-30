@@ -20,10 +20,11 @@
  * Por eso se comprueba aquí y no se confía en revisarlo a ojo: pasa cuando dos
  * ramas crecen en paralelo, que es justo cuando nadie está mirando.
  *
- * Esta comprobación no necesita base de datos: solo lee nombres de fichero.
+ * Esta comprobación no necesita base de datos: solo lee los ficheros.
  */
 
-import { readdirSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 
 const DIR = 'supabase/migrations'
 
@@ -97,6 +98,36 @@ comprueba(
 comprueba(
   ficheros[0] === '00000000000000_bootstrap_roles.sql',
   `la primera es ${ficheros[0]}`,
+)
+
+// -----------------------------------------------------------------------------
+// 5 — Cada `create policy` se puede reejecutar
+//
+// `create policy` no admite `if not exists`, así que una migración que cree
+// políticas y se vuelva a ejecutar muere con «already exists». Y se vuelve a
+// ejecutar más de lo que parece: basta con que una pasada anterior se cortara
+// después de crear la política y antes de anotarse en el registro, y a partir de
+// ahí TODOS los despliegues de esa base mueren en el mismo punto, sin manera de
+// avanzar salvo tocar el registro a mano.
+//
+// Pasó, y dejó un despliegue bloqueado con la aplicación de campo esperando el
+// arreglo que venía dentro. El remedio es de una línea y va delante de cada
+// `create policy`: `drop policy if exists "…" on …;`. Idéntico resultado, y
+// repetible.
+// -----------------------------------------------------------------------------
+const sinDrop: string[] = []
+for (const f of ficheros) {
+  const sql = readFileSync(join(DIR, f), 'utf8')
+  for (const m of sql.matchAll(/^create policy\s+"([^"]+)"\s*\n?\s*on\s+([\w.]+)/gm)) {
+    const antes = sql.slice(Math.max(0, m.index - 200), m.index)
+    if (!antes.includes(`drop policy if exists "${m[1]}"`)) sinDrop.push(`${f} → "${m[1]}"`)
+  }
+}
+comprueba(
+  sinDrop.length === 0,
+  sinDrop.length === 0
+    ? 'todas las políticas se pueden reejecutar'
+    : `políticas sin «drop policy if exists» delante:\n      ${sinDrop.join('\n      ')}`,
 )
 
 if (fallos === 0) {

@@ -51,17 +51,53 @@ export interface OutboxEntry {
   lastError: string | null
 }
 
-/** Una foto esperando a subir. Va en cola aparte porque pesa. */
+/**
+ * Una foto esperando a subir. Va en cola aparte porque pesa.
+ *
+ * **Sin los bytes dentro**, y esa ausencia es la corrección de un fallo que
+ * dejaba la sincronización entera muerta en iOS.
+ *
+ * Dexie implementa `update()` y `modify()` como leer la fila, cambiarle un
+ * campo y **volver a escribirla entera**. Si la fila lleva un `Blob`, eso
+ * significa reescribir el Blob en cada cambio de estado —a «subiendo», a
+ * «pendiente», a «rechazado»—, y WebKit falla al reescribir un Blob que salió
+ * de IndexedDB: el fichero que lo respaldaba ya no está y contesta
+ * `UnknownError: Error preparing Blob/File data to be stored in object store`.
+ *
+ * Con los bytes fuera, cambiar el estado de una foto es escribir cuatro campos
+ * de texto y números. No hay Blob que preparar, así que no hay nada que pueda
+ * fallar.
+ */
 export interface QueuedPhoto {
   id: string
   entityType: 'inspection' | 'incident'
   entityId: string
-  blob: Blob
   takenAt: string
   attempts: number
   nextAttemptAt: number
   status: 'pendiente' | 'subiendo' | 'rechazado'
   lastError: string | null
+  /**
+   * Los bytes de las versiones anteriores, mientras no se hayan trasladado.
+   * `migrarFotosASusBytes()` lo vacía en el arranque y nadie más lo escribe.
+   */
+  blob?: Blob
+}
+
+/**
+ * Los bytes de una foto, en su propia tabla y como `ArrayBuffer`.
+ *
+ * `ArrayBuffer` y no `Blob` a propósito: un ArrayBuffer se clona como datos
+ * planos y no arrastra el fichero de respaldo que WebKit pierde. Es lo que
+ * evita de raíz la clase entera de fallo.
+ *
+ * Y en tabla aparte para que la cola pueda cambiar el estado de una foto sin
+ * tocar sus megas: escribir la fila de estado ya no arrastra la imagen.
+ */
+export interface PhotoBytes {
+  id: string
+  bytes: ArrayBuffer
+  type: string
 }
 
 /** Clave-valor para estado de la app: última sincronización, sesión cifrada… */
@@ -99,6 +135,8 @@ export class AulasDB extends Dexie {
 
   outbox!: EntityTable<OutboxEntry, 'id'>
   photos!: EntityTable<QueuedPhoto, 'id'>
+  /** Los bytes de las fotos en cola, separados de su fila de estado. */
+  photoBlobs!: EntityTable<PhotoBytes, 'id'>
   meta!: EntityTable<MetaEntry, 'key'>
 
   constructor() {
@@ -140,6 +178,19 @@ export class AulasDB extends Dexie {
     this.version(4).stores({
       assetRemovals: 'id, asset_id, state',
     })
+
+    /*
+     * Los bytes de las fotos, fuera de la fila que cambia de estado.
+     *
+     * El traslado de lo que ya hubiera guardado NO va en un `.upgrade()`: leer
+     * un Blob es asíncrono y ajeno a Dexie, y esperar a algo así dentro de una
+     * transacción de IndexedDB la deja cerrarse por debajo. Lo hace
+     * `migrarFotosASusBytes()` al arrancar, foto a foto y sin transacción
+     * larga, que además permite tratar por separado la que no se pueda leer.
+     */
+    this.version(5).stores({
+      photoBlobs: 'id',
+    })
   }
 }
 
@@ -175,6 +226,75 @@ export async function enqueue<T extends object>(
     status: 'pendiente',
     lastError: null,
   })
+}
+
+// -----------------------------------------------------------------------------
+// Los bytes de las fotos
+// -----------------------------------------------------------------------------
+
+/** Guarda los bytes de una foto recién capturada. */
+export async function guardarBytesDeFoto(id: string, blob: Blob): Promise<void> {
+  await db.photoBlobs.put({ id, bytes: await blob.arrayBuffer(), type: blob.type || 'image/jpeg' })
+}
+
+/**
+ * Devuelve los bytes de una foto como Blob **nuevo**, hecho en memoria.
+ *
+ * Nunca devuelve el Blob que salió de IndexedDB: es justamente el que WebKit no
+ * sabe volver a guardar. Este se construye aquí y solo viaja a la red.
+ */
+export async function leerBytesDeFoto(id: string): Promise<Blob | null> {
+  const fila = await db.photoBlobs.get(id)
+  if (!fila) return null
+  return new Blob([fila.bytes], { type: fila.type || 'image/jpeg' })
+}
+
+/** Borra una foto de la cola: su estado y sus bytes, que van juntos aunque vivan aparte. */
+export async function borrarFotoDeLaCola(id: string): Promise<void> {
+  await db.photos.delete(id)
+  await db.photoBlobs.delete(id)
+}
+
+/**
+ * Traslada a `photoBlobs` los bytes de las fotos guardadas por versiones
+ * anteriores.
+ *
+ * Foto a foto y con su propio `try`: si WebKit ya ha perdido el fichero de
+ * respaldo de una, esa foto es irrecuperable en este dispositivo —los bytes no
+ * existen en ninguna parte— y lo que no puede pasar es que se lleve por delante
+ * a las demás. Se marca como rechazada, que es un estado visible y con botón de
+ * reintentar, en vez de dejarla bloqueando la cola en silencio.
+ *
+ * @returns cuántas se trasladaron y cuántas se perdieron por el camino.
+ */
+export async function migrarFotosASusBytes(): Promise<{ movidas: number; ilegibles: number }> {
+  const pendientes = (await db.photos.toArray()).filter((p) => p.blob !== undefined)
+  let movidas = 0
+  let ilegibles = 0
+
+  for (const foto of pendientes) {
+    const { blob, ...sinBytes } = foto
+    try {
+      await db.photoBlobs.put({
+        id: foto.id,
+        bytes: await blob!.arrayBuffer(),
+        type: blob!.type || 'image/jpeg',
+      })
+      await db.photos.put(sinBytes)
+      movidas += 1
+    } catch {
+      // Los bytes no se pueden leer. Decirlo es mejor que reintentarlo eternamente.
+      await db.photos.put({
+        ...sinBytes,
+        status: 'rechazado',
+        lastError:
+          'iOS ha descartado los datos de esta foto y ya no se pueden leer en este dispositivo. Hay que repetirla.',
+      })
+      ilegibles += 1
+    }
+  }
+
+  return { movidas, ilegibles }
 }
 
 /** Backoff exponencial: 1s, 2s, 4s… con techo de 5 minutos. */

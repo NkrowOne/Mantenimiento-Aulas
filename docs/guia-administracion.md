@@ -224,6 +224,35 @@ puede mandar nada al servidor. Si alguien cierra sesión creyendo que así se
 guarda, está haciendo justo lo contrario. La aplicación avisa cuando quedan
 cambios sin subir.
 
+### El despliegue muere con «policy … already exists»
+
+Le pasó a este proyecto y bloqueó la salida del arreglo que la gente de campo
+estaba esperando, así que conviene reconocerlo rápido:
+
+```
+ERROR:  policy "personal lee solicitudes de retirada" for table "asset_removals" already exists
+```
+
+Significa que una migración se está aplicando por segunda vez. `create policy` no
+admite `if not exists`, así que muere ahí; y con `ON_ERROR_STOP=1` se lleva por
+delante el despliegue entero, incluidas las migraciones que venían detrás.
+
+Ya no debería ocurrir: todas las políticas llevan delante su `drop policy if
+exists`, y `npm run check:migraciones` —que corre dentro de `verify:all`— falla
+si alguien añade una sin él. Si aun así aparece, es que la base tiene el registro
+de aplicadas desincronizado. Se arregla anotando lo que ya está sin volver a
+ejecutarlo:
+
+```bash
+psql "$DATABASE_URL" -c "insert into public.schema_migrations (filename)
+  values ('00000000000000_bootstrap_roles.sql'), ('…')
+  on conflict do nothing"
+```
+
+Los dos scripts de despliegue imprimen esa orden ya montada con la lista
+completa cuando detectan la situación. Repasa la lista antes de pegarla y quita
+las que sepas que **no** se han aplicado todavía.
+
 Conviene además que la aplicación esté **instalada en la pantalla de inicio**.
 iOS puede desalojar el almacenamiento de un sitio que lleve siete días sin
 abrirse; instalada, no. La aplicación pide almacenamiento persistente al

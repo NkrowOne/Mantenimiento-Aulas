@@ -289,7 +289,12 @@ export function SyncChip(): React.ReactElement {
                     setResultado(
                       `Copia de ${copia.entradas} cambios y ${copia.fotos} fotos ` +
                         `${via === 'compartido' ? 'compartida' : 'guardada'}. ` +
-                        'Mándasela a administración: con ella el trabajo ya no depende de este dispositivo.',
+                        'Mándasela a administración: con ella el trabajo ya no depende de este dispositivo.' +
+                        // Dar por salvado lo que no lo está es peor que no tener
+                        // copia, así que lo que se ha quedado fuera se dice.
+                        (copia.fotosIlegibles > 0
+                          ? ` Ojo: ${copia.fotosIlegibles} fotos no han entrado porque el dispositivo ya no puede leerlas. Hay que repetirlas.`
+                          : ''),
                     )
                   } catch (err) {
                     setResultado(
