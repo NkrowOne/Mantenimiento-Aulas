@@ -273,7 +273,7 @@ Levanta un Postgres desechable, emula lo mínimo de Supabase, aplica las
 migraciones, carga los datos reales y ejecuta las pruebas de RLS.
 
 ```bash
-npm test          # pruebas de lógica de dominio y de la pantalla de informes
+npm test          # 148 pruebas de lógica de dominio y de la pantalla de informes
 npm run typecheck
 npm run build
 ```
