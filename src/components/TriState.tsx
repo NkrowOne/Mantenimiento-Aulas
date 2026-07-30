@@ -66,7 +66,18 @@ export function TriState({ value, onChange, label, hint, flag }: Props): React.R
             </span>
           )}
         </p>
-        <p className="mt-0.5 font-mono text-[0.6875rem] uppercase leading-tight tracking-wide text-muted">
+        {/*
+          Sin `uppercase`, y es un arreglo, no un gusto.
+
+          Esta línea llevaba mayúsculas forzadas cuando decía «CONECTIVIDAD DEL
+          PUESTO». Ahora dice «Lenovo U3302 · S/N 2440634LG», y ahí las
+          mayúsculas destruyen información: `iiyama T2454MSC` es como se escribe
+          esa marca —lo dice `src/domain/almacen.ts` sobre el almacén— y un
+          número de serie con minúsculas deja de coincidir con la pegatina que el
+          técnico tiene delante. La mono y el interletrado se quedan: es un
+          renglón técnico y se lee como tal.
+        */}
+        <p className="mt-0.5 font-mono text-[0.6875rem] leading-tight tracking-wide text-muted">
           {hint}
         </p>
       </div>

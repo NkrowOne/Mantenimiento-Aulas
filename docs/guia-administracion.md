@@ -160,6 +160,29 @@ la base de datos no lo deja borrar —`by_user`, `opened_by` y `resolved_by`
 apuntan a su perfil sin `on delete`—, así que el comando falla y remite aquí.
 Es la protección funcionando, no una avería.
 
+### Tres dispositivos por persona
+
+Cada persona puede tener la aplicación en hasta tres aparatos. El primero se da
+de alta con un código; **el segundo y el tercero, no**: en la pantalla de entrada
+se elige «Con mi PIN», se escribe el correo y el PIN de siempre, y ya está. No
+hace falta llamar a nadie.
+
+Cada uno ve los suyos en **Mi cuenta** —la chapa del rol, arriba a la izquierda—
+y puede revocar el que sobre. Desde la terminal, para verlos o retirarlos por
+alguien:
+
+```bash
+npm run admin:user -- dispositivos ana@x.es     # cuáles, y cuántos huecos quedan
+npm run admin:user -- revocar <id-del-aparato>  # retira uno
+npm run admin:user -- revocar ana@x.es --todos  # retira todos los suyos
+```
+
+El tope está en `app_config.max_dispositivos` y se cambia sin desplegar:
+
+```sql
+update app_config set value = '4' where key = 'max_dispositivos';
+```
+
 ### Un dispositivo perdido
 
 Con `VITE_LOCK_AFTER_MINUTES=0` la sesión no caduca, así que **si se perdió con
@@ -168,15 +191,20 @@ la sesión abierta, quien lo encuentre puede usar la aplicación**. Actúa depri
 ```sql
 -- 1. Cortar el acceso de esa persona a todo, ahora mismo
 update profiles set active = false where email = 'ana@x.es';
+```
 
--- 2. Dejar constancia del dispositivo
-update devices set revoked_at = now()
-where profile_id = (select id from profiles where email = 'ana@x.es');
+```bash
+# 2. Retirar el aparato, con su nombre y su fecha en el registro
+npm run admin:user -- revocar ana@x.es --todos
 ```
 
 El paso 1 es el que corta de verdad: sin perfil activo el hook deja de dar rol y
 RLS no permite ver nada, en cuanto caduque el token de acceso (una hora como
-mucho). Después, para devolverle el acceso desde otro dispositivo:
+mucho). Revocar es el registro y el cierre del dispositivo —borra su sesión
+guardada la próxima vez que abra con línea— pero **no una expulsión inmediata**:
+su refresh token sigue valiendo para GoTrue hasta que caduque.
+
+Después, para devolverle el acceso desde otro dispositivo:
 
 ```sql
 update profiles set active = true where email = 'ana@x.es';   -- reactivar
@@ -185,6 +213,12 @@ update profiles set active = true where email = 'ana@x.es';   -- reactivar
 ```bash
 npm run admin:user -- codigo ana@x.es                         -- código nuevo
 ```
+
+**Si además se teme por el PIN**, el código nuevo es obligatorio y no opcional:
+rota la contraseña de la cuenta, con lo que el sobre cifrado que abría el PIN
+deja de servir para dar de alta nada. Hasta que alguien use ese código, la opción
+«Con mi PIN» de esa cuenta dice que la vinculación está en pausa y pide el
+código. Los dispositivos que siguen en manos de su dueño no se enteran.
 
 Si el dispositivo se perdió **con la sesión cerrada**, no hay urgencia: sin el
 PIN los datos guardados son ilegibles.
@@ -357,16 +391,26 @@ La segunda es la que faltaba: con un solo botón de «retirar», cada equipo que
 volvía al almacén era una unidad que el sistema perdía — el aula dejaba de
 tenerla y el almacén no la ingresaba nunca.
 
-`Datos → Retiradas por autorizar` enseña el aparato, la sala, quién lo pide, por
-qué y —si vuelve al almacén— **en qué artículo va a caer la unidad, antes de
+`Datos → Retiradas por autorizar` enseña **qué aparato es** —tipo, marca, modelo
+y número de serie—, desde cuándo está puesto, la sala, quién lo pide, por qué y
+—si vuelve al almacén— **en qué artículo va a caer la unidad, antes de
 autorizar**. Si ese tipo de equipo no tiene artículo de almacén, lo dice en
 naranja: la retirada se hará igual y el ingreso no, así que hay que enlazarlo en
 `Almacén` y ajustar a mano.
+
+Que salga el modelo no es un adorno: es la diferencia entre poder decidir y
+firmar a ciegas. «¿Dar de baja Ordenador 2?» no se puede contestar desde otro
+edificio; «Ordenador Lenovo U3302 · S/N 8QF, puesto el 12/03/2026» sí — ese no se
+tira, está en garantía.
 
 Autorizar hace cuatro cosas en una sola operación —retira el equipo, deja el
 evento en el histórico de la sala, ingresa la unidad y cierra la solicitud—
 porque a medias quedaría un aparato retirado que nadie ingresó. **No retirarlo**
 cierra la solicitud y deja el equipo donde está.
+
+Antes de autorizar se confirma, con el aparato y las consecuencias delante. Y
+**dar de baja pide teclear `BAJA`**: es la única de las dos que no se deshace, y
+un botón más no frena a nadie que vaya con prisa.
 
 Solo puede haber una solicitud viva por equipo, y quien la firmó puede
 retirarla mientras nadie la haya decidido.
@@ -413,8 +457,73 @@ update asset_types set aliases = aliases || 'proyeltor'
  where id = public.asset_type_id('Proyector');
 ```
 
-Todo cambio en `rooms`, `buildings`, `stock_items`, `assets`, `incidents` y
-`profiles` **queda auditado** con autor y valores anterior y posterior:
+### Modelos sin validar — ¿de qué marca y modelo es?
+
+`Inventario → Catálogo`, y es la bandeja que más trabajo tiene el primer día: el
+Excel traía el modelo en una casilla de texto libre, sin marca, y de ahí salen
+cincuenta y cinco modelos deducidos con duplicados dentro.
+
+```
+ME403U   ·   ME-403U   ·   ME403U *          ← el mismo proyector, tres veces
+EB-992F  ·  EB-992F EEB  ·  EB-992 F EEB     ← y otra vez
+NO  ·  NET  ·  *****                          ← lo que alguien escribió en su día
+```
+
+La pantalla abre con **los grupos que casi seguro son el mismo modelo** —los que
+solo cambian en guiones, espacios o asteriscos— porque encontrarlos a ojo en una
+lista de cincuenta es exactamente el trabajo que nadie hace.
+
+| | Cuándo | Qué hace |
+|---|---|---|
+| **Validar** | El modelo existe y se llama así | Deja de salir en naranja |
+| **Corregir** | Le falta la marca, o el nombre está mal | Guarda marca y modelo, deja el nombre viejo de alias y lo da por validado |
+| **Fusionar** | Es el mismo que otro | Mueve sus equipos al bueno y deja lápida con su nombre de alias |
+| **Retirar** | Descatalogado | Deja de ofrecerse. Los equipos que lo llevan lo conservan |
+
+Fusionar y retirar **se confirman con el alcance delante** —cuántos equipos se
+mueven— y por encima de diez equipos hay que teclear la palabra: son operaciones
+que la aplicación no sabe deshacer.
+
+Ponerle la marca a los cincuenta y cinco modelos es un rato; asignar el modelo a
+los 1.094 equipos, no: `Inventario → Equipos`, se filtra por tipo y edificio, se
+seleccionan los que son iguales y se les pone el modelo de una vez. Esa pantalla
+también exporta a CSV lo que se esté viendo, que es lo que permite cruzarlo con
+una factura o con el listado del proveedor.
+
+Las chapas de arriba son la lista de tareas: **Sin modelo**, **Sin nº de serie**,
+**Sin fecha de instalación** y **Sin validar** dicen qué queda por rellenar, y las
+dos de la garantía contestan la pregunta que llega con el aparato ya roto:
+
+| Chapa | Para qué |
+|---|---|
+| **En garantía** | Con la avería delante: ¿lo arreglamos nosotros o lo manda el fabricante? La fila enseña hasta cuándo, así que se ve de un golpe cuál corre prisa |
+| **Garantía acaba en 90 días** | Una vez al trimestre. Es el margen para reclamar algo que va justo, antes de que deje de poderse |
+
+La garantía se escribe en cada equipo —en «Más detalles», desde el aula o desde
+esta pantalla— y hasta ahora era un dato que solo se podía escribir: no había
+forma de preguntar por él, y un dato que solo se escribe es un dato que nadie
+rellena.
+
+```sql
+-- Qué queda por hacer
+select count(*) filter (where asset_model_id is null) as sin_modelo,
+       count(*) filter (where installed_at is null)   as sin_fecha,
+       count(*) as total
+  from assets where status <> 'retirado';
+
+-- Los modelos, con cuántos equipos lleva cada uno
+select t.name as tipo, coalesce(nullif(m.brand,''),'(sin marca)') as marca,
+       m.model, count(a.id) as equipos, m.confirmed
+  from asset_models m
+  join asset_types t on t.id = m.asset_type_id
+  left join assets a on a.asset_model_id = m.id
+ where m.merged_into is null
+ group by 1,2,3,5 order by 4 desc;
+```
+
+Todo cambio en `rooms`, `buildings`, `stock_items`, `assets`, `asset_types`,
+`asset_models`, `devices`, `incidents` y `profiles` **queda auditado** con autor y
+valores anterior y posterior:
 
 ```sql
 select at, by_user, old_data->>'name', new_data->>'name'

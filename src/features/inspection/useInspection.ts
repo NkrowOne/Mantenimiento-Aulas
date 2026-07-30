@@ -15,7 +15,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { db, enqueue } from '@/db/dexie'
 import { flush } from '@/sync/outbox'
 import { norm } from '@/domain/normalize'
-import { resolveType } from '@/domain/inventory'
+import { identifyAsset, resolveType } from '@/domain/inventory'
 import { incidenciasDeRevision } from '@/domain/incidencias'
 import {
   LAMP_MEASURE,
@@ -26,6 +26,7 @@ import {
   ROOM_CHECK_MEASURE,
   assetCheckKey,
   type Asset,
+  type AssetModel,
   type AssetType,
   type CheckKey,
   type CheckResult,
@@ -73,6 +74,15 @@ export interface CheckRow {
   key: CheckKey
   label: string
   hint: string
+  /**
+   * Marca, modelo y número de serie, a secas.
+   *
+   * Se guarda aparte de `hint` porque `hint` lleva además el estado —«marcado
+   * averiado»—, y esto viaja a la incidencia que abre la revisión: lo que hay
+   * que dejar escrito allí es qué aparato era, no cómo estaba señalado en la
+   * pantalla del que lo revisó. Vacío en las filas que no son un aparato.
+   */
+  ficha: string
   measure: { unit: string; label: string } | null
   /** El aparato, si la fila es de un aparato. */
   asset: Asset | null
@@ -89,25 +99,35 @@ export interface CheckRow {
  * no se podía asociar a un número de serie. Ahora cada aparato se pregunta por
  * separado.
  */
-export function checkRows(assets: Asset[], types: Map<string, AssetType>): CheckRow[] {
+export function checkRows(
+  assets: Asset[],
+  types: Map<string, AssetType>,
+  models: Map<string, AssetModel> = new Map(),
+): CheckRow[] {
   const rows: CheckRow[] = assets
     .filter((a) => a.status !== 'retirado')
     .map((asset) => {
       const type = resolveType(types, asset.asset_type_id)
-      const label = asset.label ?? type?.name ?? 'Equipo'
+      const id = identifyAsset(asset, types, models)
 
-      const detail = [
-        asset.model,
-        asset.serial,
-        asset.status === 'averiado' ? 'marcado averiado' : null,
-      ]
+      /*
+       * Qué aparato es, debajo de cómo se llama en la sala.
+       *
+       * Antes ponía el texto libre del modelo, que en la mitad del inventario
+       * estaba vacío. Ahora sale del catálogo: marca, modelo y número de serie.
+       * Es la línea que contesta «¿cuál de los dos ordenadores estoy marcando?»
+       * sin salir de la revisión, que es justo lo que se pregunta al encontrar
+       * uno averiado.
+       */
+      const detail = [id.ficha, asset.status === 'averiado' ? 'marcado averiado' : null]
         .filter(Boolean)
         .join(' · ')
 
       return {
         key: assetCheckKey(asset.id),
-        label,
+        label: id.etiqueta,
         hint: detail || 'Sin modelo ni serie',
+        ficha: id.ficha,
         measure: type?.tracks_lamp_hours ? { ...LAMP_MEASURE } : null,
         asset,
         pending: type ? !type.confirmed : false,
@@ -127,6 +147,7 @@ export function checkRows(assets: Asset[], types: Map<string, AssetType>): Check
       key,
       label: ROOM_CHECK_LABELS[key],
       hint: ROOM_CHECK_HINTS[key],
+      ficha: '',
       measure: ROOM_CHECK_MEASURE[key] ? { ...ROOM_CHECK_MEASURE[key]! } : null,
       asset: null,
       pending: false,
@@ -155,14 +176,21 @@ export function useInspection(room: Room | null, userId: string | null) {
     [room?.id],
   )
   const types = useLiveQuery(() => db.assetTypes.toArray(), [])
+  /* El catálogo de modelos, para que cada fila diga qué aparato es y no solo
+     cómo se llama en la sala. Sale del espejo: la revisión ocurre sin línea. */
+  const models = useLiveQuery(() => db.assetModels.toArray(), [])
 
   const typesById = useMemo(
     () => new Map((types ?? []).map((t) => [t.id, t])),
     [types],
   )
+  const modelsById = useMemo(
+    () => new Map<string, AssetModel>((models ?? []).map((m) => [m.id, m])),
+    [models],
+  )
   const rows = useMemo(
-    () => checkRows(assets ?? [], typesById),
-    [assets, typesById],
+    () => checkRows(assets ?? [], typesById, modelsById),
+    [assets, typesById, modelsById],
   )
 
   // Al abrir una sala se recupera su borrador si lo había, y si no se crea uno.
@@ -394,6 +422,18 @@ export function useInspection(room: Room | null, userId: string | null) {
     [rows],
   )
 
+  /**
+   * Y de qué aparato hablaba.
+   *
+   * Se copia en la incidencia al cerrar la revisión. Aquí es la única vez que
+   * está a mano sin pedir nada: la lista de comprobaciones ya cruzó el equipo con
+   * el catálogo para pintar la línea de debajo del nombre.
+   */
+  const fichaDe = useCallback(
+    (key: CheckKey): string | null => rows.find((r) => r.key === key)?.ficha || null,
+    [rows],
+  )
+
   /** Cierra la revisión. A partir de aquí es inmutable, también en el servidor. */
   const complete = useCallback(async (): Promise<Inspection | null> => {
     if (!draft) return null
@@ -429,6 +469,7 @@ export function useInspection(room: Room | null, userId: string | null) {
       inspection,
       checks: [...draft.checks.values()],
       etiquetaDe,
+      fichaDe,
       abiertas,
       nuevoId: uuidv7,
     })
@@ -490,7 +531,7 @@ export function useInspection(room: Room | null, userId: string | null) {
 
     setDraft(null)
     return inspection
-  }, [draft, etiquetaDe, qc])
+  }, [draft, etiquetaDe, fichaDe, qc])
 
   // `assets`, `types` y `typesById` se devuelven además de usarse aquí: la
   // página los necesita para el bloque de inventario y antes montaba SU PROPIA
@@ -502,6 +543,8 @@ export function useInspection(room: Room | null, userId: string | null) {
     assets: assets ?? [],
     types: types ?? [],
     typesById,
+    models: models ?? [],
+    modelsById,
     saving,
     setCheck,
     setNotes,

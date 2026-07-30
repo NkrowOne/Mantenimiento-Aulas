@@ -227,9 +227,79 @@ lo es. El worker de informes, si lo tienes desplegado, responde a las mismas
 órdenes con `npm run admin -- …`.
 
 El código **es** la contraseña temporal. Al usarlo, la app la rota
-inmediatamente a una aleatoria fuerte que no se guarda en ningún sitio, así que
-el código deja de valer y la única llave del dispositivo pasa a ser el refresh
-token cifrado con el PIN.
+inmediatamente a una aleatoria fuerte, y esa contraseña se guarda **envuelta en
+una bóveda que solo abre el PIN** (ver más abajo). El código deja de valer en ese
+instante y la llave del dispositivo pasa a ser el refresh token cifrado con el
+PIN.
+
+### Hasta tres dispositivos por persona, sin pedir otro código
+
+Quien ya usa la aplicación en el iPad y quiere abrirla en el móvil no está
+pidiendo acceso —ya lo tiene—, está cambiando de aparato. Cobrarle una llamada y
+un código de 24 horas por eso hace que el segundo dispositivo no se use.
+
+En el aparato nuevo, la pantalla de entrada trae dos pestañas:
+
+| | Qué se teclea | Cuándo |
+|---|---|---|
+| **Con código** | email + código + elegir PIN | la primera vez de esa persona |
+| **Con mi PIN** | email + el PIN que ya usa | el segundo y el tercer aparato |
+
+**Cómo puede funcionar si el PIN no se envía a ningún sitio.** No se envía, y
+sigue sin enviarse. Lo que hay en el servidor es un sobre:
+
+```
+PBKDF2(PIN, salt, 310.000)  ->  clave maestra
+  HKDF(maestra, "verificador")  ->  esto viaja: sirve para decir «sé el PIN»
+  HKDF(maestra, "envoltorio")   ->  esto NO sale del aparato: abre el sobre
+```
+
+El servidor guarda el salt, el **hash** del verificador y la contraseña de la
+cuenta **cifrada**. Nunca el PIN y nunca la contraseña. El dispositivo nuevo
+deriva las dos mitades del PIN que le teclean, enseña el verificador, y si cuadra
+recibe el sobre y lo abre en local. Las dos mitades salen de la misma clave
+maestra por HKDF con etiquetas distintas, así que son independientes: tener el
+verificador no acerca ni un paso a la clave del envoltorio.
+
+**Por qué un PIN de cuatro dígitos no se convierte en la llave de todo.** Diez
+mil combinaciones se prueban en minutos… si el sobre se entrega a quien lo pida.
+No se entrega: hay que pasar el verificador, y eso se comprueba en el servidor
+con contador. Cinco fallos bloquean cinco minutos, diez bloquean quince, quince
+bloquean una hora. La fuerza bruta deja de ser un problema de cómputo y pasa a
+ser uno de tiempo de pared. Aun así, la aplicación **recomienda seis dígitos** en
+el momento de elegirlo.
+
+Lo que sí cambia y conviene saber: quien se lleve un volcado entero de la base
+puede romper un PIN corto sin conexión. En un volcado entero ya se lleva
+`auth.users` y puede hacer lo que quiera, así que no abre una puerta nueva — pero
+es la razón de los seis dígitos.
+
+**Tres, y se ven.** El tope está en `app_config.max_dispositivos` y se cambia sin
+desplegar. Cada persona ve los suyos en **Mi cuenta** —la chapa del rol, arriba a
+la izquierda—, con su nombre, desde cuándo y cuándo se conectó por última vez, y
+puede revocar el que sobre. Un dispositivo revocado borra su sesión guardada la
+próxima vez que abra con línea.
+
+Desde la terminal, para la llamada de «he perdido el iPad»:
+
+```bash
+npm run admin:user -- dispositivos ana@x.es     # cuáles, y cuántos huecos quedan
+npm run admin:user -- revocar <id-del-aparato>  # retira uno
+npm run admin:user -- revocar ana@x.es --todos  # retira todos los suyos
+```
+
+Revocar no expulsa al instante: el refresh token del aparato sigue siendo válido
+para GoTrue hasta que caduque. Lo que corta el acceso de raíz es **emitir un
+código nuevo** (`admin:user -- codigo ana@x.es`), porque eso rota la contraseña
+de la cuenta. Y hace una cosa más que conviene tener presente: **pausa la
+vinculación por PIN** hasta que alguien use ese código, porque la contraseña que
+la bóveda envuelve deja de valer. Los dispositivos que ya están dentro no se
+enteran y siguen funcionando.
+
+**Cambiar el PIN** se hace en Mi cuenta. Cambia la bóveda —o sea, el PIN con el
+que se dan de alta dispositivos nuevos— y el sobre local de ese aparato. Los
+otros que ya estén dentro siguen desbloqueándose con el suyo hasta que se vuelvan
+a vincular; la pantalla lo dice antes de guardar.
 
 ### Copias de seguridad
 
@@ -280,7 +350,7 @@ migraciones, carga los datos reales y ejecuta las pruebas de RLS.
 > va dentro de `verify:all`.
 
 ```bash
-npm test          # 173 pruebas de lógica de dominio y de la pantalla de informes
+npm test          # 227 pruebas de lógica de dominio y de la pantalla de informes
 npm run typecheck
 npm run build
 ```
@@ -312,7 +382,7 @@ npm run informe:ia
 | Área | Estado |
 |---|---|
 | Esquema append-only, vistas y alertas | ✅ verificado contra Postgres 16 |
-| RLS, roles y auditoría | ✅ 46 bloques en verde, incluida exposición pública |
+| RLS, roles y auditoría | ✅ 62 bloques en verde, incluida exposición pública |
 | Importador del Excel | ✅ 276 salas, 283 incidencias, 669 equipos |
 | Núcleo offline (Dexie + cola de salida) | ✅ |
 | Login con PIN que cifra la sesión | ✅ lógica probada |
@@ -322,6 +392,9 @@ npm run informe:ia
 | Incidencias, almacén y depuración de datos | ✅ la pestaña es la lista de trabajo; las observaciones se leen en la ficha del aula |
 | Panel de administración: validar equipos, agrupar el catálogo, equipamiento por defecto y alta/baja de salas y edificios | ✅ |
 | Retirada de equipo con autorización: baja o vuelta al almacén | ✅ |
+| Hasta tres dispositivos por persona, con alta por PIN sin código | ✅ 10 bloques de RLS propios |
+| Catálogo de marcas y modelos, con fecha de instalación | ✅ deducido del Excel: 55 modelos, 308 equipos ligados |
+| Gestión del inventario desde el ordenador: filtros, edición en bloque, garantías y exportación | ✅ |
 | Worker de informes PDF | ✅ PDF real generado y revisado |
 | Análisis con IA (Gemini, con razonamiento) | ✅ probado contra un servidor de mentira; degrada a análisis calculado |
 | Buckets de Storage y sus políticas | ✅ 3 pruebas de RLS propias |
@@ -329,6 +402,89 @@ npm run informe:ia
 | Alta de usuarios y códigos | ✅ |
 | Despliegue sobre Postgres gestionado | ✅ verificado en Postgres desnudo |
 | Integración con ServiceNow | 🔌 puerto listo, falta la implementación |
+
+## El inventario: qué es cada aparato
+
+Hasta ahora el inventario sabía **qué clase** de aparato hay en cada aula
+—Proyector, Pantalla, Ordenador— y para el modelo tenía una casilla de texto
+libre. Con eso, el aula 2.4 y la 3.1 tienen las dos «un ordenador», y la pregunta
+que se hace todos los días no se puede contestar: ¿cuántos ASPEN 223 quedan?, ¿es
+el Lenovo U3302 el que da guerra con la docking?
+
+Y el texto libre se degrada solo. Estas son cinco filas reales del Excel, y son
+el mismo proyector:
+
+```
+ME403U   ·   ME-403U   ·   ME403U *
+EB-992F  ·  EB-992F EEB  ·  EB-992 F EEB
+```
+
+Ahora hay tres niveles, y ninguno sobra:
+
+```
+tipo (Ordenador)  +  modelo (Lenovo · U3302)  +  nº de serie
+─────────────────    ────────────────────────    ─────────────
+qué clase de cosa    exactamente cuál            cuál de ellas
+```
+
+El tipo ordena la revisión, el modelo agrupa para comprar y para diagnosticar, y
+el número de serie identifica el aparato concreto, que se lleva su historia
+consigo cuando lo cambian de aula. Los tres salen juntos en la revisión, en el
+inventario de la sala, en la ficha del aula, en el histórico y en la bandeja del
+coordinador — «Ordenador Lenovo U3302 · S/N 2440634LG».
+
+El catálogo de modelos tiene **las mismas defensas** que el de tipos, porque es el
+mismo problema: id derivado del nombre (uuid v5), para que dos técnicos sin
+cobertura que registren el mismo «Epson EB-992F» generen literalmente la misma
+fila; índice único sobre el nombre normalizado; alias; y fusión con lápida para
+los duplicados de vocabulario que el índice no ve. El id se calcula igual en el
+cliente y en SQL —`uuid_v5()` es gemela de `uuid.v5()`— y hay una prueba que lo
+comprueba, porque si dejan de coincidir el catálogo se duplica sin decir nada.
+
+**La fecha de instalación no se pide: se pone sola.** La escribe el dispositivo
+con su reloj —igual que todo lo demás del proyecto, que es lo que hace que
+funcione sin cobertura— y se puede corregir, porque durante un levantamiento la
+respuesta correcta casi nunca es hoy: el aparato lleva años ahí. Al mover un
+equipo de aula se renueva. Los 1.094 equipos que entraron con la importación se
+quedan **sin fecha** a propósito: todos comparten la del despliegue, y ponerla
+sería inventarse un dato con pinta de cierto.
+
+### Personalizable sin desplegar
+
+Cada tipo de equipo declara qué campos quiere guardar, y la interfaz los pinta
+sola:
+
+```json
+[{"clave":"lumenes","etiqueta":"Lúmenes","tipo":"numero","unidad":"lm","en":"modelo"},
+ {"clave":"ram","etiqueta":"RAM","tipo":"numero","unidad":"GB","en":"ambos"}]
+```
+
+`en` decide dónde vive el dato: `modelo` si vale para todas sus unidades —la
+resolución de un EB-992F es la misma en las cuarenta aulas—, `equipo` si es de la
+unidad concreta, `ambos` si el modelo pone el valor de fábrica y una unidad puede
+contradecirlo. Cuatro tipos de campo: texto, número, fecha y sí/no. Lo que no
+encaje cabe en las observaciones — un constructor de formularios completo es un
+proyecto aparte y se paga en una pantalla que nadie entiende.
+
+### La pestaña Inventario
+
+«Almacén» pasa a ser **Inventario**, con tres vistas de la misma cosa:
+
+- **Equipos** — el inventario entero, para trabajarlo sentado. Filtros por
+  edificio, tipo y estado; chapas para «sin modelo», «sin nº de serie», «sin
+  fecha» y «sin validar», que son la lista de tareas real; selección múltiple con
+  asignación de modelo en bloque, y exportación a CSV de lo que se esté viendo.
+  Sale del espejo local, así que funciona sin cobertura; en el móvil la misma
+  lista se pinta como fichas en vez de como tabla.
+- **Almacén** — el de siempre, sin un cambio.
+- **Catálogo** — validar, corregir, fusionar y retirar modelos. Abre con los
+  grupos que casi seguro son el mismo modelo, que con los datos reales es la mitad
+  del trabajo.
+
+Las decisiones que no se deshacen —fusionar, retirar del inventario, revocar un
+dispositivo— piden confirmación con el **alcance delante**: cuántos equipos se
+mueven, de cuántas salas. Y las de más alcance piden teclear una palabra: un
+botón más no frena a un pulgar rápido; teclear, sí.
 
 ## Guías
 
@@ -343,9 +499,10 @@ Lo verificado y lo que no, sin adornos.
 
 **Comprobado de forma automática** (`npm run verify:all` y `npm run db:verify`):
 
-- 162 pruebas de lógica de dominio y cifrado del PIN.
-- 51 bloques de pruebas de RLS contra Postgres real, en los dos escenarios de despliegue,
-  incluidas las de exposición pública.
+- 227 pruebas de lógica de dominio, cifrado del PIN y bóveda de vinculación.
+- 62 bloques de pruebas de RLS contra Postgres real, en los dos escenarios de despliegue,
+  incluidas las de exposición pública, el freno a la fuerza bruta del PIN y el tope
+  de dispositivos.
 - La aplicación **arranca en un navegador real**, pinta y no da errores de
   consola (`npm run smoke`).
 - Un PDF real generado y revisado página a página.
@@ -359,7 +516,7 @@ Lo verificado y lo que no, sin adornos.
 | **Ningún iPad ha abierto la aplicación** | Todo lo específico de iOS —límite de canvas, HEIC, `persist()`— sale de documentación, no de un dispositivo |
 | **El worker de informes como servicio HTTP** | Solo se ha probado el render por línea de comandos, no el endpoint que llama `pg_cron` |
 | **`admin-user.ts` contra un GoTrue real** | La lógica es directa, pero nunca ha hablado con el servicio |
-| **Cero pruebas de interfaz** | Las 162 pruebas cubren dominio y criptografía. No hay ninguna de componentes |
+| **Cero pruebas de interfaz** | Las 227 pruebas cubren dominio y criptografía. No hay ninguna de componentes |
 | **Sin linter configurado** | Se retiró el script `lint` porque no existía configuración y fallaba siempre |
 
 Nada de esto es un fallo conocido: es trabajo de verificación pendiente. La
@@ -490,7 +647,7 @@ tapa la segunda letra, dos rótulos de tabla que se leen como uno—.
 src/domain/       tipos y normalización compartidos con el importador
 src/db/           espejo en IndexedDB y cola de salida
 src/sync/         descarga del maestro y motor de subida
-src/auth/         PIN, cifrado de sesión y alta de dispositivo
+src/auth/         PIN, cifrado de sesión, bóveda de vinculación y dispositivos
 src/features/     pantallas por área funcional
 supabase/         migraciones, harness de pruebas y seed generado
 src/integrations/ puerto de tickets externos (ServiceNow en el futuro)

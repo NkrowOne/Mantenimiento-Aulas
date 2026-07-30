@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { SyncChip } from '@/components/SyncChip'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
+import { useConfirmar } from '@/components/Confirmar'
 import { LockScreen } from '@/features/auth/LockScreen'
 import { Diagnostico } from '@/features/admin/Diagnostico'
 import { InspectionPage } from '@/features/inspection/InspectionPage'
@@ -9,8 +10,21 @@ import { RoomListPage } from '@/features/rooms/RoomListPage'
 import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
 import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
 
-import { getSealed, lock, resumeSession, touch, watchSession } from '@/auth/session'
-import { db, pendingSummary, purgeSyncedInspections, requestPersistentStorage } from '@/db/dexie'
+import {
+  getSealed,
+  lock,
+  olvidarDispositivo,
+  resumeSession,
+  sincronizarDispositivo,
+  touch,
+  watchSession,
+} from '@/auth/session'
+import {
+  db,
+  pendingSummary,
+  purgeSyncedInspections,
+  requestPersistentStorage,
+} from '@/db/dexie'
 import { pullMaster, startPull, type ResultadoPull } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
 import { configError, supabase } from '@/lib/supabase'
@@ -34,8 +48,8 @@ const DashboardPage = lazy(() =>
 const IncidentsPage = lazy(() =>
   import('@/features/incidents/IncidentsPage').then((m) => ({ default: m.IncidentsPage })),
 )
-const StockPage = lazy(() =>
-  import('@/features/inventory/StockPage').then((m) => ({ default: m.StockPage })),
+const InventarioPage = lazy(() =>
+  import('@/features/inventory/InventarioPage').then((m) => ({ default: m.InventarioPage })),
 )
 const CleanupPage = lazy(() =>
   import('@/features/admin/CleanupPage').then((m) => ({ default: m.CleanupPage })),
@@ -59,8 +73,24 @@ const ReportsPage = lazy(() =>
 const EscanerQR = lazy(() =>
   import('@/features/rooms/EscanerQR').then((m) => ({ default: m.EscanerQR })),
 )
+/* «Mi cuenta» se abre dos veces al año: los dispositivos y el PIN no cambian a
+   diario. No tiene por qué viajar en el arranque. */
+const CuentaPage = lazy(() =>
+  import('@/features/account/CuentaPage').then((m) => ({ default: m.CuentaPage })),
+)
 
-type Tab = 'revisar' | 'panel' | 'incidencias' | 'almacen' | 'historial' | 'informes' | 'datos'
+/*
+ * `almacen` pasa a llamarse `inventario`, y no es solo un nombre.
+ *
+ * La pestaña enseñaba el almacén y nada más; el inventario instalado —los 1.094
+ * equipos de las aulas— no tenía sitio propio y solo se podía tocar de uno en
+ * uno desde dentro de la revisión. Ahora las tres vistas de la misma cosa
+ * —equipos instalados, almacén y catálogo de modelos— viven bajo «Inventario».
+ *
+ * Renombrar el identificador obliga a validar lo que se restaura, porque hay
+ * dispositivos con `almacen` guardado en `db.meta` de ayer. Ver `esTab()`.
+ */
+type Tab = 'revisar' | 'panel' | 'incidencias' | 'inventario' | 'historial' | 'informes' | 'datos'
 
 /*
  * La ficha se intercala entre la lista y la revisión, pero solo por ese camino.
@@ -101,13 +131,31 @@ const TABS: Array<{ id: Tab; label: string; minRole: Role }> = [
   { id: 'revisar', label: 'Revisar', minRole: 'tecnico' },
   { id: 'panel', label: 'Panel', minRole: 'tecnico' },
   { id: 'incidencias', label: 'Incidencias', minRole: 'tecnico' },
-  { id: 'almacen', label: 'Almacén', minRole: 'tecnico' },
+  { id: 'inventario', label: 'Inventario', minRole: 'tecnico' },
   { id: 'historial', label: 'Historial', minRole: 'tecnico' },
   { id: 'informes', label: 'Informes', minRole: 'supervisor' },
   { id: 'datos', label: 'Datos', minRole: 'admin' },
 ]
 
 const RANK: Record<Role, number> = { tecnico: 0, supervisor: 1, admin: 2 }
+
+/**
+ * ¿Ese valor guardado sigue siendo una pestaña que existe?
+ *
+ * La restauración aceptaba a ciegas lo que hubiera en `db.meta`, y con el
+ * renombrado de `almacen` a `inventario` eso deja la aplicación en blanco: el
+ * estado vale una pestaña que ya no pinta nadie, no hay error, y desde el iPad
+ * se ve como una pantalla vacía sin barra de la que tirar.
+ *
+ * Aquí NO se mira el rol, y es a propósito: cuando esto corre, el perfil todavía
+ * se está leyendo del servidor y `role` vale `tecnico`. Mirarlo aquí mandaría a
+ * todos los administradores a «Revisar» al recargar. De que la pestaña abierta
+ * sea una que el rol permite se encarga el efecto de más abajo, cuando el rol ya
+ * se sabe de verdad.
+ */
+function esTab(valor: unknown): valor is Tab {
+  return TABS.some((t) => t.id === valor)
+}
 
 /**
  * Por qué la lista está vacía.
@@ -175,6 +223,16 @@ export function App(): React.ReactElement {
   /** Se escaneó una placa cuya sala no está en este dispositivo. */
   const [escaneoFallido, setEscaneoFallido] = useState<string | null>(null)
   const [diagnostico, setDiagnostico] = useState<ResultadoPull | null>(null)
+  /** «Mi cuenta»: dispositivos y PIN. Se abre desde la chapa de la cabecera. */
+  const [cuenta, setCuenta] = useState(false)
+  /**
+   * Algo que decir sobre ESTE dispositivo: que lo han revocado, o que no ha
+   * cabido en el tope. Ninguna de las dos cosas interrumpe el trabajo, pero las
+   * dos hay que decirlas o nadie se entera de que sobra un aparato.
+   */
+  const [avisoDispositivo, setAvisoDispositivo] = useState<string | null>(null)
+
+  const { pedir: pedirConfirmacion, dialogo: dialogoConfirmar } = useConfirmar()
 
   const [tab, setTab] = useState<Tab>('revisar')
   const [view, setView] = useState<RoomView>({ name: 'edificios' })
@@ -355,7 +413,7 @@ export function App(): React.ReactElement {
           | { tab?: Tab; buildingId?: string; roomId?: string; vista?: RoomView['name'] }
           | undefined
 
-        if (guardado?.tab) setTab(guardado.tab)
+        if (esTab(guardado?.tab)) setTab(guardado.tab)
 
         if (guardado?.buildingId) {
           const building = await db.buildings.get(guardado.buildingId)
@@ -377,6 +435,20 @@ export function App(): React.ReactElement {
       }
     })()
   }, [unlocked, restaurado])
+
+  /*
+   * Y si el rol que acaba de llegar no llega para la pestaña abierta, se sale.
+   *
+   * Pasa de dos maneras: alguien a quien le bajan el rol y recarga, y el propio
+   * arranque, donde `role` vale `tecnico` hasta que el perfil contesta. En los
+   * dos casos lo que se ve es una pantalla sin la pestaña con la que salir de
+   * ella, porque la barra ya no la enseña. Esto no es una defensa —eso es RLS—,
+   * es no dejar a nadie en un callejón.
+   */
+  useEffect(() => {
+    const actual = TABS.find((t) => t.id === tab)
+    if (actual && RANK[role] < RANK[actual.minRole]) setTab('revisar')
+  }, [role, tab])
 
   useEffect(() => {
     if (!unlocked || !restaurado) return
@@ -428,10 +500,38 @@ export function App(): React.ReactElement {
       setRole(profile.role as Role)
     })()
 
+    /*
+     * El latido del dispositivo.
+     *
+     * Marca la última conexión —sin ella, la lista de «mis dispositivos» son
+     * tres filas iguales y no hay forma de saber cuál revocar—, y trae de vuelta
+     * la única respuesta que obliga a actuar: que a este lo han revocado. Se
+     * hace aquí y no en su propio temporizador porque el momento correcto es
+     * exactamente el mismo en el que ya se está hablando con el servidor.
+     */
+    const revisarDispositivo = (): void => {
+      void sincronizarDispositivo().then(async (estado) => {
+        if (estado.revocado) {
+          await olvidarDispositivo()
+          setUnlocked(false)
+          setSealed(null)
+          setAvisoDispositivo(
+            'Este dispositivo se ha revocado desde otro. Vuelve a darlo de alta con tu PIN si quieres seguir usándolo aquí.',
+          )
+          return
+        }
+        setAvisoDispositivo(estado.aviso)
+      })
+    }
+    revisarDispositivo()
+
     const stop = startSync()
     // Y los de la bajada, que no existían: lo que escribe este dispositivo subía
     // en segundos, pero lo que escribían los demás no llegaba hasta recargar.
-    const stopPull = startPull(setDiagnostico)
+    const stopPull = startPull((r) => {
+      setDiagnostico(r)
+      revisarDispositivo()
+    })
     const onActivity = (): void => void touch()
     window.addEventListener('pointerdown', onActivity)
     document.addEventListener('visibilitychange', onActivity)
@@ -468,10 +568,16 @@ export function App(): React.ReactElement {
     return (
       <LockScreen
         sealed={sealed}
+        aviso={avisoDispositivo}
         onUnlocked={() => {
           void (async () => {
             const { data } = await supabase.auth.getSession()
             setUserId(data.session?.user.id ?? null)
+            // Al darse de alta —o al vincularse con el PIN— el sobre se acaba de
+            // crear, y aquí todavía se recuerda el `null` de antes. Sin releerlo,
+            // «Mi cuenta» saldría sin nombre ni correo.
+            setSealed(await getSealed())
+            setAvisoDispositivo(null)
             setUnlocked(true)
           })()
         }}
@@ -490,15 +596,34 @@ export function App(): React.ReactElement {
           el 95% dejaba pasar un 5% de nada. */}
       <header className="sticky top-0 z-10 border-b border-line bg-ground">
         <div className="flex items-center justify-between gap-2 px-4 py-2">
-          {/* El rol, a la vista. Es lo que decide qué pestañas hay, así que
-              esconderlo convierte «no tengo el botón» en un misterio: quien es
-              admin y se ve como técnico lo detecta aquí, de un vistazo. */}
-          <span className="eyebrow truncate">Aulas · {role}</span>
+          {/* El rol, a la vista, y desde ahora también la puerta de «Mi
+              cuenta». Es lo que decide qué pestañas hay, así que esconderlo
+              convierte «no tengo el botón» en un misterio: quien es admin y se
+              ve como técnico lo detecta aquí, de un vistazo. Y con tres
+              dispositivos por persona hace falta un sitio donde verlos: este
+              rincón ya hablaba de quién eres, así que es el suyo. */}
+          <button
+            type="button"
+            onClick={() => setCuenta(true)}
+            aria-label="Mi cuenta: dispositivos y PIN"
+            className="eyebrow flex min-w-0 items-center gap-1.5 truncate underline-offset-4 hover:underline"
+          >
+            <span className="truncate">Aulas · {role}</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M9 6l6 6-6 6"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
           <div className="flex shrink-0 items-center gap-2">
             <SyncChip />
             <button
               type="button"
-              onClick={() => {
+              onClick={() =>
                 /*
                  * Es la única forma de que la sesión termine: no caduca sola.
                  * Por eso se confirma — cerrarla sin querer obliga a teclear el
@@ -508,18 +633,26 @@ export function App(): React.ReactElement {
                  * sesión no borra nada —el trabajo sigue aquí y sube al volver a
                  * entrar—, pero sí para la subida en seco: sin sesión, `flush()`
                  * no puede mandar nada. Quien cierra creyendo que «así se
-                 * guarda» está haciendo lo contrario de lo que quiere.
+                 * guarda» está haciendo lo contrario de lo que quiere. Y por eso
+                 * ese caso sube el tono a crítico: no es el mismo gesto con la
+                 * cola vacía que con nueve revisiones dentro.
                  */
-                const aviso =
-                  sinSubir > 0
-                    ? `Quedan ${sinSubir} cambios sin subir. No se pierden —siguen en este ` +
-                      'dispositivo y subirán cuando vuelvas a entrar—, pero mientras la sesión ' +
-                      'esté cerrada no se sube nada. ¿Cerrar sesión igualmente?'
-                    : '¿Cerrar sesión?'
-                if (confirm(aviso)) {
-                  void lock().then(() => setUnlocked(false))
-                }
-              }}
+                void pedirConfirmacion({
+                  titulo: '¿Cerrar sesión?',
+                  detalle:
+                    sinSubir > 0
+                      ? `Quedan ${sinSubir} cambios sin subir.`
+                      : 'La sesión no caduca sola: solo termina aquí.',
+                  consecuencias: [
+                    'Volver a entrar solo pide tu PIN: el dispositivo sigue dado de alta.',
+                    sinSubir > 0
+                      ? 'No se pierden: siguen en este dispositivo y subirán al volver a entrar. Pero mientras la sesión esté cerrada no se sube nada.'
+                      : 'Lo que esté sin sincronizar se queda esperando y sube al volver a entrar.',
+                  ],
+                  confirmar: 'Cerrar sesión',
+                  tono: sinSubir > 0 ? 'crit' : 'warn',
+                }).then((si) => si && void lock().then(() => setUnlocked(false)))
+              }
               className="key key-quiet px-3 py-1.5 text-xs font-medium text-muted"
               title="La sesión no caduca sola: solo termina aquí."
             >
@@ -528,6 +661,28 @@ export function App(): React.ReactElement {
           </div>
         </div>
       </header>
+
+      {avisoDispositivo && (
+        <div className="border-b border-line bg-warn-tint px-4 py-3">
+          <p className="text-sm text-warn">{avisoDispositivo}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setCuenta(true)}
+              className="key key-quiet min-h-11 px-3 text-sm"
+            >
+              Ver mis dispositivos
+            </button>
+            <button
+              type="button"
+              onClick={() => setAvisoDispositivo(null)}
+              className="key key-quiet min-h-11 px-3 text-sm"
+            >
+              Entendido
+            </button>
+          </div>
+        </div>
+      )}
 
       {escaneoFallido && (
         <div className="border-b border-line bg-warn-tint px-4 py-3">
@@ -767,7 +922,7 @@ export function App(): React.ReactElement {
             />
           )}
           {tab === 'incidencias' && <IncidentsPage />}
-          {tab === 'almacen' && <StockPage role={role} />}
+          {tab === 'inventario' && <InventarioPage role={role} userId={userId} />}
           {tab === 'historial' && <HistorialPage />}
           {/* El rol llega porque la configuración de la IA —que guarda un
               secreto— es de administrador, mientras que pedir informes es de
@@ -826,6 +981,26 @@ export function App(): React.ReactElement {
           />
         </Suspense>
       )}
+
+      {cuenta && (
+        <div className="fixed inset-0 z-40 overflow-y-auto bg-ground">
+          <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
+            <CuentaPage
+              userId={userId}
+              role={role}
+              email={sealed?.hint.email ?? ''}
+              fullName={sealed?.hint.fullName ?? ''}
+              onCerrar={() => setCuenta(false)}
+              onCerrarSesion={() => {
+                setCuenta(false)
+                void lock().then(() => setUnlocked(false))
+              }}
+            />
+          </Suspense>
+        </div>
+      )}
+
+      {dialogoConfirmar}
 
       {/* El aviso lleva z-30 y la barra de la revisión vive en la misma esquina:
           su «Actualizar» caía justo donde está «Guardar y siguiente sala», así
