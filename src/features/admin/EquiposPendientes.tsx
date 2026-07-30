@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { pullMaster } from '@/sync/pull'
+import { useConfirmar } from '@/components/Confirmar'
 
 /**
  * Los equipos que alguien apuntó desde un aula y nadie ha mirado todavía.
@@ -49,6 +50,7 @@ const LIMITE = 300
 export function EquiposPendientes(): React.ReactElement {
   const qc = useQueryClient()
   const [nota, setNota] = useState<string | null>(null)
+  const { pedir, dialogo } = useConfirmar()
 
   /*
    * Una sola consulta contra `asset_overview`.
@@ -165,11 +167,21 @@ export function EquiposPendientes(): React.ReactElement {
             <button
               type="button"
               disabled={act.isPending}
-              onClick={() => {
-                if (confirm(`¿Validar los ${lista.length} equipos de la lista?`)) {
-                  act.mutate({ kind: 'confirmar', ids: lista.map((p) => p.id) })
-                }
-              }}
+              onClick={() =>
+                void pedir({
+                  titulo: `¿Validar los ${lista.length} equipos de la lista?`,
+                  detalle: `En ${new Set(lista.map((p) => p.room_id)).size} sala(s).`,
+                  consecuencias: [
+                    'Pasan a formar parte del inventario oficial: cuentan en las revisiones y en los informes.',
+                    'Dejan de salir en naranja en el aula.',
+                    'Para sacar uno de su sala después ya hará falta una solicitud de retirada.',
+                  ],
+                  confirmar: 'Validar',
+                  tono: 'accent',
+                }).then((si) => {
+                  if (si) act.mutate({ kind: 'confirmar', ids: lista.map((p) => p.id) })
+                })
+              }
               className="key key-accent min-h-11 px-3 text-sm"
             >
               Validar los {lista.length}
@@ -248,18 +260,36 @@ export function EquiposPendientes(): React.ReactElement {
                           <button
                             type="button"
                             disabled={act.isPending}
-                            onClick={() => {
-                              // Borra el equipo de la sala. Se confirma por lo
-                              // mismo que en el aula: no hay botón de deshacer
-                              // al lado.
-                              if (
-                                confirm(
-                                  `¿Borrar «${e.label ?? 'este equipo'}» de la sala? No se autoriza y desaparece del inventario.`,
-                                )
-                              ) {
-                                act.mutate({ kind: 'descartar', id: e.id })
-                              }
-                            }}
+                            onClick={() =>
+                              /*
+                               * Esto BORRA el equipo de la sala, y era lo único
+                               * destructivo de la pantalla que preguntaba con el
+                               * cuadro gris del navegador: el dominio delante, sin
+                               * decir de qué aparato hablamos ni qué se conserva.
+                               * Ahora pregunta como el resto, y con el aparato
+                               * identificado — en un aula con dos ordenadores,
+                               * «este equipo» no dice cuál.
+                               */
+                              void pedir({
+                                titulo: `¿Borrar «${e.label ?? e.type_name ?? 'este equipo'}» de la sala?`,
+                                detalle: [
+                                  e.type_name,
+                                  modelo || 'sin modelo',
+                                  e.serial ? `S/N ${e.serial}` : null,
+                                ]
+                                  .filter(Boolean)
+                                  .join(' · '),
+                                consecuencias: [
+                                  'No se valida: se quita del inventario de la sala.',
+                                  'Si alguna revisión llegó a comprobarlo, el servidor lo retira en vez de borrarlo y conserva su histórico.',
+                                  'Quién lo descartó queda en la auditoría.',
+                                ],
+                                confirmar: 'Borrar de la sala',
+                                tono: 'crit',
+                              }).then((si) => {
+                                if (si) act.mutate({ kind: 'descartar', id: e.id })
+                              })
+                            }
                             className="key key-quiet min-h-11 shrink-0 px-3 text-xs text-muted"
                           >
                             No está
@@ -285,6 +315,8 @@ export function EquiposPendientes(): React.ReactElement {
           {nota}
         </p>
       )}
+
+      {dialogo}
     </section>
   )
 }

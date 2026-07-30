@@ -16,7 +16,7 @@
  * Y una segunda función, que es la que permite usar la cuenta en tres
  * dispositivos: el mismo PIN abre una **bóveda** guardada en el servidor con la
  * contraseña de la cuenta dentro (ver la mitad de abajo de este fichero y
- * `supabase/migrations/20260730000200_varios_dispositivos.sql`). El servidor
+ * `supabase/migrations/20260730000600_varios_dispositivos.sql`). El servidor
  * sigue sin ver el PIN: lo que recibe es un verificador derivado, y lo que
  * devuelve es un sobre que solo el PIN abre.
  */

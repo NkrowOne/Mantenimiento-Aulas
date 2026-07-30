@@ -101,7 +101,28 @@ export function CuentaPage({
           aquí el que ya no uses.
         </p>
 
-        {dispositivos.isPending && <p className="mt-3 text-sm text-muted">Cargando…</p>}
+        {/*
+          «Sin sesión» no es «cargando», y confundirlos dejaba esta pantalla
+          colgada para siempre.
+
+          La consulta va con `enabled: Boolean(userId)`, y una consulta
+          deshabilitada de react-query se queda en `isPending` eternamente: nunca
+          corre, así que nunca falla ni termina. Quien desbloquea con el PIN en un
+          sótano —el caso que este proyecto defiende expresamente— abría «Mi
+          cuenta» y leía «Cargando…» hasta que se cansaba, sin un error, sin una
+          explicación, y siendo este el único sitio desde el que se revoca un
+          aparato para hacer hueco al cuarto.
+
+          Ahora se dice lo que pasa y qué hacer. Lo demás de la pantalla —el PIN,
+          cerrar sesión— sigue funcionando, así que no se tapa entera.
+        */}
+        {!userId && (
+          <p className="mt-3 rounded-ctl border border-line bg-sunken px-3 py-2 text-sm text-muted">
+            Ver tus dispositivos necesita conexión: la lista la tiene el servidor, no este aparato.
+            Vuelve a entrar donde haya línea y aparecerá aquí.
+          </p>
+        )}
+        {userId && dispositivos.isPending && <p className="mt-3 text-sm text-muted">Cargando…</p>}
         {dispositivos.isError && (
           <p className="mt-3 text-sm text-crit">
             No se han podido leer:{' '}

@@ -339,4 +339,10 @@ registro. Si te equivocaste, haz una revisión nueva o dilo a tu supervisor.
 Los técnicos las abren; cerrarlas es cosa de supervisores.
 
 **¿Puedo usar mi móvil y el iPad a la vez?**
-Sí, pero cada dispositivo necesita su propia alta con su código.
+Sí, hasta tres aparatos, y **no necesitas pedir otro código**. En el segundo y el
+tercero, en la pantalla de entrada toca **«Entra con tu PIN»**, escribe tu correo
+y el PIN de siempre, y ya está. Hace falta línea esa primera vez; después
+funciona sin cobertura como el primero.
+
+Los tuyos los ves en **Mi cuenta** —la chapa del rol, arriba a la izquierda—, y
+si te falta hueco puedes revocar ahí el que ya no uses.

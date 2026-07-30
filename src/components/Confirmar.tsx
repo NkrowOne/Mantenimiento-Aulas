@@ -75,6 +75,29 @@ export function Confirmar({
         onCancelar()
         return
       }
+      /*
+       * Enter confirma, que es lo que esta cabecera prometía y no hacía.
+       *
+       * El foco entra en «Cancelar» a propósito —la salida segura—, así que un
+       * Enter lo activaba: el gesto anunciado como «confirmar» hacía lo contrario
+       * y sin decir nada. Se nota en el ordenador, que es donde viven Equipos y
+       * Catálogo, las dos pantallas de teclado.
+       *
+       * Dos excepciones, y las dos son el mismo principio: Enter no debe poder
+       * disparar lo que se ha decidido que cueste más que un gesto de inercia.
+       *  - Con `escribir` puesto no se atiende: para eso está el campo, y saltarlo
+       *    con una tecla anularía la única defensa de lo que no se deshace.
+       *  - Si el foco está en un campo de texto tampoco: ahí Enter es «he acabado
+       *    de escribir», no «adelante».
+       */
+      if (e.key === 'Enter' && listo && !peticion.escribir) {
+        const enUnCampo = document.activeElement?.tagName === 'INPUT'
+        if (!enUnCampo) {
+          e.preventDefault()
+          onConfirmar()
+          return
+        }
+      }
       // Encerrar el tabulador dentro del diálogo. Sin esto se sale al fondo, que
       // sigue ahí, y se puede pulsar lo que el diálogo estaba tapando.
       if (e.key !== 'Tab' || !panelRef.current) return
@@ -95,7 +118,7 @@ export function Confirmar({
     }
     document.addEventListener('keydown', alTeclear)
     return () => document.removeEventListener('keydown', alTeclear)
-  }, [onCancelar])
+  }, [onCancelar, onConfirmar, listo, peticion.escribir])
 
   return (
     <div

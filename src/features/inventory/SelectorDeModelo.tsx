@@ -245,13 +245,19 @@ export function SelectorDeModelo({
         />
       </label>
 
-      <ul className="mt-2 flex max-h-56 flex-col gap-1 overflow-y-auto">
+      {/* `min-h-11` y `gap-1.5`, no 36px pegados unos a otros. Es el control más
+          tocado de todo el catálogo —elegir el modelo de la lista es «el 90% de
+          las veces», dice la cabecera de este fichero— y se toca de pie, en un
+          aula, con el iPad en una mano. Por debajo del mínimo táctil de 44px el
+          gesto falla y se acaba escribiendo el modelo a mano, que es exactamente
+          lo que el catálogo viene a evitar. */}
+      <ul className="mt-2 flex max-h-56 flex-col gap-1.5 overflow-y-auto">
         {hits.map((hit) => (
           <li key={hit.model.id}>
             <button
               type="button"
               onClick={() => elegir(hit.model.id)}
-              className="key key-quiet flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-sm"
+              className="key key-quiet flex min-h-11 w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-sm"
             >
               <span className="min-w-0 flex-1 truncate">
                 {modelLabel(hit.model)}
@@ -279,7 +285,7 @@ export function SelectorDeModelo({
         <button
           type="button"
           onClick={empezarACrear}
-          className="key mt-2 flex w-full items-center justify-between border border-warn/40 bg-warn-tint px-2.5 py-2 text-left text-sm text-warn"
+          className="key mt-2 flex min-h-11 w-full items-center justify-between border border-warn/40 bg-warn-tint px-2.5 py-2 text-left text-sm text-warn"
         >
           <span className="min-w-0 truncate">Crear «{raw}»</span>
           <span className="shrink-0 text-xs font-normal">pendiente de validar</span>

@@ -562,7 +562,7 @@ async function dispositivos(): Promise<void> {
 
   const { data, error } = await admin
     .from('devices')
-    .select('id, label, enrolled_via, enrolled_at, last_seen_at, revoked_at, revoked_reason')
+    .select('id, label, enrolled_via, enrolled_at, last_seen_at, last_seen_ua, revoked_at, revoked_reason')
     .eq('profile_id', user.id)
     .order('enrolled_at', { ascending: false })
   if (error) {
@@ -583,6 +583,17 @@ async function dispositivos(): Promise<void> {
       `  ${d.revoked_at ? '✗' : '·'} ${String(d.label).padEnd(20)} ` +
         `${String(d.enrolled_via === 'pin' ? 'con PIN' : 'con código').padEnd(11)} ` +
         `alta ${fecha(d.enrolled_at)}  visto ${fecha(d.last_seen_at)}  ${d.id}` +
+        /*
+         * Y el navegador entero, en su propia línea.
+         *
+         * `last_seen_ua` se escribía en cada latido y no lo leía nadie. Importa
+         * justo en la llamada que esta orden atiende: «he perdido el iPad» con dos
+         * aparatos que se llaman los dos «iPad · Safari» no se puede resolver por
+         * la etiqueta, y revocar el equivocado deja a alguien fuera. Aquí una
+         * cadena de tres líneas no molesta, que es por lo que va aquí y no en la
+         * pantalla de «Mi cuenta».
+         */
+        (d.last_seen_ua ? `\n      ${String(d.last_seen_ua).slice(0, 120)}` : '') +
         (d.revoked_at ? `\n      revocado ${fecha(d.revoked_at)}${d.revoked_reason ? `: ${d.revoked_reason}` : ''}` : ''),
     )
   }

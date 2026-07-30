@@ -1,6 +1,6 @@
 import { useDeferredValue, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useConfirmar } from '@/components/Confirmar'
+import { useConfirmar, type PeticionConfirmar } from '@/components/Confirmar'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { pullMaster } from '@/sync/pull'
@@ -9,15 +9,18 @@ import { norm, displayRoomCode } from '@/domain/normalize'
 import { diaEnMadrid, diaMasDias, fechaCorta } from '@/domain/fechas'
 import {
   ASSET_STATUS_LABELS,
+  REMOVAL_DESTINO_HINTS,
+  REMOVAL_DESTINO_LABELS,
   type Asset,
   type AssetModel,
   type AssetStatus,
   type AssetType,
+  type RemovalDestino,
   type Role,
 } from '@/domain/types'
 import { SelectorDeModelo } from './SelectorDeModelo'
 import { CamposPropios } from './CamposPropios'
-import { asignarModelo, guardarAsset, type ModeloElegido } from './useRoomInventory'
+import { asignarModelo, guardarAsset, pedirRetirada, type ModeloElegido } from './useRoomInventory'
 
 /**
  * El inventario entero, para trabajarlo sentado.
@@ -71,6 +74,16 @@ const SIN_FECHA = '__sin_fecha__'
 const EN_GARANTIA = '__en_garantia__'
 const GARANTIA_PRONTO = '__garantia_pronto__'
 const DIAS_DE_AVISO = 90
+/*
+ * Y el fin de soporte, que es del MODELO y no del aparato.
+ *
+ * `asset_models.eol_on` se pintaba en dos pantallas y no había forma de
+ * escribirlo ni de preguntar por él, así que la pregunta que justifica la columna
+ * —«qué hay que cambiar el curso que viene»— seguía siendo una conversación. Con
+ * esto es un filtro: sale la lista de aparatos concretos, con su aula, que es lo
+ * que hace falta para presupuestarlo.
+ */
+const SIN_SOPORTE = '__sin_soporte__'
 
 export function EquiposPage({ role, userId }: { role: Role; userId: string | null }): React.ReactElement {
   const [texto, setTexto] = useState('')
@@ -179,6 +192,9 @@ export function EquiposPage({ role, userId }: { role: Role; userId: string | nul
       ) {
         return false
       }
+      // Del modelo, no del equipo: es el fabricante quien deja de dar soporte, y
+      // eso vale para las cuarenta unidades a la vez.
+      if (pega === SIN_SOPORTE && !(f.modelo?.eol_on && f.modelo.eol_on <= hoy)) return false
       return true
     })
 
@@ -266,6 +282,54 @@ export function EquiposPage({ role, userId }: { role: Role; userId: string | nul
     try {
       for (const f of elegidas) await guardarAsset(f.asset, { status })
       setNota(`${elegidas.length} equipo(s) marcados como ${ASSET_STATUS_LABELS[status].toLowerCase()}.`)
+      setSeleccion(new Set())
+    } finally {
+      setOcupado(false)
+    }
+  }
+
+  /**
+   * Pedir la retirada de los equipos elegidos.
+   *
+   * Antes esto escribía `status = 'retirado'` en cada uno con `guardarAsset`, y
+   * era la puerta de atrás del control que el aula acababa de estrenar: cuarenta
+   * equipos fuera del inventario de un clic, sin que ningún coordinador lo
+   * autorizara, sin fila en «Retiradas por autorizar», sin el evento de baja en el
+   * histórico de cada sala —así que el aparato desaparecía sin dejar rastro de
+   * quién lo quitó— y sin que el almacén ingresara ni una unidad de los que
+   * volvían a la estantería. Y lo podía pulsar un técnico, mientras en el aula el
+   * mismo gesto sobre UN aparato exigía autorización.
+   *
+   * Ahora es el mismo camino que el del aula, en bloque: una solicitud por equipo
+   * con su destino. Lo que las autoriza sigue siendo `decide_asset_removal`, que
+   * es quien sabe hacer las cuatro escrituras juntas.
+   *
+   * Los que ya tenían una solicitud viva no cuentan como fallo: es el caso normal
+   * de volver a seleccionar «todo» después de haber pedido unos cuantos.
+   */
+  async function pedirRetiradaEnBloque(destino: RemovalDestino, motivo: string): Promise<void> {
+    setOcupado(true)
+    try {
+      let pedidas = 0
+      let repetidas = 0
+      for (const f of elegidas) {
+        const r = await pedirRetirada(f.asset, destino, motivo, userId)
+        if (r.ok) pedidas += 1
+        else repetidas += 1
+      }
+      setNota(
+        [
+          pedidas > 0
+            ? `Retirada pedida para ${pedidas} equipo(s) (${REMOVAL_DESTINO_LABELS[destino].toLowerCase()}).`
+            : null,
+          repetidas > 0 ? `${repetidas} ya la tenían pedida.` : null,
+          pedidas > 0
+            ? 'Siguen en sus salas hasta que un coordinador las autorice, en Datos → Retiradas por autorizar.'
+            : null,
+        ]
+          .filter(Boolean)
+          .join(' '),
+      )
       setSeleccion(new Set())
     } finally {
       setOcupado(false)
@@ -412,20 +476,35 @@ export function EquiposPage({ role, userId }: { role: Role; userId: string | nul
 
         <label className="text-xs text-muted">
           Estado
+          {/*
+            «Retirado» no está, y no es un olvido: `pullMaster` baja los equipos
+            con `neq('status','retirado')`, así que un retirado no llega nunca al
+            espejo de este dispositivo. Ofrecerlo era invitar a una consulta que
+            esta pantalla no puede contestar — se elegía y salía «Ningún equipo
+            cumple estos filtros», siempre, en un campus con cientos de retirados,
+            sin nada que distinguiera «no hay» de «aquí no se ven».
+          */}
           <select
             value={estado}
             onChange={(e) => setEstado(e.target.value as AssetStatus | '')}
             className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
           >
             <option value="">Todos</option>
-            {(Object.keys(ASSET_STATUS_LABELS) as AssetStatus[]).map((s) => (
-              <option key={s} value={s}>
-                {ASSET_STATUS_LABELS[s]}
-              </option>
-            ))}
+            {(Object.keys(ASSET_STATUS_LABELS) as AssetStatus[])
+              .filter((s) => s !== 'retirado')
+              .map((s) => (
+                <option key={s} value={s}>
+                  {ASSET_STATUS_LABELS[s]}
+                </option>
+              ))}
           </select>
         </label>
       </div>
+
+      <p className="mt-1 text-xs text-muted">
+        Esta lista son los equipos vivos. Los retirados no se guardan en el dispositivo: se leen en
+        el histórico de su sala.
+      </p>
 
       {/* Los filtros que de verdad se usan para trabajar: «qué me falta». Van en
           chapas y no en otro desplegable porque son la lista de tareas. */}
@@ -438,6 +517,7 @@ export function EquiposPage({ role, userId }: { role: Role; userId: string | nul
             [SIN_VALIDAR, 'Sin validar'],
             [EN_GARANTIA, 'En garantía'],
             [GARANTIA_PRONTO, `Garantía acaba en ${DIAS_DE_AVISO} días`],
+            [SIN_SOPORTE, 'Modelo sin soporte'],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -537,32 +617,17 @@ export function EquiposPage({ role, userId }: { role: Role; userId: string | nul
               Marcar averiados
             </button>
 
-            <button
-              type="button"
-              disabled={ocupado}
-              onClick={() =>
-                void pedir({
-                  titulo: `¿Retirar ${elegidas.length} equipo(s) del inventario?`,
-                  detalle: 'Es la acción con más alcance de esta pantalla.',
-                  consecuencias: [
-                    'Dejan de contar en las revisiones de sus salas.',
-                    'El histórico de cada uno se conserva: no se borra nada.',
-                    `Afecta a ${elegidas.length} equipos de ${new Set(elegidas.map((f) => f.salaCodigo)).size} sala(s).`,
-                  ],
-                  confirmar: 'Retirar',
-                  tono: 'crit',
-                  // Se teclea. Retirar cuarenta equipos de un clic es la única
-                  // operación de esta pantalla que no se puede deshacer a mano
-                  // en un rato razonable.
-                  escribir: elegidas.length > 5 ? 'RETIRAR' : undefined,
-                }).then((si) => {
-                  if (si) void cambiarEstadoEnBloque('retirado')
-                })
-              }
-              className="key key-quiet min-h-11 px-3 text-xs text-crit"
-            >
-              Retirar
-            </button>
+            {/* No retira: PIDE la retirada, con su destino, igual que el aula.
+                El destino es la mitad de la decisión —solo «al almacén» suma la
+                unidad a las existencias— y sin preguntarlo no hay forma de
+                expresarlo. */}
+            <PedirRetiradaEnBloque
+              cuantos={elegidas.length}
+              salas={new Set(elegidas.map((f) => f.salaCodigo)).size}
+              deshabilitado={ocupado}
+              onPedir={(destino, motivo) => void pedirRetiradaEnBloque(destino, motivo)}
+              pedirConfirmacion={pedir}
+            />
 
             {puedeValidar && (
               <button
@@ -623,7 +688,7 @@ export function EquiposPage({ role, userId }: { role: Role; userId: string | nul
             <span className="eyebrow w-56 shrink-0">Marca y modelo</span>
             <span className="eyebrow w-36 shrink-0">Nº de serie</span>
             <span className="eyebrow w-28 shrink-0">Instalado</span>
-            <span className="w-20 shrink-0" />
+            <span className="w-28 shrink-0 lg:w-32" />
           </li>
         )}
 
@@ -687,6 +752,132 @@ function AsignarEnBloque({
           setAbierto(false)
         }}
       />
+    </div>
+  )
+}
+
+/**
+ * Pedir la retirada de varios equipos a la vez, con su destino.
+ *
+ * Mismo panel que en el aula y por el mismo motivo: «se ha roto» y «me lo llevo
+ * al almacén» son dos cosas distintas, y solo la segunda suma unidades a las
+ * existencias. En bloque importa más todavía, porque cuarenta aparatos mal
+ * clasificados son cuarenta descuadres.
+ *
+ * El motivo se pide una vez y vale para todos: en bloque siempre es el mismo
+ * —«retirada del aula 2.4», «renovación del parque»— y pedirlo cuarenta veces
+ * garantizaría que se quedara vacío.
+ */
+function PedirRetiradaEnBloque({
+  cuantos,
+  salas,
+  deshabilitado,
+  onPedir,
+  pedirConfirmacion,
+}: {
+  cuantos: number
+  salas: number
+  deshabilitado: boolean
+  onPedir: (destino: RemovalDestino, motivo: string) => void
+  pedirConfirmacion: (p: PeticionConfirmar) => Promise<boolean>
+}): React.ReactElement {
+  const [abierto, setAbierto] = useState(false)
+  /* El almacén por defecto, igual que en el aula: la retirada que más se pierde
+     es la del aparato que está bien y vuelve a la estantería sin que nadie lo
+     ingrese. */
+  const [destino, setDestino] = useState<RemovalDestino>('almacen')
+  const [motivo, setMotivo] = useState('')
+
+  if (!abierto) {
+    return (
+      <button
+        type="button"
+        disabled={deshabilitado}
+        onClick={() => setAbierto(true)}
+        className="key key-quiet min-h-11 px-3 text-xs text-crit"
+      >
+        Pedir retirada
+      </button>
+    )
+  }
+
+  return (
+    <div className="w-full max-w-md rounded-ctl border border-line bg-sunken p-3">
+      <p className="text-xs font-medium">
+        ¿A dónde van los {cuantos} equipos?
+      </p>
+
+      <div role="radiogroup" aria-label="Destino de los equipos" className="mt-2 grid gap-2">
+        {(['baja', 'almacen'] as RemovalDestino[]).map((d) => (
+          <button
+            key={d}
+            type="button"
+            role="radio"
+            aria-checked={destino === d}
+            onClick={() => setDestino(d)}
+            className={`key min-h-11 px-3 py-2 text-left text-xs ${
+              destino === d ? 'key-accent' : 'key-quiet text-muted'
+            }`}
+          >
+            <span className="block font-semibold">{REMOVAL_DESTINO_LABELS[d]}</span>
+            <span className="mt-0.5 block font-normal opacity-80">{REMOVAL_DESTINO_HINTS[d]}</span>
+          </button>
+        ))}
+      </div>
+
+      <label className="mt-2 block text-xs text-muted">
+        Por qué
+        <input
+          type="text"
+          value={motivo}
+          onChange={(e) => setMotivo(e.target.value)}
+          placeholder="Renovación del parque, se cierra el aula…"
+          enterKeyHint="done"
+          className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+        />
+      </label>
+
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() =>
+            void pedirConfirmacion({
+              titulo: `¿Pedir la retirada de ${cuantos} equipo(s)?`,
+              detalle: `${REMOVAL_DESTINO_LABELS[destino]} · ${salas} sala(s) afectada(s).`,
+              consecuencias: [
+                'Se crea una solicitud por equipo. Ninguno sale del inventario todavía.',
+                'Siguen contando en las revisiones de sus salas hasta que un coordinador las autorice.',
+                destino === 'almacen'
+                  ? 'Al autorizarlas, cada unidad entra en el almacén del artículo de su tipo.'
+                  : 'Al autorizarlas, se dan por perdidas: no vuelven al almacén.',
+                'El equipo y su historial se conservan: no se borra nada.',
+              ],
+              confirmar: 'Pedir la retirada',
+              tono: destino === 'baja' ? 'crit' : 'warn',
+              /* Se teclea por encima de cinco. No porque no se pueda deshacer
+                 —una solicitud se rechaza en la bandeja— sino porque cuarenta
+                 solicitudes son cuarenta decisiones que alguien tiene que tomar
+                 una a una: el coste cae sobre otra persona. */
+              escribir: cuantos > 5 ? (destino === 'baja' ? 'BAJA' : 'RETIRAR') : undefined,
+            }).then((si) => {
+              if (!si) return
+              onPedir(destino, motivo)
+              setAbierto(false)
+              setMotivo('')
+            })
+          }
+          className="key key-accent min-h-11 flex-1 px-2 text-xs"
+        >
+          Pedir la retirada
+        </button>
+        <button
+          type="button"
+          onClick={() => setAbierto(false)}
+          className="key key-quiet min-h-11 px-3 text-xs text-muted"
+        >
+          Cancelar
+        </button>
+      </div>
     </div>
   )
 }
@@ -766,10 +957,15 @@ function FilaEquipo({
           )}
         </span>
 
-        <span className="flex w-20 shrink-0 items-center justify-end gap-1">
+        {/* `w-28` y no `w-20`: con la chapa de estado dentro, ochenta píxeles
+            no daban para «Averiado» más el botón, y la chapa se pintaba encima de
+            la columna de la izquierda —la fecha en el ordenador, el nombre del
+            equipo en el móvil, que ya iba justo—. Solo se ve al filtrar por un
+            estado que no sea «instalado», que es justo cuando se está mirando. */}
+        <span className="flex w-28 shrink-0 items-center justify-end gap-1 lg:w-32">
           {asset.status !== 'instalado' && (
             <span
-              className={`rounded-tag px-1.5 py-0.5 text-[0.625rem] font-medium ${
+              className={`shrink-0 whitespace-nowrap rounded-tag px-1.5 py-0.5 text-[0.625rem] font-medium ${
                 asset.status === 'averiado' ? 'bg-crit-tint text-crit' : 'bg-sunken text-muted'
               }`}
             >
@@ -881,9 +1077,13 @@ function EditorEquipo({ fila, userId }: { fila: Fila; userId: string | null }): 
           </label>
         </div>
 
+        {/* `heredados`: lo que dice el modelo para los campos «ambos». El valor
+            de fábrica se escribe una vez en el catálogo y aquí se ve, salvo que
+            esta unidad concreta diga otra cosa. */}
         <CamposPropios
           campos={(tipo?.spec_fields ?? []).filter((c) => c.en !== 'modelo')}
           valores={asset.specs ?? {}}
+          heredados={fila.modelo?.specs ?? undefined}
           onChange={(specs) => guardar({ specs })}
         />
 

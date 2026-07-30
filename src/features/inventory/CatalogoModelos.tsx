@@ -6,7 +6,9 @@ import { pullMaster } from '@/sync/pull'
 import { MARCAS_HABITUALES, SIN_MARCA, duplicadosProbables, modelLabel } from '@/domain/inventory'
 import { norm } from '@/domain/normalize'
 import { fechaCorta } from '@/domain/fechas'
-import type { AssetModel, AssetType, Role } from '@/domain/types'
+import type { AssetModel, AssetType, Role, SpecValues } from '@/domain/types'
+import { CamposPropios, resumirCampos } from './CamposPropios'
+import { CamposDelTipo } from './CamposDelTipo'
 
 /**
  * El catálogo de marcas y modelos, y las cuatro decisiones que se toman sobre él.
@@ -122,20 +124,45 @@ export function CatalogoModelos({ role }: { role: Role }): React.ReactElement {
     onError: (e) => setNota(e instanceof Error ? e.message : 'No se ha podido validar.'),
   })
 
+  /*
+   * Guardar la ficha del modelo: el nombre, y lo que se sabe de él.
+   *
+   * Van en dos escrituras porque son dos cosas distintas y solo una necesita
+   * lógica: renombrar deja el nombre viejo de alias y da el modelo por validado
+   * —eso es `rename_asset_model`—, mientras que los campos propios, el fin de
+   * soporte y las observaciones son un UPDATE normal que la política «supervisor
+   * gestiona modelos» ya permite.
+   *
+   * El nombre primero: si falla —un choque con otro modelo del mismo tipo—, no se
+   * escribe nada. Al revés dejaría la ficha guardada sobre un nombre rechazado.
+   */
   const corregir = useMutation({
-    mutationFn: async (v: { id: string; brand: string; model: string }) => {
+    mutationFn: async (v: {
+      id: string
+      brand: string
+      model: string
+      specs: SpecValues
+      eol_on: string | null
+      notes: string | null
+    }) => {
       const { error: err } = await supabase.rpc('rename_asset_model', {
         p_id: v.id,
         p_brand: v.brand,
         p_model: v.model,
       })
       if (err) throw err
+
+      const { error: err2 } = await supabase
+        .from('asset_models')
+        .update({ specs: v.specs, eol_on: v.eol_on, notes: v.notes })
+        .eq('id', v.id)
+      if (err2) throw err2
     },
     onSuccess: () => {
       setEditando(null)
-      void tras('Modelo corregido. El nombre anterior se queda de alias.')
+      void tras('Modelo guardado. El nombre anterior se queda de alias.')
     },
-    onError: (e) => setNota(e instanceof Error ? e.message : 'No se ha podido corregir.'),
+    onError: (e) => setNota(e instanceof Error ? e.message : 'No se ha podido guardar.'),
   })
 
   const fusionar = useMutation({
@@ -339,6 +366,21 @@ export function CatalogoModelos({ role }: { role: Role }): React.ReactElement {
                         .filter(Boolean)
                         .join(' · ')}
                     </span>
+                    {/* Lo que se sabe del modelo, en una línea: «Resolución
+                        1920×1080 · Lúmenes 4000». Para esto se escribió
+                        `resumirCampos`, y era el rastro exacto de dónde se cortó
+                        el trabajo anterior — la función estaba y la línea que la
+                        usa no llegó a escribirse, así que había que abrir cada
+                        modelo para saber si tenía algo dentro. */}
+                    {(() => {
+                      const resumen = resumirCampos(
+                        tipos.get(m.asset_type_id)?.spec_fields ?? [],
+                        m.specs ?? {},
+                      )
+                      return resumen ? (
+                        <span className="block truncate text-xs text-muted">{resumen}</span>
+                      ) : null
+                    })()}
                   </span>
 
                   {!m.confirmed && (
@@ -416,8 +458,9 @@ export function CatalogoModelos({ role }: { role: Role }): React.ReactElement {
                     {editando === m.id && (
                       <Corrector
                         modelo={m}
+                        tipo={tipos.get(m.asset_type_id) ?? null}
                         guardando={corregir.isPending}
-                        onGuardar={(brand, model) => corregir.mutate({ id: m.id, brand, model })}
+                        onGuardar={(ficha) => corregir.mutate({ id: m.id, ...ficha })}
                         onCancelar={() => setEditando(null)}
                       />
                     )}
@@ -471,6 +514,15 @@ export function CatalogoModelos({ role }: { role: Role }): React.ReactElement {
         </>
       )}
 
+      {/*
+        Y qué se apunta de cada clase de aparato. Va aquí, debajo del catálogo de
+        modelos, porque es la misma pregunta un nivel más arriba: el catálogo dice
+        QUÉ modelos hay y esto dice QUÉ SE SABE de cada uno. Solo para quien puede
+        gestionar el catálogo — cambiar la lista de campos afecta a lo que se pide
+        en las 276 aulas.
+      */}
+      {puede && <CamposDelTipo tipos={data?.tipos ?? []} />}
+
       {dialogo}
     </div>
   )
@@ -485,17 +537,53 @@ export function CatalogoModelos({ role }: { role: Role }): React.ReactElement {
  */
 function Corrector({
   modelo,
+  tipo,
   guardando,
   onGuardar,
   onCancelar,
 }: {
   modelo: AssetModel
+  /** Su tipo, que es quien declara los campos propios. */
+  tipo: AssetType | null
   guardando: boolean
-  onGuardar: (brand: string, model: string) => void
+  onGuardar: (ficha: {
+    brand: string
+    model: string
+    specs: SpecValues
+    eol_on: string | null
+    notes: string | null
+  }) => void
   onCancelar: () => void
 }): React.ReactElement {
   const [brand, setBrand] = useState(modelo.brand)
   const [model, setModel] = useState(modelo.model)
+  const [specs, setSpecs] = useState<SpecValues>(modelo.specs ?? {})
+  const [eol, setEol] = useState(modelo.eol_on ?? '')
+  const [notes, setNotes] = useState(modelo.notes ?? '')
+
+  /*
+   * Los campos que se contestan una vez por MODELO y no por aparato.
+   *
+   * Es la mitad que faltaba de la parte personalizable del inventario, y sin ella
+   * no servía de nada: la migración siembra «Resolución», «Lúmenes» y «Referencia
+   * de lámpara» para los proyectores y «Pulgadas» para las pantallas, todos
+   * marcados `en: 'modelo'`, y no había una sola casilla en toda la aplicación
+   * donde escribirlos. El bloque de campos propios del aula filtra por
+   * `c.en !== 'modelo'`, así que en los dos tipos más numerosos del parque no
+   * aparecía nada. Un coordinador veía la pieza configurada en la base y en la
+   * pantalla no existía.
+   *
+   * Y es el nivel correcto: los lúmenes de un EB-992F son los mismos en las
+   * cuarenta aulas donde hay uno. Preguntarlo por aparato es pedir cuarenta veces
+   * el mismo dato, que es como se garantiza que no se conteste ninguna.
+   *
+   * `ambos` entra aquí también: el modelo pone el valor de fábrica y una unidad
+   * concreta puede contradecirlo desde el aula.
+   */
+  const campos = useMemo(
+    () => (tipo?.spec_fields ?? []).filter((c) => c.en !== 'equipo'),
+    [tipo],
+  )
 
   return (
     <div className="mt-2 rounded-ctl border border-line bg-sunken p-3">
@@ -539,6 +627,49 @@ function Corrector({
         este modelo. Corregir lo da además por validado.
       </p>
 
+      {campos.length > 0 && (
+        <div className="mt-3 border-t border-line-soft pt-3">
+          <CamposPropios
+            campos={campos}
+            valores={specs}
+            onChange={setSpecs}
+            titulo={`Lo que se sabe de este ${tipo?.name?.toLowerCase() ?? 'modelo'}`}
+          />
+          <p className="mt-1.5 text-xs text-muted">
+            Se contesta una vez y vale para todos los aparatos de este modelo.
+          </p>
+        </div>
+      )}
+
+      <div className="mt-3 grid gap-2 border-t border-line-soft pt-3 sm:grid-cols-2">
+        <label className="text-xs text-muted">
+          Fin de soporte
+          {/*
+            La columna existía y se pintaba en dos sitios —«sin soporte desde…» en
+            esta lista y en la ficha del equipo— y no había dónde escribirla, así
+            que ese texto no aparecía nunca. Es la que convierte el inventario en
+            planificación: «qué hay que cambiar el curso que viene» deja de ser una
+            conversación y pasa a ser un filtro.
+          */}
+          <input
+            type="date"
+            value={eol}
+            onChange={(e) => setEol(e.target.value)}
+            className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+          />
+        </label>
+        <label className="text-xs text-muted">
+          Observaciones
+          <input
+            type="text"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="La lámpara es la misma que la del ME403U…"
+            className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+          />
+        </label>
+      </div>
+
       <div className="mt-3 flex gap-2">
         <button
           type="button"
@@ -550,7 +681,15 @@ function Corrector({
         <button
           type="button"
           disabled={guardando || !model.trim()}
-          onClick={() => onGuardar(brand.trim(), model.trim())}
+          onClick={() =>
+            onGuardar({
+              brand: brand.trim(),
+              model: model.trim(),
+              specs,
+              eol_on: eol || null,
+              notes: notes.trim() || null,
+            })
+          }
           className="key key-accent min-h-11 flex-1 px-3 text-xs"
         >
           Guardar

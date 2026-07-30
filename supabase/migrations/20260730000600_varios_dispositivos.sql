@@ -335,7 +335,7 @@ comment on function public.parametros_de_vinculacion(text) is
 -- continuación lanzaba «el PIN no es correcto»… lo que revertía el propio
 -- contador. El resultado era un freno que parecía estar y no estaba: diez mil
 -- intentos, todos con el contador a cero, exactamente el ataque sin conexión que
--- se quería impedir. Lo destapó la prueba 43 de `rls-test.sql`, que lo intenta
+-- se quería impedir. Lo destapó la prueba 54 de `rls-test.sql`, que lo intenta
 -- cinco veces y exige ver el bloqueo.
 --
 -- Así que el fallo se DEVUELVE, no se lanza. La función siempre termina bien y

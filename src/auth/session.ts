@@ -440,7 +440,7 @@ export interface LinkResult {
  * `vincular_dispositivo` **devuelve** el fallo en vez de lanzarlo, y eso no es
  * un capricho de estilo del servidor: lanzarlo revertiría el contador de
  * intentos que hace seguro un PIN de cuatro dígitos (ver el comentario de la
- * función en `20260730000200_varios_dispositivos.sql`). Aquí es donde esa
+ * función en `20260730000600_varios_dispositivos.sql`). Aquí es donde esa
  * respuesta se convierte en algo que la pantalla pueda enseñar.
  *
  * Un `error` de PostgREST sí es un fallo de verdad —red, permisos, la función

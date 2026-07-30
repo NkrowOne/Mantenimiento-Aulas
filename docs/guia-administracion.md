@@ -480,9 +480,15 @@ lista de cincuenta es exactamente el trabajo que nadie hace.
 | **Fusionar** | Es el mismo que otro | Mueve sus equipos al bueno y deja lápida con su nombre de alias |
 | **Retirar** | Descatalogado | Deja de ofrecerse. Los equipos que lo llevan lo conservan |
 
-Fusionar y retirar **se confirman con el alcance delante** —cuántos equipos se
-mueven— y por encima de diez equipos hay que teclear la palabra: son operaciones
-que la aplicación no sabe deshacer.
+Las cuatro **se confirman con el alcance delante** —cuántos equipos afecta—, pero
+no pesan igual, y la diferencia importa para no aplazar la que es inofensiva:
+
+- **Fusionar no se deshace.** Mueve los equipos y deja lápida, y la aplicación no
+  sabe separarlos otra vez. Por encima de diez equipos hay que teclear
+  `FUSIONAR`.
+- **Retirar sí se deshace**, ahí mismo: el botón pasa a ser **«Devolver»**. Es un
+  clic y no pide teclear nada, porque lo único que hace es dejar de ofrecer ese
+  modelo en la lista; los equipos que lo llevan lo conservan.
 
 Ponerle la marca a los cincuenta y cinco modelos es un rato; asignar el modelo a
 los 1.094 equipos, no: `Inventario → Equipos`, se filtra por tipo y edificio, se
@@ -492,12 +498,44 @@ una factura o con el listado del proveedor.
 
 Las chapas de arriba son la lista de tareas: **Sin modelo**, **Sin nº de serie**,
 **Sin fecha de instalación** y **Sin validar** dicen qué queda por rellenar, y las
-dos de la garantía contestan la pregunta que llega con el aparato ya roto:
+tres siguientes contestan preguntas de gestión:
 
 | Chapa | Para qué |
 |---|---|
 | **En garantía** | Con la avería delante: ¿lo arreglamos nosotros o lo manda el fabricante? La fila enseña hasta cuándo, así que se ve de un golpe cuál corre prisa |
 | **Garantía acaba en 90 días** | Una vez al trimestre. Es el margen para reclamar algo que va justo, antes de que deje de poderse |
+| **Modelo sin soporte** | Los aparatos cuyo modelo pasó su fecha de fin de soporte. Es la lista de la que sale un presupuesto de renovación, con su aula al lado |
+
+La lista son los equipos **vivos**: los retirados no se guardan en el dispositivo
+y se leen en el histórico de su sala, así que el filtro de estado no los ofrece.
+
+### Qué se apunta de cada tipo de aparato
+
+En `Inventario → Catálogo`, al final: **Configurar los campos**. Además de la
+marca, el modelo y el número de serie —que los lleva todo—, cada clase de aparato
+puede tener sus propios datos, y se declaran aquí sin desplegar nada.
+
+Lo que más se piensa es **dónde se contesta cada campo**, porque decide si el dato
+se escribe una vez o mil:
+
+| Dónde | Cuándo | Ejemplo |
+|---|---|---|
+| **En el modelo** | El dato es del modelo, no del aparato | Los lúmenes de un EB-992F son los mismos en las cuarenta aulas donde hay uno |
+| **En cada aparato** | Cambia de una unidad a otra | Las horas de la lámpara |
+| **En el modelo, y el aparato puede cambiarlo** | Hay valor de fábrica y excepciones | El modelo trae 8 GB de RAM y a tres de ellos alguien les puso 16 |
+
+Los de nivel modelo se rellenan en la ficha del modelo (**Corregir**, en el
+catálogo); los de nivel aparato, en el aula o en `Inventario → Equipos`. Los de
+«ambos» salen en el aparato con el valor del modelo delante —«del modelo: 8 GB»—
+para que solo haya que escribir cuando esa unidad sea distinta.
+
+**Quitar un campo no borra lo escrito.** Deja de pedirse, y los valores siguen
+guardados: si se vuelve a añadir, reaparecen. El nombre interno se deriva de la
+etiqueta la primera vez y después no se toca, porque es lo que ata el campo a esos
+valores.
+
+En la misma ficha del modelo están el **fin de soporte** —el que alimenta la chapa
+«Modelo sin soporte»— y unas observaciones.
 
 La garantía se escribe en cada equipo —en «Más detalles», desde el aula o desde
 esta pantalla— y hasta ahora era un dato que solo se podía escribir: no había
@@ -532,7 +570,10 @@ from audit_log where table_name = 'rooms' order by at desc limit 20;
 
 ## 4. Almacén
 
-Desde la pestaña **Almacén**, con `+` y `−` por artículo.
+En **`Inventario → Almacén`**, con `+` y `−` por artículo. La pestaña se llama
+Inventario y el almacén es una de sus tres vistas, junto a *Equipos* y
+*Catálogo*: lo que antes era una pestaña «Almacén» a secas pasó a ser esta
+cuando el inventario de equipos ganó pantalla propia.
 
 **Las existencias no son un campo editable: son la suma de los movimientos.**
 Por eso no puede repetirse el descuadre del Excel, que llegó a tener stock
@@ -552,7 +593,7 @@ movimiento nace sabiendo para qué fue y en qué sala, que es lo que permite
 contestar «cuánto material se llevó el edificio H». Se puede apuntar sin
 cobertura: va por la cola de salida como las revisiones.
 
-El `−` de la pestaña Almacén sigue estando y sirve para lo demás —una
+El `−` de `Inventario → Almacén` sigue estando y sirve para lo demás —una
 instalación programada, una sustitución preventiva—, pero ese consumo queda sin
 destino y por eso no aparece repartido por edificio.
 
@@ -628,7 +669,7 @@ error de duplicado, es que ya está en la lista con otras mayúsculas o tildes:
 búscalo antes de insistir.
 
 Las 23 entradas que no llegaban a ser un artículo —«mts», «pulgadas», «cables
-de»— quedaron **archivadas**: no salen en la pestaña Almacén, pero siguen
+de»— quedaron **archivadas**: no salen en `Inventario → Almacén`, pero siguen
 enlazadas a las incidencias que las citan. Para verlas:
 
 ```sql

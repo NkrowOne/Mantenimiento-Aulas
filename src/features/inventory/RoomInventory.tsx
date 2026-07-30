@@ -5,6 +5,7 @@ import { db } from '@/db/dexie'
 import {
   identifyAsset,
   labelAvailable,
+  resolveModel,
   resolveType,
   searchCatalog,
   sugerenciasDe,
@@ -340,6 +341,7 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                             assetsInRoom={assets}
                             retirada={retiradas.get(asset.id) ?? null}
                             tipo={type}
+                            modelo={resolveModel(modelosById, asset.asset_model_id)}
                             identidad={id}
                             onPatch={(patch) => void patchAsset(asset, patch)}
                             onModelo={(m) => void setModelo(asset, m)}
@@ -441,6 +443,7 @@ function AssetFixer({
   assetsInRoom,
   retirada,
   tipo,
+  modelo,
   identidad,
   onPatch,
   onModelo,
@@ -454,6 +457,8 @@ function AssetFixer({
   retirada: AssetRemoval | null
   /** Su tipo: de ahí sale el primer nombre que le toca y sus campos propios. */
   tipo: AssetType | null
+  /** Su modelo del catálogo, del que heredan los campos «ambos». */
+  modelo: AssetModel | null
   /** Tipo, marca, modelo y serie ya resueltos, para no volver a cruzarlos aquí. */
   identidad: AssetIdentity
   onPatch: (patch: Partial<Asset>) => void
@@ -661,9 +666,13 @@ function AssetFixer({
               />
             </label>
 
+            {/* `heredados`: lo que dice el modelo para los campos «ambos», que es
+                lo que hace que ese nivel signifique algo. El técnico ve «del
+                modelo: 8 GB» y solo escribe si en ESTE aparato es otra cosa. */}
             <CamposPropios
               campos={(tipo?.spec_fields ?? []).filter((c) => c.en !== 'modelo')}
               valores={asset.specs ?? {}}
+              heredados={modelo?.specs ?? undefined}
               onChange={(specs) => onPatch({ specs })}
             />
 

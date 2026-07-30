@@ -25,11 +25,27 @@ export function CamposPropios({
   valores,
   onChange,
   titulo,
+  heredados,
 }: {
   campos: SpecField[]
   valores: SpecValues
   onChange: (valores: SpecValues) => void
   titulo?: string
+  /**
+   * Lo que dice el MODELO, para los campos `ambos`.
+   *
+   * Es lo que hace que «ambos» signifique algo: el modelo trae el valor de
+   * fábrica y esta unidad concreta puede contradecirlo. Sin esto, un campo
+   * `ambos` se veía vacío en los 1.094 equipos aunque su modelo lo tuviera
+   * contestado, y el dato bueno —el que alguien escribió una vez para las
+   * cuarenta aulas— no se enteraba nadie de que existía.
+   *
+   * No se copia al valor del aparato: se enseña como lo que hay salvo que aquí se
+   * diga otra cosa. Copiarlo convertiría «lo que trae de fábrica» en «lo que
+   * alguien comprobó en este aparato», que es una afirmación distinta y más
+   * fuerte, y ya no habría forma de distinguirlas.
+   */
+  heredados?: SpecValues
 }): React.ReactElement | null {
   if (campos.length === 0) return null
 
@@ -46,17 +62,25 @@ export function CamposPropios({
       <div className="grid gap-2 sm:grid-cols-2">
         {campos.map((campo) => {
           const valor = valores[campo.clave]
+          /* Lo que trae el modelo, si aquí no se ha dicho otra cosa. */
+          const delModelo = heredados?.[campo.clave]
+          const hereda =
+            (valor === undefined || valor === null || valor === '') &&
+            delModelo !== undefined &&
+            delModelo !== null &&
+            delModelo !== ''
 
           if (campo.tipo === 'si_no') {
             return (
               <label key={campo.clave} className="flex items-center gap-2 text-xs text-muted">
                 <input
                   type="checkbox"
-                  checked={valor === true}
+                  checked={valor === true || (hereda && delModelo === true)}
                   onChange={(e) => set(campo.clave, e.target.checked ? true : null)}
                   className="h-5 w-5 rounded border-line accent-[rgb(var(--accent))]"
                 />
                 {campo.etiqueta}
+                {hereda && <span className="text-[0.6875rem] opacity-70">(del modelo)</span>}
               </label>
             )
           }
@@ -65,7 +89,13 @@ export function CamposPropios({
             <label key={campo.clave} className="text-xs text-muted">
               {campo.etiqueta}
               {campo.unidad ? ` (${campo.unidad})` : ''}
+              {hereda && (
+                <span className="ml-1 text-[0.6875rem] opacity-70">
+                  del modelo: {String(delModelo)}
+                </span>
+              )}
               <input
+                placeholder={hereda ? String(delModelo) : undefined}
                 type={campo.tipo === 'numero' ? 'number' : campo.tipo === 'fecha' ? 'date' : 'text'}
                 inputMode={campo.tipo === 'numero' ? 'decimal' : undefined}
                 value={valor === undefined || valor === null ? '' : String(valor)}

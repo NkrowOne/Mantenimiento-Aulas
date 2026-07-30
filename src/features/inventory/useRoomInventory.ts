@@ -182,6 +182,54 @@ export async function asignarModelo(
   await guardarAsset(asset, { asset_model_id: id })
 }
 
+/**
+ * Pedir que un equipo salga de una sala.
+ *
+ * Vive fuera del hook porque **retirar tiene que tener un solo camino en toda la
+ * aplicación**, y no lo tenía: el aula pedía una solicitud y la gestión desde el
+ * ordenador escribía `status = 'retirado'` a pelo. Ese segundo camino saltaba las
+ * cuatro cosas que hace `decide_asset_removal` —retirar, dejar el evento de baja
+ * en el histórico, ingresar la unidad en el almacén si volvía allí, y cerrar la
+ * solicitud— y además se lo permitía a cualquiera, mientras el aula exigía que un
+ * coordinador lo autorizara. Dos puertas para la misma decisión, y una sin cerrojo.
+ *
+ * Se firma sin cobertura, como todo lo demás: la solicitud se escribe en el
+ * espejo y se encola.
+ */
+export async function pedirRetirada(
+  asset: Asset,
+  destino: RemovalDestino,
+  motivo: string | null,
+  userId: string | null,
+): Promise<AddResult> {
+  // Una sola solicitud viva por equipo, que es lo que espeja el índice único de
+  // la base: sin esto, la segunda se rechazaría en la cola con un 409 y quien la
+  // firmó no volvería a saber de ella.
+  const yaHay = await db.assetRemovals
+    .where('asset_id')
+    .equals(asset.id)
+    .filter((r) => r.state === 'pendiente')
+    .first()
+  if (yaHay) return { ok: false, error: 'Ya hay una retirada pedida para este equipo.' }
+
+  const solicitud: AssetRemoval = {
+    id: uuidv7(),
+    asset_id: asset.id,
+    room_id: asset.room_id,
+    destino,
+    reason: motivo?.trim() || null,
+    state: 'pendiente',
+    requested_at: new Date().toISOString(),
+    requested_by: userId,
+  }
+
+  await db.assetRemovals.put(solicitud)
+  await enqueue('asset_removal', solicitud.id, solicitud)
+  void flush()
+
+  return { ok: true }
+}
+
 export function useRoomInventory(roomId: string | null, userId: string | null) {
   /**
    * Da de alta un elemento.
@@ -385,33 +433,14 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
    *
    * Se firma en el aula y sin cobertura, como todo lo demás: es justo donde se
    * ve que un aparato sobra.
+   *
+   * La mecánica vive en `pedirRetirada`, fuera del hook, porque la gestión desde
+   * el ordenador tiene que usar exactamente la misma: hasta ahora escribía
+   * `status` a pelo y se saltaba la autorización entera.
    */
   const solicitarRetirada = useCallback(
-    async (asset: Asset, destino: RemovalDestino, motivo?: string): Promise<AddResult> => {
-      const yaHay = await db.assetRemovals
-        .where('asset_id')
-        .equals(asset.id)
-        .filter((r) => r.state === 'pendiente')
-        .first()
-      if (yaHay) return { ok: false, error: 'Ya hay una retirada pedida para este equipo.' }
-
-      const solicitud: AssetRemoval = {
-        id: uuidv7(),
-        asset_id: asset.id,
-        room_id: asset.room_id,
-        destino,
-        reason: motivo?.trim() || null,
-        state: 'pendiente',
-        requested_at: new Date().toISOString(),
-        requested_by: userId,
-      }
-
-      await db.assetRemovals.put(solicitud)
-      await enqueue('asset_removal', solicitud.id, solicitud)
-      void flush()
-
-      return { ok: true }
-    },
+    (asset: Asset, destino: RemovalDestino, motivo?: string): Promise<AddResult> =>
+      pedirRetirada(asset, destino, motivo ?? null, userId),
     [userId],
   )
 
