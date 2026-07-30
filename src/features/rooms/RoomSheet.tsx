@@ -46,15 +46,16 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { v7 as uuidv7 } from 'uuid'
-import { db } from '@/db/dexie'
+import { db, enqueue } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
+import { flush } from '@/sync/outbox'
 import { RoomPlate } from '@/components/RoomPlate'
 import { DoorPlate } from '@/components/DoorPlate'
 import { RevisionesAnteriores } from '@/features/inspection/RevisionesAnteriores'
 import type { Correccion } from '@/features/inspection/useInspection'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaCorta } from '@/domain/fechas'
-import { INCIDENT_KIND_LABELS, type IncidentKind, type Room } from '@/domain/types'
+import { INCIDENT_KIND_LABELS, type Incident, type IncidentKind, type Room } from '@/domain/types'
 
 interface TimelineRow {
   at: string
@@ -207,7 +208,7 @@ export function RoomSheet({
   })
 
   /*
-   * Guardar el registro.
+   * Guardar el registro, **por la cola**.
    *
    * Nace como `borrador` cuando no hay título, y como `abierta` cuando sí lo
    * hay: la restricción de la base dice exactamente eso, y repetirla aquí evita
@@ -215,27 +216,54 @@ export function RoomSheet({
    *
    * El id se genera en el cliente (UUID v7), que es lo que permite que la fila
    * nazca con su identidad definitiva sin haber hablado con nadie.
+   *
+   * Y eso último era todo lo que estaba aprovechado: esto hacía un `insert`
+   * directo contra Supabase, el único camino de escritura de la aplicación que no
+   * pasaba por la cola. En un sótano el `fetch` lanza, la mutación falla y lo
+   * escrito no queda en NINGUNA parte —ni en el espejo, ni en la cola, ni en el
+   * contador de pendientes—: solo un párrafo rojo con «Load failed» y el texto
+   * todavía en el cuadro, que se pierde al cambiar de sala. En la pantalla donde
+   * la aplicación promete justo lo contrario, y para apuntar precisamente lo que
+   * se ve de paso por un pasillo sin cobertura.
+   *
+   * Ahora se escribe en el espejo y se encola. Sube en cuanto haya red, cuenta en
+   * la lámpara de la cabecera mientras espera, y el reenvío ya es idempotente
+   * —'incident' está en `IGNORE_DUPLICATES`—. Aquí no hay clave ajena a una
+   * revisión que ordenar: `opened_from_inspection_id` va nulo.
    */
   const registrar = useMutation({
     mutationFn: async () => {
       const titulo = texto.trim()
-      const { error } = await supabase.from('incidents').insert({
+      const fila: Incident = {
         id: uuidv7(),
         room_id: room.id,
-        kind,
-        title: titulo || null,
-        state: titulo ? 'abierta' : 'borrador',
+        asset_id: null,
+        opened_from_inspection_id: null,
+        check_key: null,
         external_ref: codigo.trim() || null,
+        title: titulo || null,
+        description: null,
+        severity: 'media',
+        state: titulo ? 'abierta' : 'borrador',
+        kind,
         opened_at: new Date().toISOString(),
         opened_by: userId,
-      })
-      if (error) throw error
+        resolved_at: null,
+        resolved_by: null,
+        resolution: null,
+        source: 'app',
+      }
+
+      await db.incidents.put(fila)
+      await enqueue('incident', fila.id, fila)
+      void flush()
+
       return titulo.length > 0
     },
     onSuccess: (completo) => {
       setGuardado(
         completo
-          ? `${INCIDENT_KIND_LABELS[kind]} registrada.`
+          ? `${INCIDENT_KIND_LABELS[kind]} registrada. Sube en cuanto haya cobertura.`
           : `Guardado sin describir. Aparecerá en Incidencias para que lo completes.`,
       )
       setTexto('')

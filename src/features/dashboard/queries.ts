@@ -44,12 +44,33 @@ export function useSummary() {
         quarantine,
       ] = await Promise.all([
         supabase.from('rooms').select('*', head),
+        /*
+         * Las revisiones del mes, contadas por VISITA.
+         *
+         * Sobre `inspections_vigentes` y no sobre `inspections`: una revisión
+         * corregida son varias filas de la misma visita al aula, y contarlas todas
+         * diría que el equipo ha estado en más aulas de las que ha pisado.
+         */
         supabase
-          .from('inspections')
+          .from('inspections_vigentes')
           .select('*', head)
-          .eq('status', 'completa')
           .gte('occurred_at', monthStart.toISOString()),
-        supabase.from('incidents').select('*', head).neq('state', 'resuelta'),
+        /*
+         * Y «abierta» tiene que significar aquí lo mismo que en la pestaña.
+         *
+         * Contaba cualquier fila no resuelta, así que sumaba los borradores —que la
+         * pestaña esconde a propósito, porque una nota a medio escribir no es
+         * trabajo pendiente— y las observaciones importadas. El resultado es la
+         * forma más directa de «el sistema dice que hay más de las que me
+         * enseña»: el azulejo decía 6, la lista abría con 4 y nadie explicaba la
+         * diferencia. El criterio es el de la pestaña, palabra por palabra.
+         */
+        supabase
+          .from('incidents')
+          .select('*', head)
+          .neq('state', 'resuelta')
+          .neq('state', 'borrador')
+          .neq('kind', 'observacion'),
         supabase.from('alerts_lamp_low').select('*', head),
         supabase.from('alerts_stale_incidents').select('*', head),
         supabase.from('alerts_overdue_rooms').select('*', head),

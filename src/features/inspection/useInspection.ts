@@ -17,7 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { v7 as uuidv7 } from 'uuid'
-import { db, enqueue } from '@/db/dexie'
+import { borrarFotoDeLaCola, db, enqueue } from '@/db/dexie'
 import { flush } from '@/sync/outbox'
 import { rangoDeTipo, resolveType } from '@/domain/inventory'
 import { incidenciasDeRevision } from '@/domain/incidencias'
@@ -254,22 +254,24 @@ export function useInspection(
       })
 
       /*
-       * Y sube ya, sin esperar al primer toque.
+       * Y NO sube todavía, aunque nazca con contenido.
        *
-       * Una revisión normal nace vacía y no hay nada que respaldar hasta que
-       * alguien marca algo. Una corrección nace con contenido —lo que dijo la
-       * original—, y la regla del proyecto es que nada pendiente viva solo en el
-       * móvil: si el aparato se rompe con la corrección a medias, lo que se
-       * recupere desde otro tiene que incluir lo que se arrastró.
+       * Fue lo primero que escribí aquí y estaba mal por dos motivos. Uno: lo que
+       * arrastra la semilla es una copia de lo que ya está en el servidor —la
+       * revisión que se corrige—, así que no hay nada que respaldar; si el iPad se
+       * rompe antes del primer toque, no se ha perdido información, solo un
+       * borrador vacío de novedad. Y dos, el que importa: subiéndola, las filas de
+       * la corrección están arriba ANTES de que el técnico corrija, y a partir de
+       * ahí cada una de sus respuestas tiene que pisar una fila que ya existe. Eso
+       * es exactamente el terreno donde la cola decidía «no pises» y el arreglo se
+       * quedaba en el iPad.
+       *
+       * La cola lo resuelve ahora por su cuenta —el cierre espera a sus
+       * comprobaciones y ellas pisan mientras espera, ver `pushEntry`—, pero no
+       * subir de balde un borrador que nadie ha tocado sigue siendo lo correcto:
+       * también evita dejar un borrador huérfano en el servidor cada vez que
+       * alguien pulsa «Corregir» y se arrepiende.
        */
-      if (sembradas.length > 0) {
-        await db.transaction('rw', db.outbox, async () => {
-          await enqueue('inspection', id, { ...inspection, recorded_at: undefined })
-          for (const c of sembradas) await enqueue('inspection_check', c.id, c)
-        })
-        void flush()
-      }
-
       if (cancelled) return
 
       setDraft({
@@ -600,10 +602,30 @@ export function useInspection(
 
     const ids = [...draft.checks.values()].map((c) => c.id)
 
-    await db.transaction('rw', db.inspections, db.checks, db.outbox, async () => {
+    /*
+     * Y las fotos se van con ella.
+     *
+     * Una foto hecha dentro de la corrección se guarda apuntando a ESTA revisión,
+     * y sin esto se quedaba en la cola: subía después, se enlazaba a una revisión
+     * que ya no existe en ninguna parte y se convertía en un adjunto huérfano en un
+     * bucket que no permite borrar. Se va la fila de la cola, sus bytes y el
+     * adjunto local, que son las tres piezas de la misma foto.
+     */
+    const fotos = await db.photos
+      .where('[entityType+entityId]')
+      .equals(['inspection', draft.inspection.id])
+      .primaryKeys()
+
+    for (const foto of fotos) await borrarFotoDeLaCola(foto as string)
+
+    await db.transaction('rw', db.inspections, db.checks, db.outbox, db.attachments, async () => {
       await db.checks.where('inspection_id').equals(draft.inspection.id).delete()
       await db.inspections.delete(draft.inspection.id)
-      await db.outbox.bulkDelete([draft.inspection.id, ...ids])
+      await db.attachments
+        .where('[entity_type+entity_id]')
+        .equals(['inspection', draft.inspection.id])
+        .delete()
+      await db.outbox.bulkDelete([draft.inspection.id, ...ids, ...(fotos as string[])])
     })
 
     sucias.current = new Set()

@@ -527,6 +527,16 @@ export async function loadReportData(
       aperturas: string
     }>
   >`
+    -- Una fila por VISITA, igual que el recuento de arriba: si no, el título dice
+    -- «6 revisiones» sobre una tabla de siete líneas el día en que alguien corrigió
+    -- dos veces la misma. El distinct on se queda con la corrección más reciente,
+    -- el mismo desempate que usa room_overview.
+    with por_visita as (
+      select distinct on (coalesce(ins.corrects, ins.id)) ins.*
+      from inspections_vigentes ins
+      where ins.occurred_at >= ${desde} and ins.occurred_at < ${hasta}
+      order by coalesce(ins.corrects, ins.id), ins.corrected_at desc nulls last
+    )
     select
       to_char(public.dia_local(ins.occurred_at), 'YYYY-MM-DD')                as dia,
       to_char(ins.occurred_at at time zone 'Europe/Madrid', 'HH24:MI')        as hora,
@@ -537,10 +547,9 @@ export async function loadReportData(
         where c.inspection_id = ins.id and c.result = 'incidencia')           as fallos,
       (select count(*) from incidents i
         where i.opened_from_inspection_id = ins.id and i.state <> 'borrador') as aperturas
-    from inspections_vigentes ins
+    from por_visita ins
     join room_overview ro on ro.room_id = ins.room_id
     left join profiles p on p.id = ins.by_user
-    where ins.occurred_at >= ${desde} and ins.occurred_at < ${hasta}
     order by ins.occurred_at
     limit ${TOPE_FILAS}
   `

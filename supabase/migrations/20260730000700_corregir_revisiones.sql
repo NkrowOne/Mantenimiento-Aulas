@@ -58,6 +58,13 @@ alter table inspections
 create index if not exists inspections_corrects_idx
   on inspections(corrects) where corrects is not null;
 
+-- Y el de la otra pregunta que hace la ficha por cada revisión que enseña:
+-- «¿cuántas incidencias abrió esta?». Sin él es un recorrido de `incidents` por
+-- fila de `room_inspections`, y `incidents_room_idx` no sirve porque la columna
+-- por la que se busca es otra.
+create index if not exists incidents_desde_revision_idx
+  on incidents(opened_from_inspection_id) where opened_from_inspection_id is not null;
+
 -- -----------------------------------------------------------------------------
 -- 2 — Lo que una corrección tiene que cumplir
 --
@@ -118,6 +125,24 @@ begin
       using errcode = 'check_violation';
   end if;
 
+  /*
+   * Y conserva la fecha de la visita.
+   *
+   * Es LA invariante de todo esto —el aula se revisó el día que se revisó— y
+   * hasta aquí solo la cumplía el cliente. Escrita únicamente en el cliente, un
+   * dispositivo con el reloj mal puesto, una versión antigua de la aplicación o
+   * cualquier cosa que entre por la API bastaría para mover la fecha de «última
+   * revisión» de la sala corrigiendo una errata: la aula saldría revisada hoy sin
+   * que nadie haya entrado en ella, y el número que decide qué se revisa mañana
+   * dejaría de ser cierto.
+   *
+   * Se corrige en vez de rechazarse porque el trigger es `before` y porque no hay
+   * nada que decidir: la fecha correcta se sabe, es la de la revisión que se
+   * corrige. Rechazar solo convertiría un desajuste de relojes en una entrada
+   * rechazada en la cola de alguien.
+   */
+  new.occurred_at := base.occurred_at;
+
   return new;
 end;
 $$;
@@ -162,6 +187,14 @@ create trigger inspections_correccion
 -- apuntan a la misma original, así que la visita se cuenta una vez. Y la
 -- interfaz solo ofrece corregir la versión vigente, con lo que hacen falta dos
 -- dispositivos a la vez para llegar ahí.
+--
+-- Lo que ese recuento agrupa es **un eslabón, no la cadena entera**, y conviene
+-- que quede dicho: si a esas dos correcciones simultáneas alguien corrige después
+-- una de ellas, las dos vigentes que quedan ya no comparten padre y la visita se
+-- cuenta dos veces. Hace falta una bifurcación Y una corrección encima de ella,
+-- o sea dos dispositivos a la vez y un tercer intento después; cerrarlo del todo
+-- pide guardar la raíz de la cadena en su propia columna, y no parece que ese
+-- caso lo justifique todavía.
 -- -----------------------------------------------------------------------------
 
 create or replace view inspections_vigentes as
@@ -287,16 +320,59 @@ where r.active;
 
 alter view room_reliability set (security_invoker = on);
 
+-- Y de paso, la otra alerta que cuenta mal, que no es de correcciones pero se ve
+-- desde el mismo azulejo del panel y confunde la misma pregunta («¿cuántas
+-- incidencias hay?»).
+--
+-- `alerts_stale_incidents` cuenta como avería estancada cualquier fila que no
+-- esté resuelta, y eso mete dentro dos cosas que no lo son: los **borradores**
+-- —que la pestaña de Incidencias esconde a propósito, así que el supervisor iba
+-- a buscarlos y no estaban— y las **observaciones** importadas del Excel, que son
+-- notas de seguimiento y llevan abiertas desde 2025 por definición. Con 283
+-- incidencias importadas eso pintaba el panel en rojo por trabajo que nadie tiene
+-- que hacer, que es la forma más rápida de que un aviso deje de mirarse.
+--
+-- Y el título va con red: un borrador puede no tenerlo —basta la sala para
+-- guardar— y el panel lo pintaba tal cual, así que la lista de estancadas tenía
+-- un renglón con el contador de días en rojo y nada al lado.
+create or replace view alerts_stale_incidents as
+select
+  i.id,
+  coalesce(i.title, '(sin describir)') as title,
+  i.severity,
+  i.opened_at,
+  i.state,
+  ro.building_code, ro.room_code, ro.room_name,
+  extract(day from now() - i.opened_at)::int as days_open
+from incidents i
+left join room_overview ro on ro.room_id = i.room_id
+where i.state not in ('resuelta', 'borrador')
+  and i.kind <> 'observacion'
+  and i.opened_at < now() - interval '7 days'
+order by i.opened_at asc;
+
+alter view alerts_stale_incidents set (security_invoker = on);
+
 -- Dos revisiones seguidas con incidencia. Sobre las vigentes: si no, la
 -- corrección que dice «en realidad estaba bien» seguiría contando como la mala
 -- que reemplaza, y el aviso saldría precisamente por el error ya corregido.
+-- Y se numera por VISITA, no por fila: en el caso raro de dos correcciones
+-- simultáneas de la misma revisión hay dos vigentes con la misma fecha, y
+-- numerando filas la primera y la segunda serían la misma visita — el aviso
+-- saltaría con una sola revisión mala en vez de con dos seguidas.
 create or replace view alerts_repeat_offenders as
-with ranked as (
-  select
-    i.room_id,
-    i.overall,
-    row_number() over (partition by i.room_id order by i.occurred_at desc) as rn
+with por_visita as (
+  select distinct on (i.room_id, coalesce(i.corrects, i.id))
+    i.room_id, i.overall, i.occurred_at
   from inspections_vigentes i
+  order by i.room_id, coalesce(i.corrects, i.id), i.corrected_at desc nulls last
+),
+ranked as (
+  select
+    room_id,
+    overall,
+    row_number() over (partition by room_id order by occurred_at desc) as rn
+  from por_visita
 )
 select ro.room_id, ro.building_code, ro.room_code, ro.room_name
 from ranked r1
@@ -571,13 +647,26 @@ comment on view room_inspections is
 -- `substring` de una clave de comprobación es un uuid por construcción, pero
 -- basta una fila importada a mano para que el cast reviente y con él toda la
 -- consulta.
+--
+-- Comprueba la forma y luego castea, **sin bloque de excepciones**, y eso no es
+-- una cuestión de estilo: capturar la excepción abre una subtransacción, y una
+-- subtransacción está prohibida dentro de un plan paralelo. Con la tabla de
+-- comprobaciones a tamaño de un curso —200.000 filas, 21 MB— el planificador
+-- reparte `inspection_check_detail` entre dos trabajadores y la función que estaba
+-- ahí para que una clave rara no rompiera la vista era justo la que la rompía:
+--
+--   ERROR: cannot start subtransactions during a parallel operation
+--
+-- No salía con un rol normal por casualidad —la RLS mete `auth_role()`, que es
+-- `parallel unsafe`, y eso serializaba el plan—, así que aparecía únicamente
+-- desde el worker de informes y desde `psql`, que se saltan la RLS. Medido, no
+-- supuesto.
 create or replace function public.uuid_o_nulo(t text)
-returns uuid language plpgsql immutable strict parallel safe as $$
-begin
-  return t::uuid;
-exception when others then
-  return null;
-end;
+returns uuid language sql immutable strict parallel safe as $$
+  select case
+    when t ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    then t::uuid
+  end
 $$;
 
 comment on function public.uuid_o_nulo(text) is

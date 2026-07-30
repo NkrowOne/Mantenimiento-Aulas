@@ -397,8 +397,40 @@ export async function purgeSyncedInspections(): Promise<number> {
   const cerradas = await db.inspections.where('status').equals('completa').toArray()
 
   const enCola = new Set((await db.outbox.toCollection().primaryKeys()) as string[])
+
+  /*
+   * Y tampoco se borra la revisión de la que aún cuelga algo en la cola.
+   *
+   * La clave de la cola es el id de la fila, así que una comprobación pendiente
+   * aparece en `enCola` con SU id, no con el de su revisión: mirando solo
+   * `enCola.has(i.id)` se borraba el espejo de una revisión que todavía estaba
+   * subiendo por partes. Y ese espejo es el que decide si una comprobación pisa o
+   * no pisa (`ignorarDuplicados`, en outbox.ts), así que borrarlo antes de tiempo
+   * dejaba sus filas chocando contra los permisos y rechazadas para siempre.
+   *
+   * Le pasa sobre todo a una corrección, y por su propia naturaleza: conserva la
+   * fecha de la visita que corrige, así que el margen de dos días —que cuenta
+   * desde `occurred_at`— no la protege ni un minuto.
+   */
+  const conHijosEnCola = new Set(
+    (await db.outbox.where('entity').equals('inspection_check').toArray())
+      .map((e) => e.payload['inspection_id'] as string | undefined)
+      .filter((id): id is string => typeof id === 'string'),
+  )
+  // `db.photos` ya no lleva los bytes dentro —viven en `photoBlobs`—, así que
+  // leerla entera aquí es leer cuatro campos de texto por foto pendiente.
+  const conFotoEnCola = new Set(
+    (await db.photos.toArray())
+      .filter((p) => p.entityType === 'inspection')
+      .map((p) => p.entityId),
+  )
+
   const borrables = cerradas.filter(
-    (i) => !enCola.has(i.id) && new Date(i.occurred_at).getTime() < margen,
+    (i) =>
+      !enCola.has(i.id) &&
+      !conHijosEnCola.has(i.id) &&
+      !conFotoEnCola.has(i.id) &&
+      new Date(i.occurred_at).getTime() < margen,
   )
   if (borrables.length === 0) return 0
 
