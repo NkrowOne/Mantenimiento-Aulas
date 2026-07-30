@@ -19,7 +19,12 @@ import {
   touch,
   watchSession,
 } from '@/auth/session'
-import { db, purgeSyncedInspections, requestPersistentStorage } from '@/db/dexie'
+import {
+  db,
+  pendingSummary,
+  purgeSyncedInspections,
+  requestPersistentStorage,
+} from '@/db/dexie'
 import { pullMaster, startPull, type ResultadoPull } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
 import { configError, supabase } from '@/lib/supabase'
@@ -239,6 +244,10 @@ export function App(): React.ReactElement {
   const [restaurado, setRestaurado] = useState(false)
 
   const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [])
+
+  /* Cuánto trabajo hay sin subir. Solo se usa para no dejar cerrar sesión a
+     ciegas encima de una cola llena. */
+  const sinSubir = useLiveQuery(async () => (await pendingSummary()).total, [], 0)
 
   /*
    * Cuántas salas tiene cada edificio y cuántas van con retraso.
@@ -615,18 +624,33 @@ export function App(): React.ReactElement {
             <button
               type="button"
               onClick={() =>
-                // Es la única forma de que la sesión termine: no caduca sola.
-                // Por eso se confirma — cerrarla sin querer obliga a teclear el
-                // PIN otra vez en mitad de una ronda.
+                /*
+                 * Es la única forma de que la sesión termine: no caduca sola.
+                 * Por eso se confirma — cerrarla sin querer obliga a teclear el
+                 * PIN otra vez en mitad de una ronda.
+                 *
+                 * Y con la cola llena se avisa de qué se está haciendo. Cerrar
+                 * sesión no borra nada —el trabajo sigue aquí y sube al volver a
+                 * entrar—, pero sí para la subida en seco: sin sesión, `flush()`
+                 * no puede mandar nada. Quien cierra creyendo que «así se
+                 * guarda» está haciendo lo contrario de lo que quiere. Y por eso
+                 * ese caso sube el tono a crítico: no es el mismo gesto con la
+                 * cola vacía que con nueve revisiones dentro.
+                 */
                 void pedirConfirmacion({
                   titulo: '¿Cerrar sesión?',
-                  detalle: 'La sesión no caduca sola: solo termina aquí.',
+                  detalle:
+                    sinSubir > 0
+                      ? `Quedan ${sinSubir} cambios sin subir.`
+                      : 'La sesión no caduca sola: solo termina aquí.',
                   consecuencias: [
                     'Volver a entrar solo pide tu PIN: el dispositivo sigue dado de alta.',
-                    'Lo que esté sin sincronizar se queda esperando y sube al volver a entrar.',
+                    sinSubir > 0
+                      ? 'No se pierden: siguen en este dispositivo y subirán al volver a entrar. Pero mientras la sesión esté cerrada no se sube nada.'
+                      : 'Lo que esté sin sincronizar se queda esperando y sube al volver a entrar.',
                   ],
                   confirmar: 'Cerrar sesión',
-                  tono: 'warn',
+                  tono: sinSubir > 0 ? 'crit' : 'warn',
                 }).then((si) => si && void lock().then(() => setUnlocked(false)))
               }
               className="key key-quiet px-3 py-1.5 text-xs font-medium text-muted"

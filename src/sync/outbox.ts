@@ -7,7 +7,7 @@
  * un temporizador mientras queden pendientes.
  */
 
-import { db, backoffMs, type OutboxEntry, type QueuedPhoto } from '@/db/dexie'
+import { db, backoffMs, pendingSummary, type OutboxEntry, type QueuedPhoto } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 
 /** A qué tabla de PostgREST va cada tipo de entrada. */
@@ -144,97 +144,203 @@ const IGNORE_DUPLICATES = new Set<OutboxEntry['entity']>([
   'room_inventory',
 ])
 
-async function pushEntry(entry: OutboxEntry): Promise<void> {
+interface FalloDeRed {
+  message: string
+  status?: number
+}
+
+/**
+ * Ejecuta una llamada al servidor y devuelve su fallo, **lo devuelva o lo
+ * lance**.
+ *
+ * Esta distinción costó una cola atascada. El cliente de Supabase contesta
+ * `{ error }` cuando el servidor responde algo, pero **lanza** cuando no hay
+ * respuesta: se cae la cobertura a mitad de la subida, el túnel devuelve un
+ * cuerpo que no es JSON, iOS congela la petición al bloquear la pantalla. Ese
+ * `throw` no lo recogía nadie aquí, subía hasta el `catch` de `flush()` y se
+ * llevaba por delante dos cosas a la vez: el resto de la cola —que ni se
+ * intentaba— y, mucho peor, la entrada en curso, que se quedaba marcada como
+ * «enviando» para siempre.
+ *
+ * Y «enviando» era una trampa sin salida: `flush()` solo recoge lo que está
+ * «pendiente», así que esa entrada no se volvía a intentar jamás; no contaba
+ * como rechazada, así que no salía en rojo ni ofrecía «Reintentar»; pero sí
+ * contaba como pendiente en la lámpara. El resultado exacto que se ve desde
+ * fuera: «3 pendientes» que no bajan de tres por mucho que se pulse
+ * Sincronizar, sin un solo mensaje de error que explique por qué.
+ */
+async function intentar(
+  llamada: () => PromiseLike<{ error: { message: string } | null; status?: number }>,
+): Promise<FalloDeRed | null> {
+  try {
+    const { error, status } = await llamada()
+    return error ? { message: error.message, status } : null
+  } catch (err) {
+    // Sin respuesta no hay código: se trata como temporal, que es lo que es.
+    return { message: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/** @returns si la entrada llegó a subir. */
+async function pushEntry(entry: OutboxEntry): Promise<boolean> {
   await db.outbox.update(entry.id, { status: 'enviando' })
 
-  const { error, status } = await supabase
-    .from(TABLE[entry.entity])
-    .upsert(entry.payload, {
+  const fallo = await intentar(() =>
+    supabase.from(TABLE[entry.entity]).upsert(entry.payload, {
       onConflict: 'id',
       ignoreDuplicates: IGNORE_DUPLICATES.has(entry.entity),
-    })
+    }),
+  )
 
-  if (!error) {
+  if (!fallo) {
     await db.outbox.delete(entry.id)
-    return
+    return true
   }
 
   const attempts = entry.attempts + 1
-  if (isPermanentFailure(status)) {
+  if (isPermanentFailure(fallo.status)) {
     await db.outbox.update(entry.id, {
       status: 'rechazado',
       attempts,
-      lastError: `${status}: ${error.message}`,
+      lastError: `${fallo.status}: ${fallo.message}`,
     })
-    return
+    return false
   }
 
   await db.outbox.update(entry.id, {
     status: 'pendiente',
     attempts,
     nextAttemptAt: Date.now() + backoffMs(attempts),
-    lastError: error.message,
+    lastError: fallo.message,
   })
+  return false
 }
 
-async function pushPhoto(photo: QueuedPhoto): Promise<void> {
+/** @returns si la foto llegó a subir y a enlazarse. */
+async function pushPhoto(photo: QueuedPhoto): Promise<boolean> {
   await db.photos.update(photo.id, { status: 'subiendo' })
 
   const path = `${photo.entityType}/${photo.entityId}/${photo.id}.jpg`
-  const { error } = await supabase.storage
-    .from('fotos')
-    .upload(path, photo.blob, { contentType: 'image/jpeg', upsert: true })
+  const subida = await intentar(() =>
+    supabase.storage
+      .from('fotos')
+      .upload(path, photo.blob, { contentType: 'image/jpeg', upsert: true }),
+  )
 
-  if (error) {
+  if (subida) {
     const attempts = photo.attempts + 1
     await db.photos.update(photo.id, {
       status: attempts > 8 ? 'rechazado' : 'pendiente',
       attempts,
       nextAttemptAt: Date.now() + backoffMs(attempts),
-      lastError: error.message,
+      lastError: subida.message,
     })
-    return
+    return false
   }
 
   // La foto ya está arriba; ahora se enlaza con su revisión o incidencia.
-  const { error: linkError } = await supabase.from('attachments').upsert(
-    {
-      id: photo.id,
-      entity_type: photo.entityType,
-      entity_id: photo.entityId,
-      storage_path: path,
-      taken_at: photo.takenAt,
-      by_user: (await supabase.auth.getUser()).data.user?.id ?? null,
-    },
-    { onConflict: 'id' },
-  )
+  const enlace = await intentar(async () => {
+    // `getUser()` también es red, y también lanza: iba fuera del `intentar`, así
+    // que una foto subida podía dejar su fila en «subiendo» por no poder
+    // preguntar quién la hizo.
+    const autor = (await supabase.auth.getUser()).data.user?.id ?? null
+    return supabase.from('attachments').upsert(
+      {
+        id: photo.id,
+        entity_type: photo.entityType,
+        entity_id: photo.entityId,
+        storage_path: path,
+        taken_at: photo.takenAt,
+        by_user: autor,
+      },
+      { onConflict: 'id' },
+    )
+  })
 
-  if (linkError) {
+  if (enlace) {
     const attempts = photo.attempts + 1
     await db.photos.update(photo.id, {
       status: 'pendiente',
       attempts,
       nextAttemptAt: Date.now() + backoffMs(attempts),
-      lastError: linkError.message,
+      lastError: enlace.message,
     })
-    return
+    return false
   }
 
   await db.photos.delete(photo.id)
+  return true
 }
 
 /**
- * Vacía la cola. Es reentrante: si ya hay una pasada en curso, no arranca otra.
+ * Devuelve a la cola lo que se quedó «en vuelo».
+ *
+ * `flush()` no es reentrante, así que cuando arranca una pasada no hay ninguna
+ * subida en curso: **todo lo que esté en «enviando» o «subiendo» en este
+ * momento es un huérfano**, de una pasada anterior que no llegó a terminar
+ * —la app cerrada de un barrido, iOS matando la pestaña, una recarga a mitad—.
+ * Nadie lo devolvía a «pendiente», así que se quedaba fuera de la sincronización
+ * para siempre mientras seguía contando en la lámpara.
+ *
+ * Reenviarlo es seguro aunque la fila hubiera llegado al servidor: el id se
+ * genera al pulsar, no al enviar, y es la clave de idempotencia del upsert.
+ *
+ * Los intentos no se tocan: no se sabe si el envío llegó, así que no es un
+ * intento fallido. Y no puede degenerar en un bucle porque, con los `throw` ya
+ * recogidos arriba, la única forma de dejar un huérfano es que muera la app.
  */
-export async function flush(): Promise<void> {
-  if (running) return
+async function recuperarEnVuelo(): Promise<number> {
+  const motivo = 'Se interrumpió a mitad de subida; se reintenta.'
+  const [entradas, fotos] = await Promise.all([
+    db.outbox
+      .where('status')
+      .equals('enviando')
+      .modify({ status: 'pendiente', nextAttemptAt: 0, lastError: motivo }),
+    db.photos
+      .where('status')
+      .equals('subiendo')
+      .modify({ status: 'pendiente', nextAttemptAt: 0, lastError: motivo }),
+  ])
+  return entradas + fotos
+}
+
+export interface ResultadoFlush {
+  /** Cuántas cosas han llegado al servidor en esta pasada. */
+  subidos: number
+  /** Cuántas siguen esperando al terminar. */
+  pendientes: number
+  /** Cuántas ha rechazado el servidor y necesitan que alguien las mire. */
+  rechazados: number
+}
+
+/**
+ * Vacía la cola. No es reentrante: si ya hay una pasada en curso, no arranca
+ * otra.
+ *
+ * `forzar` es lo que hace el botón «Sincronizar» de la lámpara. Sin él, una
+ * pasada solo mira lo que ya ha cumplido su espera de backoff, y eso convertía
+ * al botón en un adorno justo cuando más falta hace: tres intentos fallidos
+ * seguidos ponen la siguiente ventana a cinco minutos, así que el técnico que
+ * acaba de encontrar cobertura y pulsa el botón obtenía una pasada que no
+ * intentaba absolutamente nada — y encima terminaba anunciando «Al día», porque
+ * la bajada sí funcionaba. Pulsar el botón *es* la señal de que ahora hay red;
+ * el backoff protege del reintento automático, no de una orden explícita.
+ */
+export async function flush(opciones: { forzar?: boolean } = {}): Promise<ResultadoFlush> {
+  const parte = async (subidos: number): Promise<ResultadoFlush> => {
+    const resumen = await pendingSummary()
+    return { subidos, pendientes: resumen.total, rechazados: resumen.rejected }
+  }
+
+  if (running) return parte(0)
   if (!navigator.onLine) {
     setState('sin-conexion')
-    return
+    return parte(0)
   }
 
   running = true
   setState('sincronizando')
+  let subidos = 0
 
   try {
     // `getSession()` va DENTRO del try: puede rechazar —renovar el token es una
@@ -247,27 +353,35 @@ export async function flush(): Promise<void> {
       // Sin sesión no se puede subir nada, pero tampoco es un error que mostrar:
       // el usuario simplemente aún no ha introducido su PIN.
       setState('inactivo')
-      return
+      return parte(0)
     }
 
+    // Antes que nada, rescatar lo que se quedó a medias en una pasada anterior.
+    await recuperarEnVuelo()
+
     const now = Date.now()
+    const toca = (nextAttemptAt: number): boolean => opciones.forzar || nextAttemptAt <= now
+
     const due = (await db.outbox.toArray())
-      .filter((e) => e.status === 'pendiente' && e.nextAttemptAt <= now)
+      .filter((e) => e.status === 'pendiente' && toca(e.nextAttemptAt))
       .sort((a, b) => ORDER[a.entity] - ORDER[b.entity] || a.createdAt - b.createdAt)
 
     for (const entry of due) {
-      await pushEntry(entry)
+      if (await pushEntry(entry)) subidos += 1
     }
 
     const duePhotos = (await db.photos.toArray()).filter(
-      (p) => p.status === 'pendiente' && p.nextAttemptAt <= now,
+      (p) => p.status === 'pendiente' && toca(p.nextAttemptAt),
     )
     for (const photo of duePhotos) {
-      await pushPhoto(photo)
+      if (await pushPhoto(photo)) subidos += 1
     }
 
     const remaining = await db.outbox.where('status').equals('rechazado').count()
     setState(remaining > 0 ? 'error' : 'inactivo')
+    // Una pasada que termina entera limpia el motivo anterior: si no, el panel
+    // seguía enseñando en rojo el error de hace media hora, ya resuelto.
+    ultimoErrorSync = null
   } catch (err) {
     // El `catch` no ligaba la variable, así que el motivo se evaporaba: quedaba
     // un estado 'error' que la lámpara ni siquiera sabía pintar, sin una sola
@@ -278,6 +392,8 @@ export async function flush(): Promise<void> {
   } finally {
     running = false
   }
+
+  return parte(subidos)
 }
 
 /**
@@ -297,11 +413,16 @@ export function startSync(): () => void {
 
   // Mientras queden pendientes se reintenta cada minuto. Es la red de seguridad
   // que sustituye al Background Sync que iOS no tiene.
+  //
+  // Cuenta con `pendingSummary()`, que incluye lo que está «en vuelo», y no con
+  // los dos `count()` de «pendiente» que había aquí. Con aquellos, un móvil cuya
+  // única cosa por subir fuera un huérfano de una pasada muerta nunca volvía a
+  // llamar a `flush()`: el rescate está dentro de `flush()`, y quien decidía si
+  // llamarlo contaba justamente el estado que el huérfano ya no tenía.
   timer = setInterval(() => {
     void (async () => {
-      const pending = await db.outbox.where('status').equals('pendiente').count()
-      const photos = await db.photos.where('status').equals('pendiente').count()
-      if (pending + photos > 0) void flush()
+      const { total } = await pendingSummary()
+      if (total > 0) void flush()
     })()
   }, 60_000)
 
@@ -315,7 +436,7 @@ export function startSync(): () => void {
 }
 
 /** Reintenta a mano lo rechazado, desde la pantalla de pendientes. */
-export async function retryRejected(): Promise<void> {
+export async function retryRejected(): Promise<ResultadoFlush> {
   await db.outbox.where('status').equals('rechazado').modify({
     status: 'pendiente',
     attempts: 0,
@@ -328,5 +449,6 @@ export async function retryRejected(): Promise<void> {
     nextAttemptAt: 0,
     lastError: null,
   })
-  await flush()
+  // Forzado: reintentar a mano es una orden, no un turno de la cola.
+  return flush({ forzar: true })
 }
