@@ -46,6 +46,7 @@ alter table incidents
 -- -----------------------------------------------------------------------------
 drop policy "personal abre incidencias" on incidents;
 
+drop policy if exists "personal abre incidencias" on incidents;
 create policy "personal abre incidencias" on incidents
   for insert to authenticated
   with check (public.is_staff() and state in ('abierta', 'borrador'));
@@ -62,6 +63,7 @@ create policy "personal abre incidencias" on incidents
  * le deja sacarlo de borrador pero no darlo por resuelto — cerrar sigue siendo
  * de supervisor.
  */
+drop policy if exists "tecnico completa su borrador" on incidents;
 create policy "tecnico completa su borrador" on incidents
   for update to authenticated
   using (public.is_staff() and opened_by = (select auth.uid()) and state = 'borrador')

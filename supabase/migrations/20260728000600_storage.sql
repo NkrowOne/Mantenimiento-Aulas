@@ -40,10 +40,12 @@ on conflict (id) do update
 -- incidencia es prueba de un estado en un momento dado. Permitir borrarla o
 -- reemplazarla convertiría el historial en algo negociable.
 -- -----------------------------------------------------------------------------
+drop policy if exists "personal sube fotos" on storage.objects;
 create policy "personal sube fotos"
   on storage.objects for insert to authenticated
   with check (bucket_id = 'fotos' and public.is_staff());
 
+drop policy if exists "personal lee fotos" on storage.objects;
 create policy "personal lee fotos"
   on storage.objects for select to authenticated
   using (bucket_id = 'fotos' and public.is_staff());
@@ -55,6 +57,7 @@ create policy "personal lee fotos"
 -- -----------------------------------------------------------------------------
 -- reports — el personal los lee; los escribe solo el worker
 -- -----------------------------------------------------------------------------
+drop policy if exists "personal lee informes" on storage.objects;
 create policy "personal lee informes"
   on storage.objects for select to authenticated
   using (bucket_id = 'reports' and public.is_staff());

@@ -55,11 +55,68 @@ ok 'base de datos lista'
 
 # ── 4. Migraciones ──────────────────────────────────────────────────────
 say 'Aplicando migraciones'
+
+# El mismo registro que lleva `init-plataforma.sh`, y por el mismo motivo.
+#
+# Este bucle no llevaba ninguno: recorría el glob y aplicaba las 26 migraciones
+# en CADA despliegue. Sobre una base recién creada da igual; sobre la que ya está
+# en producción es un intento de rehacer el esquema entero, y muere en la primera
+# sentencia que no sea idempotente. Con `ON_ERROR_STOP=1` eso corta el
+# despliegue, así que un `deploy.sh` sobre una base viva nunca llegaba a la
+# segunda mitad del script.
+#
+# Las políticas ya no son el problema —todas llevan su `drop policy if exists`
+# delante, y `check:migraciones` lo vigila—, pero `create type`, `create table` y
+# los `alter table ... add column` sin `if not exists` siguen sin poder repetirse.
+# La solución no es hacer idempotente cada línea de SQL de la historia del
+# proyecto: es no volver a ejecutarlas.
+D() { docker compose exec -T db psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 "$@"; }
+
+D -c 'create table if not exists public.schema_migrations (
+        filename   text primary key,
+        applied_at timestamptz not null default now())' >/dev/null
+
+# Una base que ya existía antes de que hubiera registro.
+#
+# Es el caso de cualquier despliegue hecho con la versión anterior de este
+# script: el esquema está entero y el registro, recién creado, está vacío. Si se
+# siguiera adelante se intentaría rehacer todo desde cero sobre datos reales y se
+# moriría en `create type app_role`. Adivinar qué falta no es cosa del script
+# —solo quien conoce esa base lo sabe—, así que se para y se dice qué escribir.
+if [ "$(D -tAc 'select count(*) from public.schema_migrations')" = '0' ] &&
+   [ "$(D -tAc "select count(*) from information_schema.tables
+                 where table_schema = 'public' and table_name = 'inspections'")" != '0' ]; then
+  cat >&2 <<TXT
+
+  Esta base ya tiene esquema pero no tiene registro de migraciones: la
+  desplegó una versión anterior de este script, que no lo llevaba.
+
+  Anota como aplicadas las que ya están, y vuelve a lanzar el despliegue.
+  Repasa la lista y quita las que sepas que NO se han aplicado todavía:
+
+    docker compose exec -T db psql -U postgres -d postgres -c \\
+      "insert into public.schema_migrations (filename) values
+       $(cd supabase/migrations && ls *.sql | sed "s/.*/('&')/" | paste -sd, -)
+       on conflict do nothing"
+
+TXT
+  fail 'Registro de migraciones vacío sobre una base con datos'
+fi
+
+nuevas=0
 for f in supabase/migrations/*.sql; do
-  printf '   %s\n' "$(basename "$f")"
-  docker compose exec -T db psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 < "$f"
+  b="$(basename "$f")"
+  aplicada="$(D -tAc "select count(*) from public.schema_migrations where filename = '$b'")"
+  if [ "$aplicada" != '0' ]; then
+    printf '   %s \033[2m(ya aplicada)\033[0m\n' "$b"
+    continue
+  fi
+  printf '   %s\n' "$b"
+  D < "$f"
+  D -c "insert into public.schema_migrations (filename) values ('$b')" >/dev/null
+  nuevas=$((nuevas + 1))
 done
-ok "$(ls supabase/migrations/*.sql | wc -l) migraciones aplicadas"
+ok "$nuevas migraciones nuevas, $(D -tAc 'select count(*) from public.schema_migrations') en total"
 
 # ── 5. Un solo origen para el token del worker ──────────────────────────
 #

@@ -45,6 +45,7 @@ grant select on table public.profiles to supabase_auth_admin;
 
 alter table profiles enable row level security;
 
+drop policy if exists "auth admin lee perfiles" on profiles;
 create policy "auth admin lee perfiles"
   on profiles as permissive for select to supabase_auth_admin using (true);
 
@@ -80,10 +81,12 @@ $$;
 -- -----------------------------------------------------------------------------
 -- Perfiles
 -- -----------------------------------------------------------------------------
+drop policy if exists "ver perfiles" on profiles;
 create policy "ver perfiles" on profiles
   for select to authenticated
   using ((select auth.uid()) = id or public.is_supervisor());
 
+drop policy if exists "admin gestiona perfiles" on profiles;
 create policy "admin gestiona perfiles" on profiles
   for all to authenticated
   using (public.is_admin()) with check (public.is_admin());
@@ -114,18 +117,22 @@ end $$;
 -- -----------------------------------------------------------------------------
 alter table inspections enable row level security;
 
+drop policy if exists "personal lee revisiones" on inspections;
 create policy "personal lee revisiones" on inspections
   for select to authenticated using (public.is_staff());
 
+drop policy if exists "tecnico crea sus revisiones" on inspections;
 create policy "tecnico crea sus revisiones" on inspections
   for insert to authenticated
   with check (public.is_staff() and by_user = (select auth.uid()));
 
+drop policy if exists "tecnico edita su borrador" on inspections;
 create policy "tecnico edita su borrador" on inspections
   for update to authenticated
   using (by_user = (select auth.uid()) and status = 'borrador')
   with check (by_user = (select auth.uid()));
 
+drop policy if exists "supervisor corrige revisiones" on inspections;
 create policy "supervisor corrige revisiones" on inspections
   for update to authenticated
   using (public.is_supervisor()) with check (public.is_supervisor());
@@ -148,10 +155,12 @@ create trigger inspections_freeze
 
 alter table inspection_checks enable row level security;
 
+drop policy if exists "personal lee checks" on inspection_checks;
 create policy "personal lee checks" on inspection_checks
   for select to authenticated using (public.is_staff());
 
 -- Los checks se escriben solo si su revisión sigue siendo borrador del propio usuario.
+drop policy if exists "escribir checks del borrador propio" on inspection_checks;
 create policy "escribir checks del borrador propio" on inspection_checks
   for all to authenticated
   using (
@@ -174,22 +183,27 @@ create policy "escribir checks del borrador propio" on inspection_checks
 -- -----------------------------------------------------------------------------
 alter table incidents enable row level security;
 
+drop policy if exists "personal lee incidencias" on incidents;
 create policy "personal lee incidencias" on incidents
   for select to authenticated using (public.is_staff());
 
+drop policy if exists "personal abre incidencias" on incidents;
 create policy "personal abre incidencias" on incidents
   for insert to authenticated
   with check (public.is_staff() and state = 'abierta');
 
+drop policy if exists "supervisor gestiona incidencias" on incidents;
 create policy "supervisor gestiona incidencias" on incidents
   for update to authenticated
   using (public.is_supervisor()) with check (public.is_supervisor());
 
 alter table incident_materials enable row level security;
 
+drop policy if exists "personal lee materiales" on incident_materials;
 create policy "personal lee materiales" on incident_materials
   for select to authenticated using (public.is_staff());
 
+drop policy if exists "supervisor escribe materiales" on incident_materials;
 create policy "supervisor escribe materiales" on incident_materials
   for all to authenticated
   using (public.is_supervisor()) with check (public.is_supervisor());
@@ -201,23 +215,29 @@ alter table assets enable row level security;
 alter table asset_events enable row level security;
 alter table stock_movements enable row level security;
 
+drop policy if exists "personal lee equipos" on assets;
 create policy "personal lee equipos" on assets
   for select to authenticated using (public.is_staff());
+drop policy if exists "supervisor gestiona equipos" on assets;
 create policy "supervisor gestiona equipos" on assets
   for all to authenticated
   using (public.is_supervisor()) with check (public.is_supervisor());
 
+drop policy if exists "personal lee eventos de equipo" on asset_events;
 create policy "personal lee eventos de equipo" on asset_events
   for select to authenticated using (public.is_staff());
+drop policy if exists "personal registra eventos de equipo" on asset_events;
 create policy "personal registra eventos de equipo" on asset_events
   for insert to authenticated
   with check (public.is_staff() and by_user = (select auth.uid()));
 
+drop policy if exists "personal lee movimientos" on stock_movements;
 create policy "personal lee movimientos" on stock_movements
   for select to authenticated using (public.is_staff());
 
 -- Un técnico puede descontar material al resolver algo en el aula, pero no
 -- puede inventar entradas de almacén: las compras y los ajustes son de supervisor.
+drop policy if exists "tecnico consume material" on stock_movements;
 create policy "tecnico consume material" on stock_movements
   for insert to authenticated
   with check (
@@ -225,6 +245,7 @@ create policy "tecnico consume material" on stock_movements
     and (kind = 'consumo' or public.is_supervisor())
   );
 
+drop policy if exists "supervisor corrige movimientos" on stock_movements;
 create policy "supervisor corrige movimientos" on stock_movements
   for update to authenticated
   using (public.is_supervisor()) with check (public.is_supervisor());
@@ -234,16 +255,20 @@ create policy "supervisor corrige movimientos" on stock_movements
 -- -----------------------------------------------------------------------------
 alter table attachments enable row level security;
 
+drop policy if exists "personal lee adjuntos" on attachments;
 create policy "personal lee adjuntos" on attachments
   for select to authenticated using (public.is_staff());
+drop policy if exists "personal sube adjuntos" on attachments;
 create policy "personal sube adjuntos" on attachments
   for insert to authenticated
   with check (public.is_staff() and by_user = (select auth.uid()));
 
 alter table reports enable row level security;
 
+drop policy if exists "personal lee informes" on reports;
 create policy "personal lee informes" on reports
   for select to authenticated using (public.is_staff());
+drop policy if exists "supervisor genera informes" on reports;
 create policy "supervisor genera informes" on reports
   for insert to authenticated with check (public.is_supervisor());
 
@@ -254,11 +279,14 @@ alter table import_fixes enable row level security;
 alter table import_quarantine enable row level security;
 alter table audit_log enable row level security;
 
+drop policy if exists "admin lee correcciones" on import_fixes;
 create policy "admin lee correcciones" on import_fixes
   for select to authenticated using (public.is_admin());
+drop policy if exists "admin gestiona cuarentena" on import_quarantine;
 create policy "admin gestiona cuarentena" on import_quarantine
   for all to authenticated
   using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "supervisor lee auditoría" on audit_log;
 create policy "supervisor lee auditoría" on audit_log
   for select to authenticated using (public.is_supervisor());
 

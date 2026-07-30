@@ -20,7 +20,14 @@
  * que se ha perdido no es una copia.
  */
 
-import { db, type OutboxEntry, type QueuedPhoto } from '@/db/dexie'
+import {
+  db,
+  guardarBytesDeFoto,
+  leerBytesDeFoto,
+  migrarFotosASusBytes,
+  type OutboxEntry,
+  type QueuedPhoto,
+} from '@/db/dexie'
 
 export const FORMATO = 'aulas-pendientes'
 export const VERSION = 1
@@ -137,6 +144,8 @@ export interface Exportacion {
   blob: Blob
   entradas: number
   fotos: number
+  /** Estaban en cola pero sus bytes ya no se pueden leer en este dispositivo. */
+  fotosIlegibles: number
 }
 
 /**
@@ -147,17 +156,31 @@ export interface Exportacion {
  * el servidor no quiere y por tanto lo que más tiempo va a pasar aquí dentro.
  */
 export async function exportarPendientes(ahora: number = Date.now()): Promise<Exportacion> {
+  // Los bytes de versiones anteriores, a su tabla, antes de leerlos: si no, las
+  // fotos viejas saldrían de la copia justo cuando más falta hace tenerlas.
+  await migrarFotosASusBytes()
+
   const entradas = await db.outbox.toArray()
   const enCola = await db.photos.toArray()
 
   const fotos: CopiaFoto[] = []
   for (const f of enCola) {
+    /*
+     * Una foto sin bytes no tumba la copia.
+     *
+     * Es la diferencia entre salvar 19 cosas y salvar ninguna, y la copia se
+     * hace precisamente cuando algo va mal. Lo que falte se dice al final, con
+     * su nombre, en vez de perderse en silencio.
+     */
+    const bytes = await leerBytesDeFoto(f.id)
+    if (!bytes) continue
+
     fotos.push({
       id: f.id,
       entityType: f.entityType,
       entityId: f.entityId,
       takenAt: f.takenAt,
-      datos: await aBase64(f.blob),
+      datos: await aBase64(bytes),
     })
   }
 
@@ -177,6 +200,10 @@ export async function exportarPendientes(ahora: number = Date.now()): Promise<Ex
     blob: new Blob([JSON.stringify(copia)], { type: 'application/json' }),
     entradas: entradas.length,
     fotos: fotos.length,
+    // Las que estaban en cola pero cuyos bytes ya no se pueden leer. Se cuentan
+    // para poder decirlo: dar por salvado lo que no lo está es peor que no
+    // tener copia.
+    fotosIlegibles: enCola.length - fotos.length,
   }
 }
 
@@ -209,7 +236,6 @@ export async function importarPendientes(copia: Copia): Promise<Importacion> {
     id: f.id,
     entityType: f.entityType,
     entityId: f.entityId,
-    blob: deBase64(f.datos),
     takenAt: f.takenAt,
     attempts: 0,
     nextAttemptAt: 0,
@@ -218,6 +244,10 @@ export async function importarPendientes(copia: Copia): Promise<Importacion> {
   }))
 
   if (entradas.length > 0) await db.outbox.bulkPut(entradas)
+
+  // Los bytes antes que las filas de estado, por lo mismo que al capturar: una
+  // fila en cola apuntando a unos bytes que no están es una foto perdida.
+  for (const f of copia.fotos) await guardarBytesDeFoto(f.id, deBase64(f.datos))
   if (fotos.length > 0) await db.photos.bulkPut(fotos)
 
   return { entradas: entradas.length, fotos: fotos.length }

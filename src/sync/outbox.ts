@@ -7,7 +7,16 @@
  * un temporizador mientras queden pendientes.
  */
 
-import { db, backoffMs, pendingSummary, type OutboxEntry, type QueuedPhoto } from '@/db/dexie'
+import {
+  db,
+  backoffMs,
+  borrarFotoDeLaCola,
+  leerBytesDeFoto,
+  migrarFotosASusBytes,
+  pendingSummary,
+  type OutboxEntry,
+  type QueuedPhoto,
+} from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 
 /** A qué tabla de PostgREST va cada tipo de entrada. */
@@ -118,13 +127,58 @@ function isPermanentFailure(status: number | undefined): boolean {
  * contra una política que no existe —decidir se hace por RPC— y, peor, podría
  * devolver a «pendiente» una retirada que un coordinador ya autorizó.
  */
+/*
+ * Y una incidencia, y un adjunto. Los dos por el mismo motivo que los de arriba,
+ * y los dos costaron trabajo de campo antes de estar en esta lista.
+ *
+ * El modelo de escritura del servidor es **de una sola vez**: `incidents` deja
+ * abrir a cualquiera del equipo pero solo un supervisor puede actualizar, y
+ * `attachments` solo tiene política de INSERT. La cola, en cambio, hacía upsert
+ * siempre. Y un upsert sobre una fila que ya está no es un alta: es un UPDATE.
+ *
+ * O sea que el primer envío entraba y **cualquier reenvío quedaba prohibido**.
+ * Los reenvíos no son la excepción aquí, son el día a día: se sube sin
+ * cobertura, se pierde la respuesta, se reintenta. Un 403 es permanente, así
+ * que esas filas se marcaban rechazadas para siempre y se quedaban en la cola
+ * enseñando un error de permisos que no era tal — la fila ya estaba arriba.
+ */
 const IGNORE_DUPLICATES = new Set<OutboxEntry['entity']>([
   'asset_type',
   'stock_movement',
   'asset_event',
   'asset_removal',
   'room_inventory',
+  'incident',
+  'attachment',
 ])
+
+/**
+ * ¿Este envío debe ignorar la fila que ya esté, en vez de pisarla?
+ *
+ * Para casi todo lo decide la entidad. Las revisiones y sus comprobaciones no:
+ * depende de en qué momento de su vida estén.
+ *
+ * Mientras la revisión es un borrador hay que poder pisar lo que haya —el
+ * técnico cambia una comprobación y ese cambio tiene que llegar—, y el servidor
+ * lo permite. En cuanto se cierra, la revisión queda congelada: ahí ya no hay
+ * nada legítimo que actualizar, y cualquier reenvío es un reintento de algo que
+ * quizá ya llegó. Pisar deja de estar permitido y deja de hacer falta a la vez.
+ *
+ * Sin esto, cerrar una revisión dejaba sus nueve comprobaciones rechazadas por
+ * permisos en cuanto se reintentaba una sola vez.
+ */
+async function ignorarDuplicados(entry: OutboxEntry): Promise<boolean> {
+  if (IGNORE_DUPLICATES.has(entry.entity)) return true
+  if (entry.entity !== 'inspection' && entry.entity !== 'inspection_check') return false
+
+  const inspectionId =
+    entry.entity === 'inspection'
+      ? entry.id
+      : ((entry.payload['inspection_id'] as string | undefined) ?? null)
+  if (!inspectionId) return false
+
+  return (await db.inspections.get(inspectionId))?.status === 'completa'
+}
 
 interface FalloDeRed {
   message: string
@@ -167,10 +221,11 @@ async function intentar(
 async function pushEntry(entry: OutboxEntry): Promise<boolean> {
   await db.outbox.update(entry.id, { status: 'enviando' })
 
+  const ignorar = await ignorarDuplicados(entry)
   const fallo = await intentar(() =>
     supabase.from(TABLE[entry.entity]).upsert(entry.payload, {
       onConflict: 'id',
-      ignoreDuplicates: IGNORE_DUPLICATES.has(entry.entity),
+      ignoreDuplicates: ignorar,
     }),
   )
 
@@ -198,27 +253,56 @@ async function pushEntry(entry: OutboxEntry): Promise<boolean> {
   return false
 }
 
+/**
+ * Un objeto que ya está en el almacén no es un fallo.
+ *
+ * El bucket `fotos` tiene política de INSERT y de SELECT, y **ninguna de
+ * UPDATE**, a propósito: una foto subida no se reescribe. Pero la subida iba
+ * con `upsert: true`, que sobre un objeto existente pide justamente UPDATE. O
+ * sea que el primer intento entraba y el segundo —el reintento de una respuesta
+ * que se perdió— chocaba contra una política que no existe y se rechazaba para
+ * siempre.
+ *
+ * Ahora se sube sin `upsert` y el «ya existe» se lee como lo que es: la foto
+ * está arriba. El nombre del objeto sale del id de la foto, que se genera al
+ * capturarla, así que el que ya está y el que se iba a subir son el mismo.
+ */
+function yaEstabaSubida(fallo: FalloDeRed): boolean {
+  return fallo.status === 409 || /already exists|duplicate|resource already/i.test(fallo.message)
+}
+
 /** @returns si la foto llegó a subir y a enlazarse. */
 async function pushPhoto(photo: QueuedPhoto): Promise<boolean> {
-  await db.photos.update(photo.id, { status: 'subiendo' })
-
-  const path = `${photo.entityType}/${photo.entityId}/${photo.id}.jpg`
-  const subida = await intentar(() =>
-    supabase.storage
-      .from('fotos')
-      .upload(path, photo.blob, { contentType: 'image/jpeg', upsert: true }),
-  )
-
-  if (subida) {
-    const attempts = photo.attempts + 1
+  const fallar = async (mensaje: string, cuenta = true): Promise<false> => {
+    const attempts = photo.attempts + (cuenta ? 1 : 0)
     await db.photos.update(photo.id, {
       status: attempts > 8 ? 'rechazado' : 'pendiente',
       attempts,
       nextAttemptAt: Date.now() + backoffMs(attempts),
-      lastError: subida.message,
+      lastError: mensaje,
     })
     return false
   }
+
+  await db.photos.update(photo.id, { status: 'subiendo' })
+
+  // Los bytes viven aparte y se leen como un Blob nuevo, hecho en memoria: el
+  // que sale de IndexedDB es el que WebKit no sabe manejar.
+  const bytes = await leerBytesDeFoto(photo.id)
+  if (!bytes) {
+    await db.photos.update(photo.id, {
+      status: 'rechazado',
+      lastError: 'No están los datos de esta foto en el dispositivo. Hay que repetirla.',
+    })
+    return false
+  }
+
+  const path = `${photo.entityType}/${photo.entityId}/${photo.id}.jpg`
+  const subida = await intentar(() =>
+    supabase.storage.from('fotos').upload(path, bytes, { contentType: 'image/jpeg' }),
+  )
+
+  if (subida && !yaEstabaSubida(subida)) return fallar(subida.message)
 
   // La foto ya está arriba; ahora se enlaza con su revisión o incidencia.
   const enlace = await intentar(async () => {
@@ -235,22 +319,16 @@ async function pushPhoto(photo: QueuedPhoto): Promise<boolean> {
         taken_at: photo.takenAt,
         by_user: autor,
       },
-      { onConflict: 'id' },
+      // `attachments` solo tiene política de INSERT: un reenvío que se
+      // convirtiera en UPDATE se rechazaría por permisos aunque la fila ya
+      // estuviera puesta, que es exactamente lo que pasaba.
+      { onConflict: 'id', ignoreDuplicates: true },
     )
   })
 
-  if (enlace) {
-    const attempts = photo.attempts + 1
-    await db.photos.update(photo.id, {
-      status: 'pendiente',
-      attempts,
-      nextAttemptAt: Date.now() + backoffMs(attempts),
-      lastError: enlace.message,
-    })
-    return false
-  }
+  if (enlace) return fallar(enlace.message)
 
-  await db.photos.delete(photo.id)
+  await borrarFotoDeLaCola(photo.id)
   return true
 }
 
@@ -273,17 +351,29 @@ async function pushPhoto(photo: QueuedPhoto): Promise<boolean> {
  */
 async function recuperarEnVuelo(): Promise<number> {
   const motivo = 'Se interrumpió a mitad de subida; se reintenta.'
-  const [entradas, fotos] = await Promise.all([
-    db.outbox
-      .where('status')
-      .equals('enviando')
-      .modify({ status: 'pendiente', nextAttemptAt: 0, lastError: motivo }),
-    db.photos
-      .where('status')
-      .equals('subiendo')
-      .modify({ status: 'pendiente', nextAttemptAt: 0, lastError: motivo }),
-  ])
-  return entradas + fotos
+  const cambios = { status: 'pendiente' as const, nextAttemptAt: 0, lastError: motivo }
+
+  /*
+   * Cada tabla por su lado, y con su propio `try`.
+   *
+   * Iban en un `Promise.all` y compartían suerte: cuando el rescate de fotos
+   * reventaba —y reventaba, porque `modify()` reescribía el Blob y WebKit no
+   * sabe volver a guardarlo— se llevaba por delante el de la cola Y la pasada
+   * entera, que ni siquiera llegaba a intentar subir nada. Un rescate que
+   * falla tiene que dejar las cosas como estaban, no peor.
+   */
+  let recuperados = 0
+  for (const rescatar of [
+    () => db.outbox.where('status').equals('enviando').modify(cambios),
+    () => db.photos.where('status').equals('subiendo').modify(cambios),
+  ]) {
+    try {
+      recuperados += await rescatar()
+    } catch (err) {
+      console.warn('recuperarEnVuelo', err)
+    }
+  }
+  return recuperados
 }
 
 export interface ResultadoFlush {
@@ -338,7 +428,11 @@ export async function flush(opciones: { forzar?: boolean } = {}): Promise<Result
       return parte(0)
     }
 
-    // Antes que nada, rescatar lo que se quedó a medias en una pasada anterior.
+    // Los bytes de las fotos de versiones anteriores, a su tabla. Es idempotente
+    // y con la cola limpia no hace nada, así que puede ir en cada pasada.
+    await migrarFotosASusBytes()
+
+    // Y rescatar lo que se quedó a medias en una pasada anterior.
     await recuperarEnVuelo()
 
     const now = Date.now()
@@ -352,11 +446,23 @@ export async function flush(opciones: { forzar?: boolean } = {}): Promise<Result
       if (await pushEntry(entry)) subidos += 1
     }
 
+    /*
+     * Las fotos, DESPUÉS de la cola y con su fallo acotado.
+     *
+     * Una foto que reviente no puede volver a llevarse por delante el trabajo
+     * de campo: los partes de revisión son el registro, la foto es la prueba
+     * que lo acompaña. Si hay que perder algo en una pasada, se pierde la
+     * segunda, y solo esa.
+     */
     const duePhotos = (await db.photos.toArray()).filter(
       (p) => p.status === 'pendiente' && toca(p.nextAttemptAt),
     )
     for (const photo of duePhotos) {
-      if (await pushPhoto(photo)) subidos += 1
+      try {
+        if (await pushPhoto(photo)) subidos += 1
+      } catch (err) {
+        console.error('pushPhoto', err)
+      }
     }
 
     const remaining = await db.outbox.where('status').equals('rechazado').count()

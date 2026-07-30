@@ -29,6 +29,7 @@ alter table enrollment_codes enable row level security;
 
 -- Nadie lo lee desde el cliente. El admin lo gestiona a través del endpoint
 -- de servicio, que usa service-role y se salta RLS.
+drop policy if exists "admin ve altas" on enrollment_codes;
 create policy "admin ve altas" on enrollment_codes
   for select to authenticated using (public.is_admin());
 
@@ -67,14 +68,17 @@ create index devices_profile_idx on devices(profile_id);
 
 alter table devices enable row level security;
 
+drop policy if exists "ver dispositivos propios" on devices;
 create policy "ver dispositivos propios" on devices
   for select to authenticated
   using (profile_id = (select auth.uid()) or public.is_supervisor());
 
+drop policy if exists "registrar dispositivo propio" on devices;
 create policy "registrar dispositivo propio" on devices
   for insert to authenticated
   with check (profile_id = (select auth.uid()));
 
+drop policy if exists "actualizar dispositivo propio" on devices;
 create policy "actualizar dispositivo propio" on devices
   for update to authenticated
   using (profile_id = (select auth.uid()) or public.is_supervisor())

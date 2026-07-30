@@ -8,7 +8,7 @@
  */
 
 import { v7 as uuidv7 } from 'uuid'
-import { db } from '@/db/dexie'
+import { db, guardarBytesDeFoto } from '@/db/dexie'
 
 const MAX_DIMENSION = 1600
 const TARGET_MB = 0.2
@@ -71,11 +71,24 @@ export async function capturePhoto(
   const id = uuidv7()
   const takenAt = new Date().toISOString()
 
+  /*
+   * Los bytes primero y en su propia tabla, la fila de estado después.
+   *
+   * Ese orden importa: si se cortara entre las dos escrituras, quedarían unos
+   * bytes sin fila —que no molestan a nadie y se limpian solos— en vez de una
+   * fila en cola apuntando a unos bytes que no existen, que sí es una foto
+   * perdida con aviso de error.
+   *
+   * Y van separados porque la fila de estado se reescribe en cada intento de
+   * subida: con los bytes dentro, cada uno de esos cambios obligaba a WebKit a
+   * volver a guardar el Blob, y no sabe hacerlo.
+   */
+  await guardarBytesDeFoto(id, blob)
+
   await db.photos.put({
     id,
     entityType,
     entityId,
-    blob,
     takenAt,
     attempts: 0,
     nextAttemptAt: 0,
