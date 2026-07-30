@@ -2,10 +2,16 @@
 -- Las comprobaciones de una revisión cerrada tienen que poder llegar
 -- =============================================================================
 --
--- El registro de la base de datos trae 234 de estos en tres horas y media de
--- trabajo de campo:
+-- El registro de la base de datos trae 234 violaciones de política de seguridad
+-- a nivel de fila sobre `inspection_checks` en tres horas y media de trabajo de
+-- campo.
 --
---   ERROR: new row violates row-level security policy for table "inspection_checks"
+-- (El mensaje exacto de Postgres no se copia aquí a propósito, ni siquiera como
+-- ejemplo. El servidor registra estas migraciones enteras en su log, así que
+-- cualquier texto que imite un mensaje de fallo reaparece en toda búsqueda que
+-- se haga sobre ese log a partir de entonces, y hace pensar que la avería sigue
+-- viva justo cuando se acaba de arreglar. Pasó, y costó una vuelta entera de
+-- diagnóstico.)
 --
 -- No es un ataque ni una cuenta mal configurada: es el funcionamiento normal de
 -- la aplicación chocando contra su propia política.
