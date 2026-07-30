@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { pendingSummary } from '@/db/dexie'
 import { flush, getUltimoErrorSync, onSyncState, retryRejected, type SyncState } from '@/sync/outbox'
 import { pullMaster, ultimoPull } from '@/sync/pull'
+import { exportarPendientes, ofrecerFichero } from '@/sync/rescate'
 import { Diagnostico } from '@/features/admin/Diagnostico'
 
 /**
@@ -31,6 +32,7 @@ export function SyncChip(): React.ReactElement {
   const [open, setOpen] = useState(false)
   const [bajando, setBajando] = useState(false)
   const [resultado, setResultado] = useState<string | null>(null)
+  const [copiando, setCopiando] = useState(false)
   const raiz = useRef<HTMLDivElement>(null)
   const summary = useLiveQuery(() => pendingSummary(), [], null)
   // El parte de la última bajada. `ultimoPull()` existía y no lo leía nadie.
@@ -259,6 +261,50 @@ export function SyncChip(): React.ReactElement {
               </button>
             )}
           </div>
+
+          {/*
+            La salida de emergencia.
+
+            Mientras la cola no sube, la regla de oro del proyecto —nada
+            pendiente vive solo en el móvil— está rota, y veinte revisiones
+            hechas a mano existen en un único IndexedDB de un único iPad. Este
+            botón no arregla la subida: saca el trabajo del dispositivo ahora,
+            sin servidor, sin permisos y sin red, a un fichero que se manda por
+            AirDrop o correo y que administración puede volver a meter en la
+            cola desde otro sitio.
+
+            Solo aparece cuando hay algo que salvar: un botón de rescate
+            permanente enseña a ignorarlo.
+          */}
+          {pending + rejected > 0 && (
+            <button
+              type="button"
+              disabled={copiando}
+              onClick={() => {
+                setCopiando(true)
+                void (async () => {
+                  try {
+                    const copia = await exportarPendientes()
+                    const via = await ofrecerFichero(copia.nombre, copia.blob)
+                    setResultado(
+                      `Copia de ${copia.entradas} cambios y ${copia.fotos} fotos ` +
+                        `${via === 'compartido' ? 'compartida' : 'guardada'}. ` +
+                        'Mándasela a administración: con ella el trabajo ya no depende de este dispositivo.',
+                    )
+                  } catch (err) {
+                    setResultado(
+                      `No se ha podido hacer la copia: ${err instanceof Error ? err.message : String(err)}`,
+                    )
+                  } finally {
+                    setCopiando(false)
+                  }
+                })()
+              }}
+              className="key key-quiet mt-2 w-full px-3 py-2 text-xs"
+            >
+              {copiando ? 'Preparando copia…' : 'Guardar copia de lo pendiente'}
+            </button>
+          )}
 
           {/* Aquí es donde se viene cuando «algo no va», así que aquí tiene que
               estar. Antes solo se llegaba al diagnóstico desde la lista de

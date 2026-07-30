@@ -5,6 +5,7 @@ import { AssetTypeTray } from './AssetTypeTray'
 import { EquipoPorDefecto } from './EquipoPorDefecto'
 import { EquiposPendientes } from './EquiposPendientes'
 import { MaestroSalas } from './MaestroSalas'
+import { RecuperarCopia } from './RecuperarCopia'
 import { RetiradasPendientes } from './RetiradasPendientes'
 import { UsersPage } from './UsersPage'
 
@@ -195,6 +196,8 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
           <p className="mt-4 text-sm text-muted">Ninguno pendiente.</p>
         )}
       </section>
+
+      <RecuperarCopia />
 
       <section>
         <h2 className="text-xl font-semibold">Cuarentena de importación</h2>

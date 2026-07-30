@@ -10,7 +10,7 @@ import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
 import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
 
 import { getSealed, lock, resumeSession, touch, watchSession } from '@/auth/session'
-import { db, purgeSyncedInspections, requestPersistentStorage } from '@/db/dexie'
+import { db, pendingSummary, purgeSyncedInspections, requestPersistentStorage } from '@/db/dexie'
 import { pullMaster, startPull, type ResultadoPull } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
 import { configError, supabase } from '@/lib/supabase'
@@ -186,6 +186,10 @@ export function App(): React.ReactElement {
   const [restaurado, setRestaurado] = useState(false)
 
   const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [])
+
+  /* Cuánto trabajo hay sin subir. Solo se usa para no dejar cerrar sesión a
+     ciegas encima de una cola llena. */
+  const sinSubir = useLiveQuery(async () => (await pendingSummary()).total, [], 0)
 
   /*
    * Cuántas salas tiene cada edificio y cuántas van con retraso.
@@ -495,10 +499,24 @@ export function App(): React.ReactElement {
             <button
               type="button"
               onClick={() => {
-                // Es la única forma de que la sesión termine: no caduca sola.
-                // Por eso se confirma — cerrarla sin querer obliga a teclear el
-                // PIN otra vez en mitad de una ronda.
-                if (confirm('¿Cerrar sesión?')) {
+                /*
+                 * Es la única forma de que la sesión termine: no caduca sola.
+                 * Por eso se confirma — cerrarla sin querer obliga a teclear el
+                 * PIN otra vez en mitad de una ronda.
+                 *
+                 * Y con la cola llena se avisa de qué se está haciendo. Cerrar
+                 * sesión no borra nada —el trabajo sigue aquí y sube al volver a
+                 * entrar—, pero sí para la subida en seco: sin sesión, `flush()`
+                 * no puede mandar nada. Quien cierra creyendo que «así se
+                 * guarda» está haciendo lo contrario de lo que quiere.
+                 */
+                const aviso =
+                  sinSubir > 0
+                    ? `Quedan ${sinSubir} cambios sin subir. No se pierden —siguen en este ` +
+                      'dispositivo y subirán cuando vuelvas a entrar—, pero mientras la sesión ' +
+                      'esté cerrada no se sube nada. ¿Cerrar sesión igualmente?'
+                    : '¿Cerrar sesión?'
+                if (confirm(aviso)) {
                   void lock().then(() => setUnlocked(false))
                 }
               }}
