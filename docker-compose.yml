@@ -183,6 +183,12 @@ services:
       SUPABASE_URL: https://${DOMAIN}
       SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
       WORKER_TOKEN: ${REPORTS_WORKER_TOKEN:?falta REPORTS_WORKER_TOKEN}
+      # Sin clave el informe sale igual, con el análisis calculado: por eso no
+      # lleva `:?` y no impide arrancar. Si falta, el worker lo dice en su
+      # registro la primera vez que genera un informe.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      GEMINI_THINKING: ${GEMINI_THINKING:-}
       PORT: 8080
       # Los instantes se guardan en UTC; esto solo hace que los registros del
       # contenedor y la hora local de Node coincidan con la del equipo.

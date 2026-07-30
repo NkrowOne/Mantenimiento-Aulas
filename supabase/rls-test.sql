@@ -1122,7 +1122,120 @@ begin;
 rollback;
 
 \echo ''
-\echo '=== 41. Un equipo que falla en la revisión abre incidencia, y sigue abierta ==='
+\echo '=== 41. La tubería del informe no la abre nadie de fuera ==='
+begin;
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  -- `enviar_informe` no comprueba roles porque no tiene que ser alcanzable: lo
+  -- que la protege es el permiso. Si algún día alguien la vuelve a conceder sin
+  -- darse cuenta —el `alter default privileges` del bootstrap lo hace con cada
+  -- función nueva—, esta prueba se pone en rojo.
+  do $$
+  begin
+    perform public.enviar_informe('semanal', null, null, '{}'::jsonb, null);
+    raise exception 'FALLO: un supervisor ha podido llamar a la tubería interna';
+  exception when insufficient_privilege then
+    raise notice 'OK: enviar_informe está revocada para authenticated';
+  end $$;
+
+  do $$
+  begin
+    perform public.informe_semanal_programado();
+    raise exception 'FALLO: se ha podido disparar el informe programado a mano';
+  exception when insufficient_privilege then
+    raise notice 'OK: el trabajo del viernes solo lo ejecuta el cron';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 42. Los parámetros del informe se validan antes de salir ==='
+begin;
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  savepoint s;
+
+  do $$
+  begin
+    perform public.request_report('semanal', null, null,
+      jsonb_build_object('secciones', jsonb_build_array('resumen; drop table rooms')));
+    raise exception 'FALLO: ha pasado un nombre de sección con SQL dentro';
+  exception when invalid_parameter_value then
+    raise notice 'OK: el nombre de sección raro se rechaza';
+  end $$;
+  rollback to savepoint s;
+
+  do $$
+  begin
+    perform public.request_report('semanal', null, null,
+      jsonb_build_object('audiencia', 'quien sea'));
+    raise exception 'FALLO: ha pasado una audiencia inventada';
+  exception when invalid_parameter_value then
+    raise notice 'OK: la audiencia se valida contra la lista';
+  end $$;
+  rollback to savepoint s;
+
+  do $$
+  begin
+    perform public.request_report('semanal', null, null,
+      jsonb_build_object('enfoque', repeat('x', 500)));
+    raise exception 'FALLO: ha pasado un enfoque de 500 caracteres';
+  exception when invalid_parameter_value then
+    raise notice 'OK: el texto libre tiene tope';
+  end $$;
+  rollback to savepoint s;
+
+  do $$
+  begin
+    perform public.request_report('semanal', null, null, '"soy una cadena"'::jsonb);
+    raise exception 'FALLO: ha pasado un params que no es un objeto';
+  exception when invalid_parameter_value then
+    raise notice 'OK: params tiene que ser un objeto';
+  end $$;
+  rollback to savepoint s;
+rollback;
+
+\echo ''
+\echo '=== 43. El estado de la IA no devuelve la clave ==='
+begin;
+  -- La clave la guarda un administrador; el estado lo consulta el supervisor.
+  select test_as('22222222-2222-4222-8222-222222222222', 'admin');
+  select public.ia_configurar('AIzaSyDEMOdemoDEMOdemoDEMOdemo123456', 'gemini-3.6-flash', 'high');
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  select case
+    when (public.ia_estado()->>'clave_guardada')::boolean
+     and public.ia_estado()::text not like '%AIzaSy%'
+    then 'OK: dice que hay clave y no la enseña'
+    else 'FALLO: ' || public.ia_estado()::text
+  end as resultado;
+
+  -- Un supervisor consulta el estado; configurar es de administrador, porque lo
+  -- que se guarda ahí es un secreto que se paga por uso.
+  do $$
+  begin
+    perform public.ia_configurar('AIzaSyOTRAotraOTRAotraOTRAotra9876');
+    raise exception 'FALLO: un supervisor ha cambiado la clave de la IA';
+  exception when insufficient_privilege then
+    raise notice 'OK: solo un administrador configura la IA';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 44. Un técnico no ve ni toca la configuración de la IA ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.ia_estado();
+    raise exception 'FALLO: un técnico ha leído el estado de la IA';
+  exception when insufficient_privilege then
+    raise notice 'OK: el estado de la IA es de supervisor para arriba';
+  end $$;
+
+  select case
+    when (select count(*) from app_config) = 0
+    then 'OK: app_config sigue invisible para un técnico'
+    else 'FALLO: un técnico lee app_config'
+
+\echo '=== 45. Un equipo que falla en la revisión abre incidencia, y sigue abierta ==='
 begin;
   select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
   select id as sala from rooms where active order by created_at limit 1 \gset
@@ -1185,7 +1298,7 @@ begin;
 rollback;
 
 \echo ''
-\echo '=== 42. La observación de una revisión se lee en la ficha, no en Incidencias ==='
+\echo '=== 46. La observación de una revisión se lee en la ficha, no en Incidencias ==='
 begin;
   select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
   select id as sala from rooms where active order by created_at limit 1 \gset
