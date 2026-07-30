@@ -6,6 +6,11 @@
  * fila en `inspections` que el técnico puede recuperar desde cualquier
  * dispositivo. Cerrar la app, quedarse sin batería, romper el móvil o que iOS
  * limpie el almacenamiento no pierde trabajo.
+ *
+ * Y desde aquí sale también **la corrección**: la misma pantalla, el mismo
+ * autoguardado y el mismo cierre, pero sembrada con lo que dijo una revisión
+ * anterior y apuntando a ella. Es el mismo trabajo —revisar un aula— hecho una
+ * segunda vez sobre el mismo día, así que sería un error tener dos formularios.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -14,9 +19,9 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { v7 as uuidv7 } from 'uuid'
 import { db, enqueue } from '@/db/dexie'
 import { flush } from '@/sync/outbox'
-import { norm } from '@/domain/normalize'
-import { resolveType } from '@/domain/inventory'
+import { rangoDeTipo, resolveType } from '@/domain/inventory'
 import { incidenciasDeRevision } from '@/domain/incidencias'
+import { checksDeSemilla, type Semilla } from '@/domain/revisiones'
 import {
   LAMP_MEASURE,
   LEGACY_CHECK_LABELS,
@@ -39,33 +44,13 @@ const LOCAL_DEBOUNCE_MS = 400
 const REMOTE_DEBOUNCE_MS = 3000
 
 /**
- * Orden de lectura de la sala, no alfabético.
+ * Rango de un tipo en el recorrido del aula, a partir de su identificador.
  *
- * El técnico entra por la puerta y mira primero lo que se ve desde el fondo del
- * aula. Alfabéticamente la botonera iría primero y el proyector el sexto, que
- * no es el orden en que nadie revisa nada.
- */
-export const TYPE_ORDER = [
-  'PROYECTOR',
-  'PANTALLA',
-  'ALTAVOCES',
-  'MICROFONO',
-  'CAMARA',
-  'BOTONERA',
-  'ORDENADOR',
-  'ATRIL',
-]
-
-/**
- * Rango de un tipo en el recorrido del aula. Fuera de `checkRows` porque el
- * bloque de inventario, en esa misma pantalla, tiene que ordenar igual: tenerlo
- * en dos sitios producía el mismo equipamiento listado dos veces en dos órdenes
- * distintos.
+ * El orden vive en `domain/inventory` porque lo comparten tres pantallas; aquí
+ * solo se resuelve el tipo —siguiendo las fusiones— antes de preguntarlo.
  */
 export function typeRank(types: Map<string, AssetType>, assetTypeId: string): number {
-  const name = norm(resolveType(types, assetTypeId)?.name ?? '')
-  const i = TYPE_ORDER.indexOf(name)
-  return i === -1 ? TYPE_ORDER.length : i
+  return rangoDeTipo(resolveType(types, assetTypeId)?.name)
 }
 
 /** Una fila de la revisión: o un elemento del inventario, o algo de la sala. */
@@ -141,7 +126,46 @@ export interface InspectionDraft {
   checks: Map<CheckKey, InspectionCheck>
 }
 
-export function useInspection(room: Room | null, userId: string | null) {
+/**
+ * Lo que hace falta para corregir una revisión, tal y como llega de la ficha.
+ *
+ * La ficha ya ha tenido que hablar con el servidor para poder enseñar la lista de
+ * revisiones, así que trae el detalle consigo en vez de obligar al formulario a
+ * pedirlo otra vez —y a fallar si en ese segundo se ha ido la cobertura—. Desde
+ * que el borrador existe en el dispositivo, la corrección sigue sin red como
+ * cualquier revisión.
+ */
+export interface Correccion {
+  /** La revisión que se va a reemplazar. */
+  baseId: string
+  /** La fecha de la visita original, que la corrección conserva. */
+  occurredAt: string
+  /** Quién la firmó, para poder decirlo en la cabecera. */
+  who: string | null
+  /** Cómo salió, para poder decir de qué se parte. */
+  fallos: number
+  /** Sus fotos siguen siendo las de aquel día: se enseñan al corregir. */
+  fotos: number
+  /** Lo que contestó, ya filtrado a lo que hoy se puede tocar. */
+  semilla: Semilla | null
+  /** Lo que aquella revisión anotó debajo de las fotos. */
+  notes: string | null
+}
+
+export function useInspection(
+  room: Room | null,
+  userId: string | null,
+  /**
+   * Si viene, esta pantalla corrige una revisión en vez de abrir una nueva.
+   *
+   * El borrador de una corrección y el de una revisión normal conviven en la
+   * misma sala sin mezclarse: se distinguen por `corrects`. Sin eso, empezar una
+   * corrección y luego pulsar «Revisar esta sala» habría continuado la
+   * corrección sin decirlo, y lo que iba a ser una visita nueva habría acabado
+   * reemplazando a una vieja.
+   */
+  correccion?: Correccion | null,
+) {
   const qc = useQueryClient()
   const [draft, setDraft] = useState<InspectionDraft | null>(null)
   const [saving, setSaving] = useState(false)
@@ -166,6 +190,7 @@ export function useInspection(room: Room | null, userId: string | null) {
   )
 
   // Al abrir una sala se recupera su borrador si lo había, y si no se crea uno.
+  const baseId = correccion?.baseId ?? null
   useEffect(() => {
     if (!room) {
       setDraft(null)
@@ -178,7 +203,10 @@ export function useInspection(room: Room | null, userId: string | null) {
       const existing = await db.inspections
         .where('room_id')
         .equals(room.id)
-        .filter((i) => i.status === 'borrador')
+        // El borrador de la corrección de ESTA revisión, o el de la revisión
+        // normal. `?? null` porque un borrador guardado antes de que la columna
+        // existiera llega con `undefined`, que significa lo mismo que nulo.
+        .filter((i) => i.status === 'borrador' && (i.corrects ?? null) === baseId)
         .first()
 
       if (cancelled) return
@@ -193,25 +221,70 @@ export function useInspection(room: Room | null, userId: string | null) {
         return
       }
 
+      const id = uuidv7()
       const inspection: Inspection = {
-        id: uuidv7(),
+        id,
         room_id: room.id,
         by_user: userId,
-        occurred_at: new Date().toISOString(),
+        /*
+         * La corrección conserva la fecha de la visita.
+         *
+         * Es lo que impide que arreglar una errata de marzo convierta al aula en
+         * «revisada hoy» y la saque de la lista de pendientes sin que nadie haya
+         * entrado en ella.
+         */
+        occurred_at: correccion?.occurredAt ?? new Date().toISOString(),
         recorded_at: null,
         status: 'borrador',
         overall: null,
-        notes: null,
+        // Se arrastra la observación: casi siempre sigue siendo verdad, y
+        // obligar a reescribirla es la vía rápida a perderla.
+        notes: correccion?.notes ?? null,
+        corrects: baseId,
+        corrected_at: baseId ? new Date().toISOString() : null,
       }
 
-      await db.inspections.put(inspection)
-      if (!cancelled) setDraft({ inspection, checks: new Map() })
+      const sembradas = correccion?.semilla
+        ? checksDeSemilla(correccion.semilla.checks, id, uuidv7)
+        : []
+
+      await db.transaction('rw', db.inspections, db.checks, async () => {
+        await db.inspections.put(inspection)
+        if (sembradas.length > 0) await db.checks.bulkPut(sembradas)
+      })
+
+      /*
+       * Y sube ya, sin esperar al primer toque.
+       *
+       * Una revisión normal nace vacía y no hay nada que respaldar hasta que
+       * alguien marca algo. Una corrección nace con contenido —lo que dijo la
+       * original—, y la regla del proyecto es que nada pendiente viva solo en el
+       * móvil: si el aparato se rompe con la corrección a medias, lo que se
+       * recupere desde otro tiene que incluir lo que se arrastró.
+       */
+      if (sembradas.length > 0) {
+        await db.transaction('rw', db.outbox, async () => {
+          await enqueue('inspection', id, { ...inspection, recorded_at: undefined })
+          for (const c of sembradas) await enqueue('inspection_check', c.id, c)
+        })
+        void flush()
+      }
+
+      if (cancelled) return
+
+      setDraft({
+        inspection,
+        checks: new Map(sembradas.map((c) => [c.check_key, c])),
+      })
     })()
 
     return () => {
       cancelled = true
     }
-  }, [room, userId])
+    // Las dependencias son las tres que identifican el borrador. `correccion`
+    // entera queda fuera a propósito: la ficha construye el objeto al vuelo y con
+    // él aquí cada redibujado volvería a buscar el borrador.
+  }, [room, userId, baseId])
 
   /**
    * Qué comprobaciones han cambiado desde el último guardado.
@@ -446,10 +519,18 @@ export function useInspection(room: Room | null, userId: string | null) {
      * hecha.
      *
      * Es optimista y el siguiente pull lo confirma con el valor del servidor.
+     *
+     * Una corrección no lo toca, y ahí está media gracia del asunto: no es una
+     * visita, es la misma de aquel día contada mejor. Escribirlo movería la fecha
+     * hacia atrás cuando se corrige una revisión antigua —la sala aparecería sin
+     * revisar teniendo una posterior— y no cambiaría nada cuando se corrige la de
+     * hoy, porque la original ya la puso.
      */
-    await db.rooms.update(inspection.room_id, {
-      last_inspection_at: inspection.occurred_at,
-    })
+    if (!inspection.corrects) {
+      await db.rooms.update(inspection.room_id, {
+        last_inspection_at: inspection.occurred_at,
+      })
+    }
 
     // Al cerrar sí se manda todo, y en una transacción: es la última
     // oportunidad de que el servidor reciba la revisión íntegra.
@@ -484,13 +565,50 @@ export function useInspection(room: Room | null, userId: string | null) {
      * consulta: solo hace que la próxima pantalla que se abra pida datos frescos.
      */
     void qc.invalidateQueries({ queryKey: ['room-timeline'] })
-    void qc.invalidateQueries({ queryKey: ['room-notes'] })
+    void qc.invalidateQueries({ queryKey: ['room-inspections'] })
     void qc.invalidateQueries({ queryKey: ['room-reliability'] })
+    // Las fotos, por lo mismo: la que se acaba de hacer sale de la cola local en
+    // cuanto sube, y sin esto la ficha seguiría enseñando la lista de adjuntos de
+    // antes de subirla — o sea, ninguna.
+    void qc.invalidateQueries({ queryKey: ['fotos-revision'] })
     if (nuevas.length > 0) void qc.invalidateQueries({ queryKey: ['incidents'] })
 
     setDraft(null)
     return inspection
   }, [draft, etiquetaDe, qc])
+
+  /**
+   * Tira una corrección empezada.
+   *
+   * Hace falta porque el borrador de una corrección es persistente a propósito:
+   * sin una salida, un «Corregir» pulsado por error deja a la ficha ofreciendo
+   * «Continuar la corrección» para siempre, y con él delante nadie sabe si la
+   * revisión que está leyendo es la de verdad.
+   *
+   * Solo borra el borrador —local y su sitio en la cola—. La revisión que se iba
+   * a corregir no se toca, que es lo que hace esto seguro: descartar no puede
+   * perder nada porque la corrección no había reemplazado nada todavía. Si el
+   * borrador ya había subido, en el servidor queda una fila en `borrador` que
+   * ninguna vista mira; borrarla del todo es cosa de administración, y el técnico
+   * no tiene —ni debe tener— permiso para borrar filas.
+   */
+  const descartarBorrador = useCallback(async (): Promise<void> => {
+    if (!draft) return
+
+    if (localTimer.current) clearTimeout(localTimer.current)
+    if (remoteTimer.current) clearTimeout(remoteTimer.current)
+
+    const ids = [...draft.checks.values()].map((c) => c.id)
+
+    await db.transaction('rw', db.inspections, db.checks, db.outbox, async () => {
+      await db.checks.where('inspection_id').equals(draft.inspection.id).delete()
+      await db.inspections.delete(draft.inspection.id)
+      await db.outbox.bulkDelete([draft.inspection.id, ...ids])
+    })
+
+    sucias.current = new Set()
+    setDraft(null)
+  }, [draft])
 
   // `assets`, `types` y `typesById` se devuelven además de usarse aquí: la
   // página los necesita para el bloque de inventario y antes montaba SU PROPIA
@@ -507,6 +625,7 @@ export function useInspection(room: Room | null, userId: string | null) {
     setNotes,
     markRestOk,
     complete,
+    descartarBorrador,
   }
 }
 

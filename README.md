@@ -312,14 +312,15 @@ npm run informe:ia
 | Área | Estado |
 |---|---|
 | Esquema append-only, vistas y alertas | ✅ verificado contra Postgres 16 |
-| RLS, roles y auditoría | ✅ 46 bloques en verde, incluida exposición pública |
+| RLS, roles y auditoría | ✅ 58 bloques en verde, incluida exposición pública |
 | Importador del Excel | ✅ 276 salas, 283 incidencias, 669 equipos |
 | Núcleo offline (Dexie + cola de salida) | ✅ |
 | Login con PIN que cifra la sesión | ✅ lógica probada |
 | Flujo de revisión de salas | ✅ un equipo en «Falla» abre incidencia y sigue abierta hasta que se resuelve |
-| Fotos con compresión | ✅ |
+| Leer y corregir una revisión pasada desde la ficha del aula | ✅ la corrección reemplaza a la revisión sin borrarla ni contar como otra visita |
+| Fotos con compresión | ✅ y se leen: tira de miniaturas y visor en la ficha del aula |
 | Panel con alertas y gráficos | ✅ paleta validada en claro y oscuro |
-| Incidencias, almacén y depuración de datos | ✅ la pestaña es la lista de trabajo; las observaciones se leen en la ficha del aula |
+| Incidencias, almacén y depuración de datos | ✅ la pestaña es la lista de trabajo; lo que se apuntó en cada revisión se lee en la ficha del aula |
 | Panel de administración: validar equipos, agrupar el catálogo, equipamiento por defecto y alta/baja de salas y edificios | ✅ |
 | Retirada de equipo con autorización: baja o vuelta al almacén | ✅ |
 | Worker de informes PDF | ✅ PDF real generado y revisado |
@@ -379,6 +380,26 @@ inicio: aunque iOS limpiara el almacenamiento, el trabajo ya está a salvo.
 
 **Sincronización solo en primer plano.** iOS no soporta Background Sync ni
 Periodic Background Sync, así que la app no depende de ellos en ningún punto.
+
+**Una revisión no se reescribe: se corrige encima.** Una revisión cerrada sigue
+siendo inmutable —lo garantiza el trigger `inspections_freeze`, no la confianza en
+el cliente—. Corregir crea una fila nueva con `corrects` apuntando a la anterior,
+que **conserva la fecha de la visita** (`occurred_at`) y anota cuándo se corrigió
+(`corrected_at`). La vista `inspections_vigentes` es la que cuenta en todas
+partes, y se cuentan **visitas** (`count(distinct coalesce(corrects, id))`), no
+filas: sin eso, arreglar una errata movería la fecha de «última revisión»,
+penalizaría la fiabilidad del aula y sumaría una revisión al informe del viernes.
+Las dos versiones se leen en la ficha del aula.
+
+**El permiso y la inmutabilidad son dos cosas distintas, también en las
+comprobaciones.** La política de `inspection_checks` exigía que la revisión
+siguiera en borrador para poder escribirlas, y la cola de salida sube la revisión
+antes que sus filas: una revisión hecha sin cobertura llegaba **cerrada y vacía**,
+con sus comprobaciones rechazadas con un 42501 (prueba 56). Ahora el permiso es de
+quien firma la revisión y la inmutabilidad la impone un trigger, que deja pasar el
+reenvío idéntico de la cola y bloquea cualquier cambio real — al supervisor
+incluido, que era la puerta de atrás por la que se podía reescribir lo comprobado
+de una revisión congelada.
 
 **Nada se corrige en silencio.** La importación registró 18 arreglos en
 `import_fixes` con su valor original (fechas de 2005, `29-01-026`, resoluciones

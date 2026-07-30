@@ -121,6 +121,16 @@ const SUBTIPO: Record<string, string> = {
   averia: 'avería',
   // Revisiones. Una revisión cerrada no necesita adjetivo: es lo normal.
   completa: '',
+  /*
+   * Lo que se está viendo es la versión corregida de aquella visita.
+   *
+   * Sí necesita adjetivo, y no es un detalle: la fila lleva la fecha de la visita
+   * original y un texto que puede haber cambiado desde entonces. Sin la palabra,
+   * quien compare el histórico con lo que recuerda de aquel día pensará que la
+   * aplicación ha reescrito el pasado a sus espaldas — cuando lo que ha hecho es
+   * justo lo contrario: guardar las dos versiones y enseñar la buena.
+   */
+  corregida: 'corregida',
 }
 
 /** La palabra que acompaña al título. Vacía cuando no aporta nada. */

@@ -232,6 +232,42 @@ export function sugerenciasDe(
     .slice(0, limit)
 }
 
+/**
+ * Orden de lectura de la sala, no alfabético.
+ *
+ * El técnico entra por la puerta y mira primero lo que se ve desde el fondo del
+ * aula. Alfabéticamente la botonera iría primero y el proyector el sexto, que
+ * no es el orden en que nadie revisa nada.
+ *
+ * Vive aquí y no dentro de la pantalla de revisión porque lo usan tres sitios: el
+ * formulario, el bloque de inventario que tiene debajo y la lectura de una
+ * revisión pasada desde la ficha de la sala. Tenerlo en cada uno producía el
+ * mismo equipamiento listado en tres órdenes distintos.
+ */
+export const TYPE_ORDER = [
+  'PROYECTOR',
+  'PANTALLA',
+  'ALTAVOCES',
+  'MICROFONO',
+  'CAMARA',
+  'BOTONERA',
+  'ORDENADOR',
+  'ATRIL',
+]
+
+/**
+ * Dónde cae un tipo en ese recorrido, por su nombre.
+ *
+ * Por nombre y no por identificador a propósito: una revisión de hace un año
+ * habla de un aparato que hoy puede estar retirado, y de él solo llega el nombre
+ * del tipo que resolvió el servidor. Lo que no está en la lista va al final, en
+ * el orden en que llegue.
+ */
+export function rangoDeTipo(typeName: string | null | undefined): number {
+  const i = TYPE_ORDER.indexOf(norm(typeName ?? ''))
+  return i === -1 ? TYPE_ORDER.length : i
+}
+
 /** El nombre del tipo tal y como debe verse, siguiendo las fusiones. */
 export function resolveType(types: Map<string, AssetType>, id: string): AssetType | null {
   const seen = new Set<string>()

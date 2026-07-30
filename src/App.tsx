@@ -5,6 +5,7 @@ import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { LockScreen } from '@/features/auth/LockScreen'
 import { Diagnostico } from '@/features/admin/Diagnostico'
 import { InspectionPage } from '@/features/inspection/InspectionPage'
+import type { Correccion } from '@/features/inspection/useInspection'
 import { RoomListPage } from '@/features/rooms/RoomListPage'
 import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
 import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
@@ -73,7 +74,21 @@ type Tab = 'revisar' | 'panel' | 'incidencias' | 'almacen' | 'historial' | 'info
 type RoomView =
   | { name: 'edificios' }
   | { name: 'salas'; building: Building }
-  | { name: 'revision'; building: Building; room: Room; desdeFicha?: boolean }
+  | {
+      name: 'revision'
+      building: Building
+      room: Room
+      desdeFicha?: boolean
+      /**
+       * La revisión que se está corrigiendo, si esto es una corrección.
+       *
+       * Viaja por la vista y no por un estado aparte porque es parte de «dónde
+       * estoy»: la misma pantalla, la misma sala y un trabajo distinto. Lleva
+       * dentro lo que contestó aquella visita, que es lo que evita que corregir
+       * sea rellenarlo todo otra vez.
+       */
+      correccion?: Correccion
+    }
   /*
    * La ficha de la sala.
    *
@@ -384,7 +399,17 @@ export function App(): React.ReactElement {
       key: 'ultima-vista',
       value: {
         tab,
-        vista: view.name,
+        /*
+         * Una corrección se guarda como si se estuviera en la ficha, y es a
+         * propósito.
+         *
+         * Lo que se corrige viaja en memoria —qué revisión y lo que contestó—, así
+         * que restaurar «revisión» tras recargar abriría el formulario sin nada de
+         * eso: una revisión nueva y vacía donde había una corrección a medias. La
+         * ficha, en cambio, encuentra el borrador y ofrece «Continuar la
+         * corrección», que es exactamente lo que hace falta.
+         */
+        vista: view.name === 'revision' && view.correccion ? 'ficha' : view.name,
         buildingId: view.name === 'edificios' ? null : view.building.id,
         roomId: view.name === 'revision' || view.name === 'ficha' ? view.room.id : null,
       },
@@ -681,6 +706,7 @@ export function App(): React.ReactElement {
           userId={userId}
           buildingName={view.building.name}
           zoneName={zoneName}
+          correccion={view.correccion ?? null}
           onBack={() =>
             setView(
               view.name === 'revision' && view.desdeFicha
@@ -702,6 +728,24 @@ export function App(): React.ReactElement {
             setView({ name: 'ficha', building: view.building, room: view.room, volverA: 'revision' })
           }
           onDone={(encadenar) => {
+            /*
+             * Al guardar una corrección se vuelve a la ficha, no a la lista.
+             *
+             * De ahí se venía —leyendo las revisiones de esta sala— y ahí está el
+             * resultado: la versión nueva con su marca de corregida. Devolver a la
+             * lista de aulas obligaría a entrar otra vez para comprobar que se ha
+             * guardado lo que se acaba de guardar.
+             */
+            if (view.name === 'revision' && view.correccion) {
+              setView({
+                name: 'ficha',
+                building: view.building,
+                room: view.room,
+                volverA: 'salas',
+              })
+              return
+            }
+
             const siguiente =
               encadenar && rondaActual
                 ? nextRoom(rondaActual.rooms, rondaActual.zones, roomOrder, view.room.id)
@@ -736,6 +780,17 @@ export function App(): React.ReactElement {
                 building: view.building,
                 room: view.room,
                 desdeFicha: true,
+              })
+            }
+            /* Corregir es el mismo destino con una carga distinta: el formulario
+               sembrado con lo que dijo aquella visita. */
+            onCorregir={(correccion) =>
+              setView({
+                name: 'revision',
+                building: view.building,
+                room: view.room,
+                desdeFicha: true,
+                correccion,
               })
             }
             onImprimir={() => setView({ name: 'placas', building: view.building })}
