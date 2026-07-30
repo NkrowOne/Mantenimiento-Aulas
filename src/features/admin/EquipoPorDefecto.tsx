@@ -47,14 +47,34 @@ export function EquipoPorDefecto(): React.ReactElement {
     },
   })
 
+  /*
+   * El catálogo vivo ENTERO, validado o no.
+   *
+   * Antes esto pedía solo `confirmed = true`, y el resultado era que el equipo
+   * que más falta hace declarar por defecto —el que un técnico acaba de apuntar
+   * en un aula, «Micrófono Jabra»— era justo el único que no salía en la lista.
+   * Desde el panel se veía como si la aplicación no lo tuviera.
+   *
+   * Se enseña con su marca de «sin validar» al lado, en el desplegable y en la
+   * lista de abajo, y quien administra decide. Esconderlo no evitaba el
+   * duplicado: solo escondía la decisión, y la bandeja para validarlo está dos
+   * secciones más arriba, en esta misma pantalla.
+   *
+   * Clave de caché propia y no la de la bandeja de tipos: comparten servidor
+   * pero no pregunta, y colgar esta respuesta de `['asset-types','confirmed']`
+   * metería los tipos sin validar en el «Catálogo confirmado» y en los destinos
+   * de agrupar.
+   */
   const { data: tipos } = useQuery({
-    queryKey: ['asset-types', 'confirmed'],
+    queryKey: ['asset-types', 'vivos'],
     queryFn: async (): Promise<AssetType[]> => {
       const { data } = await supabase
         .from('asset_types')
         .select('*')
-        .eq('confirmed', true)
         .is('merged_into', null)
+        // Los validados primero: son el caso normal, y así lo dudoso no se cuela
+        // por orden alfabético en mitad de la lista.
+        .order('confirmed', { ascending: false })
         .order('name')
       return (data ?? []) as AssetType[]
     },
@@ -143,7 +163,8 @@ export function EquipoPorDefecto(): React.ReactElement {
     },
   })
 
-  const nombreTipo = (id: string): string => tipos?.find((t) => t.id === id)?.name ?? 'Equipo'
+  const tipoDe = (id: string): AssetType | null => tipos?.find((t) => t.id === id) ?? null
+  const nombreTipo = (id: string): string => tipoDe(id)?.name ?? 'Equipo'
   const nombreEdificio = (id: string | null): string =>
     id ? (edificios.find((b: Building) => b.id === id)?.name ?? 'Edificio') : 'Todas las salas'
 
@@ -174,7 +195,19 @@ export function EquipoPorDefecto(): React.ReactElement {
               ×{d.qty}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium">{nombreTipo(d.asset_type_id)}</span>
+              <span className="flex items-baseline gap-2">
+                <span className="min-w-0 truncate text-sm font-medium">
+                  {nombreTipo(d.asset_type_id)}
+                </span>
+                {/* La marca viaja con el equipo hasta aquí: un defecto declarado
+                    sobre algo sin validar se instala en 276 aulas igual que
+                    cualquier otro, y eso hay que poder verlo sin ir a buscarlo. */}
+                {tipoDe(d.asset_type_id)?.confirmed === false && (
+                  <span className="shrink-0 rounded-tag bg-warn-tint px-1.5 py-0.5 text-[0.6875rem] font-medium text-warn">
+                    Sin validar
+                  </span>
+                )}
+              </span>
               <span className="block truncate text-xs text-muted">
                 {d.building_id === null ? 'En todas las salas' : `Solo en ${nombreEdificio(d.building_id)}`}
               </span>
@@ -209,9 +242,11 @@ export function EquipoPorDefecto(): React.ReactElement {
               className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
             >
               <option value="">Elige del catálogo…</option>
+              {/* Un `<option>` no admite maquetación, así que la marca va en el
+                  propio texto. Es fea y se lee, que es lo que hace falta. */}
               {(tipos ?? []).map((t) => (
                 <option key={t.id} value={t.id}>
-                  {t.name}
+                  {t.confirmed ? t.name : `${t.name} — sin validar`}
                 </option>
               ))}
             </select>
@@ -258,12 +293,15 @@ export function EquipoPorDefecto(): React.ReactElement {
           Guardar
         </button>
 
-        {/* Solo del catálogo validado, y se dice por qué: si aquí se pudiera
-            escribir un nombre suelto, el equipamiento por defecto sería la vía
-            más rápida de meter un duplicado en 276 aulas de una vez. */}
+        {/* Aquí no se escribe un nombre suelto: se elige del catálogo. Es la
+            defensa que importa —esto instala en 276 aulas de una vez—, y no
+            hace falta esconder además los tipos sin validar: el que un técnico
+            acaba de apuntar suele ser justo el que hay que declarar. */}
         <p className="mt-2 text-xs text-muted">
-          Solo equipos del catálogo confirmado. Si falta alguno, valídalo antes en la bandeja de
-          tipos: desde aquí se instala en todas las salas a la vez.
+          Se elige del catálogo, no se escribe: desde aquí se instala en todas las salas a la vez.
+          Los que salen como <span className="text-warn">sin validar</span> los creó alguien desde un
+          aula y se pueden declarar igual — conviene revisarlos antes en la bandeja de tipos, un poco
+          más arriba.
         </p>
       </div>
 

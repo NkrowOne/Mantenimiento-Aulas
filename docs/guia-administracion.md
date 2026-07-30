@@ -234,9 +234,12 @@ escritura masiva sobre inventario real. Solo **añade lo que falta**: una sala c
 tres pantallas donde el defecto dice una se queda con sus tres. Y quitar un
 defecto no quita nada de ninguna sala: lo materializado es inventario de verdad.
 
-Solo se puede declarar con equipos del **catálogo confirmado**. Si se pudiera
-escribir un nombre suelto, esto sería la vía más rápida de meter un duplicado en
-276 aulas de una vez.
+El equipo **se elige del catálogo, no se escribe**: esto instala en 276 aulas de
+una vez, y un nombre suelto sería la vía más rápida de meter ahí un duplicado.
+Los tipos **sin validar** —los que creó alguien desde un aula— salen marcados y
+se pueden declarar igual: suele ser justo el que hace falta, y esconderlo solo
+escondía la decisión. Conviene revisarlos antes en la bandeja de tipos, que está
+en esta misma pantalla.
 
 ### Cambios en lote
 
