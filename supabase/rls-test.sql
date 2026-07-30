@@ -847,3 +847,276 @@ begin;
     else 'FALLO: el levantamiento no aparece en el histórico'
   end as resultado;
 rollback;
+
+-- =============================================================================
+-- El panel de administración
+--
+-- A partir de aquí hace falta un tercer usuario: `is_admin()` no es
+-- `is_supervisor()`, y toda la diferencia entre las dos está en quién puede
+-- tocar el maestro.
+-- =============================================================================
+
+insert into auth.users (id, email) values
+  ('44444444-4444-4444-8444-444444444444', 'admin@test.local')
+on conflict do nothing;
+
+update profiles set role = 'admin' where id = '44444444-4444-4444-8444-444444444444';
+
+\echo ''
+\echo '=== 36. Un equipo apuntado desde el aula nace sin validar ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  savepoint s;
+
+  insert into assets (id, asset_type_id, room_id, label, created_by)
+  select '55555555-5555-4555-8555-555555555551',
+         public.asset_type_id('Proyector'),
+         id,
+         'Proyector de prueba',
+         '11111111-1111-4111-8111-111111111111'
+    from rooms limit 1;
+
+  select case
+    when not (select confirmed from assets where id = '55555555-5555-4555-8555-555555555551')
+    then 'OK: el equipo entra sin validar'
+    else 'FALLO: se ha dado por bueno solo'
+  end as resultado;
+
+  -- Y no puede darse el visto bueno a sí mismo. La política de UPDATE tiene que
+  -- seguir dejándole corregir la etiqueta —es su trabajo— así que quien lo
+  -- impide es el disparador, no la RLS: la columna simplemente no se mueve.
+  update assets
+     set confirmed = true, label = 'Proyector corregido'
+   where id = '55555555-5555-4555-8555-555555555551';
+
+  select case
+    when not (select confirmed from assets where id = '55555555-5555-4555-8555-555555555551')
+     and (select label from assets where id = '55555555-5555-4555-8555-555555555551') = 'Proyector corregido'
+    then 'OK: la corrección pasa y la validación no'
+    else 'FALLO: el técnico se ha autovalidado un equipo'
+  end as resultado;
+
+  do $$
+  begin
+    perform public.confirm_assets(array['55555555-5555-4555-8555-555555555551'::uuid]);
+    raise exception 'FALLO: confirm_assets aceptó a un técnico';
+  exception when insufficient_privilege then
+    raise notice 'OK: confirm_assets rechazó al técnico';
+  end $$;
+  rollback to savepoint s;
+rollback;
+
+\echo ''
+\echo '=== 37. Agrupar tipos renombra el equipo en TODAS las salas ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  -- Tres formas de escribir el mismo micrófono, como llegan de verdad.
+  insert into asset_types (id, name) values
+    ('66666666-6666-4666-8666-666666666661', 'Jabra'),
+    ('66666666-6666-4666-8666-666666666662', 'Mic Jabra'),
+    ('66666666-6666-4666-8666-666666666663', 'Micro jabra');
+
+  insert into assets (asset_type_id, room_id, label, created_by)
+  select t.id, r.id, t.name, '11111111-1111-4111-8111-111111111111'
+    from asset_types t
+    cross join (select id from rooms order by created_at limit 2) r
+   where t.id in ('66666666-6666-4666-8666-666666666661',
+                  '66666666-6666-4666-8666-666666666662',
+                  '66666666-6666-4666-8666-666666666663');
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+
+  select case
+    when public.group_asset_types(
+           array['66666666-6666-4666-8666-666666666661',
+                 '66666666-6666-4666-8666-666666666662',
+                 '66666666-6666-4666-8666-666666666663']::uuid[],
+           '66666666-6666-4666-8666-666666666661',
+           'Micrófono Jabra') = 2
+    then 'OK: dos tipos absorbidos'
+    else 'FALLO: la agrupación no absorbió lo que debía'
+  end as resultado;
+
+  -- Lo que se lee en el aula es la etiqueta del equipo, no el nombre del tipo:
+  -- si esta parte no viaja, el renombrado global no ha renombrado nada.
+  select case
+    when (select count(*) from assets
+           where asset_type_id = '66666666-6666-4666-8666-666666666661'
+             and public.norm_text(label) like 'MICROFONO JABRA%') = 6
+    then 'OK: las 6 etiquetas de las dos salas dicen ya «Micrófono Jabra»'
+    else 'FALLO: quedan etiquetas con el nombre viejo: ' ||
+         coalesce((select string_agg(distinct label, ', ') from assets
+                    where asset_type_id = '66666666-6666-4666-8666-666666666661'
+                      and public.norm_text(label) not like 'MICROFONO JABRA%'), 'ninguna')
+  end as resultado;
+
+  -- Y ninguna sala se ha quedado con dos equipos llamados igual, que es lo que
+  -- haría un renombrado a lo bruto contra el índice único.
+  select case
+    when not exists (
+      select 1 from assets where room_id is not null and label is not null and status <> 'retirado'
+       group by room_id, public.norm_text(label) having count(*) > 1)
+    then 'OK: ni una etiqueta duplicada tras la agrupación'
+    else 'FALLO: hay etiquetas repetidas dentro de una sala'
+  end as resultado;
+
+  select case
+    when (select name from asset_types where id = public.asset_type_id('mic jabra')) = 'Micrófono Jabra'
+    then 'OK: quien escriba «mic jabra» sigue encontrándolo'
+    else 'FALLO: el nombre absorbido dejó de resolver'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 38. El equipamiento por defecto: el del edificio manda sobre el global ==='
+begin;
+  select test_as('44444444-4444-4444-8444-444444444444', 'admin');
+  select id as ed from buildings order by sort_order limit 1 \gset
+
+  select public.set_asset_default(public.asset_type_id('Pantalla'), null, 1) is not null as g1 \gset
+  select public.set_asset_default(public.asset_type_id('Pantalla'), :'ed', 2) is not null as g2 \gset
+
+  -- Declarar dos veces lo mismo corrige la cantidad, no revienta: el ámbito lo
+  -- protegen dos índices únicos parciales y `on conflict` no sabe inferirlos.
+  select case
+    when (select count(*) from asset_defaults) = 2
+     and (select qty from asset_defaults where building_id = :'ed') = 2
+    then 'OK: un defecto global y uno de edificio, sin duplicar'
+    else 'FALLO: el ámbito no se respeta'
+  end as resultado;
+
+  select public.apply_asset_defaults(:'ed') as creados \gset
+  select case
+    when (select public.apply_asset_defaults(:'ed')) = 0
+    then 'OK: ' || :'creados' || ' equipos creados, y la segunda pasada no duplica ninguno'
+    else 'FALLO: aplicar dos veces vuelve a crear equipos'
+  end as resultado;
+
+  -- Dos pantallas en cada sala del edificio: ha ganado el defecto del edificio.
+  select case
+    when not exists (
+      select 1 from rooms r join zones z on z.id = r.zone_id
+       where z.building_id = :'ed' and r.active
+         and (select count(*) from assets a
+               where a.room_id = r.id
+                 and a.asset_type_id = public.asset_type_id('Pantalla')
+                 and a.status <> 'retirado') < 2)
+    then 'OK: todas las salas del edificio llegan a las dos pantallas'
+    else 'FALLO: alguna sala se quedó con el defecto global'
+  end as resultado;
+
+  -- Y lo que materializa una máquina no acaba en la bandeja del coordinador.
+  select case
+    when not exists (select 1 from assets where created_by is null and not confirmed)
+    then 'OK: el equipamiento por defecto nace validado'
+    else 'FALLO: ' || (select count(*) from assets where created_by is null and not confirmed) ||
+         ' equipos del maestro esperando visto bueno'
+  end as resultado;
+
+  do $$
+  begin
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', '11111111-1111-4111-8111-111111111111', 'app_role', 'tecnico')::text, true);
+    perform public.apply_asset_defaults(null);
+    raise exception 'FALLO: un técnico aplicó el equipamiento por defecto';
+  exception when insufficient_privilege then
+    raise notice 'OK: aplicar el equipamiento por defecto es cosa del administrador';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 39. Solo el administrador da de alta salas y edificios ==='
+begin;
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  begin
+    perform public.create_building('ZZ', 'Edificio de prueba');
+    raise exception 'FALLO: un supervisor creó un edificio';
+  exception when insufficient_privilege then
+    raise notice 'OK: ni siquiera el supervisor toca el maestro';
+  end $$;
+rollback;
+
+begin;
+  select test_as('44444444-4444-4444-8444-444444444444', 'admin');
+
+  -- Un defecto declarado antes de crear la sala: lo que se comprueba es que la
+  -- sala nueva NACE con él, sin que nadie tenga que acordarse de aplicarlo.
+  select public.set_asset_default(public.asset_type_id('Proyector'), null, 1) is not null as d \gset
+
+  select public.create_building('ZZ', 'Edificio de prueba') as ed \gset
+  select public.create_room(:'ed', '1ª Planta', '1.1', '', 'aula') as sala \gset
+
+  select case
+    when (select short_ref from rooms where id = :'sala') like 'SALA-%'
+     and (select count(*) from assets where room_id = :'sala') = 1
+     and (select label from assets where room_id = :'sala') = 'Proyector'
+    then 'OK: la sala nueva nace con matrícula ' ||
+         (select short_ref from rooms where id = :'sala') || ' y con su proyector'
+    else 'FALLO: la sala nueva ha nacido incompleta'
+  end as resultado;
+
+  -- La misma planta escrita de otra forma no crea una planta nueva.
+  select public.create_room(:'ed', '1ª PLANTA', '1.2', 'Aula grande') as sala2 \gset
+  select case
+    when (select count(*) from zones where building_id = :'ed') = 1
+    then 'OK: «1ª Planta» y «1ª PLANTA» son la misma planta'
+    else 'FALLO: la zona se ha duplicado por la grafía'
+  end as resultado;
+
+  do $$
+  declare v_ed uuid;
+  begin
+    select b.id into v_ed from buildings b where b.code = 'ZZ';
+    perform public.delete_building(v_ed);
+    raise exception 'FALLO: borró un edificio que todavía tenía salas';
+  exception when others then
+    if sqlerrm like 'FALLO%' then raise; end if;
+    raise notice 'OK: %', sqlerrm;
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 40. Dar de baja una sala con histórico la archiva, no la borra ==='
+begin;
+  select test_as('44444444-4444-4444-8444-444444444444', 'admin');
+  select id as sala from rooms where active order by created_at limit 1 \gset
+
+  insert into inspections (id, room_id, by_user, occurred_at, status, overall)
+  values ('77777777-7777-4777-8777-777777777771', :'sala',
+          '44444444-4444-4444-8444-444444444444', now(), 'completa', 'ok');
+
+  -- La baja va en su propia sentencia: dentro de un mismo `select`, lo que
+  -- escriba la función no lo ven las subconsultas de al lado —comparten
+  -- instantánea— y la comprobación mediría el estado de antes.
+  select public.delete_room(:'sala') as baja \gset
+
+  select case
+    when :'baja' = 'archivada'
+     and (select count(*) from room_overview where room_id = :'sala') = 0
+     and (select count(*) from archived_rooms where room_id = :'sala') = 1
+     -- Por id y no por recuento: la sala puede arrastrar revisiones del seed, y
+     -- lo que se afirma es que la baja no se llevó por delante ninguna.
+     and exists (select 1 from inspections where id = '77777777-7777-4777-8777-777777777771')
+    then 'OK: fuera de la lista de trabajo y con su revisión intacta'
+    else 'FALLO: la baja no ha archivado la sala'
+  end as resultado;
+
+  select public.restore_room(:'sala');
+  select case
+    when (select count(*) from room_overview where room_id = :'sala') = 1
+    then 'OK: y se puede deshacer'
+    else 'FALLO: la sala no vuelve'
+  end as resultado;
+
+  do $$
+  begin
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', '11111111-1111-4111-8111-111111111111', 'app_role', 'tecnico')::text, true);
+    perform public.delete_room((select id from rooms limit 1));
+    raise exception 'FALLO: un técnico dio de baja una sala';
+  exception when insufficient_privilege then
+    raise notice 'OK: dar de baja una sala es cosa del administrador';
+  end $$;
+rollback;

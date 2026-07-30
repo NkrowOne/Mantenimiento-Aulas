@@ -159,7 +159,56 @@ PIN los datos guardados son ilegibles.
 
 ## 3. Editar edificios, salas y equipamiento
 
-Un `admin` puede editarlo desde la aplicación. Para cambios en lote, SQL directo:
+Las altas y las bajas se hacen **desde la aplicación**, en `Datos → Salas y
+edificios`, y solo las ve un `admin`. Es a propósito: el maestro sostiene el
+histórico, los informes y las placas de la puerta, y una sala creada desde el
+aula con el código mal escrito se convierte en una sala duplicada de la que
+nadie sabe cuál es la buena.
+
+**Una sala nueva nace completa**: con su matrícula `SALA-000xxx`, su QR y el
+equipamiento por defecto de su edificio. La planta se escribe tal cual —`1ª
+PLANTA`— y si ya existe se reutiliza: «1ª Planta» y «1ª PLANTA» no crean dos.
+
+**Dar de baja no siempre es borrar**, y la diferencia la decide el servidor:
+
+| La sala tiene… | Qué pasa |
+|---|---|
+| Nada | Se borra de verdad, con el equipamiento que le puso el defecto |
+| Revisiones, incidencias, inventarios o consumos | Se **archiva**: sale de la lista de trabajo, del buscador y de los dispositivos, y todo lo que se hizo allí se conserva entero |
+
+Las archivadas salen plegadas al final de la sección, con un botón de
+**Reactivar**. Borrarlas de verdad sería tirar el histórico de un año para
+limpiar una lista.
+
+Un edificio se borra solo cuando está vacío. Si todavía tiene salas, el
+servidor lo rechaza y dice cuántas: para el caso frecuente —el duplicado— lo que
+toca es **Fusionar**, que está en `Edificios sin identificar` y se lleva consigo
+zonas, salas e incidencias.
+
+### El equipamiento por defecto
+
+`Datos → Equipamiento por defecto` declara **lo que toda sala lleva**, para que
+un aula nueva no nazca vacía. Dos ámbitos, y el segundo existe porque el primero
+no llega:
+
+- **En todas las salas** — el global.
+- **Solo en un edificio** — y **manda sobre el global** para ese tipo. Es lo que
+  permite decir «en todas partes una pantalla; en el EPS, dos» sin repetir la
+  lista veintitrés veces.
+
+Se aplica solo al crear la sala. Para las que ya existen está **Aplicar ahora**,
+con la cifra delante —«se crearían 35 equipos en 18 salas»— porque es una
+escritura masiva sobre inventario real. Solo **añade lo que falta**: una sala con
+tres pantallas donde el defecto dice una se queda con sus tres. Y quitar un
+defecto no quita nada de ninguna sala: lo materializado es inventario de verdad.
+
+Solo se puede declarar con equipos del **catálogo confirmado**. Si se pudiera
+escribir un nombre suelto, esto sería la vía más rápida de meter un duplicado en
+276 aulas de una vez.
+
+### Cambios en lote
+
+Para lo que no cabe en la pantalla, SQL directo:
 
 ```sql
 -- Renombrar una sala
@@ -173,7 +222,8 @@ update rooms
 set capabilities = capabilities || '{"microfono": true, "camara": true}'::jsonb
 where code = '2.3';
 
--- Dar de baja una sala sin borrar su historial
+-- Dar de baja una sala sin borrar su historial (es lo que hace «Dar de baja»
+-- desde la aplicación cuando la sala tiene histórico)
 update rooms set active = false where code = '0.6';
 ```
 
@@ -189,18 +239,47 @@ Campos: `proyector`, `altavoces`, `camara`, `microfono`, `botonera`, `tv`.
 
 ## Catálogo de equipos
 
-Un técnico puede **dar de alta un tipo desde el aula**. Entra sin confirmar, sale
-en naranja y **se usa igual**: bloquear la revisión hasta que alguien apruebe un
-nombre es el camino más corto a que el equipo deje de apuntar lo que encuentra.
+Un técnico puede **dar de alta equipos y tipos desde el aula**. Entran sin
+confirmar, salen en naranja y **se usan igual**: bloquear la revisión hasta que
+alguien apruebe un nombre es el camino más corto a que el equipo deje de apuntar
+lo que encuentra.
 
-La contrapartida está en **Datos → Equipos sin validar**, y tiene tres salidas.
-Ninguna es borrar: lo que alguien apuntó porque lo tenía delante existe.
+La contrapartida son las dos bandejas del panel, y responden a dos preguntas
+distintas.
+
+### Equipos sin validar — ¿está de verdad ese aparato en esa aula?
+
+`Datos → Equipos sin validar` lista lo que alguien apuntó desde un aula,
+agrupado por sala y con quién y cuándo. «Micrófono Jabra» puede ser un tipo
+perfectamente validado y aun así ser mentira que haya uno en el 2.4.
+
+- **Validar** — uno, los de una sala, o los de la lista entera.
+- **No está** — lo retira del inventario. Deja de contar en la sala y se queda
+  en su histórico, que es donde tiene que quedarse.
+
+Lo que carga una máquina —el importador, el equipamiento por defecto— nace
+validado: no es la propuesta de nadie que haya estado en el aula.
+
+### Tipos sin validar — ¿cómo se llama esa clase de aparato?
+
+`Datos → Tipos de equipo sin validar`, y tiene tres salidas. Ninguna es borrar:
+lo que alguien apuntó porque lo tenía delante existe.
 
 | | Cuándo | Qué hace |
 |---|---|---|
 | **Confirmar** | Era un tipo nuevo legítimo | Deja de salir en naranja |
 | **Corregir nombre** | Estaba bien pero mal escrito | Renombra y **guarda el nombre viejo como alias**, así quien lo teclee mañana encuentra este |
-| **Fusionar** | Ya existía con otra palabra | Mueve los equipos al tipo bueno y el nombre absorbido pasa a ser alias suyo |
+| **Agrupar** | Ya existía con otras palabras | Se marcan los que son lo mismo, se elige cuál sobrevive y se le pone el nombre bueno de una vez |
+
+**Renombrar y agrupar son globales de verdad**: el nombre nuevo baja hasta la
+etiqueta de cada equipo en cada sala, así que «Cañón» y «Cañón 2» pasan a leerse
+«Proyector» y «Proyector 2» en las cuarenta aulas. Si en el aula siguiera
+poniendo lo de antes, el renombrado no habría llegado a donde se lee. Las
+etiquetas escritas a mano —«Pantalla atril»— no se tocan: valen más que el
+nombre del tipo, porque las escribió quien estuvo delante.
+
+Se agrupa en bloque, y no de uno en uno, porque así es como llegan: «Jabra»,
+«Mic Jabra» y «Micro jabra» aparecen la misma semana y son el mismo micrófono.
 
 Los duplicados de grafía —«Micrófono» y «microfono»— no llegan aquí: los para el
 índice único sobre el nombre normalizado, y el cliente refuerza lo mismo

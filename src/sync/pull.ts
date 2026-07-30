@@ -145,6 +145,38 @@ export async function pullMaster(): Promise<ResultadoPull> {
     filas += res.data.length
   }
 
+  /**
+   * Y se borra lo que ya no está.
+   *
+   * `bulkPut` solo sabe añadir y pisar, así que el espejo era acumulativo: una
+   * sala archivada desde el panel —o un edificio borrado— se quedaba en el
+   * dispositivo para siempre, y el técnico la seguía viendo en su lista, la
+   * seguía revisando y sus revisiones se quedaban colgando de una sala que la
+   * aplicación ya no enseña en ningún otro sitio.
+   *
+   * Solo se poda el maestro —edificios, zonas y salas—, y esa frontera importa:
+   * son las tres tablas que el dispositivo nunca crea por su cuenta, así que lo
+   * que no viene del servidor es que ya no existe. Con los equipos no valdría:
+   * uno recién dado de alta en el aula, todavía en la cola de salida, no está
+   * aún en la respuesta del servidor y esto lo borraría antes de que llegue a
+   * subir.
+   *
+   * Y nunca sobre una respuesta vacía o con error, que es la firma de RLS
+   * bloqueando o de media descarga: eso vaciaría el dispositivo entero por un
+   * token mal emitido.
+   */
+  const podar = async (
+    res: Respuesta<Record<string, unknown>>,
+    tabla: { toCollection: () => { primaryKeys: () => Promise<unknown[]> }; bulkDelete: (k: string[]) => Promise<unknown> },
+    idDe: (fila: Record<string, unknown>) => string,
+  ): Promise<void> => {
+    if (res.error || !res.data?.length) return
+    const vivos = new Set(res.data.map(idDe))
+    const locales = (await tabla.toCollection().primaryKeys()) as string[]
+    const sobran = locales.filter((id) => !vivos.has(id))
+    if (sobran.length > 0) await tabla.bulkDelete(sobran)
+  }
+
   await guardar<Building>(de('buildings'), db.buildings)
   await guardar<Zone>(de('zones'), db.zones)
   await guardar<StockItem>(de('stock_items'), db.stockItems)
@@ -174,6 +206,10 @@ export async function pullMaster(): Promise<ResultadoPull> {
     await db.rooms.bulkPut(mapped)
     filas += mapped.length
   }
+
+  await podar(de('buildings'), db.buildings, (b) => b['id'] as string)
+  await podar(de('zones'), db.zones, (z) => z['id'] as string)
+  await podar(rooms, db.rooms, (r) => r['room_id'] as string)
 
   const todasVacias = fallos.length === 0 && vacias.length === consultas.length
 

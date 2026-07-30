@@ -210,12 +210,41 @@ export interface Asset {
   model: string | null
   status: AssetStatus
   created_at: string | null
+  /**
+   * ¿Lo ha mirado alguien que no sea quien lo apuntó?
+   *
+   * El tipo ya se validaba; el aparato concreto no. Y son dos preguntas
+   * distintas: «Micrófono Jabra» puede ser un tipo perfectamente validado y aun
+   * así ser mentira que haya uno en el aula 2.4. Se usa igual mientras tanto
+   * —la revisión no espera a nadie— y sale en la bandeja del panel hasta que un
+   * coordinador lo confirma.
+   *
+   * Lo que carga una máquina —el importador, el equipamiento por defecto— nace
+   * confirmado: no es la propuesta de nadie que haya estado en el aula.
+   */
+  confirmed: boolean
 }
 
 export const ASSET_STATUS_LABELS: Record<AssetStatus, string> = {
   instalado: 'Instalado',
   averiado: 'Averiado',
   retirado: 'Retirado',
+}
+
+/**
+ * Lo que una sala lleva por defecto.
+ *
+ * `building_id: null` es el ámbito global —vale para todas las salas— y con
+ * edificio vale solo para el suyo Y MANDA sobre el global. Esa jerarquía es
+ * toda la pieza: permite decir «en todas partes un proyector; en el EPS, dos»
+ * sin repetir la lista entera edificio por edificio, que es como se convierte en
+ * veintitrés listas que nadie mantiene.
+ */
+export interface AssetDefault {
+  id: string
+  asset_type_id: string
+  building_id: string | null
+  qty: number
 }
 
 export type IncidentState = 'borrador' | 'abierta' | 'en_curso' | 'resuelta'
