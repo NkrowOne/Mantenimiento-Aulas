@@ -156,6 +156,13 @@ const REDACCION_BUENA = {
   ],
 }
 
+const REDACCION_CON_FORMULAS = {
+  ...REDACCION_BUENA,
+  entradilla:
+    'Es importante destacar que la semana ha sido intensa. De cara a los próximos días, conviene ' +
+    'revisar las once lámparas por debajo del 20 %.',
+}
+
 const REDACCION_INVENTADA = {
   ...REDACCION_BUENA,
   entradilla:
@@ -189,7 +196,7 @@ async function main(): Promise<number> {
    * prueba salía a Internet a preguntarle a Google de verdad y fallaba con «API
    * key not valid» — que es exactamente lo que una prueba no debe hacer.
    */
-  const { configurarIA, redactar, cifrasInventadas, expediente } = await import(
+  const { configurarIA, redactar, cifrasInventadas, formulasDelatoras, expediente } = await import(
     '../reports-worker/src/ia.js'
   )
   const { senales, lecturaCalculada } = await import('../reports-worker/src/analisis.js')
@@ -257,6 +264,35 @@ async function main(): Promise<number> {
   devolver = respuesta(REDACCION_INVENTADA)
   const conInventos = await redactar(d, se, cfg)
   comprueba('con cifras inventadas se descarta la redacción entera', conInventos === null)
+
+  /*
+   * Y lo que delata que un texto salió de un modelo.
+   *
+   * El informe no lleva ninguna etiqueta que lo diga —es un documento del
+   * servicio, no la ficha de una herramienta—, así que lo único que puede
+   * delatarlo es la prosa. Un párrafo que empieza por «es importante destacar»
+   * lo cuenta todo.
+   */
+  console.log('\n▸ Y el texto que suena a texto generado')
+  comprueba(
+    'caza las fórmulas de relleno',
+    formulasDelatoras('Es importante destacar que, de cara a la próxima semana...').length === 2,
+  )
+  comprueba(
+    'y el «como modelo de lenguaje» de manual',
+    formulasDelatoras('Como modelo, no puedo acceder a los datos').length === 1,
+  )
+  comprueba(
+    'deja en paz el español corriente',
+    formulasDelatoras(
+      'Por otro lado, la sala 1.13 repite avería. Además, quedan once lámparas por cambiar.',
+    ).length === 0,
+    'ha marcado un texto legítimo',
+  )
+
+  devolver = respuesta(REDACCION_CON_FORMULAS)
+  const conFormulas = await redactar(d, se, cfg)
+  comprueba('con dos fórmulas de relleno se descarta la redacción entera', conFormulas === null)
 
   console.log('\n▸ Cuando la API falla, el informe sigue saliendo')
   estado = 500

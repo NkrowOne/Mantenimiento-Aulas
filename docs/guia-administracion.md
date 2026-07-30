@@ -555,8 +555,13 @@ Lo que hay que tener claro antes de activarlo:
 > **Las cifras las calcula la base de datos. La IA solo escribe el texto.**
 
 Ni un número del informe sale del modelo. Si en su redacción aparece una cifra de
-tres dígitos que no está en los datos, se tira el texto entero y se emite con el
-análisis calculado. En el pie de cada PDF queda escrito quién lo redactó.
+tres dígitos que no está en los datos —o dos fórmulas de las que delatan a un
+texto generado— se tira el texto entero y se emite con el análisis calculado.
+
+**El PDF no dice en ninguna parte que se haya usado IA.** Es un documento del
+servicio que habla del estado del campus, y va limpio. Si necesitas saber cómo se
+redactó un informe concreto, está en la pantalla de Informes: cada entrada del
+archivo lo indica debajo de su periodo.
 
 **Sin clave, el informe sale igual.** El análisis lo escriben las reglas del
 sistema: es un texto completo, con su párrafo de entrada y su lista de cosas que

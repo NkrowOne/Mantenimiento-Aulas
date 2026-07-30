@@ -414,11 +414,26 @@ viernes seguidos. Si aparecen en su texto cifras de tres dígitos que no están 
 el expediente, se descarta la redacción entera y se emite con la calculada.
 
 Se usa **Gemini 3.6 Flash con razonamiento alto** (`thinkingLevel`, no el
-`thinkingBudget` de la serie 2.5), con salida en JSON validada por esquema. El
-prompt prohíbe explícitamente lo que delata a un texto generado: emojis,
-negritas, viñetas, titulares con dos puntos y la lista de fórmulas de relleno
-—«es importante destacar», «de cara a», «en resumen»—. Y el pie del PDF dice
-siempre quién lo redactó.
+`thinkingBudget` de la serie 2.5), con salida en JSON validada por esquema.
+
+**El PDF no menciona en ninguna parte que haya pasado por un modelo**, y es una
+decisión de quien firma el informe: el documento sale del servicio de
+mantenimiento y habla del estado del campus, no de las herramientas con las que
+se preparó — igual que no se imprime qué versión de Postgres contó las
+incidencias. El rastro no se pierde: queda en `reports.params` con cada informe
+y la pantalla de Informes lo enseña junto a cada entrada del archivo.
+
+Eso traslada toda la responsabilidad al texto: sin etiqueta, lo único que puede
+delatarlo es cómo está escrito. Por eso hay tres filtros y no uno:
+
+1. **En el encargo.** Se prohíben con ejemplos los emojis, las negritas, las
+   viñetas, los titulares con dos puntos y las fórmulas de relleno.
+2. **Al recibir.** Se limpian los asteriscos, los emojis y los guiones de viñeta
+   que se cuelan igual.
+3. **Antes de imprimir.** Si aparecen dos fórmulas de relleno —«es importante
+   destacar», «de cara a», «como modelo»— se descarta la redacción entera y sale
+   la calculada. Un párrafo sobrio no levanta ninguna sospecha; uno que empieza
+   por «es importante destacar» las levanta todas.
 
 **Sin clave configurada el informe sale igual**, con el análisis calculado. No es
 un modo degradado con un hueco: es un informe completo con otra voz. La clave se

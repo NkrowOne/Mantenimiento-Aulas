@@ -127,13 +127,25 @@ export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement 
         </span>
       </div>
 
-      {estado?.ultimo_analisis && (
-        <p className="mt-3 text-xs text-muted">
-          El último informe
-          {estado.ultimo_informe ? ` (${fechaCorta(estado.ultimo_informe)})` : ''} salió con{' '}
-          {estado.ultimo_analisis}.
-        </p>
-      )}
+      {/*
+        Dónde se dice esto y dónde no.
+
+        El PDF sale limpio: es un documento del servicio de mantenimiento y no
+        lleva ninguna etiqueta sobre cómo se preparó. Esta pantalla es el otro
+        lado de esa decisión — aquí sí se dice, con todo el detalle, porque es
+        donde se administra la herramienta y donde hay que poder auditarla.
+      */}
+      <p className="mt-3 text-xs text-muted">
+        {estado?.ultimo_analisis && (
+          <>
+            El último informe
+            {estado.ultimo_informe ? ` (${fechaCorta(estado.ultimo_informe)})` : ''} salió con{' '}
+            {estado.ultimo_analisis}.{' '}
+          </>
+        )}
+        El PDF no menciona nada de esto: va limpio. La procedencia de cada informe
+        se ve aquí y en el archivo de abajo.
+      </p>
 
       {esAdmin && !abierto && (
         <button

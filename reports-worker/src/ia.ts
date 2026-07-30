@@ -12,8 +12,17 @@
  *
  * Sin clave configurada esto devuelve `null` y el informe sale con la redacción
  * calculada. No es un modo degradado con un hueco: es un informe completo con
- * otra voz, y el pie dice cuál de las dos se usó. Un documento que se archiva
- * tiene que poder decir cómo se hizo.
+ * otra voz.
+ *
+ * EL INFORME NO DICE EN NINGUNA PARTE QUE HAYA PASADO POR AQUÍ, y es una
+ * decisión de quien lo firma: el PDF es un documento del servicio de
+ * mantenimiento y habla del estado del campus, no de las herramientas con las
+ * que se preparó. El rastro queda donde tiene que quedar —en `reports.params` y
+ * en la pantalla de Informes—, no en el papel que se lleva a una reunión.
+ *
+ * Eso traslada aquí toda la responsabilidad: si el texto no lleva etiqueta, lo
+ * único que puede delatarlo es cómo está escrito. De ahí que se limpie lo que
+ * llega y que se descarte entero si suena a relleno.
  *
  * Contrato de la API (v1beta, `generateContent`):
  *   - la clave va en la cabecera `x-goog-api-key`, nunca en la URL —la URL
@@ -365,6 +374,42 @@ export function cifrasInventadas(texto: string, hechos: string): string[] {
   return [...sospechosas]
 }
 
+/*
+ * Las fórmulas que delatan a un texto generado.
+ *
+ * Están prohibidas en la instrucción del sistema, y aun así se cuelan: son el
+ * camino de menor resistencia de cualquier modelo. Prohibirlas y no comprobarlo
+ * es confiar en que el modelo se acuerde, que es exactamente lo que no hay que
+ * hacer con la parte del informe que se ve.
+ *
+ * La lista es corta a propósito. Solo entran expresiones que un técnico de
+ * mantenimiento no escribiría en un parte ni por accidente: nada de «por otro
+ * lado» o «además», que son español corriente y saltarían con cualquier texto
+ * bien escrito.
+ */
+const FORMULAS = [
+  /\bes importante (destacar|señalar|mencionar|recordar)\b/i,
+  /\bcabe (destacar|señalar|mencionar)\b/i,
+  /\ben (resumen|conclusión|definitiva)\b/i,
+  /\bde cara a\b/i,
+  /\ba nivel de\b/i,
+  /\bse recomienda encarecidamente\b/i,
+  /\bjuega un papel\b/i,
+  /\besencial para garantizar\b/i,
+  /\bsinergia/i,
+  /\ben el (contexto|panorama) actual\b/i,
+  /\bno solo\b[^.]{0,60}\bsino también\b/i,
+  /\bcomo (asistente|modelo|IA)\b/i,
+  /\bbasándome en los datos (proporcionados|facilitados)\b/i,
+]
+
+export function formulasDelatoras(texto: string): string[] {
+  return FORMULAS.filter((r) => r.test(texto)).map((r) => {
+    const m = r.exec(texto)
+    return m ? m[0] : r.source
+  })
+}
+
 interface Respuesta {
   candidates?: Array<{
     content?: { parts?: Array<{ text?: string; thought?: boolean }> }
@@ -488,11 +533,27 @@ export async function redactar(
         throw new Error(`cifras que no están en los datos: ${inventadas.join(', ')}`)
       }
 
+      /*
+       * Y el texto se descarta también si suena a lo que es.
+       *
+       * El informe no dice en ninguna parte cómo se redactó —es un documento del
+       * servicio de mantenimiento, no la ficha técnica de una herramienta— así
+       * que lo único que puede delatarlo es la prosa. Con dos fórmulas de
+       * relleno, el texto entero se cae y sale la redacción calculada: un
+       * párrafo sobrio no levanta ninguna sospecha, y uno que empieza por «es
+       * importante destacar» las levanta todas.
+       */
+      const formulas = formulasDelatoras(todo)
+      if (formulas.length >= 2) {
+        throw new Error(`fórmulas de relleno: ${formulas.join('; ')}`)
+      }
+
       const pensado = res.usageMetadata?.thoughtsTokenCount
       console.log(
         `Análisis redactado con ${o.modelo} (razonamiento ${o.thinking}` +
           `${pensado ? `, ${pensado} tokens de razonamiento` : ''}).` +
-          (inventadas.length ? ` Aviso: cifra sin respaldo «${inventadas[0]}».` : ''),
+          (inventadas.length ? ` Aviso: cifra sin respaldo «${inventadas[0]}».` : '') +
+          (formulas.length ? ` Aviso: fórmula de relleno «${formulas[0]}».` : ''),
       )
       return lectura
     } catch (err) {

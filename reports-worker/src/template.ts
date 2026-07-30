@@ -611,11 +611,24 @@ function seccionRecomendaciones(l: Lectura): string {
   </section>`
 }
 
-function colofon(d: ReportData, l: Lectura, o: Opciones, pie: Pie): string {
+/**
+ * La procedencia de los DATOS. Nada más.
+ *
+ * Aquí iba una línea que decía con qué se había redactado el análisis. Se ha
+ * quitado, y es una decisión del que firma el informe, no un descuido: este
+ * documento sale del servicio de mantenimiento y habla del estado del campus.
+ * Cómo se preparó por dentro es asunto de la herramienta, igual que no se
+ * imprime qué versión de Postgres contó las incidencias ni qué motor maquetó
+ * las páginas.
+ *
+ * El rastro NO se pierde: queda en `reports.params` con cada informe, y la
+ * pantalla de Informes lo enseña junto a cada entrada del archivo. Quien tenga
+ * que auditarlo lo tiene; quien lea el PDF, no lo necesita.
+ */
+function colofon(d: ReportData, o: Opciones, pie: Pie): string {
   const partes = [
     `Datos leídos de la base el ${esc(pie.emitido)}, en hora de Madrid.`,
     `Periodo ${esc(d.period.start)} a ${esc(d.period.end)}, comparado con ${esc(d.anterior.start)} a ${esc(d.anterior.end)}.`,
-    `Análisis: ${esc(l.origen)}.`,
     pie.solicitante ? `Solicitado por ${esc(pie.solicitante)}.` : 'Emisión automática programada.',
   ]
   if (d.situacion.salasNuncaRevisadas > 0) {
@@ -973,7 +986,7 @@ ${
 
 ${cuerpo}
 
-${colofon(d, l, o, pie)}
+${colofon(d, o, pie)}
 
 </body>
 </html>`

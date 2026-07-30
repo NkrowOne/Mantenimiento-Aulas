@@ -61,7 +61,13 @@ export interface Lectura {
   entradilla: string
   hallazgos: Array<{ titulo: string; cuerpo: string }>
   recomendaciones: Array<{ accion: string; porque: string }>
-  /** De dónde salió la prosa. Va impreso en el pie: un informe dice cómo se hizo. */
+  /**
+   * De dónde salió la prosa.
+   *
+   * NO se imprime en el PDF: va a `reports.params` y a la pantalla de Informes.
+   * El documento habla del campus, no de cómo se preparó; el archivo sí tiene
+   * que poder decirlo, para eso está.
+   */
   origen: string
 }
 
