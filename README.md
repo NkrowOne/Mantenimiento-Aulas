@@ -350,7 +350,7 @@ migraciones, carga los datos reales y ejecuta las pruebas de RLS.
 > va dentro de `verify:all`.
 
 ```bash
-npm test          # 206 pruebas de lógica de dominio y de la pantalla de informes
+npm test          # 211 pruebas de lógica de dominio y de la pantalla de informes
 npm run typecheck
 npm run build
 ```
@@ -382,7 +382,7 @@ npm run informe:ia
 | Área | Estado |
 |---|---|
 | Esquema append-only, vistas y alertas | ✅ verificado contra Postgres 16 |
-| RLS, roles y auditoría | ✅ 61 bloques en verde, incluida exposición pública |
+| RLS, roles y auditoría | ✅ 62 bloques en verde, incluida exposición pública |
 | Importador del Excel | ✅ 276 salas, 283 incidencias, 669 equipos |
 | Núcleo offline (Dexie + cola de salida) | ✅ |
 | Login con PIN que cifra la sesión | ✅ lógica probada |
@@ -499,8 +499,8 @@ Lo verificado y lo que no, sin adornos.
 
 **Comprobado de forma automática** (`npm run verify:all` y `npm run db:verify`):
 
-- 206 pruebas de lógica de dominio, cifrado del PIN y bóveda de vinculación.
-- 61 bloques de pruebas de RLS contra Postgres real, en los dos escenarios de despliegue,
+- 211 pruebas de lógica de dominio, cifrado del PIN y bóveda de vinculación.
+- 62 bloques de pruebas de RLS contra Postgres real, en los dos escenarios de despliegue,
   incluidas las de exposición pública, el freno a la fuerza bruta del PIN y el tope
   de dispositivos.
 - La aplicación **arranca en un navegador real**, pinta y no da errores de
@@ -516,7 +516,7 @@ Lo verificado y lo que no, sin adornos.
 | **Ningún iPad ha abierto la aplicación** | Todo lo específico de iOS —límite de canvas, HEIC, `persist()`— sale de documentación, no de un dispositivo |
 | **El worker de informes como servicio HTTP** | Solo se ha probado el render por línea de comandos, no el endpoint que llama `pg_cron` |
 | **`admin-user.ts` contra un GoTrue real** | La lógica es directa, pero nunca ha hablado con el servicio |
-| **Cero pruebas de interfaz** | Las 206 pruebas cubren dominio y criptografía. No hay ninguna de componentes |
+| **Cero pruebas de interfaz** | Las 211 pruebas cubren dominio y criptografía. No hay ninguna de componentes |
 | **Sin linter configurado** | Se retiró el script `lint` porque no existía configuración y fallaba siempre |
 
 Nada de esto es un fallo conocido: es trabajo de verificación pendiente. La

@@ -54,6 +54,31 @@ export function tituloDeIncidencia(etiqueta: string, nota: string | null): strin
   return `${etiqueta}: ${corto}`
 }
 
+/**
+ * La descripción: lo que se escribió, y de qué aparato se está hablando.
+ *
+ * La nota va primero porque es lo que hace falta leer para decidir si esto se
+ * atiende hoy. La ficha —marca, modelo y número de serie— va debajo, y no es
+ * adorno: la incidencia se lee desde la pestaña de Incidencias, a kilómetros del
+ * aula y días después, donde «Ordenador 2» no dice cuál de los dos ordenadores
+ * de la 2.4 es. Quien va a buscar el recambio necesita el modelo, y quien lo
+ * pide a garantía necesita la serie.
+ *
+ * Se copia en vez de resolverse al leer, a propósito: el aparato se puede
+ * sustituir, fusionar su modelo o cambiar de sala, y lo que estaba roto aquel
+ * jueves era ESTE. Es el mismo criterio que el resto del proyecto —los eventos
+ * no se reescriben— aplicado a la única línea que lo cuenta.
+ */
+export function descripcionDeIncidencia(nota: string | null, ficha: string | null): string | null {
+  const texto = (nota ?? '').trim()
+  const aparato = (ficha ?? '').trim()
+  // Y si la nota ya nombra el aparato entero —el técnico lo escribió a mano— no
+  // se repite debajo: una descripción de dos líneas iguales se lee como un fallo
+  // de la aplicación.
+  if (aparato && texto.includes(aparato)) return texto
+  return [texto, aparato].filter(Boolean).join('\n') || null
+}
+
 export interface EntradaIncidencias {
   /** La revisión que se acaba de cerrar. */
   inspection: Inspection
@@ -61,6 +86,11 @@ export interface EntradaIncidencias {
   checks: InspectionCheck[]
   /** Cómo se llama la fila que falló: «Proyector», «Pantalla 2», «Red». */
   etiquetaDe: (key: CheckKey) => string
+  /**
+   * Y qué aparato es: «Lenovo U3302 · S/N 8QF». Vacío en las filas que no son un
+   * equipo —la red, la megafonía— y en un equipo sin modelo ni serie apuntados.
+   */
+  fichaDe?: (key: CheckKey) => string | null
   /**
    * Las incidencias que ya hay en esta sala, del espejo local.
    *
@@ -125,7 +155,7 @@ export function incidenciasDeRevision(entrada: EntradaIncidencias): Incident[] {
       check_key: check.check_key,
       external_ref: null,
       title: tituloDeIncidencia(entrada.etiquetaDe(check.check_key), nota),
-      description: nota || null,
+      description: descripcionDeIncidencia(nota, entrada.fichaDe?.(check.check_key) ?? null),
       // La revisión siempre deja una gravedad puesta; el `?? 'media'` es para una
       // comprobación vieja guardada antes de que el formulario la exigiera.
       severity: check.severity ?? 'media',

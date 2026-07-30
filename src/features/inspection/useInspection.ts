@@ -74,6 +74,15 @@ export interface CheckRow {
   key: CheckKey
   label: string
   hint: string
+  /**
+   * Marca, modelo y número de serie, a secas.
+   *
+   * Se guarda aparte de `hint` porque `hint` lleva además el estado —«marcado
+   * averiado»—, y esto viaja a la incidencia que abre la revisión: lo que hay
+   * que dejar escrito allí es qué aparato era, no cómo estaba señalado en la
+   * pantalla del que lo revisó. Vacío en las filas que no son un aparato.
+   */
+  ficha: string
   measure: { unit: string; label: string } | null
   /** El aparato, si la fila es de un aparato. */
   asset: Asset | null
@@ -118,6 +127,7 @@ export function checkRows(
         key: assetCheckKey(asset.id),
         label: id.etiqueta,
         hint: detail || 'Sin modelo ni serie',
+        ficha: id.ficha,
         measure: type?.tracks_lamp_hours ? { ...LAMP_MEASURE } : null,
         asset,
         pending: type ? !type.confirmed : false,
@@ -137,6 +147,7 @@ export function checkRows(
       key,
       label: ROOM_CHECK_LABELS[key],
       hint: ROOM_CHECK_HINTS[key],
+      ficha: '',
       measure: ROOM_CHECK_MEASURE[key] ? { ...ROOM_CHECK_MEASURE[key]! } : null,
       asset: null,
       pending: false,
@@ -411,6 +422,18 @@ export function useInspection(room: Room | null, userId: string | null) {
     [rows],
   )
 
+  /**
+   * Y de qué aparato hablaba.
+   *
+   * Se copia en la incidencia al cerrar la revisión. Aquí es la única vez que
+   * está a mano sin pedir nada: la lista de comprobaciones ya cruzó el equipo con
+   * el catálogo para pintar la línea de debajo del nombre.
+   */
+  const fichaDe = useCallback(
+    (key: CheckKey): string | null => rows.find((r) => r.key === key)?.ficha || null,
+    [rows],
+  )
+
   /** Cierra la revisión. A partir de aquí es inmutable, también en el servidor. */
   const complete = useCallback(async (): Promise<Inspection | null> => {
     if (!draft) return null
@@ -446,6 +469,7 @@ export function useInspection(room: Room | null, userId: string | null) {
       inspection,
       checks: [...draft.checks.values()],
       etiquetaDe,
+      fichaDe,
       abiertas,
       nuevoId: uuidv7,
     })
@@ -507,7 +531,7 @@ export function useInspection(room: Room | null, userId: string | null) {
 
     setDraft(null)
     return inspection
-  }, [draft, etiquetaDe, qc])
+  }, [draft, etiquetaDe, fichaDe, qc])
 
   // `assets`, `types` y `typesById` se devuelven además de usarse aquí: la
   // página los necesita para el bloque de inventario y antes montaba SU PROPIA

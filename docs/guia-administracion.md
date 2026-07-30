@@ -351,16 +351,26 @@ La segunda es la que faltaba: con un solo botón de «retirar», cada equipo que
 volvía al almacén era una unidad que el sistema perdía — el aula dejaba de
 tenerla y el almacén no la ingresaba nunca.
 
-`Datos → Retiradas por autorizar` enseña el aparato, la sala, quién lo pide, por
-qué y —si vuelve al almacén— **en qué artículo va a caer la unidad, antes de
+`Datos → Retiradas por autorizar` enseña **qué aparato es** —tipo, marca, modelo
+y número de serie—, desde cuándo está puesto, la sala, quién lo pide, por qué y
+—si vuelve al almacén— **en qué artículo va a caer la unidad, antes de
 autorizar**. Si ese tipo de equipo no tiene artículo de almacén, lo dice en
 naranja: la retirada se hará igual y el ingreso no, así que hay que enlazarlo en
 `Almacén` y ajustar a mano.
+
+Que salga el modelo no es un adorno: es la diferencia entre poder decidir y
+firmar a ciegas. «¿Dar de baja Ordenador 2?» no se puede contestar desde otro
+edificio; «Ordenador Lenovo U3302 · S/N 8QF, puesto el 12/03/2026» sí — ese no se
+tira, está en garantía.
 
 Autorizar hace cuatro cosas en una sola operación —retira el equipo, deja el
 evento en el histórico de la sala, ingresa la unidad y cierra la solicitud—
 porque a medias quedaría un aparato retirado que nadie ingresó. **No retirarlo**
 cierra la solicitud y deja el equipo donde está.
+
+Antes de autorizar se confirma, con el aparato y las consecuencias delante. Y
+**dar de baja pide teclear `BAJA`**: es la única de las dos que no se deshace, y
+un botón más no frena a nadie que vaya con prisa.
 
 Solo puede haber una solicitud viva por equipo, y quien la firmó puede
 retirarla mientras nadie la haya decidido.

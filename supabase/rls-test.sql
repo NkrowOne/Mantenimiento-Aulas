@@ -1952,3 +1952,60 @@ begin;
     else 'FALLO: asset_overview se lee sin autenticar'
   end as resultado;
 rollback;
+
+\echo ''
+\echo '=== 62. La cola de retiradas dice qué aparato es, y no se lee sin token ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select public.asset_type_id('Ordenador') as tipo \gset
+  select id as sala from rooms where active order by created_at limit 1 \gset
+
+  reset role;
+  insert into asset_models (id, asset_type_id, brand, model, confirmed)
+  values (public.asset_model_id(:'tipo', 'Lenovo', 'ZZ3302'), :'tipo', 'Lenovo', 'ZZ3302', true)
+  on conflict (id) do nothing;
+
+  insert into assets (id, asset_type_id, room_id, label, serial, asset_model_id, confirmed)
+  values ('88888888-8888-4888-8888-888888888885', :'tipo', :'sala', 'Ordenador 2', 'SN-COLA',
+          public.asset_model_id(:'tipo', 'Lenovo', 'ZZ3302'), true);
+
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  insert into asset_removals (id, asset_id, room_id, destino, reason, requested_at, requested_by)
+  values ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9', '88888888-8888-4888-8888-888888888885',
+          :'sala', 'baja', 'No enciende', now(), '11111111-1111-4111-8111-111111111111');
+
+  -- Es la afirmación de la migración: quien autoriza tiene delante el aparato y
+  -- no solo su nombre en la sala. «¿Dar de baja Ordenador 2?» no se puede
+  -- decidir; «Ordenador Lenovo ZZ3302 · S/N SN-COLA», sí.
+  select case
+    when (select identidad from asset_removal_queue
+           where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9') = 'Ordenador Lenovo ZZ3302'
+     and (select serial from asset_removal_queue
+           where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9') = 'SN-COLA'
+     and (select asset_label from asset_removal_queue
+           where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9') = 'Ordenador 2'
+    then 'OK: la cola identifica el aparato, no solo su nombre en el aula'
+    else 'FALLO: asset_removal_queue no dice qué aparato es'
+  end as resultado;
+
+  -- Y una sola fila, aunque el tipo tenga varios artículos de almacén: el
+  -- `lateral` de la vista es lo que lo garantiza, y con un `join` a secas la
+  -- misma solicitud saldría repetida y se autorizaría dos veces.
+  select case
+    when (select count(*) from asset_removal_queue
+           where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9') = 1
+    then 'OK: una solicitud, una fila'
+    else 'FALLO: la solicitud sale repetida en la cola'
+  end as resultado;
+
+  -- Encadenar dos vistas no hereda el `security_invoker`: si esta no lo llevara,
+  -- la cola —que dice qué aparatos hay en qué aulas— se leería con la RLS del
+  -- dueño de la vista en vez de con la de quien pregunta.
+  set local role anon;
+  select set_config('request.jwt.claims', null, true);
+  select case
+    when (select count(*) from asset_removal_queue) = 0
+    then 'OK: sin token, la cola de retiradas está vacía'
+    else 'FALLO: asset_removal_queue se lee sin autenticar'
+  end as resultado;
+rollback;

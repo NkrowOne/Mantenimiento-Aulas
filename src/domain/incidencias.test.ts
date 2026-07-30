@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { incidenciasDeRevision, tituloDeIncidencia } from './incidencias'
+import {
+  descripcionDeIncidencia,
+  incidenciasDeRevision,
+  tituloDeIncidencia,
+} from './incidencias'
 import { assetCheckKey, type Incident, type Inspection, type InspectionCheck } from './types'
 
 const REVISION: Inspection = {
@@ -53,16 +57,20 @@ function incidencia(over: Partial<Incident>): Incident {
 }
 
 const ETIQUETAS: Record<string, string> = { [PROYECTOR]: 'Proyector', red: 'Red' }
+const FICHAS: Record<string, string> = { [PROYECTOR]: 'Epson EB-992F · S/N X9K' }
 
 function abrir(entrada: {
   checks: InspectionCheck[]
   abiertas?: Incident[]
+  fichas?: Record<string, string>
 }): Incident[] {
   let n = 0
+  const fichas = entrada.fichas ?? FICHAS
   return incidenciasDeRevision({
     inspection: REVISION,
     checks: entrada.checks,
     etiquetaDe: (k) => ETIQUETAS[k] ?? k,
+    fichaDe: (k) => fichas[k] ?? null,
     abiertas: entrada.abiertas ?? [],
     nuevoId: () => `nueva-${++n}`,
   })
@@ -89,9 +97,21 @@ describe('incidenciasDeRevision', () => {
       state: 'abierta',
       severity: 'alta',
       title: 'Proyector: No da imagen',
-      description: 'No da imagen',
+      description: 'No da imagen\nEpson EB-992F · S/N X9K',
       opened_by: 'tecnico-1',
     })
+  })
+
+  it('deja escrito qué aparato era, aunque nadie dijera nada', () => {
+    const [inc] = abrir({ checks: [check({ result: 'incidencia' })] })
+    expect(inc?.description).toBe('Epson EB-992F · S/N X9K')
+  })
+
+  it('en una fila que no es un aparato, la descripción es solo la nota', () => {
+    const [inc] = abrir({
+      checks: [check({ check_key: 'red', result: 'incidencia', note: 'sin señal' })],
+    })
+    expect(inc?.description).toBe('sin señal')
   })
 
   it('fecha la incidencia cuando se vio el fallo, no cuando sube', () => {
@@ -188,5 +208,25 @@ describe('tituloDeIncidencia', () => {
     expect(titulo.startsWith('Red: ')).toBe(true)
     expect(titulo.endsWith('…')).toBe(true)
     expect(titulo.length).toBeLessThanOrEqual('Red: '.length + 100)
+  })
+})
+
+describe('descripcionDeIncidencia', () => {
+  it('pone la nota primero y el aparato debajo', () => {
+    expect(descripcionDeIncidencia('no enciende', 'Lenovo U3302 · S/N 8QF')).toBe(
+      'no enciende\nLenovo U3302 · S/N 8QF',
+    )
+  })
+
+  it('con una sola de las dos, no deja líneas vacías', () => {
+    expect(descripcionDeIncidencia(null, 'Lenovo U3302')).toBe('Lenovo U3302')
+    expect(descripcionDeIncidencia('no enciende', null)).toBe('no enciende')
+    expect(descripcionDeIncidencia('  ', '  ')).toBeNull()
+  })
+
+  it('no repite el aparato si el técnico ya lo escribió', () => {
+    expect(descripcionDeIncidencia('el Lenovo U3302 no enciende', 'Lenovo U3302')).toBe(
+      'el Lenovo U3302 no enciende',
+    )
   })
 })
