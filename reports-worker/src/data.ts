@@ -1,31 +1,178 @@
 /**
  * Consultas del informe. Van directas a Postgres con el rol de servicio,
  * porque el worker no actúa en nombre de ningún usuario.
+ *
+ * Dos reglas que ordenan todo este fichero:
+ *
+ *  1. **Lo del periodo se mide en el periodo.** El informe anterior enseñaba el
+ *     histórico acumulado por edificio en un documento titulado «semanal»: un
+ *     gráfico que no se movía de una semana a la siguiente, porque contaba tres
+ *     años de incidencias. Aquí cada cifra dice explícitamente si habla del
+ *     periodo o de la situación a día de hoy.
+ *  2. **Un número solo no informa.** Todo lo que se cuenta en el periodo se
+ *     cuenta también en el tramo anterior de la misma duración, y el informe
+ *     enseña las dos cifras. «18 revisiones» no es bueno ni malo hasta que se
+ *     sabe que la semana pasada fueron 31.
+ *
+ * Los borradores no entran en ninguna cuenta. Todavía no se sabe qué son, y
+ * contarlos como incidencias abiertas infla el número que más se mira.
  */
 
 import postgres from 'postgres'
+import {
+  diasDelPeriodo,
+  nombreComparacion,
+  nombrePeriodo,
+  periodoAnterior,
+  type Periodo,
+} from './periods.js'
+
+/** Lo que se puede contar dentro de un periodo. Se calcula dos veces: ahora y antes. */
+export interface Contadores {
+  revisiones: number
+  salasRevisadas: number
+  registros: number
+  incidencias: number
+  solicitudes: number
+  observaciones: number
+  gravedadAlta: number
+  resueltas: number
+  materialConsumido: number
+}
+
+/** La foto de hoy. No depende del periodo y por eso se cuenta aparte. */
+export interface Situacion {
+  salasTotal: number
+  incidenciasAbiertas: number
+  estancadas: number
+  lamparasAlLimite: number
+  salasSinRevisarHace6Meses: number
+  salasNuncaRevisadas: number
+  articulosBajoMinimo: number
+}
 
 export interface ReportData {
   kind: string
-  periodStart: string
-  periodEnd: string
-  summary: {
-    roomsTotal: number
-    inspections: number
-    roomsInspected: number
-    incidentsOpened: number
-    incidentsResolved: number
-    incidentsOpen: number
-    lampAlerts: number
-    staleIncidents: number
+  period: Periodo
+  anterior: Periodo
+  /** El periodo escrito para una portada: «del 27 al 31 de julio de 2026». */
+  periodoTexto: string
+  /** Cómo se llama el tramo con el que se compara: «la semana anterior». */
+  comparacionTexto: string
+  dias: number
+
+  ahora: Contadores
+  antes: Contadores
+  situacion: Situacion
+
+  serieDiaria: Array<{ dia: string; revisiones: number; abiertas: number; resueltas: number }>
+  porEdificio: Array<{
+    code: string
+    name: string
+    salas: number
+    revisadas: number
+    abiertas: number
+    pendientes: number
+  }>
+  porTipo: Array<{ tipo: string; total: number }>
+  porGravedad: Array<{ gravedad: string; total: number }>
+  porMes: Array<{ month: string; total: number }>
+
+  topSalas: Array<{
+    building: string
+    room: string
+    name: string
+    total: number
+    fiabilidad: number | null
+    hayDatos: boolean
+  }>
+  resolucion: {
+    resueltas: number
+    medianaDias: number | null
+    mediaDias: number | null
+    enMenosDe48h: number
   }
-  byBuilding: Array<{ code: string; total: number }>
-  /** Incidencias del histórico cuya sala no se pudo identificar al importar. */
-  unassignedIncidents: number
-  byMonth: Array<{ month: string; total: number }>
-  lampRows: Array<{ building: string; room: string; hours: number | null; pct: number }>
-  staleRows: Array<{ ref: string | null; title: string; building: string; days: number }>
-  topMaterials: Array<{ name: string; consumed: number }>
+  lamparas: Array<{ building: string; room: string; horas: number | null; pct: number }>
+  estancadas: Array<{
+    ref: string | null
+    titulo: string
+    building: string
+    room: string
+    dias: number
+    gravedad: string
+  }>
+  materiales: Array<{ name: string; unidad: string; consumido: number; incidencias: number }>
+  reincidentes: Array<{ building: string; room: string; item: string; veces: number }>
+  olvidadas: Array<{ building: string; room: string; dias: number | null }>
+  equipo: Array<{ nombre: string; revisiones: number; registros: number }>
+
+  /** Registros del periodo cuya sala no se pudo identificar (el histórico importado los trae). */
+  sinSala: number
+}
+
+/**
+ * Los dos extremos del periodo como instantes.
+ *
+ * Los límites son medianoche DE MADRID, no de UTC. Comparar un `timestamptz`
+ * con una cadena de fecha lo convierte usando la zona de la sesión, así que una
+ * revisión de las 00:30 caía en el informe del día anterior. `inicio_del_dia`
+ * lo hace explícito y aguanta el cambio de hora.
+ *
+ * Se devuelven los dos trozos por separado —y no la condición entera— porque el
+ * nombre de la columna cambia en cada consulta y algunas van con alias de tabla.
+ * Interpolar el identificador con `sql(campo)` habría hecho lo mismo con menos
+ * texto, pero un ayudante de identificador al PRINCIPIO de un fragmento no
+ * encuentra la palabra clave que le dice qué es y revienta al construir la
+ * consulta. Escribir la columna a mano en cada sitio, además, la deja a la
+ * vista de quien lea la consulta.
+ */
+function limites(sql: postgres.Sql, p: Periodo): { desde: postgres.Fragment; hasta: postgres.Fragment } {
+  return {
+    desde: sql`public.inicio_del_dia(${p.start}::date)`,
+    hasta: sql`public.inicio_del_dia(${p.end}::date + 1)`,
+  }
+}
+
+const num = (v: unknown): number => Number(v ?? 0)
+
+async function contadores(sql: postgres.Sql, p: Periodo): Promise<Contadores> {
+  const { desde, hasta } = limites(sql, p)
+  const [c] = await sql<Array<Record<string, string>>>`
+    select
+      (select count(*) from inspections
+         where status = 'completa' and occurred_at >= ${desde} and occurred_at < ${hasta})        as revisiones,
+      (select count(distinct room_id) from inspections
+         where status = 'completa' and occurred_at >= ${desde} and occurred_at < ${hasta})        as salas_revisadas,
+      (select count(*) from incidents
+         where state <> 'borrador' and opened_at >= ${desde} and opened_at < ${hasta})          as registros,
+      (select count(*) from incidents
+         where state <> 'borrador' and kind = 'incidencia'
+           and opened_at >= ${desde} and opened_at < ${hasta})                                 as incidencias,
+      (select count(*) from incidents
+         where state <> 'borrador' and kind = 'solicitud'
+           and opened_at >= ${desde} and opened_at < ${hasta})                                 as solicitudes,
+      (select count(*) from incidents
+         where state <> 'borrador' and kind = 'observacion'
+           and opened_at >= ${desde} and opened_at < ${hasta})                                 as observaciones,
+      (select count(*) from incidents
+         where state <> 'borrador' and severity = 'alta'
+           and opened_at >= ${desde} and opened_at < ${hasta})                                 as gravedad_alta,
+      (select count(*) from incidents
+         where state = 'resuelta' and resolved_at >= ${desde} and resolved_at < ${hasta})         as resueltas,
+      (select coalesce(sum(-qty), 0) from stock_movements
+         where kind = 'consumo' and occurred_at >= ${desde} and occurred_at < ${hasta})           as material_consumido
+  `
+  return {
+    revisiones: num(c?.['revisiones']),
+    salasRevisadas: num(c?.['salas_revisadas']),
+    registros: num(c?.['registros']),
+    incidencias: num(c?.['incidencias']),
+    solicitudes: num(c?.['solicitudes']),
+    observaciones: num(c?.['observaciones']),
+    gravedadAlta: num(c?.['gravedad_alta']),
+    resueltas: num(c?.['resueltas']),
+    materialConsumido: num(c?.['material_consumido']),
+  }
 }
 
 export async function loadReportData(
@@ -34,97 +181,351 @@ export async function loadReportData(
   periodStart: string,
   periodEnd: string,
 ): Promise<ReportData> {
-  const [counts] = await sql<
-    Array<{
-      rooms_total: number
-      inspections: number
-      rooms_inspected: number
-      incidents_opened: number
-      incidents_resolved: number
-      incidents_open: number
-      lamp_alerts: number
-      stale_incidents: number
-    }>
-  >`
+  const period: Periodo = { start: periodStart, end: periodEnd }
+  const anterior = periodoAnterior(period)
+  const { desde, hasta } = limites(sql, period)
+
+  const ahora = await contadores(sql, period)
+  const antes = await contadores(sql, anterior)
+
+  const [sit] = await sql<Array<Record<string, string>>>`
     select
-      (select count(*) from rooms where active)                                  as rooms_total,
-      -- Los límites del periodo son medianoche DE MADRID, no de UTC. Comparar
-      -- un timestamptz con una cadena de fecha lo convertía usando la zona de
-      -- la sesión, así que una revisión de las 00:30 caía en el informe del día
-      -- anterior. inicio_del_dia lo hace explícito y aguanta el cambio de hora.
-      (select count(*) from inspections
-         where status = 'completa'
-           and occurred_at >= public.inicio_del_dia(${periodStart}::date)
-           and occurred_at <  public.inicio_del_dia(${periodEnd}::date + 1))
-                                                                                 as inspections,
-      (select count(distinct room_id) from inspections
-         where status = 'completa'
-           and occurred_at >= public.inicio_del_dia(${periodStart}::date)
-           and occurred_at <  public.inicio_del_dia(${periodEnd}::date + 1))
-                                                                                 as rooms_inspected,
+      (select count(*) from rooms where active)                                    as salas_total,
+      -- Fuera los borradores, y no solo las resueltas: un borrador es una nota a
+      -- medias, y contarlo aquí infla justo el número que más se mira.
       (select count(*) from incidents
-         where opened_at >= public.inicio_del_dia(${periodStart}::date)
-           and opened_at <  public.inicio_del_dia(${periodEnd}::date + 1))
-                                                                                 as incidents_opened,
+         where state not in ('resuelta', 'borrador'))                              as incidencias_abiertas,
       (select count(*) from incidents
-         where resolved_at >= public.inicio_del_dia(${periodStart}::date)
-           and resolved_at <  public.inicio_del_dia(${periodEnd}::date + 1))
-                                                                                 as incidents_resolved,
-      (select count(*) from incidents where state <> 'resuelta')                 as incidents_open,
-      (select count(*) from alerts_lamp_low)                                     as lamp_alerts,
-      (select count(*) from alerts_stale_incidents)                              as stale_incidents
+         where state not in ('resuelta', 'borrador')
+           and opened_at < now() - interval '7 days')                              as estancadas,
+      (select count(*) from alerts_lamp_low)                                       as lamparas,
+      (select count(*) from room_overview
+         where last_inspection_at is not null
+           and last_inspection_at < now() - interval '180 days')                   as sin_revisar,
+      (select count(*) from room_overview where last_inspection_at is null)        as nunca_revisadas,
+      (select count(*) from stock_levels where below_threshold)                    as bajo_minimo
   `
 
-  const byBuilding = await sql<Array<{ code: string; total: number }>>`
-    select code, total from incidents_by_building order by total desc limit 10
+  /*
+   * La serie diaria con `generate_series` y no con un bucle en Node: así el
+   * gráfico tiene una barra por cada día del periodo, incluidos los que no
+   * tuvieron actividad. Sin los días vacíos, una semana con dos jornadas de
+   * trabajo se dibuja igual que una semana entera y el hueco no se ve.
+   */
+  const serieDiaria = await sql<
+    Array<{ dia: string; revisiones: string; abiertas: string; resueltas: string }>
+  >`
+    with dias as (
+      select generate_series(${period.start}::date, ${period.end}::date, interval '1 day')::date as dia
+    ),
+    rev as (
+      select public.dia_local(occurred_at) as dia, count(*) as n
+      from inspections
+      where status = 'completa' and occurred_at >= ${desde} and occurred_at < ${hasta}
+      group by 1
+    ),
+    abre as (
+      select public.dia_local(opened_at) as dia, count(*) as n
+      from incidents
+      where state <> 'borrador' and opened_at >= ${desde} and opened_at < ${hasta}
+      group by 1
+    ),
+    cierra as (
+      select public.dia_local(resolved_at) as dia, count(*) as n
+      from incidents
+      where state = 'resuelta' and resolved_at >= ${desde} and resolved_at < ${hasta}
+      group by 1
+    )
+    select to_char(d.dia, 'YYYY-MM-DD') as dia,
+           coalesce(rev.n, 0) as revisiones,
+           coalesce(abre.n, 0) as abiertas,
+           coalesce(cierra.n, 0) as resueltas
+    from dias d
+    left join rev    on rev.dia = d.dia
+    left join abre   on abre.dia = d.dia
+    left join cierra on cierra.dia = d.dia
+    order by d.dia
   `
-  const byMonth = await sql<Array<{ month: string; total: number }>>`
+
+  const porEdificio = await sql<
+    Array<{ code: string; name: string; salas: string; revisadas: string; abiertas: string; pendientes: string }>
+  >`
+    with salas as (
+      select b.id, b.code, b.name, count(r.id) as n
+      from buildings b
+      join zones z on z.building_id = b.id
+      join rooms r on r.zone_id = z.id and r.active
+      group by b.id, b.code, b.name
+    ),
+    revisadas as (
+      select z.building_id as id, count(distinct i.room_id) as n
+      from inspections i
+      join rooms r on r.id = i.room_id
+      join zones z on z.id = r.zone_id
+      where i.status = 'completa' and i.occurred_at >= ${desde} and i.occurred_at < ${hasta}
+      group by z.building_id
+    ),
+    abiertas as (
+      select z.building_id as id, count(*) as n
+      from incidents i
+      join rooms r on r.id = i.room_id
+      join zones z on z.id = r.zone_id
+      where i.state <> 'borrador' and i.opened_at >= ${desde} and i.opened_at < ${hasta}
+      group by z.building_id
+    ),
+    pendientes as (
+      select z.building_id as id, count(*) as n
+      from incidents i
+      join rooms r on r.id = i.room_id
+      join zones z on z.id = r.zone_id
+      where i.state not in ('resuelta', 'borrador')
+      group by z.building_id
+    )
+    select s.code, s.name, s.n as salas,
+           coalesce(rv.n, 0) as revisadas,
+           coalesce(ab.n, 0) as abiertas,
+           coalesce(pe.n, 0) as pendientes
+    from salas s
+    left join revisadas  rv on rv.id = s.id
+    left join abiertas   ab on ab.id = s.id
+    left join pendientes pe on pe.id = s.id
+    order by coalesce(ab.n, 0) desc, s.n desc
+  `
+
+  const porTipo = await sql<Array<{ tipo: string; total: string }>>`
+    select kind::text as tipo, count(*) as total
+    from incidents
+    where state <> 'borrador' and opened_at >= ${desde} and opened_at < ${hasta}
+    group by kind
+    order by count(*) desc
+  `
+
+  const porGravedad = await sql<Array<{ gravedad: string; total: string }>>`
+    select severity::text as gravedad, count(*) as total
+    from incidents
+    where state <> 'borrador' and kind = 'incidencia'
+      and opened_at >= ${desde} and opened_at < ${hasta}
+    group by severity
+  `
+
+  const porMes = await sql<Array<{ month: string; total: string }>>`
     select month, total from incidents_by_month order by month desc limit 12
   `
-  const lampRows = await sql<
-    Array<{ building: string; room: string; hours: number | null; pct: number }>
+
+  const topSalas = await sql<
+    Array<{ building: string; room: string; name: string; total: string; fiabilidad: string | null; hay_datos: boolean }>
+  >`
+    select ro.building_code as building, ro.room_code as room, ro.room_name as name,
+           count(*) as total, rr.score as fiabilidad, coalesce(rr.hay_datos, false) as hay_datos
+    from incidents i
+    join room_overview ro on ro.room_id = i.room_id
+    left join room_reliability rr on rr.room_id = i.room_id
+    where i.state <> 'borrador' and i.kind = 'incidencia'
+      and i.opened_at >= ${desde} and i.opened_at < ${hasta}
+    group by ro.building_code, ro.room_code, ro.room_name, rr.score, rr.hay_datos
+    order by count(*) desc, ro.building_code, ro.room_code
+    limit 8
+  `
+
+  const [res] = await sql<Array<Record<string, string | null>>>`
+    select
+      count(*) as resueltas,
+      -- La mediana y no solo la media: dos incidencias del histórico abiertas
+      -- hace un año arrastran la media a semanas y esconden que el trabajo del
+      -- día se cierra en horas. Van las dos, y la mediana primero.
+      percentile_cont(0.5) within group (
+        order by extract(epoch from (resolved_at - opened_at)) / 86400
+      ) as mediana,
+      avg(extract(epoch from (resolved_at - opened_at)) / 86400) as media,
+      count(*) filter (where resolved_at - opened_at <= interval '48 hours') as rapidas
+    from incidents
+    where state = 'resuelta' and resolved_at >= ${desde} and resolved_at < ${hasta}
+  `
+
+  const lamparas = await sql<
+    Array<{ building: string; room: string; horas: string | null; pct: string }>
   >`
     select building_code as building, room_code as room,
-           projector_hours as hours, lamp_pct as pct
-    from alerts_lamp_low order by lamp_pct asc limit 20
+           projector_hours as horas, lamp_pct as pct
+    from alerts_lamp_low order by lamp_pct asc limit 12
   `
-  const staleRows = await sql<
-    Array<{ ref: string | null; title: string; building: string; days: number }>
+
+  /*
+   * Las estancadas se consultan aquí y no con `alerts_stale_incidents`, que
+   * filtra por `state <> 'resuelta'` y por tanto arrastra borradores. En un
+   * panel se disimula; en un informe firmado, una nota a medias listada como
+   * «47 días abierta» es una acusación falsa.
+   */
+  const estancadas = await sql<
+    Array<{ ref: string | null; titulo: string; building: string; room: string; dias: string; gravedad: string }>
   >`
-    select i.external_ref as ref, a.title,
-           coalesce(a.building_code, '—') as building, a.days_open as days
-    from alerts_stale_incidents a
-    join incidents i on i.id = a.id
-    order by a.days_open desc limit 20
+    select i.external_ref as ref,
+           i.title as titulo,
+           coalesce(ro.building_code, '—') as building,
+           coalesce(ro.room_code, '') as room,
+           extract(day from now() - i.opened_at)::int as dias,
+           i.severity::text as gravedad
+    from incidents i
+    left join room_overview ro on ro.room_id = i.room_id
+    where i.state not in ('resuelta', 'borrador')
+      and i.opened_at < now() - interval '7 days'
+    order by i.opened_at asc
+    limit 12
   `
-  const topMaterials = await sql<Array<{ name: string; consumed: number }>>`
-    select name, consumed from material_consumption_ranking limit 10
+
+  const materiales = await sql<
+    Array<{ name: string; unidad: string; consumido: string; incidencias: string }>
+  >`
+    select si.name, si.unit as unidad,
+           sum(-sm.qty) as consumido,
+           count(distinct sm.incident_id) as incidencias
+    from stock_movements sm
+    join stock_items si on si.id = sm.stock_item_id
+    where sm.kind = 'consumo' and sm.occurred_at >= ${desde} and sm.occurred_at < ${hasta}
+    group by si.name, si.unit
+    order by sum(-sm.qty) desc
+    limit 10
   `
+
+  const reincidentes = await sql<
+    Array<{ building: string; room: string; item: string; veces: string }>
+  >`
+    select ro.building_code as building, ro.room_code as room, rro.item, rro.veces
+    from room_repeat_offenders rro
+    join room_overview ro on ro.room_id = rro.room_id
+    order by rro.veces desc
+    limit 6
+  `
+
+  const olvidadas = await sql<Array<{ building: string; room: string; dias: string | null }>>`
+    select building_code as building, room_code as room, days_since as dias
+    from alerts_overdue_rooms
+    order by days_since desc nulls first
+    limit 10
+  `
+
+  /*
+   * Actividad del equipo. Va con nombre porque el informe es interno y quien lo
+   * lee ya sabe quién está de turno; lo que NO sale de aquí es hacia la IA, que
+   * recibe estas filas sin nombres (ver `ia.ts`). No es un ranking: un técnico
+   * con seis revisiones y otro con dos pueden haber trabajado lo mismo si el
+   * segundo ha estado desmontando una botonera toda la tarde.
+   */
+  const equipo = await sql<Array<{ nombre: string; revisiones: string; registros: string }>>`
+    with rev as (
+      select by_user, count(*) as n from inspections
+      where status = 'completa' and by_user is not null and occurred_at >= ${desde} and occurred_at < ${hasta}
+      group by by_user
+    ),
+    reg as (
+      select opened_by as by_user, count(*) as n from incidents
+      where state <> 'borrador' and opened_by is not null and opened_at >= ${desde} and opened_at < ${hasta}
+      group by opened_by
+    )
+    select p.full_name as nombre,
+           coalesce(rev.n, 0) as revisiones,
+           coalesce(reg.n, 0) as registros
+    from profiles p
+    left join rev on rev.by_user = p.id
+    left join reg on reg.by_user = p.id
+    where coalesce(rev.n, 0) + coalesce(reg.n, 0) > 0
+    order by coalesce(rev.n, 0) + coalesce(reg.n, 0) desc
+    limit 12
+  `
+
+  const [sinSala] = await sql<Array<{ total: string }>>`
+    select count(*) as total from incidents
+    where room_id is null and state <> 'borrador' and opened_at >= ${desde} and opened_at < ${hasta}
+  `
+
+  const redondea = (v: string | null | undefined): number | null =>
+    v === null || v === undefined ? null : Math.round(Number(v) * 10) / 10
 
   return {
     kind,
-    periodStart,
-    periodEnd,
-    summary: {
-      roomsTotal: Number(counts?.rooms_total ?? 0),
-      inspections: Number(counts?.inspections ?? 0),
-      roomsInspected: Number(counts?.rooms_inspected ?? 0),
-      incidentsOpened: Number(counts?.incidents_opened ?? 0),
-      incidentsResolved: Number(counts?.incidents_resolved ?? 0),
-      incidentsOpen: Number(counts?.incidents_open ?? 0),
-      lampAlerts: Number(counts?.lamp_alerts ?? 0),
-      staleIncidents: Number(counts?.stale_incidents ?? 0),
+    period,
+    anterior,
+    periodoTexto: nombrePeriodo(period),
+    comparacionTexto: nombreComparacion(period),
+    dias: diasDelPeriodo(period),
+    ahora,
+    antes,
+    situacion: {
+      salasTotal: num(sit?.['salas_total']),
+      incidenciasAbiertas: num(sit?.['incidencias_abiertas']),
+      estancadas: num(sit?.['estancadas']),
+      lamparasAlLimite: num(sit?.['lamparas']),
+      salasSinRevisarHace6Meses: num(sit?.['sin_revisar']),
+      salasNuncaRevisadas: num(sit?.['nunca_revisadas']),
+      articulosBajoMinimo: num(sit?.['bajo_minimo']),
     },
-    // El cubo sin edificio sale del gráfico: con 118 incidencias sin sala
-    // identificada eclipsaba a todos los edificios reales y hacía ilegible la
-    // comparación. El número no se esconde, se cuenta aparte en el pie.
-    byBuilding: byBuilding
-      .filter((r) => r.code !== '—')
-      .map((r) => ({ code: r.code, total: Number(r.total) })),
-    unassignedIncidents: Number(byBuilding.find((r) => r.code === '—')?.total ?? 0),
-    byMonth: [...byMonth].reverse().map((r) => ({ month: r.month, total: Number(r.total) })),
-    lampRows: lampRows.map((r) => ({ ...r, pct: Number(r.pct), hours: r.hours ? Number(r.hours) : null })),
-    staleRows: staleRows.map((r) => ({ ...r, days: Number(r.days) })),
-    topMaterials: topMaterials.map((r) => ({ name: r.name, consumed: Number(r.consumed) })),
+    serieDiaria: serieDiaria.map((r) => ({
+      dia: r.dia,
+      revisiones: num(r.revisiones),
+      abiertas: num(r.abiertas),
+      resueltas: num(r.resueltas),
+    })),
+    porEdificio: porEdificio.map((r) => ({
+      code: r.code,
+      name: r.name,
+      salas: num(r.salas),
+      revisadas: num(r.revisadas),
+      abiertas: num(r.abiertas),
+      pendientes: num(r.pendientes),
+    })),
+    porTipo: porTipo.map((r) => ({ tipo: r.tipo, total: num(r.total) })),
+    porGravedad: porGravedad.map((r) => ({ gravedad: r.gravedad, total: num(r.total) })),
+    porMes: [...porMes].reverse().map((r) => ({ month: r.month, total: num(r.total) })),
+    topSalas: topSalas.map((r) => ({
+      building: r.building,
+      room: r.room,
+      name: r.name,
+      total: num(r.total),
+      fiabilidad: r.fiabilidad === null ? null : num(r.fiabilidad),
+      hayDatos: r.hay_datos,
+    })),
+    resolucion: {
+      resueltas: num(res?.['resueltas']),
+      medianaDias: redondea(res?.['mediana']),
+      mediaDias: redondea(res?.['media']),
+      enMenosDe48h: num(res?.['rapidas']),
+    },
+    lamparas: lamparas.map((r) => ({
+      building: r.building,
+      room: r.room,
+      horas: r.horas === null ? null : num(r.horas),
+      pct: num(r.pct),
+    })),
+    estancadas: estancadas.map((r) => ({
+      ref: r.ref,
+      titulo: r.titulo,
+      building: r.building,
+      room: r.room,
+      dias: num(r.dias),
+      gravedad: r.gravedad,
+    })),
+    materiales: materiales.map((r) => ({
+      name: r.name,
+      unidad: r.unidad,
+      consumido: num(r.consumido),
+      incidencias: num(r.incidencias),
+    })),
+    reincidentes: reincidentes.map((r) => ({
+      building: r.building,
+      room: r.room,
+      item: r.item,
+      veces: num(r.veces),
+    })),
+    olvidadas: olvidadas.map((r) => ({
+      building: r.building,
+      room: r.room,
+      dias: r.dias === null ? null : num(r.dias),
+    })),
+    equipo: equipo.map((r) => ({
+      nombre: r.nombre,
+      revisiones: num(r.revisiones),
+      registros: num(r.registros),
+    })),
+    sinSala: num(sinSala?.total),
   }
 }

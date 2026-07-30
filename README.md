@@ -273,7 +273,7 @@ Levanta un Postgres desechable, emula lo mínimo de Supabase, aplica las
 migraciones, carga los datos reales y ejecuta las pruebas de RLS.
 
 ```bash
-npm test          # 124 pruebas de lógica de dominio
+npm test          # pruebas de lógica de dominio y de la pantalla de informes
 npm run typecheck
 npm run build
 ```
@@ -283,11 +283,22 @@ npm run build
 ```bash
 cd reports-worker && npm install
 DATABASE_URL=postgresql://... npm run render -- semanal informe.pdf
+
+# Un periodo concreto, y solo algunas secciones
+DATABASE_URL=... npm run render -- personalizado marzo.pdf 2026-03-01 2026-03-31
+DATABASE_URL=... npm run render -- semanal x.html --secciones=resumen,analisis --sin-ia
 ```
 
 Acepta `.html` como salida para iterar la plantilla sin WeasyPrint. En
-producción lo levanta `docker compose up reports-worker` y lo despierta
-`pg_cron`.
+producción lo levanta `docker compose up reports-worker`, lo despierta `pg_cron`
+los viernes y se pide a mano desde la pantalla de Informes.
+
+El cliente de la IA se prueba sin gastar clave, contra un servidor que habla
+como la API de Gemini:
+
+```bash
+npm run informe:ia
+```
 
 ## Qué está construido
 
@@ -304,6 +315,7 @@ producción lo levanta `docker compose up reports-worker` y lo despierta
 | Incidencias, almacén y depuración de datos | ✅ |
 | Panel de administración: validar equipos, agrupar el catálogo, equipamiento por defecto y alta/baja de salas y edificios | ✅ |
 | Worker de informes PDF | ✅ PDF real generado y revisado |
+| Análisis con IA (Gemini, con razonamiento) | ✅ probado contra un servidor de mentira; degrada a análisis calculado |
 | Buckets de Storage y sus políticas | ✅ 3 pruebas de RLS propias |
 | Despliegue: Compose, Caddy, claves, copias | ✅ |
 | Alta de usuarios y códigos | ✅ |
@@ -382,17 +394,65 @@ que la app existe para dar.
 
 ## Informes
 
-La cadena es **Postgres → ECharts SSR a SVG → HTML → WeasyPrint → Storage**, sin
-Chromium en ningún punto. Como los gráficos salen ya vectorizados, la plantilla
+**El automático sale los viernes a las 07:00** con la semana de trabajo entera,
+de lunes a viernes. Cualquier otro se pide a mano desde la pantalla de Informes,
+eligiendo periodo, secciones, para quién está escrito y si el análisis lo
+redacta la IA. Un informe emitido no se regenera nunca: se versiona.
+
+### El análisis lo escribe una IA; las cifras, no
+
+La regla que hace que este documento se pueda firmar:
+
+> **Las cifras se calculan con SQL. La IA solo escribe la prosa.**
+
+Ni un número del informe sale del modelo. Los indicadores, las variaciones, los
+umbrales y los avisos los calcula `analisis.ts` con operaciones que se pueden
+seguir a mano. Al modelo se le entrega ese expediente ya cerrado y se le pide lo
+que un modelo hace bien y una plantilla hace mal: decidir qué es lo importante de
+esta semana y contarlo en español legible, sin repetir el mismo párrafo cincuenta
+viernes seguidos. Si aparecen en su texto cifras de tres dígitos que no están en
+el expediente, se descarta la redacción entera y se emite con la calculada.
+
+Se usa **Gemini 3.6 Flash con razonamiento alto** (`thinkingLevel`, no el
+`thinkingBudget` de la serie 2.5), con salida en JSON validada por esquema. El
+prompt prohíbe explícitamente lo que delata a un texto generado: emojis,
+negritas, viñetas, titulares con dos puntos y la lista de fórmulas de relleno
+—«es importante destacar», «de cara a», «en resumen»—. Y el pie del PDF dice
+siempre quién lo redactó.
+
+**Sin clave configurada el informe sale igual**, con el análisis calculado. No es
+un modo degradado con un hueco: es un informe completo con otra voz. La clave se
+pone en `GEMINI_API_KEY` o, si no hay acceso al servidor, desde la propia
+pantalla de Informes con perfil de administrador — el entorno manda sobre la
+base de datos si están las dos, y ni la pantalla ni la función `ia_estado()`
+devuelven nunca su valor.
+
+### La cadena
+
+La cadena es **Postgres → análisis → ECharts SSR a SVG → HTML → WeasyPrint →
+Storage**, sin Chromium en ningún punto. Como los gráficos salen ya vectorizados, la plantilla
 no necesita ejecutar JavaScript, y eso permite usar WeasyPrint: unos 300 MB de
 imagen en lugar de 1,5 GB y ningún proceso de navegador que vigilar. Si algún
 día una plantilla necesitara JavaScript de verdad, el reemplazo es Gotenberg 8,
 no un contenedor de Playwright a mano.
 
 Los gráficos usan una paleta **validada**, no elegida a ojo: pasa las seis
-comprobaciones de contraste, croma y separación bajo daltonismo en ambos temas.
-Los colores de estado (ok / aviso / crítico) están reservados y nunca se
-reutilizan como serie.
+comprobaciones de contraste, croma y separación bajo daltonismo en ambos temas —y
+también sobre papel blanco, que es la superficie de este documento y no la de la
+aplicación. Los colores de estado (ok / aviso / crítico) están reservados y nunca
+se reutilizan como serie.
+
+Dos cosas se hacen al revés que en pantalla, y a propósito: **el valor va escrito
+sobre cada marca** —en un papel no hay ratón que enseñe el dato al pasar por
+encima— y **se dibuja al tamaño real de impresión**, porque estirar un SVG
+agranda también la tipografía de los ejes y deja de casar con el texto de al
+lado.
+
+La maquetación es de documento, no de panel: serif para lo que se lee seguido y
+sans para lo que se consulta a saltos, una columna de lectura estrecha, los
+indicadores en vertical al lado del texto y ni un emoji. Se revisa mirando el PDF
+de verdad, que es donde se ven las cosas que no se razonan —una capitular que
+tapa la segunda letra, dos rótulos de tabla que se leen como uno—.
 
 ## Estructura
 

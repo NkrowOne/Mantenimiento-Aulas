@@ -751,7 +751,10 @@ export function App(): React.ReactElement {
           {tab === 'incidencias' && <IncidentsPage />}
           {tab === 'almacen' && <StockPage role={role} />}
           {tab === 'historial' && <HistorialPage />}
-          {tab === 'informes' && <ReportsPage />}
+          {/* El rol llega porque la configuración de la IA —que guarda un
+              secreto— es de administrador, mientras que pedir informes es de
+              supervisor. La pestaña la ven los dos. */}
+          {tab === 'informes' && <ReportsPage role={role} />}
           {tab === 'datos' && <CleanupPage yo={userId} />}
         </Suspense>
       )}
