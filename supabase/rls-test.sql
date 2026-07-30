@@ -401,25 +401,41 @@ begin;
 rollback;
 
 \echo ''
-\echo '=== 17. Dos equipos con la misma etiqueta en una sala: imposible ==='
+\echo '=== 17. Dos equipos con la misma etiqueta en una sala: se recoloca, no se rechaza ==='
 begin;
   select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
-  savepoint s;
 
-  -- Es lo que hace legible una incidencia: si hay dos «Pantalla 2», el parte
-  -- no dice cuál de las dos falla.
-  do $$
-  begin
-    insert into assets (asset_type_id, room_id, label)
-    select a.asset_type_id, a.room_id, a.label
-      from assets a
-     where a.room_id is not null and a.label is not null and a.status <> 'retirado'
-     limit 1;
-    raise exception 'FALLO: ha entrado una etiqueta duplicada en la misma sala';
-  exception when unique_violation then
-    raise notice 'OK: el índice impidió la etiqueta duplicada';
-  end $$;
-  rollback to savepoint s;
+  -- La regla no cambia: si hay dos «Pantalla 2», el parte no dice cuál de las
+  -- dos falla. Lo que cambia es quién la hace cumplir.
+  --
+  -- Antes la hacía cumplir el índice único a base de 409, y eso convertía un
+  -- espejo de minutos —el técnico calcula la etiqueta con lo que su iPad sabe—
+  -- en una fila atascada para siempre en la cola de salida, con un mensaje que
+  -- el técnico no puede atender y administración tampoco: la fila está en el
+  -- dispositivo de otra persona. Ahora la hace cumplir el servidor, que es el
+  -- único que ve la sala entera, dándole el siguiente número libre.
+  select a.id as original, a.room_id as sala, a.label as etiqueta
+    from assets a
+   where a.room_id is not null and a.label is not null and a.status <> 'retirado'
+   limit 1 \gset
+
+  insert into assets (id, asset_type_id, room_id, label, created_by)
+  select 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1', a.asset_type_id, a.room_id, a.label,
+         '11111111-1111-4111-8111-111111111111'
+    from assets a where a.id = :'original';
+
+  select case
+    when (select label from assets where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1')
+         is distinct from :'etiqueta'
+     and not exists (
+       select 1 from assets
+        where room_id = :'sala' and label is not null and status <> 'retirado'
+        group by public.norm_text(label) having count(*) > 1)
+    then 'OK: «' || :'etiqueta' || '» chocaba y ha entrado como «' ||
+         (select label from assets where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1') ||
+         '», sin duplicados en la sala'
+    else 'FALLO: la etiqueta duplicada no se ha recolocado'
+  end as resultado;
 rollback;
 
 \echo ''

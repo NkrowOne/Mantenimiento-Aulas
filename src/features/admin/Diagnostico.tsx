@@ -12,8 +12,10 @@ import { supabase } from '@/lib/supabase'
  *
  * Son cinco líneas y una llamada, y contestan la pregunta entera:
  *
- *   claim_app_role = null  → el hook de GoTrue no está activo en el servicio de
- *                            auth (GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED).
+ *   claim_app_role = null  → el hook de GoTrue no está activo. **No es un fallo
+ *                            por sí solo**: `auth_role()` mira el perfil cuando
+ *                            el claim no viene, y eso existe justo para esto.
+ *                            Solo importa si además `puede_leer` es false.
  *   perfil_existe  = false → la cuenta no tiene fila en `profiles`.
  *   perfil_rol     ≠ el que toca → el alta se hizo sin rol: entra como técnico.
  *   puede_leer     = false → RLS bloquea; es la causa de que no se vea nada.
@@ -76,7 +78,19 @@ export function Diagnostico(): React.ReactElement {
       {parte && (
         <>
           <ul className="mt-3 divide-y divide-line text-xs">
-            {fila('claim app_role', parte.claim_app_role ?? '(ausente)', !parte.claim_app_role)}
+            {/*
+              El claim ausente NO se pinta en rojo si el rol se resolvió igual.
+              `auth_role()` mira el perfil cuando el claim no viene —existe justo
+              para eso—, así que un despliegue que funciona perfectamente enseñaba
+              una línea en rojo y, debajo, un párrafo mandando tocar variables de
+              entorno del servicio de auth. Se busca una avería que no está
+              mientras la de verdad, si la hay, queda tapada.
+            */}
+            {fila(
+              'claim app_role',
+              parte.claim_app_role ?? '(ausente, se usa el perfil)',
+              !parte.claim_app_role && !parte.puede_leer,
+            )}
             {fila('rol efectivo', parte.rol_efectivo, parte.rol_efectivo === 'none')}
             {fila('perfil', parte.perfil_existe ? 'existe' : 'NO existe', !parte.perfil_existe)}
             {fila('rol del perfil', parte.perfil_rol ?? '—', !parte.perfil_rol)}
@@ -84,19 +98,39 @@ export function Diagnostico(): React.ReactElement {
             {fila('puede leer', parte.puede_leer ? 'sí' : 'no', !parte.puede_leer)}
           </ul>
 
-          {/* La conclusión, escrita. Una tabla de valores obliga a saber ya cuál
-              de los seis importa; esto dice qué hacer. */}
+          {/*
+            La conclusión, escrita. Una tabla de valores obliga a saber ya cuál
+            de los seis importa; esto dice qué hacer.
+
+            Y el orden de las ramas ES el diagnóstico. La del claim iba primera,
+            así que se llevaba por delante a todas las demás: con el hook sin
+            activar —que es lo normal sobre una plataforma— la pantalla decía
+            «añade estas dos variables» aunque el rol estuviera bien, se pudiera
+            leer y no pasara absolutamente nada. Ahora lo que manda es si se
+            puede leer o no, que es la pregunta que trae aquí a la gente.
+          */}
           <p className="mt-3 text-sm text-muted">
-            {!parte.claim_app_role
-              ? 'El token llega sin el claim app_role: el hook de GoTrue no está activo. En el servicio de auth, añade GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true y GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI=pg-functions://postgres/public/custom_access_token_hook, reinícialo y vuelve a entrar con el PIN.'
-              : !parte.perfil_existe
-                ? 'Tu cuenta no tiene perfil. Créalo con: alta crear <tu-email> "<tu nombre>" admin'
-                : parte.perfil_activo === false
-                  ? 'Tu perfil está desactivado, así que RLS no te deja ver nada.'
-                  : !parte.puede_leer
-                    ? 'Tienes sesión pero RLS no te deja leer. Revisa el rol de tu perfil.'
-                    : `Todo correcto: puedes leer y tu rol es ${parte.rol_efectivo}. Si aún no ves datos, es que el servidor no tiene ninguno cargado.`}
+            {!parte.perfil_existe
+              ? 'Tu cuenta no tiene perfil. Créalo con: alta crear <tu-email> "<tu nombre>" admin'
+              : parte.perfil_activo === false
+                ? 'Tu perfil está desactivado, así que RLS no te deja ver nada.'
+                : !parte.puede_leer
+                  ? !parte.claim_app_role
+                    ? 'RLS no te deja leer y el token llega sin el claim app_role. En el servicio de auth, añade GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true y GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI=pg-functions://postgres/public/custom_access_token_hook, reinícialo y vuelve a entrar con el PIN.'
+                    : 'Tienes sesión pero RLS no te deja leer. Revisa el rol de tu perfil.'
+                  : `Todo correcto: puedes leer y tu rol es ${parte.rol_efectivo}. Si aún no ves datos, es que el servidor no tiene ninguno cargado.`}
           </p>
+
+          {/* El apunte del hook, cuando no hay nada roto: es una optimización
+              pendiente, no una avería, y decirlo con ese peso evita que alguien
+              se pase la mañana tocando el servicio de auth sin motivo. */}
+          {parte.puede_leer && !parte.claim_app_role && (
+            <p className="mt-2 text-xs text-muted">
+              El token no trae el claim <span className="font-mono">app_role</span>, así que el rol
+              se resuelve leyendo tu perfil. Funciona —lo estás viendo— y activar el hook de GoTrue
+              solo ahorra esa consulta.
+            </p>
+          )}
         </>
       )}
     </div>
