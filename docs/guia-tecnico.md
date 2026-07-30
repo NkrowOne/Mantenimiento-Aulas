@@ -72,10 +72,13 @@ revisó, qué hay registrado, qué queda abierto y qué le ha pasado antes.
 
 Dos cosas viven aquí:
 
-- **Las observaciones** de todas las revisiones del aula, en su propia sección y
-  enteras. Es lo que se ha ido apuntando pasando por delante —el mando está en
-  el cajón, la persiana cuesta— y es lo que hoy se pierde en la columna de texto
-  libre del Excel. Se escriben en la revisión, debajo de las fotos; se leen aquí.
+- **Las revisiones anteriores**, enteras. Una tarjeta por visita: la fecha, quién
+  la hizo, cómo salió, **la observación** que se escribió aquel día —el mando
+  está en el cajón, la persiana cuesta— y **las fotos**, que se abren a pantalla
+  completa tocándolas. Y desplegando **«Ver las comprobaciones»**, lo que se
+  contestó equipo por equipo, con la gravedad y las medidas: «el proyector iba
+  por 1.900 horas». Es lo que hoy se pierde en la columna de texto libre del
+  Excel.
 - **«Incidencia o solicitud»**, para registrar sin estar revisando: una avería
   que ves de paso, o un trabajo que hay que pedir —«instalar una cámara»—.
 
@@ -85,6 +88,31 @@ Dos cosas viven aquí:
 
 Arriba del todo, el botón grande: **«Revisar esta aula»**. Al salir de la
 revisión vuelves a la ficha.
+
+### Si una revisión quedó mal apuntada: corrígela
+
+En la tarjeta de esa revisión, **«Corregir esta revisión»**. Se abre el
+formulario de siempre **con lo que contestaste aquel día ya puesto**: cambias lo
+que esté mal y guardas. No hace falta rellenarlo todo otra vez.
+
+Lo que pasa al guardar:
+
+- Se guarda como una **versión nueva de esa misma visita**, con **la fecha de
+  aquel día** — no como una revisión de hoy. El aula no aparece revisada hoy por
+  haber arreglado una errata, y en el informe sigue contando una visita, no dos.
+- **La original no se borra.** Se sigue leyendo: en la tarjeta aparece
+  «Original / Corrección 1» para ver qué decía antes.
+- **Las incidencias que abrió no se cierran solas.** Si marcas que el proyector
+  estaba bien, el parte que se abrió sigue abierto: eso lo cierra un supervisor,
+  con su resolución. La aplicación te lo dice mientras corriges.
+
+Puedes corregir la revisión de un compañero, y él la tuya: queda firmado quién
+corrigió y cuándo. Si empiezas una corrección y la dejas a medias, la ficha te
+ofrece **«Continuar la corrección»**; si la pulsaste sin querer, **«Descartar la
+corrección»** la tira y no cambia nada.
+
+> Hace falta cobertura **una vez**, al pulsar «Corregir», para traerse lo que
+> dijo aquella revisión. A partir de ahí funciona sin red como cualquier otra.
 
 > **El camino corto sigue igual.** El QR de la puerta y el buscador entran
 > directos a revisar: si escaneas una placa ya sabes dónde estás y a qué vienes.
@@ -263,6 +291,12 @@ zona con cobertura y se resolverá solo.
 
 Pulsa **Añadir foto** y elige cámara o carrete. Se comprimen solas.
 
+**Y se ven después.** En la ficha del aula, cada revisión enseña las suyas en una
+tira; al tocar una se abre a pantalla completa, y con más de una se pasa con
+*Anterior* y *Siguiente*. Una foto recién hecha aparece marcada **«sin subir»**
+hasta que haya cobertura: así sabes que la tiene el aparato y que todavía no ha
+salido de él.
+
 Si sale un aviso sobre **HEIC**, ve a *Ajustes → Cámara → Formatos* y pon **Más
 compatible**. Es cosa del iPhone, no de la aplicación.
 
@@ -277,8 +311,10 @@ cerrado sesión, sin tu PIN no se puede entrar; si lo perdiste con la sesión
 abierta, quien lo encuentre puede usar la aplicación hasta que se dé de baja.
 
 **¿Puedo corregir una revisión ya guardada?**
-No. Una vez marcada como completa queda fija, que es lo que hace que valga como
-registro. Si te equivocaste, haz una revisión nueva o dilo a tu supervisor.
+Sí, desde la ficha del aula: en su tarjeta, **«Corregir esta revisión»**. Se
+guarda como una versión nueva de esa visita, con la fecha de aquel día, y la
+anterior se queda guardada y legible. Lo que no se puede es **reescribirla**: eso
+es lo que hace que el histórico valga como registro.
 
 **¿Por qué no puedo cerrar una incidencia?**
 Los técnicos las abren; cerrarlas es cosa de supervisores.

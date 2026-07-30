@@ -18,10 +18,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const upsert = vi.fn()
 const uploadFoto = vi.fn()
+/** Lo que contesta el servidor cuando se le pregunta cómo está una fila. */
+const maybeSingle = vi.fn()
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
-    from: () => ({ upsert }),
+    from: () => ({ upsert, select: () => ({ eq: () => ({ maybeSingle }) }) }),
     storage: { from: () => ({ upload: uploadFoto }) },
     auth: {
       getSession: () => Promise.resolve({ data: { session: { user: { id: 'u1' } } } }),
@@ -76,6 +78,7 @@ beforeEach(async () => {
   await db.inspections.clear()
   upsert.mockReset().mockResolvedValue({ error: null, status: 201 })
   uploadFoto.mockReset().mockResolvedValue({ error: null })
+  maybeSingle.mockReset().mockResolvedValue({ data: null })
 })
 
 describe('flush', () => {
@@ -190,6 +193,192 @@ describe('flush', () => {
         onConflict: 'id',
         ignoreDuplicates: false,
       })
+    })
+
+    /*
+     * Y la fila de la revisión SÍ pisa, cerrada o no, porque su segundo envío no
+     * es un reintento: es el cierre.
+     *
+     * La cola sube la revisión dos veces —borrador mientras se rellena, completa
+     * al terminar—. Ignorando duplicados, ese segundo envío se convierte en un
+     * «no hagas nada» sobre la fila que ya está y la revisión se queda en
+     * borrador en el servidor para siempre: invisible en el histórico de la sala,
+     * en la fiabilidad, en el informe y en la lista de revisiones de la ficha.
+     * El técnico ve su trabajo guardado en el iPad y en el servidor no hay nada.
+     */
+    it('la revisión al cerrarse SÍ pisa la que ya está: ese envío es el cierre', async () => {
+      await db.inspections.put({ id: 'insp-1', status: 'completa' } as never)
+      await db.outbox.add(
+        entrada({ entity: 'inspection', id: 'insp-1', payload: { id: 'insp-1', status: 'completa' } }),
+      )
+
+      await flush()
+
+      expect(upsert).toHaveBeenCalledWith(expect.anything(), {
+        onConflict: 'id',
+        ignoreDuplicates: false,
+      })
+    })
+
+    /*
+     * Y el otro lado del cierre: cuando la respuesta se pierde por el camino.
+     *
+     * El cierre es un UPDATE de verdad y el servidor solo lo permite mientras la
+     * revisión siga siendo borrador —así no se reescribe un registro cerrado—. El
+     * reintento llega a una fila ya cerrada y vuelve un 42501, que es permanente:
+     * la entrada se quedaba rechazada para siempre enseñando «sin enviar» por una
+     * revisión que sí estaba guardada.
+     */
+    it('el reintento del cierre no se rechaza si la revisión ya está cerrada arriba', async () => {
+      upsert.mockResolvedValue({
+        error: { message: 'new row violates row-level security policy' },
+        status: 403,
+      })
+      maybeSingle.mockResolvedValue({ data: { status: 'completa' } })
+
+      const cierre = entrada({
+        entity: 'inspection',
+        id: 'insp-2',
+        payload: { id: 'insp-2', status: 'completa' },
+      })
+      await db.outbox.add(cierre)
+
+      const parte = await flush()
+
+      expect(parte.subidos).toBe(1)
+      expect(parte.rechazados).toBe(0)
+      expect(await db.outbox.get(cierre.id)).toBeUndefined()
+    })
+
+    it('pero si arriba sigue en borrador, el rechazo es real y se queda a la vista', async () => {
+      upsert.mockResolvedValue({
+        error: { message: 'new row violates row-level security policy' },
+        status: 403,
+      })
+      maybeSingle.mockResolvedValue({ data: { status: 'borrador' } })
+
+      const cierre = entrada({
+        entity: 'inspection',
+        id: 'insp-3',
+        payload: { id: 'insp-3', status: 'completa' },
+      })
+      await db.outbox.add(cierre)
+
+      const parte = await flush()
+
+      expect(parte.rechazados).toBe(1)
+      expect((await db.outbox.get(cierre.id))?.status).toBe('rechazado')
+    })
+
+    /*
+     * El caso que se llevaba por delante una corrección entera, y de paso los
+     * últimos toques de cualquier revisión.
+     *
+     * El servidor solo acepta cambiar las comprobaciones mientras la revisión sea
+     * un borrador. Si el cierre se adelanta a sus filas, las que llegan después se
+     * quedan fuera en silencio: la corrección se cerraba arriba con los valores de
+     * la revisión que venía a corregir.
+     */
+    it('el cierre espera a sus comprobaciones, y ellas pisan mientras espera', async () => {
+      await db.inspections.put({ id: 'insp-4', status: 'completa' } as never)
+      await db.outbox.bulkAdd([
+        entrada({
+          entity: 'inspection',
+          id: 'insp-4',
+          payload: { id: 'insp-4', status: 'completa', overall: 'con_incidencias' },
+        }),
+        entrada({
+          entity: 'inspection_check',
+          payload: { id: 'c9', inspection_id: 'insp-4', result: 'incidencia' },
+        }),
+      ])
+
+      const primera = await flush()
+
+      // La revisión ha subido como borrador —crea la fila, que es lo que sus
+      // comprobaciones necesitan— y su cierre sigue esperando en la cola.
+      const [payloadRevision] = upsert.mock.calls[0]!
+      expect(payloadRevision).toMatchObject({ id: 'insp-4', status: 'borrador' })
+      expect((await db.outbox.get('insp-4'))?.status).toBe('pendiente')
+
+      // Y la comprobación ha ido a pisar, no a «no pises»: es justo el valor que
+      // el técnico acaba de cambiar.
+      expect(upsert.mock.calls[1]![1]).toEqual({ onConflict: 'id', ignoreDuplicates: false })
+      expect(primera.subidos).toBe(1)
+
+      // Segunda vuelta: ya no queda nada dentro, así que ahora sí se cierra.
+      upsert.mockClear()
+      const segunda = await flush({ forzar: true })
+
+      expect(upsert.mock.calls[0]![0]).toMatchObject({ id: 'insp-4', status: 'completa' })
+      expect(segunda.subidos).toBe(1)
+      expect(await db.outbox.count()).toBe(0)
+    })
+
+    it('y no espera a una comprobación rechazada, que no va a moverse sola', async () => {
+      await db.inspections.put({ id: 'insp-5', status: 'completa' } as never)
+      await db.outbox.bulkAdd([
+        entrada({
+          entity: 'inspection',
+          id: 'insp-5',
+          payload: { id: 'insp-5', status: 'completa' },
+        }),
+        entrada({
+          entity: 'inspection_check',
+          status: 'rechazado',
+          payload: { id: 'c8', inspection_id: 'insp-5' },
+        }),
+      ])
+
+      await flush()
+
+      // Sin esta salida, una comprobación rechazada dejaría la revisión sin cerrar
+      // para siempre.
+      expect(upsert.mock.calls[0]![0]).toMatchObject({ status: 'completa' })
+      expect(await db.outbox.get('insp-5')).toBeUndefined()
+    })
+
+    /*
+     * Y el fallo que explica las incidencias que no aparecen nunca en su pestaña:
+     * la revisión se corta a mitad de subir, y sus hijos chocan contra una clave
+     * ajena que todavía no existe. Eso no es contenido malo, es orden.
+     */
+    it('un choque de clave ajena vuelve a la cola en vez de rechazarse para siempre', async () => {
+      upsert.mockResolvedValue({
+        error: {
+          message:
+            'insert or update on table "incidents" violates foreign key constraint "incidents_opened_from_inspection_id_fkey"',
+        },
+        status: 409,
+      })
+      const hija = entrada({ entity: 'incident', payload: { id: 'inc-1' } })
+      await db.outbox.add(hija)
+
+      const parte = await flush()
+
+      expect(parte.rechazados).toBe(0)
+      const quedo = await db.outbox.get(hija.id)
+      expect(quedo?.status).toBe('pendiente')
+      expect(quedo?.nextAttemptAt).toBeGreaterThan(0)
+    })
+
+    it('un reencolado durante la subida no se pierde al terminar', async () => {
+      // El técnico toca otra vez la misma fila mientras está en vuelo. Borrar por
+      // id a secas se llevaba el toque nuevo con la entrada vieja.
+      const { enqueue } = await import('@/db/dexie')
+      const tocada = entrada({ id: 'tocada', payload: { id: 'tocada', v: 1 } })
+      await db.outbox.add(tocada)
+
+      upsert.mockImplementation(async () => {
+        await enqueue('incident', 'tocada', { id: 'tocada', v: 2 })
+        return { error: null, status: 201 }
+      })
+
+      await flush()
+
+      const quedo = await db.outbox.get('tocada')
+      expect(quedo?.payload['v']).toBe(2)
+      expect(quedo?.status).toBe('pendiente')
     })
 
     it('una foto que ya estaba en el almacén cuenta como subida, no como error', async () => {

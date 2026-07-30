@@ -302,12 +302,32 @@ export async function pullMaster(): Promise<ResultadoPull> {
    * cobertura todavía no está en la respuesta del servidor, y esto la borraría
    * antes de que llegue a subir.
    */
+  /*
+   * Y la tercera salvaguarda, que es la que le faltaba: **el mismo cuarto de hora
+   * de gracia que tienen los equipos**.
+   *
+   * Estar en la cola deja de protegerla en el instante en que sube: la entrada se
+   * borra. Si una descarga salió un momento antes —o si PostgREST todavía no ve la
+   * fila recién insertada— esa incidencia no viene en la respuesta y ya no está en
+   * la cola, así que se borraba del espejo. Y el espejo es lo que contesta a «¿este
+   * proyector ya tiene una incidencia abierta?»: sin ella, la revisión de la ronda
+   * siguiente abre una segunda para la misma avería. Dos filas en la pestaña para
+   * el mismo proyector y el recuento de la sala mintiendo.
+   *
+   * Lo recién abierto no se juzga, igual que con los equipos y las retiradas.
+   */
   const incidencias = de('incidents')
   if (!incidencias.error && !todasVacias) {
     const vivas = new Set((incidencias.data ?? []).map((i) => i['id'] as string))
     const enCola = new Set((await db.outbox.toCollection().primaryKeys()) as string[])
-    const locales = (await db.incidents.toCollection().primaryKeys()) as string[]
-    const cerradas = locales.filter((id) => !vivas.has(id) && !enCola.has(id))
+    const locales = await db.incidents.toArray()
+    const cerradas = locales
+      .filter((i) => {
+        if (vivas.has(i.id) || enCola.has(i.id)) return false
+        const abierta = i.opened_at ? new Date(i.opened_at).getTime() : 0
+        return abierta <= margen
+      })
+      .map((i) => i.id)
     if (cerradas.length > 0) await db.incidents.bulkDelete(cerradas)
   }
 

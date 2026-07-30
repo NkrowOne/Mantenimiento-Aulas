@@ -8,7 +8,9 @@ import { PHOTO_ACCEPT, capturePhoto } from '@/lib/photos'
 import { db } from '@/db/dexie'
 import { type CheckKey, type Room, type Severity } from '@/domain/types'
 import { displayRoomCode } from '@/domain/normalize'
-import { useInspection } from './useInspection'
+import { fechaLegible } from '@/domain/historial'
+import { FotosDeRevision } from './FotosDeRevision'
+import { useInspection, type Correccion } from './useInspection'
 
 interface Props {
   room: Room
@@ -20,6 +22,13 @@ interface Props {
   onBack: () => void
   /** Abrir la ficha de la sala desde la placa, sin salir del flujo. */
   onFicha: () => void
+  /**
+   * Si viene, esta pantalla no abre una revisión nueva: corrige la que dice.
+   *
+   * Es el mismo formulario, y eso es lo importante — corregir es revisar otra vez
+   * el mismo día, no rellenar una pantalla distinta con reglas propias.
+   */
+  correccion?: Correccion | null
 }
 
 const SEVERITIES: Array<{ value: Severity; label: string }> = [
@@ -36,9 +45,21 @@ export function InspectionPage({
   onDone,
   onBack,
   onFicha,
+  correccion,
 }: Props): React.ReactElement {
-  const { draft, rows, assets, types, typesById, saving, setCheck, setNotes, markRestOk, complete } =
-    useInspection(room, userId)
+  const {
+    draft,
+    rows,
+    assets,
+    types,
+    typesById,
+    saving,
+    setCheck,
+    setNotes,
+    markRestOk,
+    complete,
+    descartarBorrador,
+  } = useInspection(room, userId, correccion)
   const [photoError, setPhotoError] = useState<string | null>(null)
   const [subiendoFoto, setSubiendoFoto] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -67,7 +88,18 @@ export function InspectionPage({
 
   const missing = rows.filter((row) => !draft.checks.get(row.key))
   const incidents = [...draft.checks.values()].filter((c) => c.result === 'incidencia')
-  const needsPhoto = incidents.length > 0 && photoCount === 0
+
+  /*
+   * Corrigiendo, las fotos de aquel día ya cuentan.
+   *
+   * Se sabe por el borrador y no por la prop: al volver a entrar en una
+   * corrección empezada —desde «Continuar la corrección»— es el borrador el que
+   * dice qué se está corrigiendo, y sin esto la pantalla pediría otra foto de una
+   * avería que ya la tiene.
+   */
+  const corrigiendo = Boolean(draft.inspection.corrects)
+  const fotosDeAntes = corrigiendo ? (correccion?.fotos ?? 0) : 0
+  const needsPhoto = incidents.length > 0 && photoCount === 0 && fotosDeAntes === 0
 
   async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = e.target.files?.[0]
@@ -94,6 +126,76 @@ export function InspectionPage({
         onBack={onBack}
         onFicha={onFicha}
       />
+
+      {/*
+        Qué es esta pantalla cuando no es una revisión nueva.
+
+        Va arriba del todo y teñida porque es lo primero que hay que saber: las
+        filas de abajo vienen contestadas, y quien no entienda por qué creerá que
+        la aplicación se ha inventado unas respuestas. Dice de qué visita se
+        parte, quién la firmó y qué va a pasar al guardar.
+      */}
+      {corrigiendo && (
+        <div className="border-b border-accent/30 bg-accent-tint px-4 py-3">
+          <p className="eyebrow text-accent">Corrigiendo una revisión</p>
+          <p className="mt-1 text-sm leading-relaxed">
+            La del <strong>{fechaLegible(draft.inspection.occurred_at)}</strong>
+            {correccion?.who ? `, que firmó ${correccion.who}` : ''}. Abajo está lo que
+            se contestó aquel día: cambia lo que esté mal y guarda.
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-muted">
+            Se guardará como una versión nueva de esa misma visita, con su fecha —no
+            como una revisión de hoy—. La original no se borra: se sigue pudiendo leer
+            en la ficha de la sala.
+          </p>
+
+          {/* Lo que no se ha podido arrastrar, dicho aquí y no al final: es una
+              parte de aquella revisión que esta corrección no va a contener. */}
+          {(correccion?.semilla?.descartadas.length ?? 0) > 0 && (
+            <p className="mt-2 text-xs leading-relaxed text-warn">
+              {correccion!.semilla!.descartadas.join(', ')}: ya no{' '}
+              {correccion!.semilla!.descartadas.length === 1 ? 'está' : 'están'} en la sala,
+              así que {correccion!.semilla!.descartadas.length === 1 ? 'esa fila' : 'esas filas'}{' '}
+              no {correccion!.semilla!.descartadas.length === 1 ? 'entra' : 'entran'} en la
+              corrección. La revisión original las conserva.
+            </p>
+          )}
+
+          {/* Las incidencias que abrió la original siguen abiertas, y hay que
+              decirlo: marcar aquí «correcto» un equipo no cierra el parte que ya
+              tiene alguien asignado. Cerrar una incidencia es otro acto y lo hace
+              otra persona. */}
+          {(correccion?.fallos ?? 0) > 0 && (
+            <p className="mt-2 text-xs leading-relaxed text-muted">
+              Aquella revisión dejó {correccion!.fallos}{' '}
+              {correccion!.fallos === 1 ? 'equipo en falla' : 'equipos en falla'}. Si aquí
+              marcas que estaban bien, las incidencias que se abrieron siguen abiertas: se
+              cierran desde Incidencias, con su resolución.
+            </p>
+          )}
+
+          {fotosDeAntes > 0 && (
+            <div className="mt-3">
+              <p className="eyebrow mb-1">Fotos de aquel día</p>
+              <FotosDeRevision ids={[correccion!.baseId]} />
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              // Se confirma porque tira trabajo, y sobre todo porque el botón vive
+              // al lado del que guarda.
+              if (confirm('¿Descartar la corrección? La revisión original no cambia.')) {
+                void descartarBorrador().then(onBack)
+              }
+            }}
+            className="key key-quiet mt-3 min-h-11 px-3 text-sm"
+          >
+            Descartar la corrección
+          </button>
+        </div>
+      )}
 
       {/* Revisión por excepción: primero la vía rápida, y solo se baja al
           detalle quien tenga algo que reportar.
@@ -375,24 +477,43 @@ export function InspectionPage({
           </div>
         </div>
 
-        <div className="flex gap-2">
+        {/*
+          Corrigiendo hay un solo botón, y no es un detalle de maquetación.
+
+          «Guardar y siguiente sala» encadena la ronda: existe porque después de
+          revisar un aula viene la siguiente. Una corrección no es un paso de la
+          ronda —se hace sentado, minutos u horas después— y ofrecer el encadenado
+          aquí llevaría al técnico a un aula en la que no está.
+        */}
+        {corrigiendo ? (
           <button
             type="button"
             disabled={missing.length > 0}
             onClick={() => void complete().then(() => onDone(false))}
-            className="key key-quiet h-touch flex-1"
+            className="key key-accent h-touch w-full"
           >
-            Guardar
+            Guardar la corrección
           </button>
-          <button
-            type="button"
-            disabled={missing.length > 0}
-            onClick={() => void complete().then(() => onDone(true))}
-            className="key key-accent h-touch flex-[2]"
-          >
-            Guardar y siguiente sala
-          </button>
-        </div>
+        ) : (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={missing.length > 0}
+              onClick={() => void complete().then(() => onDone(false))}
+              className="key key-quiet h-touch flex-1"
+            >
+              Guardar
+            </button>
+            <button
+              type="button"
+              disabled={missing.length > 0}
+              onClick={() => void complete().then(() => onDone(true))}
+              className="key key-accent h-touch flex-[2]"
+            >
+              Guardar y siguiente sala
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

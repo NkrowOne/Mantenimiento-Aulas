@@ -155,8 +155,8 @@ const IGNORE_DUPLICATES = new Set<OutboxEntry['entity']>([
 /**
  * ¿Este envío debe ignorar la fila que ya esté, en vez de pisarla?
  *
- * Para casi todo lo decide la entidad. Las revisiones y sus comprobaciones no:
- * depende de en qué momento de su vida estén.
+ * Para casi todo lo decide la entidad. Las **comprobaciones** no: depende de en
+ * qué momento de su vida esté la revisión de la que cuelgan.
  *
  * Mientras la revisión es un borrador hay que poder pisar lo que haya —el
  * técnico cambia una comprobación y ese cambio tiene que llegar—, y el servidor
@@ -166,18 +166,93 @@ const IGNORE_DUPLICATES = new Set<OutboxEntry['entity']>([
  *
  * Sin esto, cerrar una revisión dejaba sus nueve comprobaciones rechazadas por
  * permisos en cuanto se reintentaba una sola vez.
+ *
+ * LA FILA DE LA REVISIÓN NO ENTRA AQUÍ, y es lo contrario de un descuido.
+ *
+ * Su segundo envío no es un reintento: es **el cierre**. La cola la sube dos
+ * veces a propósito —como borrador mientras se rellena y como `completa` al
+ * terminar— y esa segunda vez tiene que pisar la de antes. Con la regla de las
+ * comprobaciones aplicada también a ella, el envío del cierre se convertía en un
+ * `on conflict do nothing` sobre la fila que ya estaba: la revisión se quedaba
+ * **en borrador en el servidor para siempre**. Y en borrador no existe para nadie
+ * —ni en el histórico de la sala, ni en la fiabilidad, ni en el informe del
+ * viernes, ni en la lista de revisiones de la ficha—, así que el técnico veía su
+ * trabajo guardado en el iPad y en el servidor no había nada. Solo se salvaba la
+ * revisión hecha entera sin cobertura, la única que llega ya cerrada de primeras.
+ *
+ * Del reintento del cierre —el que llega a una fila que ya está cerrada y vuelve
+ * un 42501— se encarga `yaEstabaCerrada()`, unas líneas más abajo: pregunta si
+ * está cerrada arriba y, si lo está, da la entrada por subida. Ahí y no en la
+ * política, para no dejar una revisión cerrada al alcance de un UPDATE.
  */
 async function ignorarDuplicados(entry: OutboxEntry): Promise<boolean> {
   if (IGNORE_DUPLICATES.has(entry.entity)) return true
-  if (entry.entity !== 'inspection' && entry.entity !== 'inspection_check') return false
+  if (entry.entity !== 'inspection_check') return false
 
-  const inspectionId =
-    entry.entity === 'inspection'
-      ? entry.id
-      : ((entry.payload['inspection_id'] as string | undefined) ?? null)
+  const inspectionId = entry.payload['inspection_id'] as string | undefined
   if (!inspectionId) return false
 
+  /*
+   * La pregunta es si está cerrada ARRIBA, no aquí.
+   *
+   * El espejo local se cierra en el momento en que el técnico pulsa Guardar, y el
+   * servidor no: la cola tarda lo que tarde. Preguntándoselo solo al espejo, las
+   * comprobaciones que suben en esa ventana —justamente las que el técnico acaba
+   * de cambiar— se mandaban con «no pises lo que ya está» y el servidor se quedaba
+   * con el valor viejo. Sin un solo error: la cola vaciándose, la lámpara al día,
+   * y el arreglo del técnico solo en su iPad.
+   *
+   * Le duele especialmente a una corrección, cuyas filas están arriba desde antes
+   * de empezar a corregir: el «no pises» las dejaba tal cual y la corrección se
+   * cerraba sin corregir nada.
+   *
+   * Mientras su revisión siga en la cola, el cierre no ha subido —`pushEntry` lo
+   * retiene a propósito hasta que sus comprobaciones estén dentro—, así que arriba
+   * sigue siendo un borrador y pisar es lo correcto y está permitido.
+   */
+  if (await db.outbox.get(inspectionId)) return false
+
   return (await db.inspections.get(inspectionId))?.status === 'completa'
+}
+
+/**
+ * ¿Le queda a esta revisión alguna comprobación por subir?
+ *
+ * Las rechazadas no cuentan: no van a moverse solas, y esperarlas dejaría la
+ * revisión sin cerrar para siempre.
+ */
+async function checksPendientes(inspectionId: string): Promise<number> {
+  return await db.outbox
+    .where('entity')
+    .equals('inspection_check')
+    .filter(
+      (e) => e.payload['inspection_id'] === inspectionId && e.status !== 'rechazado',
+    )
+    .count()
+}
+
+/**
+ * Un 23503 no es «este contenido está mal»: es «esto ha llegado antes que su
+ * padre».
+ *
+ * El caso real, y el que explica incidencias que no aparecen nunca en su pestaña:
+ * revisión hecha sin cobertura, el técnico sale del edificio y arranca la subida;
+ * el POST de la revisión se corta a mitad —wifi que se cae, 502 de Kong, iOS
+ * congelando la petición— y vuelve a la cola con su espera, que es lo correcto.
+ * Pero la pasada continúa, y sus nueve comprobaciones y su incidencia chocan
+ * contra la clave ajena de una revisión que todavía no está arriba. PostgREST
+ * devuelve el 23503 como 4xx, y un 4xx se marca rechazado para siempre: la
+ * revisión sube sola un minuto después y sus hijos ya no, porque `flush()` solo
+ * recoge lo pendiente. En el servidor queda una revisión cerrada y vacía, y en la
+ * pestaña de Incidencias no aparece la avería. Con la incidencia rechazada
+ * viviendo en el espejo, además, las rondas siguientes tampoco la vuelven a
+ * abrir: para el iPad ya está reportada.
+ *
+ * Así que se trata como temporal, como el 408 y el 429: vuelve a la cola con
+ * espera y entra sola en la pasada siguiente, cuando el padre ya está.
+ */
+function faltaSuPadre(fallo: FalloDeRed): boolean {
+  return /violates foreign key constraint/i.test(fallo.message)
 }
 
 interface FalloDeRed {
@@ -217,26 +292,115 @@ async function intentar(
   }
 }
 
+/**
+ * Una revisión que ya está cerrada arriba no es un fallo.
+ *
+ * Es el gemelo de `yaEstabaSubida()` para las fotos, y por el mismo motivo: el
+ * reintento de algo que quizá llegó no puede leerse como un error de permisos.
+ *
+ * El cierre de una revisión es un UPDATE de verdad —la fila pasa de `borrador` a
+ * `completa`— y el servidor solo lo permite mientras siga siendo borrador, que es
+ * lo que hace que un registro cerrado no se pueda reescribir. Las dos cosas son
+ * correctas y chocan en un sitio: cuando la respuesta del cierre se pierde por el
+ * camino, el reintento llega a una fila que ya está cerrada y vuelve un 42501. Un
+ * 4xx es permanente, así que esa entrada se quedaba rechazada para siempre
+ * enseñando «sin enviar» por una revisión que sí estaba guardada.
+ *
+ * Aquí se pregunta lo único que resuelve la duda: ¿está cerrada en el servidor?
+ * Si lo está, el trabajo llegó y la entrada se puede tirar. Y se pregunta solo en
+ * este caso —una revisión que se subía como `completa` y volvió rechazada—, así
+ * que no añade una consulta al camino normal.
+ *
+ * La alternativa era ampliar la política para que el autor pudiera reenviar su
+ * revisión cerrada. Se probó y se descartó: dejaba la fila cerrada al alcance de
+ * un UPDATE del técnico y la inmutabilidad pasaba a depender solo del trigger.
+ * Son dos capas a propósito, y la prueba 3 de `rls-test.sql` está ahí para que
+ * quitar una se note.
+ */
+async function yaEstabaCerrada(entry: OutboxEntry): Promise<boolean> {
+  if (entry.entity !== 'inspection') return false
+  if (entry.payload['status'] !== 'completa') return false
+
+  const { data } = await supabase
+    .from('inspections')
+    .select('status')
+    .eq('id', entry.id)
+    .maybeSingle()
+
+  return data?.['status'] === 'completa'
+}
+
+/**
+ * Deja la entrada como toque, **solo si sigue siendo la que se envió**.
+ *
+ * Mientras una entrada está en vuelo, el técnico puede volver a tocar esa misma
+ * fila: `enqueue()` la reescribe con el contenido nuevo y la devuelve a
+ * «pendiente». Si al terminar la subida se borra por id a secas, ese toque
+ * desaparece con ella —se subió el contenido viejo y el nuevo se tira—. Es una
+ * ventana estrecha y real: la corrección la abre de par en par, porque nace
+ * subiendo y el técnico ya está tocando.
+ */
+async function cerrarEntrada(
+  id: string,
+  cambios: Partial<OutboxEntry> | null,
+): Promise<void> {
+  const enVuelo = db.outbox.where('id').equals(id).and((e) => e.status === 'enviando')
+  if (cambios === null) await enVuelo.delete()
+  else await enVuelo.modify(cambios)
+}
+
 /** @returns si la entrada llegó a subir. */
 async function pushEntry(entry: OutboxEntry): Promise<boolean> {
   await db.outbox.update(entry.id, { status: 'enviando' })
 
+  /*
+   * El cierre de una revisión es lo ÚLTIMO que sube de ella.
+   *
+   * El servidor solo acepta cambiar las comprobaciones mientras la revisión sea un
+   * borrador —y hace bien: un registro cerrado no se reescribe—, así que si el
+   * cierre se adelanta a sus filas, las que lleguen después se quedan fuera en
+   * silencio. Pero la fila de la revisión tampoco puede esperar del todo: sus
+   * comprobaciones cuelgan de ella por clave ajena y sin la fila no entran.
+   *
+   * Así que sube, y sube **como borrador**: crea o mantiene la fila —que es lo
+   * único que hace falta para que sus comprobaciones puedan entrar—, y el paso a
+   * `completa` se queda para la pasada siguiente, cuando ya no le quede nada
+   * dentro. Una vuelta más de la cola, y el parte llega entero.
+   */
+  const esCierre = entry.entity === 'inspection' && entry.payload['status'] === 'completa'
+  const esperandoSusChecks = esCierre && (await checksPendientes(entry.id)) > 0
+  const payload = esperandoSusChecks
+    ? { ...entry.payload, status: 'borrador', overall: null }
+    : entry.payload
+
   const ignorar = await ignorarDuplicados(entry)
   const fallo = await intentar(() =>
-    supabase.from(TABLE[entry.entity]).upsert(entry.payload, {
+    supabase.from(TABLE[entry.entity]).upsert(payload, {
       onConflict: 'id',
       ignoreDuplicates: ignorar,
     }),
   )
 
   if (!fallo) {
-    await db.outbox.delete(entry.id)
+    if (esperandoSusChecks) {
+      // La fila ya está arriba; lo que queda por mandar es el cierre. Sin espera:
+      // en cuanto sus comprobaciones estén dentro, la pasada siguiente lo cierra.
+      await cerrarEntrada(entry.id, { status: 'pendiente', nextAttemptAt: 0, lastError: null })
+      return false
+    }
+    await cerrarEntrada(entry.id, null)
     return true
   }
 
   const attempts = entry.attempts + 1
-  if (isPermanentFailure(fallo.status)) {
-    await db.outbox.update(entry.id, {
+  if (isPermanentFailure(fallo.status) && !faltaSuPadre(fallo)) {
+    // Antes de darla por rechazada: puede que lo que se estaba subiendo ya
+    // estuviera arriba y el «permiso denegado» sea de la fila que lo demuestra.
+    if (await yaEstabaCerrada(entry)) {
+      await cerrarEntrada(entry.id, null)
+      return true
+    }
+    await cerrarEntrada(entry.id, {
       status: 'rechazado',
       attempts,
       lastError: `${fallo.status}: ${fallo.message}`,
@@ -244,7 +408,7 @@ async function pushEntry(entry: OutboxEntry): Promise<boolean> {
     return false
   }
 
-  await db.outbox.update(entry.id, {
+  await cerrarEntrada(entry.id, {
     status: 'pendiente',
     attempts,
     nextAttemptAt: Date.now() + backoffMs(attempts),

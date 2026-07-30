@@ -98,8 +98,41 @@ export function IncidentsPage(): React.ReactElement {
 
   const LIMITE = 200
 
+  const buscado = query.trim()
+
+  /*
+   * Cuántas hay cerradas, para poder decirlo.
+   *
+   * Sin este número, la pestaña es la respuesta a «se han perdido mis
+   * incidencias»: el histórico importado trae 283 y 281 vienen con fecha de
+   * resolución, así que la lista abre con dos o tres filas y no hay NADA en
+   * pantalla que insinúe que detrás hay 281 más. La casilla «Incluir resueltas»
+   * sin cifra al lado no lo dice: parece un filtro fino, no la diferencia entre
+   * ver tres cosas y ver el histórico entero.
+   */
+  const { data: resueltas } = useQuery({
+    queryKey: ['incidents-resueltas'],
+    queryFn: async (): Promise<number> => {
+      const { count, error } = await supabase
+        .from('incidents')
+        .select('id', { count: 'exact', head: true })
+        .eq('state', 'resuelta')
+        .neq('kind', 'observacion')
+      if (error) throw error
+      return count ?? 0
+    },
+  })
+
   const { data: incidents, isPending, isError, refetch } = useQuery({
-    queryKey: ['incidents', showResolved],
+    /*
+     * La búsqueda entra en la clave, y con eso deja de ser un filtro en memoria.
+     *
+     * Bajaba las 200 más recientes y filtraba sobre ese array, así que buscar una
+     * referencia de hace un año contestaba «Ninguna incidencia coincide» de algo
+     * que existe en la tabla — y la pantalla, encima, invitaba a hacer justo eso:
+     * «Afina la búsqueda para ver el resto». Buscar tiene que ser una consulta.
+     */
+    queryKey: ['incidents', showResolved, buscado],
     queryFn: async (): Promise<IncidentRow[]> => {
       let q = supabase
         .from('incidents')
@@ -126,7 +159,24 @@ export function IncidentsPage(): React.ReactElement {
         .neq('kind', 'observacion')
         .order('opened_at', { ascending: false })
         .limit(LIMITE)
-      if (!showResolved) q = q.neq('state', 'resuelta')
+
+      /*
+       * Quien busca una referencia concreta no está triando trabajo abierto: está
+       * buscando algo que sabe que existe, y casi siempre está cerrado. Así que
+       * mientras haya texto, la búsqueda va al servidor y el estado deja de
+       * filtrar; sin texto, la lista sigue siendo la de lo que hay que atender.
+       *
+       * Los caracteres con los que PostgREST separa filtros y cita valores se
+       * limpian, igual que en el buscador del histórico: una coma no es un ataque
+       * pero sí una consulta rota con un error incomprensible.
+       */
+      if (buscado) {
+        const t = buscado.replace(/[,()*"\\]/g, ' ')
+        q = q.or(`title.ilike.*${t}*,description.ilike.*${t}*,external_ref.ilike.*${t}*`)
+      } else if (!showResolved) {
+        q = q.neq('state', 'resuelta')
+      }
+
       const { data, error } = await q
       // Sin esto un fallo de red devolvía lista vacía y la pantalla decía
       // «Ninguna abierta», que es exactamente lo contrario de la verdad.
@@ -161,8 +211,27 @@ export function IncidentsPage(): React.ReactElement {
         if (input.resolution) patch['resolution'] = input.resolution
       }
 
-      const { error } = await supabase.from('incidents').update(patch).eq('id', input.id)
+      /*
+       * Se pide la fila de vuelta, y sin ella esto es un fallo.
+       *
+       * Un UPDATE que no alcanza ninguna fila **no es un error** para PostgREST:
+       * responde 204 con `error` a null. Y a un técnico no le alcanza ninguna —la
+       * única política de UPDATE que le sirve exige que sea su propio borrador—,
+       * así que pulsar «Resolver» entraba por `onSuccess`, invalidaba la consulta,
+       * la lista se redibujaba igual y la incidencia seguía abierta. Sin un
+       * mensaje, sin un error, sin nada: la pantalla decía que sí y el servidor
+       * decía que no. Y el aviso «Solo un supervisor cierra incidencias» que hay
+       * escrito ahí abajo cuelga de `advance.isError`, o sea que nunca se pintaba.
+       */
+      const { data, error } = await supabase
+        .from('incidents')
+        .update(patch)
+        .eq('id', input.id)
+        .select('id')
       if (error) throw error
+      if (!data || data.length === 0) {
+        throw new Error('El servidor no ha aplicado el cambio: hace falta ser supervisor.')
+      }
     },
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['incidents'] }),
   })
@@ -177,9 +246,27 @@ export function IncidentsPage(): React.ReactElement {
             checked={showResolved}
             onChange={(e) => setShowResolved(e.target.checked)}
           />
+          {/* Con la cifra al lado. Es lo que convierte «me faltan incidencias» en
+              «ah, están cerradas»: 281 filas del histórico no se intuyen desde una
+              lista de tres. */}
           Incluir resueltas
+          {resueltas !== undefined && resueltas > 0 && (
+            <span className="rounded-tag bg-raised px-1.5 py-0.5 font-mono text-xs text-muted">
+              {resueltas}
+            </span>
+          )}
         </label>
       </div>
+
+      {/* Y dicho también donde se nota: debajo de la lista corta, cuando la lista
+          corta es corta porque el resto está cerrado. */}
+      {!showResolved && !buscado && (resueltas ?? 0) > 0 && (
+        <p className="mt-2 text-xs text-muted">
+          {resueltas} resuelta{resueltas === 1 ? '' : 's'} no se muestran. Marca «Incluir
+          resueltas» para verlas, o busca por texto o referencia — la búsqueda mira también
+          las cerradas.
+        </p>
+      )}
 
       {/*
         Lo sin terminar, antes que lo abierto, y solo si lo hay.
@@ -336,16 +423,21 @@ export function IncidentsPage(): React.ReactElement {
       )}
 
       {/* Que el listado esté recortado tiene que verse: con 283 incidencias, 83
-          desaparecían sin que nada lo dijera. */}
+          desaparecían sin que nada lo dijera. Y ahora la frase es verdad: buscar
+          pregunta al servidor, así que afinar la búsqueda SÍ encuentra el resto. */}
       {incidents?.length === LIMITE && (
         <p className="mt-4 text-xs text-muted">
-          Mostrando las {LIMITE} más recientes. Afina la búsqueda para ver el resto.
+          Mostrando las {LIMITE} más recientes. Busca por texto o referencia para
+          encontrar cualquiera de las demás.
         </p>
       )}
 
+      {/* `role="alert"` porque ahora sí llega: es la respuesta a un botón que
+          parecía funcionar y no hacía nada. */}
       {advance.isError && (
-        <p className="mt-4 text-sm text-crit">
-          Solo un supervisor cierra incidencias.
+        <p role="alert" className="mt-4 text-sm text-crit">
+          No se ha podido cambiar el estado: cerrar y empezar incidencias es cosa de
+          un supervisor.
         </p>
       )}
     </div>
