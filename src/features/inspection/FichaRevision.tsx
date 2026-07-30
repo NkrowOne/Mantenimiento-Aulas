@@ -29,10 +29,7 @@
  * salir del servidor.
  */
 
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useLiveQuery } from 'dexie-react-hooks'
-import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaCorta } from '@/domain/fechas'
@@ -48,6 +45,7 @@ import {
   type RevisionRow,
 } from '@/domain/revision'
 import { type Incident, type IncidentState } from '@/domain/types'
+import { FotosDeRevision } from './FotosDeRevision'
 
 /*
  * Las incidencias de la sala.
@@ -231,6 +229,32 @@ export function FichaRevision({
                 <p className="mt-2 max-w-prose text-sm text-warn">
                   Esta revisión no se cerró: lo que hay aquí es lo que se llegó a marcar. No cuenta
                   como revisión hecha y la sala sigue en la lista de pendientes.
+                </p>
+              )}
+
+              {/*
+                Dónde encaja esta versión, cuando no es la única.
+
+                Es lo primero que hay que saber al abrir la ficha de una revisión
+                corregida: sin decirlo, alguien lee un resultado que ya no vale y
+                se lleva a la reunión un dato que la aplicación considera
+                sustituido. Y al contrario, quien abre una corrección tiene que
+                saber que lo que está leyendo no es la revisión original.
+              */}
+              {!r.vigente && r.corregida_at && (
+                <p className="mt-2 max-w-prose text-sm text-warn">
+                  Esta versión está corregida: alguien la reemplazó el{' '}
+                  {fechaCorta(r.corregida_at)}
+                  {r.corregida_por_quien ? ` (${r.corregida_por_quien})` : ''}. Lo que cuenta de esa
+                  visita es la corrección; esto se conserva tal cual se firmó.
+                </p>
+              )}
+              {r.corrects && r.corrected_at && (
+                <p className="mt-2 max-w-prose text-sm text-muted">
+                  Es una corrección de la revisión del{' '}
+                  {fechaCorta(r.corrige_occurred_at ?? r.occurred_at)}, hecha el{' '}
+                  {fechaCorta(r.corrected_at)}. Conserva la fecha de la visita: el aula se revisó
+                  aquel día, no el de la corrección.
                 </p>
               )}
             </section>
@@ -427,7 +451,30 @@ export function FichaRevision({
               </section>
             )}
 
-            <Fotos inspectionId={inspectionId} enServidor={r.fotos} />
+            {/*
+              Las fotos, con el mismo visor que la ficha del aula.
+
+              Era un componente propio hasta el merge —rejilla y una capa a
+              pantalla completa— y sobraba: el de la otra mitad de esto ya hacía lo
+              mismo mejor (tira que no desplaza la página, teclado, y las fotos que
+              siguen en el dispositivo esperando cobertura). Dos visores de fotos
+              en la misma aplicación es la clase de duplicado que se nota tres
+              meses después, cuando uno gana una mejora y el otro no.
+
+              Se le pasan las fotos de TODAS las versiones de la visita: las de
+              aquel día se hicieron en la misma aula y en el mismo rato, y
+              enseñar solo las de la última versión sería esconder las de la
+              original sin decirlo.
+            */}
+            <section aria-labelledby="sec-fotos" className="mt-8">
+              <div className="section-head">
+                <h2 id="sec-fotos" className="eyebrow">Fotos</h2>
+              </div>
+              <FotosDeRevision
+                ids={[inspectionId, ...(r.corrects ? [r.corrects] : [])]}
+                vacio="Esta revisión no tiene fotos."
+              />
+            </section>
 
             {/*
               El histórico de incidencias de la sala.
@@ -500,140 +547,5 @@ export function FichaRevision({
         )}
       </div>
     </div>
-  )
-}
-
-/**
- * Las fotos de la revisión.
- *
- * Se hacían en el aula, se comprimían, se subían y **no se veían en ninguna
- * parte**: el único rastro era el contador del botón «2 fotos · añadir otra»
- * mientras la revisión seguía abierta. Una foto que nadie puede volver a mirar
- * no es una prueba de nada.
- *
- * El bucket es privado, así que se piden URLs firmadas de vida corta. Es
- * deliberado —las fotos enseñan instalaciones y a veces personas— y por eso la
- * consulta no se cachea largo: una URL caducada da una imagen rota, que es peor
- * que pedirla otra vez.
- *
- * Y se cuentan también las que aún no han salido del dispositivo. Si no, alguien
- * que hizo tres fotos en un sótano abriría la ficha, vería una y pensaría que
- * las otras dos se perdieron.
- */
-function Fotos({
-  inspectionId,
-  enServidor,
-}: {
-  inspectionId: string
-  enServidor: number
-}): React.ReactElement | null {
-  const [grande, setGrande] = useState<string | null>(null)
-
-  const pendientes =
-    useLiveQuery(
-      async () =>
-        db.photos.where('[entityType+entityId]').equals(['inspection', inspectionId]).count(),
-      [inspectionId],
-      0,
-    ) ?? 0
-
-  const fotos = useQuery({
-    queryKey: ['revision-fotos', inspectionId],
-    enabled: enServidor > 0,
-    // Las URLs firmadas caducan: se piden frescas en vez de servir una cacheada
-    // que ya no abre nada.
-    staleTime: 4 * 60_000,
-    queryFn: async (): Promise<Array<{ id: string; url: string; taken_at: string }>> => {
-      const { data: adjuntos, error } = await supabase
-        .from('attachments')
-        .select('id, storage_path, taken_at')
-        .eq('entity_type', 'inspection')
-        .eq('entity_id', inspectionId)
-        .order('taken_at')
-      if (error) throw error
-
-      const rutas = (adjuntos ?? []).map((a) => a['storage_path'] as string)
-      if (rutas.length === 0) return []
-
-      const { data: firmadas, error: fallo } = await supabase.storage
-        .from('fotos')
-        .createSignedUrls(rutas, 5 * 60)
-      if (fallo) throw fallo
-
-      const porRuta = new Map((firmadas ?? []).map((f) => [f.path ?? '', f.signedUrl]))
-      return (adjuntos ?? [])
-        .map((a) => ({
-          id: a['id'] as string,
-          taken_at: a['taken_at'] as string,
-          url: porRuta.get(a['storage_path'] as string) ?? '',
-        }))
-        .filter((f) => f.url !== '')
-    },
-  })
-
-  if (enServidor === 0 && pendientes === 0) return null
-
-  return (
-    <section aria-labelledby="sec-fotos" className="mt-8">
-      <div className="section-head">
-        <h2 id="sec-fotos" className="eyebrow">Fotos</h2>
-        <span className="rounded-tag bg-raised px-2 py-0.5 text-xs font-medium text-muted">
-          {enServidor}
-        </span>
-      </div>
-
-      {fotos.isPending && enServidor > 0 && <p className="text-sm text-muted">Cargando las fotos…</p>}
-      {fotos.isError && (
-        <p className="text-sm text-muted">
-          Las fotos no se han podido abrir. Vuelve a intentarlo con conexión.
-        </p>
-      )}
-
-      <ul className="grid grid-cols-3 gap-2">
-        {(fotos.data ?? []).map((f) => (
-          <li key={f.id}>
-            <button
-              type="button"
-              onClick={() => setGrande(f.url)}
-              className="block w-full overflow-hidden rounded-ctl border border-line bg-sunken"
-            >
-              <img
-                src={f.url}
-                alt={`Foto de la revisión del ${fechaCorta(f.taken_at)}`}
-                loading="lazy"
-                className="aspect-square w-full object-cover"
-              />
-            </button>
-          </li>
-        ))}
-      </ul>
-
-      {pendientes > 0 && (
-        <p className="mt-2 text-xs text-warn">
-          {pendientes} {pendientes === 1 ? 'foto' : 'fotos'} de este dispositivo{' '}
-          {pendientes === 1 ? 'sigue' : 'siguen'} sin subir. {pendientes === 1 ? 'Aparecerá' : 'Aparecerán'} aquí
-          en cuanto haya cobertura.
-        </p>
-      )}
-
-      {/* A pantalla completa, porque una miniatura de 100 px no sirve para ver
-          si un conector está doblado. */}
-      {grande && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
-          onClick={() => setGrande(null)}
-        >
-          <img src={grande} alt="Foto de la revisión" className="max-h-full max-w-full object-contain" />
-          <button
-            type="button"
-            onClick={() => setGrande(null)}
-            className="key key-quiet absolute right-4 top-4 min-h-11 px-3 text-sm"
-            style={{ marginTop: 'env(safe-area-inset-top)' }}
-          >
-            Cerrar
-          </button>
-        </div>
-      )}
-    </section>
   )
 }

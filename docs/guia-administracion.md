@@ -134,6 +134,41 @@ Consecuencias prácticas:
 - **Las solicitudes sí entran**, marcadas como tal: son trabajo pedido y no hay
   otro sitio donde reclamarlas.
 
+### Una revisión corregida, y qué significa para los números
+
+Un técnico puede **corregir** una revisión ya cerrada desde la ficha del aula. No
+la reescribe: se crea una fila nueva en `inspections` con `corrects` apuntando a
+la anterior y `corrected_at` diciendo cuándo. La corregida se queda intacta —el
+congelado sigue en pie para todo el mundo salvo un administrador— y las dos
+versiones se leen en la ficha.
+
+Lo que hay que saber para no interpretar mal una cifra:
+
+- **La corrección conserva `occurred_at`**, la fecha de la visita. Corregir en
+  julio una revisión de marzo no mueve la fecha de «última revisión» del aula ni
+  la saca de la lista de pendientes.
+- **Todo lo que cuenta revisiones cuenta `inspections_vigentes`** —cerradas y sin
+  corrección encima— y cuenta **visitas**, no filas: `room_overview`,
+  `room_reliability`, `alerts_repeat_offenders`, `room_timeline` y el worker de
+  informes. Si escribes una consulta nueva sobre `inspections`, usa esa vista o
+  contarás la misma visita dos veces.
+- **Las incidencias que abrió la original no se cierran** porque la corrección
+  diga que el equipo estaba bien. Siguen en la cola del supervisor, con su
+  resolución, que es donde se decide eso.
+
+```sql
+-- Qué se ha corregido y quién, para mirarlo de cuando en cuando
+select r.code, base.occurred_at as visita, c.corrected_at,
+       pb.full_name as la_hizo, pc.full_name as la_corrigio
+from inspections c
+join inspections base on base.id = c.corrects
+join rooms r          on r.id = c.room_id
+left join profiles pb on pb.id = base.by_user
+left join profiles pc on pc.id = c.by_user
+where c.status = 'completa'
+order by c.corrected_at desc;
+```
+
 ```sql
 -- Las averías que ha abierto la revisión, con el aparato al que apuntan
 select i.opened_at, r.code, i.title, i.severity, a.serial
@@ -682,16 +717,29 @@ Trae lo que antes se guardaba y no se leía en ninguna parte:
 | Cuántas veces había fallado eso mismo antes en esa sala | `incidents.check_key` |
 | La incidencia que abrió, su estado y su resolución | `incidents.opened_from_inspection_id` |
 | Las observaciones completas | `inspections.notes` |
-| Las fotos | `attachments` + bucket `fotos`, con URL firmada de 5 minutos |
+| Las fotos, incluidas las que aún esperan cobertura en el iPad | `attachments` + bucket `fotos`, con URL firmada de una hora |
 | Las medidas tomadas: horas de lámpara, Mbps | `inspection_checks.measure` |
 | Los dos relojes, y el desfase cuando se revisó sin cobertura | `occurred_at` / `recorded_at` |
 | El histórico de incidencias de la sala, marcando las que abrió esa revisión | `incidents` |
+| Si esa versión está corregida, o es la corrección de otra | `inspections.corrects` |
 
-Sale de dos vistas nuevas, `inspection_overview` e `inspection_check_detail`, y
-valen lo mismo que `room_timeline`: **no guardan nada**, leen de las tablas que
-ya existen.
+Sale de dos vistas, `inspection_overview` e `inspection_check_detail`, y valen lo
+mismo que `room_timeline`: **no guardan nada**, leen de las tablas que ya existen.
 
-Dos detalles que conviene saber al leer una ficha:
+Y son **las mismas dos** que usa la lectura de revisiones anteriores de la ficha
+del aula. Nacieron por separado, en dos ramas a la vez —una tercera vista
+`room_inspections` contaba lo mismo para aquella pantalla— y se fundieron al
+juntarlas: dos vistas que cuentan los fallos y las fotos de las mismas tablas
+acaban contándolos distinto en cuanto alguien arregla un `filter` en una de ellas,
+y entonces la ficha del aula y el listado dicen cifras diferentes de la misma
+revisión.
+
+Tres detalles que conviene saber al leer una ficha:
+
+- **Una visita corregida no son dos revisiones.** El listado marca la versión
+  corregida —«manda la corrección»— y la ficha del aula las agrupa en una sola
+  tarjeta con sus versiones dentro. Hay un filtro **Corregidas** que saca las dos
+  caras: lo que se corrigió y lo que corrige.
 
 - **Un borrador no es una revisión sin incidencias.** Sale como «sin cerrar», en
   naranja, y la sala sigue contando como pendiente. Antes no había ninguna
@@ -804,7 +852,11 @@ tarde por falta de cobertura:
 
 ```sql
 select count(*) from inspections
-where recorded_at - occurred_at > interval '1 hour';
+where recorded_at - occurred_at > interval '1 hour'
+  -- Las correcciones fuera: conservan la fecha de la visita que corrigen, así
+  -- que una revisión de marzo corregida hoy tiene cuatro meses de «retraso» sin
+  -- que nadie haya estado sin cobertura ni un minuto.
+  and corrects is null;
 ```
 
 Si crece mucho, hay zonas del campus donde los técnicos trabajan sin red más de

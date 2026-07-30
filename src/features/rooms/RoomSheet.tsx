@@ -14,12 +14,25 @@
  * destino permanente en la barra para algo que casi siempre está vacío enseña a
  * no pulsarlo.
  *
- * **Dos — leer las observaciones.** Se escribían en cada revisión, debajo de las
- * fotos, se guardaban en `inspections.notes` y no se pintaban en ningún sitio:
+ * **Dos — leer las revisiones anteriores, enteras.** Lo que se apuntaba en cada
+ * visita —el resultado de cada aparato, las medidas, la observación de debajo de
+ * las fotos, las fotos mismas— se guardaba y no se pintaba en ningún sitio:
  * exactamente el mismo destino que la columna de texto libre del Excel de la que
- * se venía huyendo. Ahora se leen aquí, que es donde alguien pregunta «qué se ha
+ * se venía huyendo. Ahora se lee aquí, que es donde alguien pregunta «qué se ha
  * dicho de esta aula». Y no en la pestaña de Incidencias: eso es la lista de lo
  * que hay que arreglar, y una nota de seguimiento no es trabajo pendiente.
+ *
+ * La observación vive dentro de su revisión y no en una sección aparte, y ese
+ * cambio es deliberado: se escribió el mismo día que se comprobaron nueve cosas,
+ * y leerla al lado de lo que se comprobó dice bastante más que leerla suelta. Una
+ * sola puerta, además, en vez de dos listas que hablan de lo mismo.
+ *
+ * **Tres — corregir una revisión sin fabricar otra.** Una revisión cerrada es
+ * inmutable, y con razón. Pero hasta ahora eso significaba que un error solo se
+ * podía arreglar revisando otra vez: veinte revisiones nuevas que no son visitas
+ * nuevas, cada una moviendo la fecha de «última revisión» y contando en el
+ * informe. Desde la lista de revisiones se corrige la que salió mal, y la
+ * corrección la reemplaza en todo lo que se cuenta sin borrarla.
  *
  * Lo que sí es trabajo pendiente entra por su camino. Un equipo que falla se
  * marca en la revisión, en su propia fila, y eso abre una incidencia. El
@@ -37,17 +50,18 @@ import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { RoomPlate } from '@/components/RoomPlate'
 import { DoorPlate } from '@/components/DoorPlate'
+import { RevisionesAnteriores } from '@/features/inspection/RevisionesAnteriores'
+import type { Correccion } from '@/features/inspection/useInspection'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaCorta } from '@/domain/fechas'
-import { useFichaRevision } from '@/features/inspection/useFichaRevision'
 import { INCIDENT_KIND_LABELS, type IncidentKind, type Room } from '@/domain/types'
 
 interface TimelineRow {
   at: string
   kind: 'incidencia' | 'solicitud' | 'observacion' | 'revision_ok' | 'revision_ko'
     | 'material' | 'equipo' | 'inventario'
-  /** El identificador de lo que pasó. En una revisión es su id, y con él se abre su ficha. */
-  ref_id: string
+  /** El matiz del evento. En una revisión, `corregida` si lo que se ve es una corrección. */
+  subkind: string
   title: string
   /** La letra pequeña del evento: la nota de la revisión, la descripción, la resolución. */
   detail: string | null
@@ -72,14 +86,6 @@ interface Reincidencia {
   veces: number
   desde: string
   hasta: string
-}
-
-/** Una observación escrita en una revisión, tal y como se lee aquí. */
-interface Observacion {
-  ref_id: string
-  at: string
-  who: string | null
-  texto: string
 }
 
 /**
@@ -121,6 +127,14 @@ interface Props {
   userId: string | null
   onBack: () => void
   onRevisar: () => void
+  /**
+   * Abrir el formulario para corregir una revisión anterior.
+   *
+   * Es el mismo destino que `onRevisar` —la pantalla de revisión— y va por otro
+   * camino a propósito: lleva consigo lo que dijo aquella visita, y de eso
+   * depende que corregir no sea rellenarlo todo otra vez.
+   */
+  onCorregir: (correccion: Correccion) => void
   /** Ir a la hoja de placas del edificio, lista para imprimir. */
   onImprimir: () => void
 }
@@ -132,12 +146,10 @@ export function RoomSheet({
   userId,
   onBack,
   onRevisar,
+  onCorregir,
   onImprimir,
 }: Props): React.ReactElement {
   const qc = useQueryClient()
-  /* La ficha de una revisión anterior, que es lo que contesta «¿qué se vio la
-     última vez?» — la pregunta con la que se entra en esta pantalla. */
-  const { abrir: abrirRevision, ficha } = useFichaRevision()
   const [abierto, setAbierto] = useState(false)
   const [kind, setKind] = useState<IncidentKind>('incidencia')
   const [texto, setTexto] = useState('')
@@ -177,45 +189,6 @@ export function RoomSheet({
         .order('veces', { ascending: false })
       if (error) throw error
       return (data ?? []) as Reincidencia[]
-    },
-  })
-
-  /*
-   * Las observaciones de las revisiones.
-   *
-   * Se escriben debajo de las fotos, en el aula, y hasta ahora acababan en
-   * `inspections.notes` sin que ninguna pantalla las leyera: guardadas y
-   * perdidas, que es el destino de la columna de texto libre del Excel.
-   *
-   * Sale de `room_timeline` y no de `inspections` por dos motivos. La vista ya
-   * resuelve el nombre de quien lo escribió con un `join` —desde el cliente
-   * serían dos consultas— y ya está filtrada por RLS igual que el resto de la
-   * ficha. Y el filtro va en el servidor: pedir las últimas treinta filas del
-   * histórico y quedarse con las que traen nota daría tres observaciones en un
-   * aula con mucho movimiento, porque las treinta se las come el material.
-   *
-   * `detail` es la nota de la revisión. Solo revisiones: las observaciones
-   * importadas del Excel son incidencias de tipo `observacion` y siguen leyéndose
-   * en el histórico de abajo, con su marca.
-   */
-  const { data: observaciones } = useQuery({
-    queryKey: ['room-notes', room.id],
-    queryFn: async (): Promise<Observacion[]> => {
-      const { data, error } = await supabase
-        .from('room_timeline')
-        .select('ref_id, at, who, detail')
-        .eq('room_id', room.id)
-        .in('kind', ['revision_ok', 'revision_ko'])
-        .not('detail', 'is', null)
-        .order('at', { ascending: false })
-        .limit(12)
-      if (error) throw error
-      return (data ?? []).map((o) => ({
-        ref_id: o['ref_id'] as string,
-        at: o['at'] as string,
-        who: (o['who'] as string | null) ?? null,
-        texto: (o['detail'] as string | null) ?? '',
-      }))
     },
   })
 
@@ -500,60 +473,15 @@ export function RoomSheet({
         </section>
 
         {/*
-          Las observaciones, antes del histórico y solo si hay alguna.
+          Las revisiones anteriores: lo que se comprobó, lo que se apuntó, las
+          fotos — y el botón de corregir.
 
-          Van en su propia sección y no confundidas entre las filas de la línea de
-          tiempo porque se vienen a leer: son frases escritas por alguien que
-          estuvo en el aula, y una frase encajada en una lista de eventos con su
-          punto de color y su fecha se lee como metadato en vez de como lo que
-          dice. Aquí se leen enteras, sin recortar, con quién y cuándo debajo.
-
-          Cuando no hay ninguna no se dibuja nada: un «sin observaciones» es
-          ruido en una ficha que ya tiene seis bloques.
+          Van antes del histórico porque son la respuesta a la pregunta con la que
+          se entra («¿qué se ha dicho de esta aula?») y el histórico es el resto:
+          material, equipos y registros, en orden de reloj. Las dos listas hablan
+          de cosas distintas, y por eso conviven sin repetirse.
         */}
-        {(observaciones ?? []).length > 0 && (
-          <section aria-labelledby="sec-obs" className="mt-8">
-            <div className="section-head">
-              <h2 id="sec-obs" className="eyebrow">Observaciones</h2>
-              <span className="rounded-tag bg-raised px-2 py-0.5 text-xs font-medium text-muted">
-                {observaciones?.length}
-              </span>
-            </div>
-            <p className="mb-3 max-w-prose text-sm leading-relaxed text-muted">
-              Lo que se ha ido apuntando en las revisiones de esta sala. No son averías: lo que hay
-              que arreglar está en Incidencias.
-            </p>
-            <ul className="divide-y divide-line-soft border-y border-line bg-surface px-4">
-              {(observaciones ?? []).map((o) => (
-                <li key={o.ref_id} className="py-4">
-                  {/* `whitespace-pre-line`: quien escribe tres cosas las escribe
-                      en tres líneas, y aplastarlas en un párrafo pierde justo la
-                      separación que le costó poner con el móvil en una mano. */}
-                  <p className="whitespace-pre-line text-sm leading-relaxed">{o.texto}</p>
-                  <p className="mt-1.5 font-mono text-xs text-muted">
-                    {[fechaCorta(o.at), o.who].filter(Boolean).join(' · ')}
-                  </p>
-                  {/* Y de la nota a la revisión que la escribió. Una observación
-                      suelta se lee a medias: «la pizarra sigue igual» significa
-                      una cosa si ese día todo lo demás iba bien y otra si
-                      cayeron tres equipos. */}
-                  <button
-                    type="button"
-                    onClick={() => abrirRevision(o.ref_id)}
-                    className="mt-1 min-h-11 text-xs text-accent underline-offset-4 hover:underline"
-                  >
-                    Ver la revisión en la que se escribió
-                  </button>
-                </li>
-              ))}
-            </ul>
-            {observaciones?.length === 12 && (
-              <p className="mt-2 text-xs text-muted">
-                Las 12 más recientes. El resto está en el histórico de la sala.
-              </p>
-            )}
-          </section>
-        )}
+        <RevisionesAnteriores roomId={room.id} onCorregir={onCorregir} />
 
         <section aria-labelledby="sec-hist" className="mt-8">
           <div className="section-head">
@@ -565,16 +493,7 @@ export function RoomSheet({
             </p>
           )}
           <ul className="mt-2 space-y-3">
-            {(historial ?? []).map((h, i) => {
-              /*
-               * Las revisiones se abren; el resto, no.
-               *
-               * Detrás de una revisión hay nueve comprobaciones, sus notas y sus
-               * fotos, y esta fila solo enseña el titular. Detrás de un consumo de
-               * cable no hay nada más que lo que ya dice.
-               */
-              const esRevision = h.kind === 'revision_ok' || h.kind === 'revision_ko'
-              return (
+            {(historial ?? []).map((h, i) => (
               <li key={`${h.at}-${i}`} className="flex gap-3">
                 <span
                   aria-hidden
@@ -594,6 +513,15 @@ export function RoomSheet({
                         sin completar
                       </span>
                     )}
+                    {/* Lo que se ve es la versión corregida de aquella visita, no
+                        una visita más. Sin decirlo, quien compara esta lista con
+                        la de revisiones de arriba no entiende por qué la fecha es
+                        vieja y el texto ha cambiado. */}
+                    {h.subkind === 'corregida' && (
+                      <span className="ml-2 rounded-tag bg-accent-tint px-1.5 py-0.5 text-xs text-accent">
+                        corregida
+                      </span>
+                    )}
                   </p>
                   {/* El detalle se pinta. La vista lo traía —la nota de la
                       revisión, la descripción de la incidencia, la resolución— y
@@ -608,27 +536,15 @@ export function RoomSheet({
                   <p className="mt-0.5 font-mono text-xs text-muted">
                     {[fechaCorta(h.at), h.who, h.ref].filter(Boolean).join(' · ')}
                   </p>
-                  {esRevision && (
-                    <button
-                      type="button"
-                      onClick={() => abrirRevision(h.ref_id)}
-                      className="mt-1 min-h-11 text-xs text-accent underline-offset-4 hover:underline"
-                    >
-                      Ver la ficha de esta revisión
-                    </button>
-                  )}
                 </div>
               </li>
-              )
-            })}
+            ))}
             {historial?.length === 0 && (
               <li className="text-sm text-muted">Todavía no hay nada registrado en esta sala.</li>
             )}
           </ul>
         </section>
       </div>
-
-      {ficha}
     </div>
   )
 }

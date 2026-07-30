@@ -1674,3 +1674,357 @@ begin;
     else 'FALLO: las vistas de la ficha se leen sin sesión'
   end as resultado;
 rollback;
+
+\echo ''
+\echo '=== 55. Corregir una revisión no crea una visita nueva ==='
+begin;
+  -- Una sala sin revisiones previas: es la única forma de afirmar algo sobre
+  -- «la última revisión» sin que la conteste el histórico importado.
+  select id as sala from rooms r
+   where r.active and not exists (select 1 from inspections i where i.room_id = r.id)
+   order by r.code limit 1 \gset
+
+  -- La revisión original la firma el SUPERVISOR: corregir lo de un compañero es
+  -- el caso que trae a nadie a esta pantalla, y tiene que funcionar.
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  insert into inspections (id, room_id, by_user, occurred_at, status)
+  values ('cccccccc-cccc-4ccc-8ccc-ccccccccccc1', :'sala',
+          '22222222-2222-4222-8222-222222222222', now() - interval '3 days', 'borrador');
+  insert into inspection_checks (id, inspection_id, check_key, result, severity, note)
+  values (gen_random_uuid(), 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1', 'red', 'incidencia',
+          'alta', 'la red no va');
+  update inspections set status = 'completa', overall = 'con_incidencias',
+         notes = 'lo apunté mal'
+   where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1';
+
+  -- Y la corrige un técnico, conservando la fecha de la visita.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  insert into inspections (id, room_id, by_user, occurred_at, status, corrects, corrected_at)
+  values ('cccccccc-cccc-4ccc-8ccc-ccccccccccc2', :'sala',
+          '11111111-1111-4111-8111-111111111111',
+          (select occurred_at from inspections where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1'),
+          'borrador', 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1', now());
+  insert into inspection_checks (id, inspection_id, check_key, result)
+  values (gen_random_uuid(), 'cccccccc-cccc-4ccc-8ccc-ccccccccccc2', 'red', 'ok');
+  update inspections set status = 'completa', overall = 'ok',
+         notes = 'la red iba bien: me equivoqué de aula'
+   where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc2';
+
+  select case
+    when (select count(*) from room_timeline
+           where room_id = :'sala' and kind in ('revision_ok', 'revision_ko')) = 1
+     and (select count(*) from room_timeline
+           where ref_id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1') = 0
+     and (select subkind from room_timeline
+           where ref_id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc2') = 'corregida'
+    then 'OK: dos filas, una sola visita, y marcada como corregida'
+    else 'FALLO: la corrección se cuenta como una revisión más'
+  end as resultado;
+
+  -- La sala no aparece revisada hoy por haber corregido una revisión de hace
+  -- tres días, y lo que se lee de ella es la versión que vale.
+  select case
+    when (select last_inspection_at from room_overview where room_id = :'sala')
+         = (select occurred_at from inspections where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1')
+     and (select last_inspection_overall from room_overview where room_id = :'sala')::text = 'ok'
+    then 'OK: la fecha es la de la visita y el resultado el de la corrección'
+    else 'FALLO: la corrección ha movido la última revisión de la sala'
+  end as resultado;
+
+  -- Y para la fiabilidad de la sala ha habido UNA revisión, no dos. Es el
+  -- número que decide si el índice significa algo: contando correcciones, un aula
+  -- con una visita corregida tres veces parecería tener cuatro.
+  select case
+    when (select revisiones from room_reliability where room_id = :'sala') = 1
+    then 'OK: la fiabilidad cuenta una visita, no dos filas'
+    else 'FALLO: la corrección cuenta como otra revisión en la fiabilidad'
+  end as resultado;
+
+  -- Y la ficha la lee entera: quién, cómo salió y quién la corrigió. Sale de
+  -- `inspection_overview`, que es la vista única del listado y de la ficha: la
+  -- `inspection_overview` con la que nació esta prueba se fundió con ella en el
+  -- merge, para que no hubiera dos vistas contando los mismos fallos.
+  select case
+    when (select vigente from inspection_overview where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc2')
+     and not (select vigente from inspection_overview where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1')
+     and (select corregida_por from inspection_overview where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1')
+         = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc2'
+     and (select fallos from inspection_overview where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1') = 1
+     and (select fallos from inspection_overview where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc2') = 0
+    then 'OK: las dos versiones se leen, y se sabe cuál manda'
+    else 'FALLO: la ficha no distingue la versión vigente'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 56. La revisión corregida sigue intacta y congelada ==='
+begin;
+  select id as sala from rooms where active limit 1 \gset
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  insert into inspections (id, room_id, by_user, occurred_at, status, notes)
+  values ('cccccccc-cccc-4ccc-8ccc-ccccccccccd1', :'sala',
+          '11111111-1111-4111-8111-111111111111', now() - interval '1 day', 'borrador',
+          'lo que dije aquel día');
+  update inspections set status = 'completa', overall = 'con_incidencias'
+   where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccd1';
+
+  insert into inspections (id, room_id, by_user, occurred_at, status, overall, corrects, corrected_at)
+  values ('cccccccc-cccc-4ccc-8ccc-ccccccccccd2', :'sala',
+          '11111111-1111-4111-8111-111111111111', now() - interval '1 day', 'completa', 'ok',
+          'cccccccc-cccc-4ccc-8ccc-ccccccccccd1', now());
+
+  -- Corregir es añadir, no editar: el texto original se queda donde estaba.
+  select case
+    when (select notes from inspections where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccd1')
+         = 'lo que dije aquel día'
+     and (select overall from inspections
+           where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccd1')::text = 'con_incidencias'
+    then 'OK: la original conserva su texto y su resultado'
+    else 'FALLO: la corrección ha reescrito la revisión anterior'
+  end as resultado;
+
+  -- Y el congelado sigue en pie para todo el mundo: una corrección no es una
+  -- puerta trasera para editar lo que ya se cerró.
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  begin
+    update inspections set notes = 'por la puerta de atrás'
+     where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccd1';
+    raise exception 'FALLO: se editó una revisión completa';
+  exception when check_violation then
+    raise notice 'OK: el congelado sigue parando la edición directa';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 57. Lo que una corrección no puede ser ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active order by code limit 1 \gset
+  select id as otra from rooms where active and id <> :'sala' order by code limit 1 \gset
+
+  insert into inspections (id, room_id, by_user, occurred_at, status, overall)
+  values ('cccccccc-cccc-4ccc-8ccc-cccccccccce1', :'sala',
+          '11111111-1111-4111-8111-111111111111', now(), 'completa', 'ok');
+  insert into inspections (id, room_id, by_user, occurred_at, status)
+  values ('cccccccc-cccc-4ccc-8ccc-cccccccccce2', :'sala',
+          '11111111-1111-4111-8111-111111111111', now(), 'borrador');
+
+  -- De otra sala: metería una revisión ajena en el recuento de la sala.
+  savepoint s1;
+  do $$
+  declare v_otra uuid;
+  begin
+    select id into v_otra from rooms where active and id <> (
+      select room_id from inspections where id = 'cccccccc-cccc-4ccc-8ccc-cccccccccce1'
+    ) order by code limit 1;
+    insert into inspections (id, room_id, by_user, occurred_at, status, corrects, corrected_at)
+    values (gen_random_uuid(), v_otra, '11111111-1111-4111-8111-111111111111', now(),
+            'borrador', 'cccccccc-cccc-4ccc-8ccc-cccccccccce1', now());
+    raise exception 'FALLO: se corrigió la revisión de otra sala';
+  exception when check_violation then
+    raise notice 'OK: una corrección es de la misma sala';
+  end $$;
+  rollback to savepoint s1;
+
+  -- De un borrador: reemplazaría algo que nunca se cerró.
+  savepoint s2;
+  do $$
+  begin
+    insert into inspections (id, room_id, by_user, occurred_at, status, corrects, corrected_at)
+    select gen_random_uuid(), room_id, '11111111-1111-4111-8111-111111111111', now(),
+           'borrador', 'cccccccc-cccc-4ccc-8ccc-cccccccccce2', now()
+      from inspections where id = 'cccccccc-cccc-4ccc-8ccc-cccccccccce2';
+    raise exception 'FALLO: se corrigió un borrador';
+  exception when check_violation then
+    raise notice 'OK: solo se corrige lo que está cerrado';
+  end $$;
+  rollback to savepoint s2;
+
+  -- Sin fecha de corrección: la restricción impide una corrección sin decir cuándo.
+  savepoint s3;
+  do $$
+  begin
+    insert into inspections (id, room_id, by_user, occurred_at, status, corrects)
+    select gen_random_uuid(), room_id, '11111111-1111-4111-8111-111111111111', now(),
+           'borrador', 'cccccccc-cccc-4ccc-8ccc-cccccccccce1'
+      from inspections where id = 'cccccccc-cccc-4ccc-8ccc-cccccccccce1';
+    raise exception 'FALLO: una corrección sin fecha de corrección';
+  exception when check_violation then
+    raise notice 'OK: una corrección dice cuándo se hizo';
+  end $$;
+  rollback to savepoint s3;
+
+  -- Y a qué revisión corrige no se cambia después: es lo que cierra la puerta a
+  -- una cadena que se muerda la cola.
+  savepoint s4;
+  insert into inspections (id, room_id, by_user, occurred_at, status, corrects, corrected_at)
+  select 'cccccccc-cccc-4ccc-8ccc-cccccccccce3', room_id,
+         '11111111-1111-4111-8111-111111111111', now(), 'borrador',
+         'cccccccc-cccc-4ccc-8ccc-cccccccccce1', now()
+    from inspections where id = 'cccccccc-cccc-4ccc-8ccc-cccccccccce1';
+  do $$
+  begin
+    update inspections set corrects = null
+     where id = 'cccccccc-cccc-4ccc-8ccc-cccccccccce3';
+    raise exception 'FALLO: una corrección cambió de objetivo';
+  exception when check_violation then
+    raise notice 'OK: a qué revisión corrige se decide al crearla';
+  end $$;
+  rollback to savepoint s4;
+rollback;
+
+\echo ''
+\echo '=== 58. El detalle de una revisión se lee con el aparato por su nombre ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as equipo, room_id as sala from assets
+   where room_id is not null and status <> 'retirado' and label is not null limit 1 \gset
+
+  -- Las comprobaciones se escriben mientras la revisión es borrador, que es la
+  -- única ventana en que su autor puede tocarlas: después queda congelada.
+  insert into inspections (id, room_id, by_user, occurred_at, status)
+  values ('cccccccc-cccc-4ccc-8ccc-ccccccccccf1', :'sala',
+          '11111111-1111-4111-8111-111111111111', now(), 'borrador');
+  insert into inspection_checks (id, inspection_id, check_key, result, severity, measure, measure_unit)
+  values (gen_random_uuid(), 'cccccccc-cccc-4ccc-8ccc-ccccccccccf1',
+          'asset:' || :'equipo', 'incidencia', 'media', 1900, 'h'),
+         (gen_random_uuid(), 'cccccccc-cccc-4ccc-8ccc-ccccccccccf1', 'red', 'ok', null, 94.3, 'Mbps'),
+         -- Y una clave mal formada, como la que puede traer una importación: no
+         -- puede tumbar la vista entera.
+         (gen_random_uuid(), 'cccccccc-cccc-4ccc-8ccc-ccccccccccf1',
+          'asset:esto-no-es-un-uuid', 'na', null, null, null);
+  update inspections set status = 'completa', overall = 'con_incidencias'
+   where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccf1';
+
+  -- La etiqueta del aparato es lo único que el dispositivo no puede resolver de
+  -- un equipo retirado: tiene que venir de aquí.
+  select case
+    when (select asset_label from inspection_check_detail
+           where inspection_id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccf1'
+             and asset_id = :'equipo')
+         = (select label from assets where id = :'equipo')
+     and (select measure from inspection_check_detail
+           where inspection_id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccf1'
+             and check_key = 'red') = 94.3
+     and (select asset_id from inspection_check_detail
+           where inspection_id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccf1'
+             and check_key = 'red') is null
+    then 'OK: el aparato sale con su nombre y la medida con su unidad'
+    else 'FALLO: el detalle de la revisión no se puede leer'
+  end as resultado;
+
+  select case
+    when (select count(*) from inspection_check_detail
+           where inspection_id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccf1') = 3
+    then 'OK: la fila con la clave rara se lee igual, sin aparato'
+    else 'FALLO: una clave mal formada rompe el detalle'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 59. La revisión hecha sin cobertura llega ENTERA ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active limit 1 \gset
+
+  -- El orden real de la cola de salida (`ORDER`, en outbox.ts): primero la
+  -- revisión, después sus comprobaciones. En un sótano no se subió el borrador,
+  -- así que la fila que llega primero llega ya cerrada.
+  insert into inspections (id, room_id, by_user, occurred_at, status, overall)
+  values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1', :'sala',
+          '11111111-1111-4111-8111-111111111111', now(), 'completa', 'ok');
+
+  insert into inspection_checks (id, inspection_id, check_key, result)
+  values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeec1',
+          'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1', 'red', 'ok');
+
+  select case
+    when (select count(*) from inspection_checks
+           where inspection_id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1') = 1
+    then 'OK: las comprobaciones de una revisión sin cobertura no se pierden'
+    else 'FALLO: la revisión llegó al servidor sin lo que se comprobó'
+  end as resultado;
+
+  -- Y el reenvío idéntico —lo que hace la cola al cerrar, y el reintento cuando
+  -- se pierde una respuesta— no puede volver rojo el indicador de sincronización.
+  do $$
+  begin
+    insert into inspection_checks (id, inspection_id, check_key, result)
+    values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeec1',
+            'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1', 'red', 'ok')
+    on conflict (id) do update set result = excluded.result;
+    raise notice 'OK: el reenvío idéntico pasa sin ruido';
+  exception when others then
+    raise exception 'FALLO: el reenvío de la cola se rechaza (%)', sqlerrm;
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 60. …pero lo comprobado no se puede reescribir ni borrar ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active limit 1 \gset
+
+  insert into inspections (id, room_id, by_user, occurred_at, status, overall)
+  values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2', :'sala',
+          '11111111-1111-4111-8111-111111111111', now(), 'completa', 'con_incidencias');
+  insert into inspection_checks (id, inspection_id, check_key, result, severity)
+  values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeec2',
+          'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2', 'red', 'incidencia', 'alta');
+
+  -- Cambiar el resultado de una revisión cerrada es exactamente lo que corregir
+  -- viene a resolver: se hace añadiendo una versión, no reescribiendo esta.
+  do $$
+  begin
+    update inspection_checks set result = 'ok', severity = null
+     where id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeec2';
+    raise exception 'FALLO: se reescribió una comprobación cerrada';
+  exception when check_violation then
+    raise notice 'OK: lo comprobado no se reescribe';
+  end $$;
+
+  do $$
+  declare n int;
+  begin
+    delete from inspection_checks where id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeec2';
+    get diagnostics n = row_count;
+    if n > 0 then raise exception 'FALLO: se borró una comprobación cerrada'; end if;
+    raise notice 'OK: y tampoco se borra';
+  end $$;
+
+  -- Y el supervisor tampoco, que era la puerta de atrás: la fila de la revisión
+  -- estaba congelada para él y sus comprobaciones no.
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  begin
+    update inspection_checks set note = 'por la puerta de atrás'
+     where id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeec2';
+    raise exception 'FALLO: el supervisor reescribió una comprobación cerrada';
+  exception when check_violation then
+    raise notice 'OK: ni el supervisor: para eso está corregir la revisión';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 61. Las comprobaciones de otro no se tocan ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active limit 1 \gset
+  insert into inspections (id, room_id, by_user, occurred_at, status)
+  values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3', :'sala',
+          '11111111-1111-4111-8111-111111111111', now(), 'borrador');
+
+  -- Otro técnico, con el mismo rol, no escribe en la revisión de un compañero:
+  -- el permiso es del autor, no del oficio.
+  select test_as('33333333-3333-4333-8333-333333333339', 'tecnico');
+  do $$
+  begin
+    insert into inspection_checks (id, inspection_id, check_key, result)
+    values (gen_random_uuid(), 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3', 'red', 'ok');
+    raise exception 'FALLO: un técnico escribió en la revisión de otro';
+  exception when insufficient_privilege then
+    raise notice 'OK: las comprobaciones son de quien firma la revisión';
+  end $$;
+rollback;

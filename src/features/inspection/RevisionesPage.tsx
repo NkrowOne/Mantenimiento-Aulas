@@ -28,6 +28,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { displayRoomCode } from '@/domain/normalize'
+import { fechaCorta } from '@/domain/fechas'
 import { ATAJOS, desdeDe, diaDe, fechaLegible, type Atajo } from '@/domain/historial'
 import { textoDeFallos, tituloDeResultado, type RevisionRow } from '@/domain/revision'
 import { useFichaRevision } from './useFichaRevision'
@@ -35,7 +36,7 @@ import { useFichaRevision } from './useFichaRevision'
 const PAGINA = 40
 
 /**
- * Los cuatro cortes por resultado.
+ * Los cortes por resultado.
  *
  * «Sin cerrar» está en la misma fila y no escondido en los filtros de abajo a
  * propósito: un borrador abandonado es un aula que parece revisada y no lo está,
@@ -46,6 +47,14 @@ const RESULTADOS = [
   { id: 'fallos', label: 'Con incidencias', punto: 'bg-crit' },
   { id: 'limpias', label: 'Sin incidencias', punto: 'bg-ok' },
   { id: 'borradores', label: 'Sin cerrar', punto: 'bg-warn' },
+  /*
+   * Y las que alguien tuvo que corregir.
+   *
+   * No es un cajón de curiosidades: es la lista de dónde se apuntó algo mal, y
+   * leerla de cuando en cuando dice si el formulario tiene una fila confusa o si
+   * a alguien le hace falta una vuelta con el procedimiento.
+   */
+  { id: 'corregidas', label: 'Corregidas', punto: 'bg-accent' },
 ] as const
 
 type Resultado = (typeof RESULTADOS)[number]['id']
@@ -100,6 +109,10 @@ export function RevisionesPage(): React.ReactElement {
       if (resultado === 'borradores') q = q.neq('status', 'completa')
       else if (resultado === 'fallos') q = q.eq('status', 'completa').eq('overall', 'con_incidencias')
       else if (resultado === 'limpias') q = q.eq('status', 'completa').eq('overall', 'ok')
+      // Las dos caras de una corrección: la versión que reemplazó a otra y la que
+      // fue reemplazada. Las dos son «esto se corrigió», y separarlas obligaría a
+      // saber de antemano cuál de las dos se está buscando.
+      else if (resultado === 'corregidas') q = q.or('corrects.not.is.null,vigente.is.false')
 
       if (roomId) q = q.eq('room_id', roomId)
       else if (buildingId) q = q.eq('building_id', buildingId)
@@ -395,6 +408,27 @@ function Fila({
             .filter(Boolean)
             .join(' · ')}
         </span>
+
+        {/*
+          Y si esta versión ya no es la que cuenta, se dice.
+
+          Sin esto, corregir la revisión del martes pone dos filas del martes en
+          esta lista, con resultados distintos y sin pista de cuál vale — que es el
+          problema que corregir viene a resolver, trasladado a la pantalla. La
+          corregida se queda: leer lo que decía antes es la mitad de por qué
+          corregir no pierde nada.
+        */}
+        {!r.vigente && (
+          <span className="mt-1 block text-xs text-warn">
+            Corregida{r.corregida_at ? ` el ${fechaCorta(r.corregida_at)}` : ''}
+            {r.corregida_por_quien ? ` por ${r.corregida_por_quien}` : ''}: manda la corrección
+          </span>
+        )}
+        {r.corrects && (
+          <span className="mt-1 block text-xs text-accent">
+            Es la corrección de esa visita
+          </span>
+        )}
       </span>
 
       {/* El veredicto en una palabra, con el número cuando lo hay: es lo que se
