@@ -74,6 +74,32 @@ P -c 'create table if not exists public.schema_migrations (
         filename   text primary key,
         applied_at timestamptz not null default now())' >/dev/null
 
+# Las que cambiaron de nombre, reconciliadas antes de comparar.
+#
+# El registro va por NOMBRE DE FICHERO, así que renumerar una migración la
+# convierte en una desconocida y este script la reejecutaría. Y no son
+# idempotentes: `retirada_de_equipos` crea políticas, y `create policy` no admite
+# `if not exists`, así que la segunda pasada muere con «already exists» sobre una
+# base que en realidad estaba perfecta.
+#
+# Las dos de aquí se renumeraron porque compartían marca de tiempo con otra —dos
+# ficheros con el mismo prefijo dejan su orden relativo en manos del alfabeto, y
+# el alfabeto puso «etiqueta» antes que «incidencias» cuando se escribieron al
+# revés—. Esto solo mueve la anotación: no aplica nada y no toca el esquema.
+#
+# `where not exists` para que una base que ya tenga anotado el nombre nuevo no
+# choque contra la clave primaria.
+while IFS='|' read -r viejo nuevo; do
+  [ -n "$viejo" ] || continue
+  P -c "update public.schema_migrations set filename = '$nuevo'
+         where filename = '$viejo'
+           and not exists (select 1 from public.schema_migrations m
+                            where m.filename = '$nuevo')" >/dev/null
+done <<'RENOMBRADAS'
+20260730000200_retirada_de_equipos.sql|20260730000400_retirada_de_equipos.sql
+20260730000300_etiqueta_sin_choque.sql|20260730000500_etiqueta_sin_choque.sql
+RENOMBRADAS
+
 nuevas=0
 for f in supabase/migrations/*.sql; do
   b="$(basename "$f")"

@@ -272,8 +272,15 @@ npm run db:verify -- --gestionado    # sobre un Postgres desnudo, sin imagen de 
 Levanta un Postgres desechable, emula lo mínimo de Supabase, aplica las
 migraciones, carga los datos reales y ejecuta las pruebas de RLS.
 
+> **Al añadir una migración, que su marca de tiempo no la lleve nadie más.** Los
+> tres caminos de despliegue recorren `supabase/migrations/*.sql` en orden
+> alfabético, que es el cronológico *porque* el nombre empieza por la fecha. Con
+> el prefijo repetido el desempate lo hace el resto del nombre, y eso no sabe
+> nada de cuándo se escribió cada una. `npm run check:migraciones` lo comprueba y
+> va dentro de `verify:all`.
+
 ```bash
-npm test          # 148 pruebas de lógica de dominio y de la pantalla de informes
+npm test          # 173 pruebas de lógica de dominio y de la pantalla de informes
 npm run typecheck
 npm run build
 ```
