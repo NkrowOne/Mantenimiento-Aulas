@@ -28,18 +28,20 @@ interface Pendiente {
   id: string
   label: string | null
   room_id: string | null
-  asset_type_id: string
+  /** La identidad ya resuelta por el servidor: «Ordenador Lenovo U3302». */
+  identidad: string
+  type_name: string
+  brand: string | null
+  model_name: string | null
+  model_libre: string | null
   serial: string | null
-  model: string | null
+  installed_at: string | null
   created_at: string | null
   created_by: string | null
-}
-
-interface Sala {
-  room_id: string
-  room_code: string
-  room_name: string
-  building_code: string
+  created_by_name: string | null
+  room_code: string | null
+  room_name: string | null
+  building_code: string | null
 }
 
 const LIMITE = 300
@@ -48,12 +50,23 @@ export function EquiposPendientes(): React.ReactElement {
   const qc = useQueryClient()
   const [nota, setNota] = useState<string | null>(null)
 
-  const { data, isPending, isError, error, refetch } = useQuery({
+  /*
+   * Una sola consulta contra `asset_overview`.
+   *
+   * Antes eran cuatro —los equipos, y luego las salas, el catálogo entero y los
+   * perfiles para poder escribir sus nombres— y el catálogo se bajaba completo
+   * para resolver ocho tipos. La vista ya trae la sala, el tipo, la marca, el
+   * modelo y el autor resueltos, y de paso sigue las fusiones: un equipo cuyo
+   * tipo se agrupó ayer sale con el nombre bueno y no con la lápida.
+   */
+  const { data: pendientes, isPending, isError, error, refetch } = useQuery({
     queryKey: ['assets', 'pendientes'],
-    queryFn: async () => {
+    queryFn: async (): Promise<Pendiente[]> => {
       const { data: equipos, error: err } = await supabase
-        .from('assets')
-        .select('id, label, room_id, asset_type_id, serial, model, created_at, created_by')
+        .from('asset_overview')
+        .select(
+          'id, label, room_id, identidad, type_name, brand, model_name, model_libre, serial, installed_at, created_at, created_by, created_by_name, room_code, room_name, building_code',
+        )
         .eq('confirmed', false)
         .neq('status', 'retirado')
         // Los más recientes arriba: son los de la ronda que se acaba de hacer,
@@ -61,44 +74,7 @@ export function EquiposPendientes(): React.ReactElement {
         .order('created_at', { ascending: false })
         .limit(LIMITE)
       if (err) throw err
-
-      const pendientes = (equipos ?? []) as Pendiente[]
-      if (pendientes.length === 0) {
-        return { pendientes, salas: new Map<string, Sala>(), tipos: new Map<string, string>(), quien: new Map<string, string>() }
-      }
-
-      // Los tres contextos que hacen falta para decidir, y ninguno más: dónde
-      // está, qué es y quién lo apuntó. Se piden solo para lo que hay en la
-      // bandeja en vez de bajarse las 276 salas y el catálogo entero.
-      const roomIds = [...new Set(pendientes.map((p) => p.room_id).filter(Boolean))] as string[]
-      const userIds = [...new Set(pendientes.map((p) => p.created_by).filter(Boolean))] as string[]
-
-      const [salasRes, tiposRes, perfilesRes] = await Promise.all([
-        roomIds.length
-          ? supabase
-              .from('room_overview')
-              .select('room_id, room_code, room_name, building_code')
-              .in('room_id', roomIds)
-          : Promise.resolve({ data: [] }),
-        supabase.from('asset_types').select('id, name'),
-        userIds.length
-          ? supabase.from('profiles').select('id, full_name').in('id', userIds)
-          : Promise.resolve({ data: [] }),
-      ])
-
-      return {
-        pendientes,
-        salas: new Map(((salasRes.data ?? []) as Sala[]).map((s) => [s.room_id, s])),
-        tipos: new Map(
-          ((tiposRes.data ?? []) as Array<{ id: string; name: string }>).map((t) => [t.id, t.name]),
-        ),
-        quien: new Map(
-          ((perfilesRes.data ?? []) as Array<{ id: string; full_name: string }>).map((p) => [
-            p.id,
-            p.full_name,
-          ]),
-        ),
-      }
+      return (equipos ?? []) as Pendiente[]
     },
   })
 
@@ -127,13 +103,13 @@ export function EquiposPendientes(): React.ReactElement {
     },
   })
 
-  const pendientes = data?.pendientes ?? []
+  const lista = pendientes ?? []
 
   // Agrupados por sala. Sueltos, la lista son cuarenta líneas sin más orden que
   // la fecha; por sala se lee como lo que es —«en el 2.4 apuntaron tres cosas»—
   // y se decide de una vez en lugar de una por una.
   const porSala = new Map<string, Pendiente[]>()
-  for (const p of pendientes) {
+  for (const p of lista) {
     const clave = p.room_id ?? 'sin-sala'
     porSala.set(clave, [...(porSala.get(clave) ?? []), p])
   }
@@ -166,26 +142,26 @@ export function EquiposPendientes(): React.ReactElement {
         </div>
       )}
 
-      {data && pendientes.length === 0 && (
+      {pendientes && lista.length === 0 && (
         <p className="mt-3 text-sm text-muted">Nada pendiente de validar.</p>
       )}
 
-      {data && pendientes.length > 0 && (
+      {pendientes && lista.length > 0 && (
         <>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               type="button"
               disabled={act.isPending}
               onClick={() => {
-                if (confirm(`¿Validar los ${pendientes.length} equipos de la lista?`)) {
-                  act.mutate({ kind: 'confirmar', ids: pendientes.map((p) => p.id) })
+                if (confirm(`¿Validar los ${lista.length} equipos de la lista?`)) {
+                  act.mutate({ kind: 'confirmar', ids: lista.map((p) => p.id) })
                 }
               }}
               className="key key-accent min-h-11 px-3 text-sm"
             >
-              Validar los {pendientes.length}
+              Validar los {lista.length}
             </button>
-            {pendientes.length === LIMITE && (
+            {lista.length === LIMITE && (
               <span className="text-xs text-muted">
                 Se muestran los {LIMITE} más recientes. Valida estos y vuelve a entrar.
               </span>
@@ -194,16 +170,16 @@ export function EquiposPendientes(): React.ReactElement {
 
           <ul className="mt-3 space-y-3">
             {[...porSala].map(([roomId, equipos]) => {
-              const sala = data.salas.get(roomId)
+              const sala = equipos[0]
 
               return (
                 <li key={roomId} className="card p-4">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <span className="font-medium">
-                      {sala
+                      {sala?.room_code
                         ? `${sala.building_code} · ${sala.room_code}`
                         : 'Equipos sin sala asignada'}
-                      {sala && sala.room_name !== sala.room_code && (
+                      {sala?.room_name && sala.room_name !== sala.room_code && (
                         <span className="ml-2 text-sm font-normal text-muted">{sala.room_name}</span>
                       )}
                     </span>
@@ -221,21 +197,35 @@ export function EquiposPendientes(): React.ReactElement {
 
                   <ul className="mt-2 divide-y divide-line-soft">
                     {equipos.map((e) => {
-                      const detalle = [e.model, e.serial].filter(Boolean).join(' · ')
-                      const autor = e.created_by ? data.quien.get(e.created_by) : null
+                      /* Marca y modelo del catálogo; si todavía no tiene, el
+                         texto libre que se escribió, que es la pista de qué hay
+                         que asignarle. */
+                      const modelo =
+                        [e.brand, e.model_name].filter(Boolean).join(' ') ||
+                        e.model_libre?.trim() ||
+                        ''
 
                       return (
                         <li key={e.id} className="flex items-center gap-2 py-2">
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-sm font-medium">
-                              {e.label ?? data.tipos.get(e.asset_type_id) ?? 'Equipo'}
+                              {e.label ?? e.type_name}
                             </span>
+                            {/* Tipo, marca, modelo y serie: es lo que hace que
+                                validar sea una decisión y no un acto de fe. Antes
+                                ponía el tipo y un modelo de texto libre que en la
+                                mitad de los casos estaba vacío. */}
                             <span className="block truncate text-xs text-muted">
                               {[
-                                data.tipos.get(e.asset_type_id),
-                                detalle || 'sin modelo ni serie',
-                                autor,
-                                e.created_at ? new Date(e.created_at).toLocaleDateString('es-ES') : null,
+                                e.type_name,
+                                modelo || 'sin modelo',
+                                e.serial ? `S/N ${e.serial}` : null,
+                                e.created_by_name,
+                                e.installed_at
+                                  ? `instalado el ${new Date(e.installed_at).toLocaleDateString('es-ES')}`
+                                  : e.created_at
+                                    ? new Date(e.created_at).toLocaleDateString('es-ES')
+                                    : null,
                               ]
                                 .filter(Boolean)
                                 .join(' · ')}

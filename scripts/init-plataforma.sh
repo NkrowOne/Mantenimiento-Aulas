@@ -140,6 +140,7 @@ if [ "$CON_SEED" = 1 ]; then
     # Las migraciones corrieron antes que el seed, así que cuando el relleno de
     # inventario se ejecutó no había ni una sala. Se repite ahora que sí las hay.
     P -c 'select public.backfill_room_assets()' >/dev/null
+    P -c 'select public.backfill_asset_models()' >/dev/null
     ok 'inventario de las salas materializado'
   fi
 fi

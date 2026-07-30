@@ -89,6 +89,7 @@ if [[ "${1:-}" == '--con-seed' ]]; then
     # Las migraciones corrieron antes que el seed, así que cuando el relleno de
     # inventario se ejecutó no había ni una sala. Se repite ahora que sí las hay.
     docker compose exec -T db psql -U postgres -d postgres -q -c 'select public.backfill_room_assets()' >/dev/null
+    docker compose exec -T db psql -U postgres -d postgres -q -c 'select public.backfill_asset_models()' >/dev/null
     ok 'inventario de las salas materializado'
   fi
 fi

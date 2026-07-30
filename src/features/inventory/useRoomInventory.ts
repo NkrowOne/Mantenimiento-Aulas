@@ -10,8 +10,8 @@ import { useCallback } from 'react'
 import { v7 as uuidv7 } from 'uuid'
 import { db, enqueue } from '@/db/dexie'
 import { flush } from '@/sync/outbox'
-import { assetTypeId, nextLabel } from '@/domain/inventory'
-import type { Asset, AssetStatus, AssetType } from '@/domain/types'
+import { assetModelId, assetTypeId, nextLabel } from '@/domain/inventory'
+import type { Asset, AssetModel, AssetStatus, AssetType } from '@/domain/types'
 
 export interface AddResult {
   ok: boolean
@@ -38,16 +38,157 @@ export type Origen =
   | { tipo: 'almacen'; stockItemId: string; unidades: number }
   | { tipo: 'traslado'; assetId: string; desdeRoomId: string }
 
+/**
+ * El modelo que se le pone al equipo: uno del catálogo, o uno nuevo.
+ *
+ * El segundo caso existe por lo mismo que existe crear tipos desde el aula: el
+ * técnico está delante de un proyector cuyo modelo no está en la lista, y si
+ * para apuntarlo tiene que esperar a que alguien lo dé de alta, no lo apunta.
+ */
+export type ModeloElegido = { id: string } | { brand: string; model: string }
+
+/** Todo lo que se decide al añadir un equipo, en un solo objeto. */
+export interface AltaDeEquipo {
+  origen: Origen
+  /** null = no consta el modelo. Es una respuesta legítima y frecuente. */
+  modelo: ModeloElegido | null
+  /**
+   * Desde cuándo está puesto.
+   *
+   * Por defecto, ahora. Se puede cambiar porque durante un levantamiento la
+   * respuesta correcta casi nunca es hoy: el aparato lleva años ahí y quien está
+   * delante lo sabe. Fecharlo hoy convertiría el inventario en una foto de
+   * cuándo se apuntó, que no es la pregunta que nadie hace.
+   */
+  instaladoEl: string
+  /** Solo tiene sentido cuando se añade UNA unidad. */
+  serial?: string | null
+}
+
+/**
+ * Deja el modelo en el espejo local y lo encola si es nuevo. Devuelve su id.
+ *
+ * El id sale de (tipo, marca, modelo), así que dos técnicos sin cobertura que
+ * registren el mismo «Epson EB-992F» generan la misma fila y al sincronizar
+ * convergen. Es la misma defensa que ya tenían los tipos, y la razón por la que
+ * el catálogo no se llena de duplicados por diseño.
+ */
+export async function asegurarModelo(
+  typeId: string,
+  brand: string,
+  model: string,
+  userId: string | null,
+): Promise<string | null> {
+  const marca = brand.trim()
+  const nombre = model.trim()
+  if (!nombre) return null
+
+  const id = assetModelId(typeId, marca, nombre)
+  const existente = await db.assetModels.get(id)
+  if (existente) return id
+
+  const nuevo: AssetModel = {
+    id,
+    asset_type_id: typeId,
+    brand: marca,
+    model: nombre,
+    aliases: [],
+    specs: {},
+    notes: null,
+    eol_on: null,
+    // Lo apunta quien está en el aula, así que nace sin validar y sale marcado
+    // hasta que un coordinador lo mire. Se usa igual mientras tanto.
+    confirmed: false,
+    active: true,
+    merged_into: null,
+    created_at: new Date().toISOString(),
+  }
+
+  await db.assetModels.put(nuevo)
+  // `confirmed` y `active` no se envían: en el servidor los defectos ya son los
+  // correctos, y omitirlos garantiza que un alta reenviada no pueda devolver a
+  // naranja un modelo que el coordinador ya validó.
+  await enqueue('asset_model', id, {
+    id,
+    asset_type_id: typeId,
+    brand: marca,
+    model: nombre,
+    created_by: userId,
+  })
+  return id
+}
+
+/**
+ * Guarda un cambio del elemento en local y lo encola.
+ *
+ * Relee el elemento de Dexie en vez de fiarse del objeto que le pasan. Ese
+ * objeto viene capturado del render, y bastaba con escribir el modelo y pulsar
+ * «Averiado» seguido para que la segunda escritura, con el elemento de antes
+ * en la mano, mandara `model: null` y borrara lo recién escrito. El técnico lo
+ * veía en pantalla —el campo conservaba el texto— y el dato ya no estaba.
+ *
+ * Está fuera del hook y no dentro porque la gestión desde el ordenador escribe
+ * exactamente igual —en local y por la cola— y no tiene ninguna sala. Duplicar
+ * la lista de columnas del envío en dos sitios es la forma más segura de que
+ * una de las dos se quede sin un campo y el dato se pierda en silencio.
+ */
+export async function guardarAsset(asset: Asset, patch: Partial<Asset>): Promise<void> {
+  const actual = (await db.assets.get(asset.id)) ?? asset
+  const next = { ...actual, ...patch }
+  await db.assets.put(next)
+  await enqueue('asset', next.id, {
+    id: next.id,
+    asset_type_id: next.asset_type_id,
+    room_id: next.room_id,
+    label: next.label,
+    serial: next.serial,
+    model: next.model,
+    asset_model_id: next.asset_model_id,
+    installed_at: next.installed_at,
+    warranty_until: next.warranty_until,
+    specs: next.specs,
+    notes: next.notes,
+    status: next.status,
+  })
+  void flush()
+}
+
+/**
+ * Le pone modelo a un equipo, creándolo si hace falta.
+ *
+ * Funciona sin cobertura, que es lo que la separa de la RPC `set_asset_model`
+ * del servidor: aquí se escribe en el espejo y se encola, así que asignar el
+ * modelo de veinte ordenadores en un aula sin línea es una operación normal.
+ */
+export async function asignarModelo(
+  asset: Asset,
+  modelo: ModeloElegido | null,
+  userId: string | null,
+): Promise<void> {
+  const id =
+    modelo === null
+      ? null
+      : 'id' in modelo
+        ? modelo.id
+        : await asegurarModelo(asset.asset_type_id, modelo.brand, modelo.model, userId)
+  await guardarAsset(asset, { asset_model_id: id })
+}
+
 export function useRoomInventory(roomId: string | null, userId: string | null) {
   /**
    * Da de alta un elemento.
    *
    * Si el tipo no está en el catálogo se crea sobre la marcha, sin confirmar. El
    * id sale del nombre normalizado, así que dos técnicos que registren lo mismo
-   * sin cobertura acaban en la misma fila en vez de duplicarla.
+   * sin cobertura acaban en la misma fila en vez de duplicarla. Con el modelo
+   * pasa exactamente igual.
    */
   const addAsset = useCallback(
-    async (typeName: string, existing: AssetType | null): Promise<AddResult> => {
+    async (
+      typeName: string,
+      existing: AssetType | null,
+      alta?: Pick<AltaDeEquipo, 'modelo' | 'instaladoEl' | 'serial'>,
+    ): Promise<AddResult> => {
       if (!roomId) return { ok: false, error: 'Sin sala.' }
 
       const name = typeName.trim()
@@ -70,6 +211,8 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
             confirmed: false,
             aliases: [],
             merged_into: null,
+            active: true,
+            spec_fields: [],
           }
           await db.assetTypes.put(type)
           // `confirmed` no se envía: en el servidor el defecto ya es "sin
@@ -85,16 +228,30 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
         }
       }
 
+      const modelo = alta?.modelo ?? null
+      const modelId =
+        modelo === null
+          ? null
+          : 'id' in modelo
+            ? modelo.id
+            : await asegurarModelo(type.id, modelo.brand, modelo.model, userId)
+
       const inRoom = await db.assets.where('room_id').equals(roomId).toArray()
       const label = nextLabel(inRoom, type.name)
+      const instaladoEl = alta?.instaladoEl ?? new Date().toISOString()
 
       const asset: Asset = {
         id: uuidv7(),
         asset_type_id: type.id,
         room_id: roomId,
         label,
-        serial: null,
+        serial: alta?.serial?.trim() || null,
         model: null,
+        asset_model_id: modelId,
+        installed_at: instaladoEl,
+        warranty_until: null,
+        specs: {},
+        notes: null,
         status: 'instalado',
         created_at: new Date().toISOString(),
         // Lo apunta quien está en el aula, así que nace sin validar. Igual que
@@ -110,6 +267,11 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
         asset_type_id: asset.asset_type_id,
         room_id: asset.room_id,
         label: asset.label,
+        serial: asset.serial,
+        asset_model_id: asset.asset_model_id,
+        // Va explícita y no se deja al disparador: el reloj bueno es el de este
+        // aparato, y una subida que llega mañana no puede fecharse mañana.
+        installed_at: asset.installed_at,
         status: asset.status,
         created_by: userId,
       })
@@ -136,18 +298,26 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
    * perder.
    */
   const addAssetConOrigen = useCallback(
-    async (typeName: string, existing: AssetType | null, origen: Origen): Promise<AddResult> => {
+    async (typeName: string, existing: AssetType | null, alta: AltaDeEquipo): Promise<AddResult> => {
+      const { origen } = alta
+
       if (origen.tipo === 'traslado') {
-        return trasladarAsset(origen.assetId, roomId, userId)
+        return trasladarAsset(origen.assetId, roomId, userId, alta)
       }
 
       const unidades = origen.tipo === 'almacen' ? Math.max(1, origen.unidades) : 1
 
       // Varias unidades son varios equipos: dos altavoces en un aula son dos
-      // filas con dos etiquetas, porque uno se puede averiar sin el otro.
+      // filas con dos etiquetas, porque uno se puede averiar sin el otro. El
+      // número de serie solo viaja con la primera: dos aparatos no lo comparten,
+      // y el índice único de la base lo rechazaría con razón.
       let ultimo: AddResult = { ok: false, error: 'No se pudo añadir.' }
       for (let i = 0; i < unidades; i++) {
-        ultimo = await addAsset(typeName, existing)
+        ultimo = await addAsset(typeName, existing, {
+          modelo: alta.modelo,
+          instaladoEl: alta.instaladoEl,
+          serial: i === 0 ? alta.serial : null,
+        })
         if (!ultimo.ok) return ultimo
       }
 
@@ -170,30 +340,17 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
     [addAsset, roomId, userId],
   )
 
-  /**
-   * Guarda un cambio del elemento en local y lo encola.
-   *
-   * Relee el elemento de Dexie en vez de fiarse del objeto que le pasan. Ese
-   * objeto viene capturado del render, y bastaba con escribir el modelo y pulsar
-   * «Averiado» seguido para que la segunda escritura, con el elemento de antes
-   * en la mano, mandara `model: null` y borrara lo recién escrito. El técnico lo
-   * veía en pantalla —el campo conservaba el texto— y el dato ya no estaba.
-   */
-  const patchAsset = useCallback(async (asset: Asset, patch: Partial<Asset>): Promise<void> => {
-    const actual = (await db.assets.get(asset.id)) ?? asset
-    const next = { ...actual, ...patch }
-    await db.assets.put(next)
-    await enqueue('asset', next.id, {
-      id: next.id,
-      asset_type_id: next.asset_type_id,
-      room_id: next.room_id,
-      label: next.label,
-      serial: next.serial,
-      model: next.model,
-      status: next.status,
-    })
-    void flush()
-  }, [])
+  const patchAsset = useCallback(
+    (asset: Asset, patch: Partial<Asset>): Promise<void> => guardarAsset(asset, patch),
+    [],
+  )
+
+  /** Elegir o crear el modelo de un equipo que ya está dado de alta. */
+  const setModelo = useCallback(
+    (asset: Asset, modelo: ModeloElegido | null): Promise<void> =>
+      asignarModelo(asset, modelo, userId),
+    [userId],
+  )
 
   const setStatus = useCallback(
     async (asset: Asset, status: AssetStatus): Promise<void> => {
@@ -244,7 +401,7 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
     [roomId, userId],
   )
 
-  return { addAsset, addAssetConOrigen, confirmarInventario, patchAsset, setStatus }
+  return { addAsset, addAssetConOrigen, confirmarInventario, patchAsset, setModelo, setStatus }
 }
 
 /**
@@ -258,11 +415,16 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
  * La etiqueta se recalcula en el destino: llegar como «Pantalla 2» a una sala
  * donde ya hay una «Pantalla 2» chocaría contra el índice único de la base, y
  * el traslado se quedaría rechazado en la cola sin que nadie entendiera por qué.
+ *
+ * Y la fecha de instalación se renueva: el proyector lleva en ESTA aula desde
+ * hoy, aunque llevara seis años en la de al lado. La instalación anterior no se
+ * pierde — está en el histórico, que es su sitio.
  */
 async function trasladarAsset(
   assetId: string,
   destinoRoomId: string | null,
   userId: string | null,
+  alta?: Pick<AltaDeEquipo, 'instaladoEl'>,
 ): Promise<AddResult> {
   if (!destinoRoomId) return { ok: false, error: 'Sin sala.' }
 
@@ -274,8 +436,14 @@ async function trasladarAsset(
   const type = await db.assetTypes.get(asset.asset_type_id)
   const enDestino = await db.assets.where('room_id').equals(destinoRoomId).toArray()
   const label = nextLabel(enDestino, type?.name ?? asset.label ?? 'Equipo')
+  const cuando = alta?.instaladoEl ?? new Date().toISOString()
 
-  const movido: Asset = { ...asset, room_id: destinoRoomId, label }
+  const movido: Asset = {
+    ...asset,
+    room_id: destinoRoomId,
+    label,
+    installed_at: cuando,
+  }
   await db.assets.put(movido)
   await enqueue('asset', movido.id, {
     id: movido.id,
@@ -284,6 +452,8 @@ async function trasladarAsset(
     label: movido.label,
     serial: movido.serial,
     model: movido.model,
+    asset_model_id: movido.asset_model_id,
+    installed_at: movido.installed_at,
     status: movido.status,
   })
 
@@ -296,7 +466,7 @@ async function trasladarAsset(
     asset_id: movido.id,
     room_id: destinoRoomId,
     kind: 'traslado',
-    occurred_at: new Date().toISOString(),
+    occurred_at: cuando,
     by_user: userId,
     meta: { desde_room_id: origen, nota: 'Trasladado desde otra sala' },
   })

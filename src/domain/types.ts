@@ -195,6 +195,64 @@ export interface AssetType {
   aliases: string[]
   /** Lápida de una fusión: este tipo se absorbió en otro. */
   merged_into: string | null
+  /** Un tipo retirado deja de ofrecerse. No se borra: hay historial que lo nombra. */
+  active: boolean
+  /** Los campos propios de este tipo. Ver `SpecField`. */
+  spec_fields: SpecField[]
+}
+
+/**
+ * Un campo que este tipo de equipo quiere guardar y que el código no conoce.
+ *
+ * Es la pieza que hace el inventario personalizable sin desplegar: quien
+ * coordina decide que los proyectores llevan «Lúmenes» y los ordenadores
+ * «Procesador», y la interfaz los pinta sola.
+ *
+ * `en` dice dónde vive el dato, y la distinción no es un capricho:
+ *  - `modelo` — es del modelo y vale para todas sus unidades: la resolución de
+ *    un EB-992F es la misma en las cuarenta aulas. Se escribe una vez.
+ *  - `equipo` — es de la unidad concreta: el sistema operativo de ESE ordenador.
+ *  - `ambos`  — el modelo pone el valor de fábrica y una unidad puede
+ *    contradecirlo. Es el caso de la RAM: el modelo trae 8 GB y a tres de ellos
+ *    alguien les puso 16.
+ */
+export interface SpecField {
+  clave: string
+  etiqueta: string
+  tipo: 'texto' | 'numero' | 'fecha' | 'si_no'
+  unidad?: string
+  en?: 'modelo' | 'equipo' | 'ambos'
+}
+
+export type SpecValues = Record<string, string | number | boolean | null>
+
+/**
+ * Marca y modelo concretos de un tipo: «Ordenador» → «Lenovo U3302».
+ *
+ * El nivel que faltaba. Sin él, el aula 2.4 y la 3.1 tienen las dos «un
+ * ordenador» y la pregunta que se hace todos los días —¿cuántos ASPEN 223
+ * quedan?, ¿es el U3302 el que da guerra?— no se puede contestar.
+ *
+ * Mismas defensas que el catálogo de tipos, y por lo mismo: id derivado del
+ * nombre para que dos altas sin cobertura converjan, alias para que la palabra
+ * que uno teclea encuentre algo, y lápida de fusión para los duplicados de
+ * vocabulario que el índice único no ve.
+ */
+export interface AssetModel {
+  id: string
+  asset_type_id: string
+  /** Vacía, no nula: hay aparatos sin marca legible y la interfaz dice «Sin marca». */
+  brand: string
+  model: string
+  aliases: string[]
+  specs: SpecValues
+  notes: string | null
+  /** Fin de soporte del fabricante. Lo que convierte el inventario en planificación. */
+  eol_on: string | null
+  confirmed: boolean
+  active: boolean
+  merged_into: string | null
+  created_at: string | null
 }
 
 export type AssetStatus = 'instalado' | 'retirado' | 'averiado'
@@ -207,7 +265,31 @@ export interface Asset {
   /** Cómo se llama en ESTA sala: «Pantalla 2», o «Pantalla atril» si se corrige. */
   label: string | null
   serial: string | null
+  /**
+   * El modelo escrito a mano, de cuando no había catálogo.
+   *
+   * No se borra al asignar `asset_model_id`, y no es dejadez: es lo que alguien
+   * leyó en la pegatina del aparato. Si la asignación al catálogo fue un error,
+   * el texto original sigue ahí para corregirla; sin él, el error sería
+   * irreversible y silencioso.
+   */
   model: string | null
+  /** El modelo del catálogo. Nulo mientras nadie se lo haya asignado. */
+  asset_model_id: string | null
+  /**
+   * Desde cuándo está puesto en esta sala.
+   *
+   * La escribe el dispositivo con su reloj —igual que `occurred_at` en todo lo
+   * demás— para que un alta hecha sin cobertura lleve la hora del aula y no la
+   * de llegada al servidor. Nula en los equipos que cargó la importación: todos
+   * comparten la fecha del despliegue y ponerla sería inventarse un dato.
+   */
+  installed_at: string | null
+  /** Hasta cuándo cubre la garantía. Nulo = no consta, que no es «caducada». */
+  warranty_until: string | null
+  /** Los campos propios del tipo, para esta unidad concreta. */
+  specs: SpecValues
+  notes: string | null
   status: AssetStatus
   created_at: string | null
   /**

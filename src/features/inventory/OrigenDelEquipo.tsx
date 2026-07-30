@@ -2,8 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { displayRoomCode } from '@/domain/normalize'
-import type { AssetType } from '@/domain/types'
-import type { Origen } from './useRoomInventory'
+import { diaEnMadrid } from '@/domain/fechas'
+import { identifyAsset } from '@/domain/inventory'
+import type { AssetModel, AssetType } from '@/domain/types'
+import { SelectorDeModelo } from './SelectorDeModelo'
+import type { AltaDeEquipo, ModeloElegido, Origen } from './useRoomInventory'
 
 /**
  * ¿De dónde sale este equipo?
@@ -44,7 +47,7 @@ export function OrigenDelEquipo({
    */
   inventariando: boolean
   onCancelar: () => void
-  onConfirmar: (origen: Origen) => void
+  onConfirmar: (alta: AltaDeEquipo) => void
 }): React.ReactElement {
   // --- Almacén ---------------------------------------------------------------
   const articulos = useLiveQuery(
@@ -88,15 +91,23 @@ export function OrigenDelEquipo({
     async () => {
       if (!origenRoomId) return []
       const enSala = await db.assets.where('room_id').equals(origenRoomId).toArray()
-      const tipos = new Map((await db.assetTypes.toArray()).map((t) => [t.id, t.name]))
+      const tipos = new Map((await db.assetTypes.toArray()).map((t) => [t.id, t]))
+      const modelos = new Map<string, AssetModel>(
+        (await db.assetModels.toArray()).map((m) => [m.id, m]),
+      )
       return enSala
         .filter((a) => a.status !== 'retirado')
-        .map((a) => ({
-          id: a.id,
-          label: a.label ?? tipos.get(a.asset_type_id) ?? 'Equipo',
-          esDelTipo: a.asset_type_id === type?.id,
-          detalle: [a.model, a.serial].filter(Boolean).join(' · '),
-        }))
+        .map((a) => {
+          const id = identifyAsset(a, tipos, modelos)
+          return {
+            id: a.id,
+            label: id.etiqueta,
+            esDelTipo: a.asset_type_id === type?.id,
+            // Marca, modelo y serie: es lo que distingue un ordenador de otro en
+            // una lista donde todos se llaman «Ordenador».
+            detalle: id.ficha,
+          }
+        })
         // Los del tipo que se está añadiendo, primero: es lo que casi siempre
         // se busca, y en una sala con ocho equipos ahorra leerlos todos.
         .sort((a, b) => Number(b.esDelTipo) - Number(a.esDelTipo) || a.label.localeCompare(b.label, 'es'))
@@ -129,6 +140,19 @@ export function OrigenDelEquipo({
   const elegido = articulos.find((a) => a.id === stockItemId) ?? null
   const disponibles = elegido?.onHand ?? null
 
+  // --- Identidad del aparato -------------------------------------------------
+  const [modelo, setModelo] = useState<ModeloElegido | null>(null)
+  const [serial, setSerial] = useState('')
+  /*
+   * Desde cuándo está puesto.
+   *
+   * Hoy por defecto, que es lo correcto al instalar algo. Durante un
+   * levantamiento casi nunca lo es —el aparato lleva años ahí— y por eso el
+   * campo está a la vista en vez de escondido: preguntar es barato, corregir 276
+   * fechas después no lo es.
+   */
+  const [instaladoEl, setInstaladoEl] = useState(() => diaEnMadrid())
+
   const listo = useMemo(() => {
     if (modo === 'almacen') return Boolean(stockItemId) && unidades >= 1
     if (modo === 'traslado') return Boolean(assetId)
@@ -136,10 +160,29 @@ export function OrigenDelEquipo({
   }, [modo, stockItemId, unidades, assetId])
 
   function confirmar(): void {
-    if (modo === 'almacen') onConfirmar({ tipo: 'almacen', stockItemId, unidades })
-    else if (modo === 'traslado') onConfirmar({ tipo: 'traslado', assetId, desdeRoomId: origenRoomId })
-    else onConfirmar({ tipo: 'sin_origen' })
+    const origen: Origen =
+      modo === 'almacen'
+        ? { tipo: 'almacen', stockItemId, unidades }
+        : modo === 'traslado'
+          ? { tipo: 'traslado', assetId, desdeRoomId: origenRoomId }
+          : { tipo: 'sin_origen' }
+
+    onConfirmar({
+      origen,
+      modelo,
+      // Mediodía y no medianoche: con un campo de fecha sin hora, la medianoche
+      // en UTC cae en el día anterior para media Europa y la fecha se ve movida
+      // un día en la ficha del equipo.
+      instaladoEl: new Date(`${instaladoEl}T12:00:00`).toISOString(),
+      serial: serial.trim() || null,
+    })
   }
+
+  /* En un traslado no se pregunta ni marca ni serie: el aparato ya existe y las
+     trae consigo. Cambiárselas aquí sería reescribir el inventario de la sala de
+     origen desde la de destino, que es justo lo que un traslado no es. */
+  const pideIdentidad = modo !== 'traslado'
+  const unaSola = modo !== 'almacen' || unidades === 1
 
   const MODOS: Array<{ id: Modo; label: string; disponible: boolean }> = [
     { id: 'almacen', label: 'Del almacén', disponible: articulos.length > 0 },
@@ -319,6 +362,89 @@ export function OrigenDelEquipo({
             ? 'Esta sala está sin inventariar, así que viene elegido lo más probable: el aparato ya estaba y solo faltaba apuntarlo. Si lo acabas de traer, dilo arriba.'
             : 'Se apunta el equipo sin tocar el almacén. Es lo que toca cuando el aparato ya estaba en la sala y solo faltaba registrarlo.'}
         </p>
+      )}
+
+      {/*
+        Marca, modelo, serie y fecha, en el mismo paso y no dos pantallas más
+        adentro.
+
+        Es la diferencia entre un inventario que dice «hay un ordenador» y uno
+        que dice «hay un Lenovo U3302, número de serie tal, desde marzo». Y tiene
+        que ser aquí: quien está delante del aparato lee la pegatina de un
+        vistazo; obligarle a añadir primero y corregir después significa que la
+        segunda mitad no se hace nunca.
+
+        Todo es opcional a propósito. «No consta» es una respuesta legítima y
+        frecuente, y bloquear el alta por un modelo ilegible haría que el equipo
+        no se apuntara — que es infinitamente peor.
+      */}
+      {pideIdentidad && (
+        <div className="mt-3 border-t border-line pt-3">
+          <p className="eyebrow">Qué aparato es</p>
+
+          <div className="mt-2 text-xs text-muted">
+            Marca y modelo
+            <div className="mt-1">
+              <SelectorDeModelo
+                typeId={type?.id ?? null}
+                value={modelo && 'id' in modelo ? modelo.id : null}
+                onChange={setModelo}
+                autoFocus={false}
+              />
+            </div>
+            {modelo && !('id' in modelo) && (
+              <p className="mt-1 text-xs text-warn">
+                Se creará «{[modelo.brand, modelo.model].filter(Boolean).join(' ')}» al añadirlo.
+              </p>
+            )}
+            {!type && (
+              <p className="mt-1 text-xs text-muted">
+                El tipo se está creando ahora, así que el modelo se podrá elegir al corregir el
+                equipo.
+              </p>
+            )}
+          </div>
+
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {unaSola && (
+              <label className="text-xs text-muted">
+                Nº de serie
+                <input
+                  type="text"
+                  value={serial}
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  enterKeyHint="done"
+                  onChange={(e) => setSerial(e.target.value)}
+                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 font-mono text-sm text-ink"
+                />
+              </label>
+            )}
+            <label className={`text-xs text-muted ${unaSola ? '' : 'col-span-2'}`}>
+              Instalado el
+              <input
+                type="date"
+                value={instaladoEl}
+                max={diaEnMadrid()}
+                onChange={(e) => setInstaladoEl(e.target.value || diaEnMadrid())}
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+              />
+            </label>
+          </div>
+
+          {!unaSola && (
+            <p className="mt-2 text-xs text-muted">
+              Son {unidades} aparatos, así que el número de serie se apunta después en cada uno.
+            </p>
+          )}
+          {inventariando && (
+            <p className="mt-2 text-xs text-muted">
+              Si el aparato lleva años puesto, cambia la fecha: es lo que hace que el inventario
+              diga desde cuándo está y no cuándo se apuntó.
+            </p>
+          )}
+        </div>
       )}
 
       <button

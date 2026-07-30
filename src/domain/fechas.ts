@@ -90,3 +90,42 @@ export function fechaCorta(iso: string): string {
     year: 'numeric',
   }).format(t)
 }
+
+/**
+ * «hace 3 días», «hace 8 meses», «hoy».
+ *
+ * Es la forma en que se lee de verdad una antigüedad: nadie compara `2025-11-04`
+ * con la fecha de hoy mentalmente, y sin embargo esa resta es justo la pregunta
+ * —¿cuándo se instaló esto?, ¿cuándo se conectó ese iPad por última vez?—.
+ *
+ * `Intl.RelativeTimeFormat` pone las palabras y las conjuga; aquí solo se elige
+ * la unidad, que es lo que decide si sale «hace 45 días» o «hace un mes y
+ * medio». Se sube de unidad en cuanto la de abajo pasa de dos cifras: a partir
+ * de ahí el número exacto ya no informa y solo hace la frase más larga.
+ */
+export function desdeHace(iso: string, ahora = new Date()): string {
+  const t = new Date(iso)
+  if (Number.isNaN(t.getTime())) return ''
+
+  const segundos = Math.round((t.getTime() - ahora.getTime()) / 1000)
+  const abs = Math.abs(segundos)
+  const rtf = new Intl.RelativeTimeFormat('es-ES', { numeric: 'auto' })
+
+  if (abs < 60) return 'ahora mismo'
+  if (abs < 3600) return rtf.format(Math.round(segundos / 60), 'minute')
+  if (abs < 86_400) return rtf.format(Math.round(segundos / 3600), 'hour')
+  if (abs < 86_400 * 45) return rtf.format(Math.round(segundos / 86_400), 'day')
+  if (abs < 86_400 * 365) return rtf.format(Math.round(segundos / (86_400 * 30)), 'month')
+  return rtf.format(Math.round(segundos / (86_400 * 365)), 'year')
+}
+
+/**
+ * Cuántos días hace. Para ordenar y para comparar con un umbral, no para leer.
+ * Devuelve null si la fecha no vale, que es distinto de cero.
+ */
+export function diasDesde(iso: string | null, ahora = new Date()): number | null {
+  if (!iso) return null
+  const t = new Date(iso)
+  if (Number.isNaN(t.getTime())) return null
+  return Math.floor((ahora.getTime() - t.getTime()) / 86_400_000)
+}

@@ -13,6 +13,7 @@
 import Dexie, { type EntityTable } from 'dexie'
 import type {
   Asset,
+  AssetModel,
   AssetType,
   Attachment,
   Building,
@@ -37,6 +38,7 @@ export interface OutboxEntry {
     | 'attachment'
     | 'asset_event'
     | 'asset_type'
+    | 'asset_model'
     | 'asset'
     | 'room_inventory'
   op: 'upsert'
@@ -79,6 +81,10 @@ export class AulasDB extends Dexie {
   stockLevels!: EntityTable<StockLevel, 'stock_item_id'>
   incidents!: EntityTable<Incident, 'id'>
   assetTypes!: EntityTable<AssetType, 'id'>
+  /* El catálogo de marcas y modelos. Se espeja entero —son decenas de filas— y
+     tiene que estar en el dispositivo: elegir el modelo de un proyector ocurre
+     delante del proyector, que es donde no hay cobertura. */
+  assetModels!: EntityTable<AssetModel, 'id'>
 
   // El inventario es a la vez maestro y cosa que el técnico produce: lo lee de
   // aquí para revisar y escribe aquí al dar de alta un elemento en el aula.
@@ -125,6 +131,23 @@ export class AulasDB extends Dexie {
     // ofrecer «sale del almacén» con la cifra delante, también sin cobertura.
     this.version(3).stores({
       stockLevels: 'stock_item_id, name',
+    })
+
+    /*
+     * El catálogo de modelos, y el índice que lo une al equipo.
+     *
+     * Va en su propia versión y no dentro de la primera porque Dexie no reevalúa
+     * los almacenes de una versión ya aplicada: en un iPad que ya tiene la base
+     * creada, añadir la línea arriba no crea nada y el catálogo saldría vacío
+     * sin un solo error.
+     *
+     * `assets` se redeclara entera —Dexie exige la lista completa de índices al
+     * tocar un almacén— para añadir `asset_model_id`, que es por lo que pregunta
+     * la gestión desde el ordenador al filtrar por modelo.
+     */
+    this.version(4).stores({
+      assetModels: 'id, asset_type_id, confirmed',
+      assets: 'id, room_id, asset_type_id, status, asset_model_id, serial',
     })
   }
 }

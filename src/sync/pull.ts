@@ -20,7 +20,7 @@
 
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
-import type { Asset, AssetType, Building, Incident, Room, StockItem,
+import type { Asset, AssetModel, AssetType, Building, Incident, Room, StockItem,
   StockLevel, Zone } from '@/domain/types'
 
 /** Dónde queda el parte de la última descarga, para que la interfaz lo lea. */
@@ -115,6 +115,10 @@ export async function pullMaster(): Promise<ResultadoPull> {
         // El catálogo entero, fusionados incluidos: sin las lápidas, un elemento
         // cuyo tipo se fusionó ayer se quedaría sin nombre en el dispositivo.
         ['asset_types', supabase.from('asset_types').select('*')],
+        // Y el de modelos, por lo mismo y por una razón más: elegir el modelo de
+        // un proyector se hace delante del proyector, que es donde no hay línea.
+        // Sin espejo, el desplegable saldría vacío justo cuando se usa.
+        ['asset_models', supabase.from('asset_models').select('*')],
         ['assets', supabase.from('assets').select('*').neq('status', 'retirado')],
       ].map(async ([tabla, consulta]) => ({
         tabla: tabla as string,
@@ -183,6 +187,7 @@ export async function pullMaster(): Promise<ResultadoPull> {
   await guardar<StockLevel>(de('stock_levels'), db.stockLevels)
   await guardar<Incident>(de('incidents'), db.incidents)
   await guardar<AssetType>(de('asset_types'), db.assetTypes)
+  await guardar<AssetModel>(de('asset_models'), db.assetModels)
   await guardar<Asset>(de('assets'), db.assets)
 
   const rooms = de('room_overview')

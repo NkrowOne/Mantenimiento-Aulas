@@ -1,12 +1,16 @@
 import { useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { useConfirmar } from '@/components/Confirmar'
 import { db } from '@/db/dexie'
-import { labelAvailable, resolveType, searchCatalog } from '@/domain/inventory'
-import { ASSET_STATUS_LABELS, type Asset, type AssetType } from '@/domain/types'
+import { identifyAsset, labelAvailable, searchCatalog } from '@/domain/inventory'
+import { fechaCorta } from '@/domain/fechas'
+import { ASSET_STATUS_LABELS, type Asset, type AssetModel, type AssetType } from '@/domain/types'
 import { typeRank } from '@/features/inspection/useInspection'
 import { LevantarInventario } from './LevantarInventario'
 import { OrigenDelEquipo } from './OrigenDelEquipo'
-import { useRoomInventory, type Origen } from './useRoomInventory'
+import { SelectorDeModelo } from './SelectorDeModelo'
+import { CamposPropios } from './CamposPropios'
+import { useRoomInventory, type AltaDeEquipo, type ModeloElegido } from './useRoomInventory'
 
 /**
  * El inventario de la sala, dentro de la propia revisión.
@@ -36,10 +40,17 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
   const [fixing, setFixing] = useState<string | null>(null)
   /* Lo que se va a añadir, esperando a que se diga de dónde sale. */
   const [eligiendo, setEligiendo] = useState<{ nombre: string; tipo: AssetType | null } | null>(null)
+  const { pedir, dialogo } = useConfirmar()
 
-  const { addAssetConOrigen, confirmarInventario, patchAsset, setStatus } = useRoomInventory(
-    roomId,
-    userId,
+  const { addAssetConOrigen, confirmarInventario, patchAsset, setModelo, setStatus } =
+    useRoomInventory(roomId, userId)
+
+  /* El catálogo de modelos, para poder decir «Lenovo U3302» y no «Ordenador».
+     Sale del espejo, así que se lee igual en un sótano. */
+  const modelos = useLiveQuery(() => db.assetModels.toArray(), [], [])
+  const modelosById = useMemo(
+    () => new Map<string, AssetModel>(modelos.map((m) => [m.id, m])),
+    [modelos],
   )
 
   /* Cuándo se confirmó por última vez que el inventario de esta sala está
@@ -81,10 +92,11 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
   const hits = searchCatalog(types, query)
   const raw = query.trim()
 
-  async function add(origen: Origen): Promise<void> {
+  async function add(alta: AltaDeEquipo): Promise<void> {
     if (!eligiendo) return
     const { nombre, tipo } = eligiendo
-    const result = await addAssetConOrigen(nombre, tipo, origen)
+    const result = await addAssetConOrigen(nombre, tipo, alta)
+    const { origen } = alta
 
     setEligiendo(null)
     setQuery('')
@@ -216,7 +228,7 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                 roomId={roomId}
                 inventariando={levantadoEl === null}
                 onCancelar={() => setEligiendo(null)}
-                onConfirmar={(origen) => void add(origen)}
+                onConfirmar={(alta) => void add(alta)}
               />
             )}
 
@@ -224,22 +236,32 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
 
             <ul className="mt-3 divide-y divide-line-soft">
               {live.map((asset) => {
-                const type = resolveType(typesById, asset.asset_type_id)
+                const type = typesById.get(asset.asset_type_id) ?? null
                 const pending = type ? !type.confirmed : false
-                const detail = [asset.model, asset.serial].filter(Boolean).join(' · ')
+                const id = identifyAsset(asset, typesById, modelosById)
 
                 return (
                   <li key={asset.id} className="py-2">
                     <div className="flex items-center gap-2">
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">
-                          {asset.label ?? type?.name ?? 'Equipo'}
-                        </span>
+                        <span className="block truncate text-sm font-medium">{id.etiqueta}</span>
+                        {/*
+                          Marca, modelo y número de serie, en la segunda línea y
+                          en este orden. Es lo que contesta «¿cuál de los dos
+                          ordenadores es?» sin abrir nada: antes ponía el texto
+                          libre del modelo, que en la mitad de los equipos estaba
+                          vacío y en la otra mitad decía «M403H *».
+                        */}
                         <span className="block truncate text-xs text-muted">
-                          {detail || 'Sin modelo ni serie'}
+                          {id.ficha || 'Sin modelo ni serie'}
                         </span>
                       </span>
 
+                      {id.modeloSinValidar && !pending && (
+                        <span className="shrink-0 rounded-tag bg-warn-tint px-1.5 py-0.5 text-[0.6875rem] font-medium text-warn">
+                          Modelo sin validar
+                        </span>
+                      )}
                       {pending && (
                         <span className="shrink-0 rounded-tag bg-warn-tint px-1.5 py-0.5 text-[0.6875rem] font-medium text-warn">
                           Sin validar
@@ -254,6 +276,7 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                       <button
                         type="button"
                         onClick={() => setFixing(fixing === asset.id ? null : asset.id)}
+                        aria-expanded={fixing === asset.id}
                         className="key key-quiet min-h-11 shrink-0 px-3 text-xs"
                       >
                         Corregir
@@ -262,15 +285,35 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
 
                     {/* Se monta solo al abrirlo. Una sala de ocho equipos tenía
                         ocho formularios completos —24 campos y 16 botones— vivos
-                        dentro de un panel que nace cerrado. */}
-                    <div className="collapse-y" data-open={fixing === asset.id}>
+                        dentro de un panel que nace cerrado.
+                        `inert` cuando está plegado: sin él, el tabulador entra en
+                        un formulario de alto cero y el foco se va a un sitio que
+                        no se ve. */}
+                    <div className="collapse-y" data-open={fixing === asset.id} inert={fixing !== asset.id}>
                       <div>
                         {fixing === asset.id && (
                           <AssetFixer
                             asset={asset}
                             assetsInRoom={assets}
+                            tipo={type}
                             onPatch={(patch) => void patchAsset(asset, patch)}
+                            onModelo={(m) => void setModelo(asset, m)}
                             onStatus={(status) => void setStatus(asset, status)}
+                            onRetirar={() =>
+                              void pedir({
+                                titulo: `¿Retirar «${id.etiqueta}» de la sala?`,
+                                detalle: id.ficha ? `${id.completo} · ${id.ficha}` : id.completo,
+                                consecuencias: [
+                                  'Deja de contar en las revisiones de esta sala.',
+                                  'El equipo y su historial se conservan: no se borra nada.',
+                                  'Si vuelve, se da de alta como traslado desde esta sala.',
+                                ],
+                                confirmar: 'Retirar',
+                                tono: 'crit',
+                              }).then((si) => {
+                                if (si) void setStatus(asset, 'retirado')
+                              })
+                            }
                           />
                         )}
                       </div>
@@ -296,6 +339,8 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
           </div>
         </div>
       </div>
+
+      {dialogo}
     </section>
   )
 }
@@ -306,27 +351,65 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
  * La etiqueta se puede reescribir porque «Pantalla 2» no dice cuál de las dos
  * es: el técnico que está delante sabe que una es la del atril, y esa palabra
  * vale más que el número.
+ *
+ * El modelo ya no es un campo de texto: es el catálogo. Es el cambio que hace
+ * que el inventario pueda contestar «¿cuántos EB-992F tenemos?», y de paso el
+ * que impide que el mismo aparato entre como «ME403U», «ME-403U» y «ME403U *»
+ * desde tres aulas distintas.
  */
 function AssetFixer({
   asset,
   assetsInRoom,
+  tipo,
   onPatch,
+  onModelo,
   onStatus,
+  onRetirar,
 }: {
   asset: Asset
   assetsInRoom: Asset[]
+  tipo: AssetType | null
   onPatch: (patch: Partial<Asset>) => void
+  onModelo: (modelo: ModeloElegido | null) => void
   onStatus: (status: 'averiado' | 'retirado') => void
+  onRetirar: () => void
 }): React.ReactElement {
   const [label, setLabel] = useState(asset.label ?? '')
-  const [model, setModel] = useState(asset.model ?? '')
   const [serial, setSerial] = useState(asset.serial ?? '')
+  const [notes, setNotes] = useState(asset.notes ?? '')
+  const [mas, setMas] = useState(false)
 
   const clash = label.trim() !== '' && !labelAvailable(assetsInRoom, label, asset.id)
 
+  /*
+   * El número de serie es único en TODA la base, no por sala.
+   *
+   * Sin este aviso, teclear uno que ya existe se acepta aquí, se sube, y el
+   * servidor lo rechaza horas después y a kilómetros del aula, donde ya no hay
+   * forma de saber cuál de los dos aparatos era. Se avisa y no se bloquea: quien
+   * está delante lee la pegatina mejor que esta comprobación, y puede ser que el
+   * duplicado sea el equipo viejo, mal apuntado.
+   */
+  const serialRepetido = useLiveQuery(
+    async () => {
+      const s = serial.trim()
+      if (!s) return null
+      const otros = await db.assets.where('serial').equals(s).toArray()
+      const choca = otros.find((a) => a.id !== asset.id && a.status !== 'retirado')
+      if (!choca) return null
+      const sala = choca.room_id ? await db.rooms.get(choca.room_id) : null
+      return sala ? `${sala.code} — ${sala.name}` : 'otro equipo'
+    },
+    [serial, asset.id],
+    null,
+  )
+
+  /** `AAAA-MM-DD` para el campo de fecha, o vacío si no consta. */
+  const instalado = asset.installed_at ? asset.installed_at.slice(0, 10) : ''
+
   return (
     <div className="mt-2 rounded-ctl border border-line bg-sunken p-3">
-      <div className="grid gap-2">
+      <div className="grid gap-3">
         <label className="text-xs text-muted">
           Nombre en esta sala
           <input
@@ -341,25 +424,32 @@ function AssetFixer({
           />
         </label>
         {clash && (
-          <p className="text-xs text-crit">
+          <p className="-mt-2 text-xs text-crit">
             Ya hay otro equipo con ese nombre en esta sala.
           </p>
         )}
 
-        <div className="grid grid-cols-2 gap-2">
-          <label className="text-xs text-muted">
-            Modelo
-            <input
-              type="text"
-              value={model}
-              autoCapitalize="off"
-              autoCorrect="off"
-              enterKeyHint="done"
-              onChange={(e) => setModel(e.target.value)}
-              onBlur={() => model.trim() !== (asset.model ?? '') && onPatch({ model: model.trim() || null })}
-              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+        <div className="text-xs text-muted">
+          Marca y modelo
+          <div className="mt-1">
+            <SelectorDeModelo
+              typeId={asset.asset_type_id}
+              value={asset.asset_model_id}
+              onChange={onModelo}
+              autoFocus={false}
             />
-          </label>
+          </div>
+          {/* Lo que se escribió a mano antes de que existiera el catálogo. Se
+              enseña mientras no haya modelo elegido: es la pista de qué hay que
+              elegir, y tirarla dejaría el aparato sin ninguna. */}
+          {!asset.asset_model_id && asset.model?.trim() && (
+            <p className="mt-1 text-xs text-muted">
+              Antes ponía «{asset.model.trim()}». Elígelo del catálogo o créalo.
+            </p>
+          )}
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-2">
           <label className="text-xs text-muted">
             Nº de serie
             {/* Un número de serie no es una frase: sin esto iOS lo capitaliza y
@@ -376,6 +466,75 @@ function AssetFixer({
               className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 font-mono text-sm text-ink"
             />
           </label>
+
+          <label className="text-xs text-muted">
+            Instalado el
+            <input
+              type="date"
+              value={instalado}
+              onChange={(e) =>
+                onPatch({
+                  installed_at: e.target.value
+                    ? new Date(`${e.target.value}T12:00:00`).toISOString()
+                    : null,
+                })
+              }
+              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+            />
+          </label>
+        </div>
+
+        {serialRepetido && (
+          <p className="-mt-1 text-xs text-warn">
+            Ese número de serie ya está en {serialRepetido}. Si es el mismo aparato, tráelo con
+            «De otra sala» en vez de darlo de alta otra vez.
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setMas((v) => !v)}
+          aria-expanded={mas}
+          className="text-left text-xs text-muted underline-offset-4 hover:underline"
+        >
+          {mas ? 'Menos detalles' : 'Más detalles: garantía, observaciones…'}
+        </button>
+
+        <div className="collapse-y" data-open={mas} inert={!mas}>
+          <div className="grid gap-2">
+            <label className="text-xs text-muted">
+              Garantía hasta
+              <input
+                type="date"
+                value={asset.warranty_until ?? ''}
+                onChange={(e) => onPatch({ warranty_until: e.target.value || null })}
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+              />
+            </label>
+
+            <CamposPropios
+              campos={(tipo?.spec_fields ?? []).filter((c) => c.en !== 'modelo')}
+              valores={asset.specs ?? {}}
+              onChange={(specs) => onPatch({ specs })}
+            />
+
+            <label className="text-xs text-muted">
+              Observaciones
+              <textarea
+                value={notes}
+                rows={2}
+                onChange={(e) => setNotes(e.target.value)}
+                onBlur={() => notes.trim() !== (asset.notes ?? '') && onPatch({ notes: notes.trim() || null })}
+                className="mt-1 w-full rounded-ctl border border-line bg-surface px-2 py-1.5 text-sm text-ink"
+              />
+            </label>
+
+            {asset.installed_at && (
+              <p className="text-xs text-muted">
+                Puesto en esta sala el {fechaCorta(asset.installed_at)}.
+              </p>
+            )}
+          </div>
         </div>
 
         <div className="flex gap-2">
@@ -396,11 +555,7 @@ function AssetFixer({
           */}
           <button
             type="button"
-            onClick={() => {
-              if (confirm(`¿Retirar «${asset.label ?? 'este equipo'}» de la sala?`)) {
-                onStatus('retirado')
-              }
-            }}
+            onClick={onRetirar}
             className="key key-quiet min-h-11 flex-1 px-2 text-xs text-muted"
           >
             Retirar de la sala

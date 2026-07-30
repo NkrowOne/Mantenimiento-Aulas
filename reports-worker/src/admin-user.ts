@@ -116,7 +116,7 @@ function has(name: string): boolean {
 }
 
 /** Opciones que no llevan valor detrás; el resto consume el argumento siguiente. */
-const BANDERAS = new Set(['primer-admin'])
+const BANDERAS = new Set(['primer-admin', 'todos'])
 
 /**
  * Argumentos sueltos, los que no son ni una opción ni el valor de una.
@@ -254,6 +254,17 @@ ${renovado ? '\n  Ya existía: este código sustituye al anterior, que queda anu
   Caduca en ${CODE_TTL_HOURS} horas y solo sirve una vez.
   El técnico lo introduce junto a su email la primera vez que abre la
   aplicación, y a continuación elige su PIN.
+
+  ⚠ Emitir un código PAUSA la vinculación por PIN de esta cuenta.
+
+    El código ES la contraseña temporal de la cuenta, así que la que estaba
+    guardada cifrada con el PIN deja de valer en este instante. Hasta que
+    alguien use este código, dar de alta un dispositivo nuevo con «Con mi PIN»
+    dirá que la vinculación no vale y pedirá el código. En cuanto se use, todo
+    vuelve a la normalidad: el dispositivo que entre rehace la bóveda.
+
+    Los dispositivos que YA están dentro no se enteran de nada y siguen
+    funcionando: su sesión no depende de la contraseña.
 
   No vuelve a mostrarse. Si se pierde, genera otro con:
     ${CLI} codigo ${email}
@@ -529,6 +540,132 @@ async function borrar(): Promise<void> {
 `)
 }
 
+/**
+ * Los dispositivos de alguien, y su estado.
+ *
+ * Existe para la llamada que se hace de verdad: «he perdido el iPad». Quien la
+ * recibe está en un panel de administración, no dentro de la aplicación, y el
+ * dueño del aparato perdido puede ser justo quien no puede entrar a revocarlo.
+ */
+async function dispositivos(): Promise<void> {
+  const email = arg('email') ?? reparto().email
+  if (!email) {
+    console.error(`Uso: ${CLI} dispositivos <email>`)
+    process.exit(1)
+  }
+
+  const user = await findUserByEmail(email)
+  if (!user) {
+    console.error(`No hay ningún usuario con ${email}.`)
+    process.exit(1)
+  }
+
+  const { data, error } = await admin
+    .from('devices')
+    .select('id, label, enrolled_via, enrolled_at, last_seen_at, revoked_at, revoked_reason')
+    .eq('profile_id', user.id)
+    .order('enrolled_at', { ascending: false })
+  if (error) {
+    console.error('No se han podido leer:', error.message)
+    explicarEsquema(error.message)
+    process.exit(1)
+  }
+
+  const filas = data ?? []
+  const activos = filas.filter((d) => !d.revoked_at)
+
+  const { data: tope } = await admin.from('app_config').select('value').eq('key', 'max_dispositivos').maybeSingle()
+
+  console.log(`\n  ${email} — ${activos.length} de ${tope?.value ?? 3} dispositivos en uso\n`)
+  for (const d of filas) {
+    const fecha = (v: string | null): string => (v ? new Date(v).toISOString().slice(0, 16).replace('T', ' ') : '—')
+    console.log(
+      `  ${d.revoked_at ? '✗' : '·'} ${String(d.label).padEnd(20)} ` +
+        `${String(d.enrolled_via === 'pin' ? 'con PIN' : 'con código').padEnd(11)} ` +
+        `alta ${fecha(d.enrolled_at)}  visto ${fecha(d.last_seen_at)}  ${d.id}` +
+        (d.revoked_at ? `\n      revocado ${fecha(d.revoked_at)}${d.revoked_reason ? `: ${d.revoked_reason}` : ''}` : ''),
+    )
+  }
+  console.log(`
+  Para retirar uno:      ${CLI} revocar <id-del-dispositivo>
+  Para retirarlos todos: ${CLI} revocar ${email} --todos
+`)
+}
+
+/**
+ * Revocar un dispositivo, o todos los de alguien.
+ *
+ * Conviene ser exacto sobre lo que hace y lo que no: el dispositivo deja de
+ * estar dado de alta y **se borra su sesión guardada la próxima vez que abra la
+ * aplicación con línea**. Su refresh token sigue siendo válido para GoTrue hasta
+ * que caduque, así que esto no es una expulsión inmediata.
+ *
+ * Para un iPad perdido de verdad —el caso en que hay prisa— lo que corta el
+ * acceso de raíz es emitir un código nuevo (`${CLI} codigo <email>`): eso rota
+ * la contraseña de la cuenta y pausa la vinculación por PIN.
+ */
+async function revocar(): Promise<void> {
+  const suelto = reparto()
+  const email = arg('email') ?? suelto.email
+  const todos = has('todos')
+  // Un id de dispositivo es un uuid suelto que no es email ni rol.
+  const id = arg('id') ?? sueltos().find((t) => /^[0-9a-f-]{36}$/i.test(t))
+
+  if (!id && !(email && todos)) {
+    console.error(`Uso: ${CLI} revocar <id-del-dispositivo>
+     o:  ${CLI} revocar <email> --todos
+
+  Los ids salen de:  ${CLI} dispositivos <email>`)
+    process.exit(1)
+  }
+
+  if (id) {
+    const { data, error } = await admin
+      .from('devices')
+      .update({ revoked_at: new Date().toISOString(), revoked_reason: 'Revocado por administración' })
+      .eq('id', id)
+      .is('revoked_at', null)
+      .select('label')
+    if (error) {
+      console.error('No se ha podido revocar:', error.message)
+      process.exit(1)
+    }
+    console.log(
+      (data ?? []).length > 0
+        ? `\n  Revocado: ${data![0]!.label}\n`
+        : '\n  Ese dispositivo no existe o ya estaba revocado.\n',
+    )
+    return
+  }
+
+  const user = await findUserByEmail(email!)
+  if (!user) {
+    console.error(`No hay ningún usuario con ${email}.`)
+    process.exit(1)
+  }
+
+  const { data, error } = await admin
+    .from('devices')
+    .update({ revoked_at: new Date().toISOString(), revoked_reason: 'Revocado por administración' })
+    .eq('profile_id', user.id)
+    .is('revoked_at', null)
+    .select('id')
+  if (error) {
+    console.error('No se han podido revocar:', error.message)
+    process.exit(1)
+  }
+
+  console.log(`
+  Revocados ${(data ?? []).length} dispositivo(s) de ${email}.
+
+  Podrá volver a dar de alta uno con su PIN, sin código, salvo que además
+  emitas un código nuevo — que es lo que hay que hacer si lo que se ha
+  perdido es el aparato Y se teme por el PIN:
+
+    ${CLI} codigo ${email}
+`)
+}
+
 async function listar(): Promise<void> {
   const { data, error } = await admin
     .from('profiles')
@@ -548,7 +685,15 @@ async function listar(): Promise<void> {
 }
 
 const command = process.argv[2]
-const commands: Record<string, () => Promise<void>> = { crear, codigo, rol, borrar, listar }
+const commands: Record<string, () => Promise<void>> = {
+  crear,
+  codigo,
+  rol,
+  borrar,
+  listar,
+  dispositivos,
+  revocar,
+}
 
 /*
  * Nada de lo que se escribe se ignora en silencio. Un argumento suelto que no
@@ -558,7 +703,11 @@ const commands: Record<string, () => Promise<void>> = { crear, codigo, rol, borr
  * nada; se ve semanas después, cuando la aplicación no le deja hacer su trabajo.
  */
 const { sobrantes } = reparto()
-if (command && sobrantes.length > 0) {
+// Un id de dispositivo es un uuid suelto y es un argumento legítimo de
+// `revocar`: sin esta salvedad, la comprobación de más abajo lo tomaría por un
+// rol mal escrito y abortaría el comando.
+const soloIds = sobrantes.every((t) => /^[0-9a-f-]{36}$/i.test(t))
+if (command && sobrantes.length > 0 && !(command === 'revocar' && soloIds)) {
   console.error(`
 No sé qué hacer con: ${sobrantes.join(', ')}
 
@@ -582,6 +731,10 @@ Uso: ${CLI} <comando> [opciones]
   rol     <email> tecnico|supervisor|admin
   borrar  <email>
   listar
+
+  dispositivos <email>              en qué aparatos está y cuántos huecos le quedan
+  revocar      <id-del-dispositivo> retira uno
+  revocar      <email> --todos      retira todos los suyos
 
 Las opciones con nombre (--email, --nombre, --rol) siguen valiendo y ganan.
 `)
