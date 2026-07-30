@@ -212,6 +212,17 @@ export function RoomListPage({
                     </span>
                   )}
                   {/*
+                    Sin inventariar, en gris. Es información para elegir por
+                    dónde seguir cuando ya se está en el edificio, no un aviso:
+                    son 41 salas, y en naranja competiría con «toca revisar»,
+                    que es lo que de verdad manda en esta lista.
+                  */}
+                  {!hasDraft && room.last_inventory_at === null && (
+                    <span className="mb-1 block rounded-tag bg-sunken px-2 py-0.5 text-[0.6875rem] font-medium text-muted">
+                      Sin inventariar
+                    </span>
+                  )}
+                  {/*
                     La cifra y su unidad, separadas.
                     «Hace 302 d» en una sola tirada obliga a leer la frase para
                     quedarse con el número. Con el número en monoespaciada

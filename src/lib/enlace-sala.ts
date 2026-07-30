@@ -56,3 +56,30 @@ export function salaDeLaUrl(search: string): string | null {
     ? valor.toLowerCase()
     : null
 }
+
+/**
+ * La sala que trae un código escaneado con la cámara.
+ *
+ * `salaDeLaUrl` lee la barra de direcciones, donde el navegador ya ha separado
+ * la consulta. Un lector de QR no: devuelve **el texto crudo** del código, que
+ * puede ser la URL entera —lo normal— pero también un identificador pelado si
+ * las placas se generaron con otra herramienta, o cualquier otra cosa, porque
+ * al apuntar con la cámara se lee lo que haya delante: la etiqueta del wifi de
+ * la sala, el código de un extintor.
+ *
+ * Devolver null ante lo que no reconoce es la mitad importante. Abrir un aula al
+ * azar es peor que no abrir ninguna: el técnico revisaría la sala equivocada sin
+ * enterarse de nada.
+ */
+export function salaDeTextoQR(texto: string): string | null {
+  const t = String(texto ?? '').trim()
+  if (!t) return null
+
+  // Se busca el parámetro, no un UUID suelto: así un enlace a otra cosa que
+  // lleve un identificador dentro no se confunde con una sala.
+  const enUrl = t.match(new RegExp(`[?&#]${PARAM_SALA}=([0-9a-f-]{36})`, 'i'))
+  if (enUrl?.[1]) return salaDeLaUrl(`?${PARAM_SALA}=${enUrl[1]}`)
+
+  // El identificador pelado, y solo si es lo único que hay.
+  return salaDeLaUrl(`?${PARAM_SALA}=${t}`)
+}

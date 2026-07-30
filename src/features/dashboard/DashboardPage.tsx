@@ -143,6 +143,22 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
         </button>
       )}
 
+      {/*
+        El inventario pendiente va en su propia tarjeta y en gris, no con las
+        alertas. No hay nada roto: hay salas por las que nadie ha pasado a mirar
+        todavía, y pintarlo de naranja junto a «lámparas al 20%» le quitaría
+        urgencia a lo que sí la tiene. Desaparece sola cuando se acaba.
+      */}
+      {s.roomsUninventoried > 0 && (
+        <section className="card p-4">
+          <h2 className="font-semibold">Inventario por levantar</h2>
+          <p className="mt-1 text-sm text-muted">
+            {s.roomsUninventoried} de {s.roomsTotal} salas sin que nadie haya confirmado qué hay
+            dentro. Se resuelve desde la ficha de la sala, en «Equipos de la sala».
+          </p>
+        </section>
+      )}
+
       <section aria-labelledby="sec-graficos">
         <div className="section-head">
           <h2 id="sec-graficos" className="eyebrow">

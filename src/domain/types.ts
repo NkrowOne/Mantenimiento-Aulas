@@ -129,6 +129,12 @@ export interface Room {
   projector_hours: number | null
   lamp_pct: number | null
   last_inspection_at: string | null
+  /**
+   * Cuándo confirmó alguien por última vez que el inventario de la sala está
+   * completo. `null` = nadie ha ido nunca a mirar, que no es lo mismo que «la
+   * sala está vacía»: son 41 aulas y la aplicación no puede distinguirlas.
+   */
+  last_inventory_at: string | null
   active: boolean
   /**
    * `SALA-000087`: la referencia corta y **estable**.
@@ -260,6 +266,32 @@ export interface StockItem {
   name: string
   unit: string
   min_threshold: number
+  /**
+   * Qué tipo de equipo es este artículo, si es que es uno.
+   *
+   * NULL en los consumibles —un cable no es nada del inventario de la sala— y
+   * puesto en los catorce que sí lo son. Es lo que permite que al añadir un
+   * proyector a un aula la aplicación sepa qué caja del almacén descontar.
+   */
+  asset_type_id: string | null
+}
+
+/**
+ * Las existencias de un artículo, tal y como se espejan en el dispositivo.
+ *
+ * Es una foto, no la verdad: el saldo vive en el servidor y se calcula sumando
+ * movimientos. Se copia aquí para poder enseñar «quedan 12» dentro del aula,
+ * sin cobertura, cuando alguien va a instalar un proyector. Si la foto está
+ * vieja, el servidor rechaza el consumo al sincronizar; enseñar una cifra
+ * aproximada es mucho mejor que no enseñar ninguna.
+ */
+export interface StockLevel {
+  stock_item_id: string
+  name: string
+  unit: string
+  min_threshold: number
+  on_hand: number
+  below_threshold: boolean
 }
 
 export type StockMovementKind = 'compra' | 'consumo' | 'ajuste' | 'devolucion'

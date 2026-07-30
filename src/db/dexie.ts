@@ -21,6 +21,7 @@ import type {
   InspectionCheck,
   Room,
   StockItem,
+  StockLevel,
   Zone,
 } from '@/domain/types'
 
@@ -37,6 +38,7 @@ export interface OutboxEntry {
     | 'asset_event'
     | 'asset_type'
     | 'asset'
+    | 'room_inventory'
   op: 'upsert'
   payload: Record<string, unknown>
   createdAt: number
@@ -72,6 +74,9 @@ export class AulasDB extends Dexie {
   zones!: EntityTable<Zone, 'id'>
   rooms!: EntityTable<Room, 'id'>
   stockItems!: EntityTable<StockItem, 'id'>
+  /* Cuánto queda de cada artículo. Se espeja para poder decidir dentro del
+     aula si un proyector sale del almacén o de otra sala. */
+  stockLevels!: EntityTable<StockLevel, 'stock_item_id'>
   incidents!: EntityTable<Incident, 'id'>
   assetTypes!: EntityTable<AssetType, 'id'>
 
@@ -114,6 +119,12 @@ export class AulasDB extends Dexie {
     // la tabla entera —con los Blob de las fotos dentro— en cada escritura.
     this.version(2).stores({
       outbox: 'id, status, nextAttemptAt, entity, createdAt',
+    })
+
+    // Las existencias entran en el espejo para que el alta de equipo pueda
+    // ofrecer «sale del almacén» con la cifra delante, también sin cobertura.
+    this.version(3).stores({
+      stockLevels: 'stock_item_id, name',
     })
   }
 }

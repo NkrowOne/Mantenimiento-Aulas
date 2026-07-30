@@ -2796,4 +2796,7 @@ insert into import_quarantine (source, row_ref, raw, reason) values ('Material I
 insert into import_quarantine (source, row_ref, raw, reason) values ('Material Instalado 2025', 'I251202_0003', '{"material":"1 Lampara NP30"}'::jsonb, 'Material usado no interpretable automáticamente');
 insert into import_quarantine (source, row_ref, raw, reason) values ('Material Instalado 2025', 'I251202_0004', '{"material":"1 Lampara NP30"}'::jsonb, 'Material usado no interpretable automáticamente');
 
+-- Qué artículo del almacén es cada tipo de equipo
+select public.enlazar_almacen_con_catalogo();
+
 commit;

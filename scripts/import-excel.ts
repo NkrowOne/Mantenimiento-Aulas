@@ -820,6 +820,14 @@ function emit(): void {
     )
   }
 
+  // El puente entre el almacén y el catálogo de equipos. Va aquí y no en la
+  // migración porque en una instalación limpia las migraciones corren antes que
+  // esto: allí `stock_items` está todavía vacía. La función es idempotente y
+  // vive en un solo sitio —la migración—, así que el mapa no se duplica.
+  out.push('')
+  out.push('-- Qué artículo del almacén es cada tipo de equipo')
+  out.push('select public.enlazar_almacen_con_catalogo();')
+
   out.push('')
   out.push('commit;')
   statements.push(...out)

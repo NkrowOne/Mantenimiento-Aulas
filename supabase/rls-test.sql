@@ -756,3 +756,94 @@ begin;
          ' con sala'
   end as resultado;
 rollback;
+
+\echo ''
+\echo '=== 31. El histórico de una sala se lee entero y con una sola consulta ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  -- `room_timeline` une cinco tablas con `security_invoker`, así que basta con
+  -- que UNA de ellas tenga la RLS mal puesta para que el histórico salga
+  -- truncado sin ningún error: la lista simplemente enseñaría menos cosas.
+  select case
+    when (select count(distinct kind) from room_timeline) >= 3  -- revision_ok, incidencia, material…
+    then 'OK: el técnico ve ' || (select count(*) from room_timeline) || ' entradas de ' ||
+         (select count(distinct kind) from room_timeline) || ' familias'
+    else 'FALLO: el técnico solo ve las familias ' ||
+         coalesce((select string_agg(distinct kind, ', ') from room_timeline), 'ninguna')
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 32. Un anónimo NO ve el histórico ==='
+begin;
+  set local role anon;
+  select set_config('request.jwt.claims', '', true);
+  select case
+    when (select count(*) from room_timeline) = 0
+    then 'OK: sin token, el histórico está vacío'
+    else 'FALLO: ' || (select count(*) from room_timeline) || ' entradas legibles desde Internet'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 33. Cada artículo de almacén que es un equipo sabe de qué tipo ==='
+begin;
+  -- Sin este puente, dar de alta un proyector en un aula no puede descontar
+  -- nada del almacén: son dos mundos que no se tocan.
+  select case
+    when (select count(*) from stock_items where asset_type_id is not null) >= 10
+    then 'OK: ' || (select count(*) from stock_items where asset_type_id is not null) ||
+         ' artículos enlazados con su tipo de equipo'
+    else 'ATENCIÓN: solo ' || (select count(*) from stock_items where asset_type_id is not null) ||
+         ' artículos enlazados'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 34. El técnico levanta inventario, y ese acto no se reescribe ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  savepoint s;
+
+  -- Es quien está en el aula, así que tiene que poder decir «esto es todo lo
+  -- que hay». Sin esto, las 41 salas sin equipos se quedan pendientes para
+  -- siempre y el aviso se convierte en ruido.
+  insert into room_inventories (id, room_id, by_user, occurred_at, asset_count)
+  select gen_random_uuid(), id, '11111111-1111-4111-8111-111111111111', now(), 3
+    from rooms limit 1;
+
+  select case
+    when (select count(*) from room_overview where last_inventory_at is not null) = 1
+    then 'OK: la sala deja de estar pendiente'
+    else 'FALLO: el levantamiento no llega a room_overview'
+  end as resultado;
+
+  -- Pero no puede firmarlo en nombre de otro.
+  do $$
+  begin
+    insert into room_inventories (id, room_id, by_user, occurred_at, asset_count)
+    select gen_random_uuid(), id, '22222222-2222-4222-8222-222222222222', now(), 0
+      from rooms limit 1;
+    raise exception 'FALLO: ha firmado un levantamiento en nombre de otro';
+  exception when insufficient_privilege then
+    raise notice 'OK: solo puede firmar lo suyo';
+  end $$;
+  rollback to savepoint s;
+rollback;
+
+\echo ''
+\echo '=== 35. El levantamiento sale en el histórico de la sala ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  insert into room_inventories (id, room_id, by_user, occurred_at, asset_count)
+  select gen_random_uuid(), id, '11111111-1111-4111-8111-111111111111', now(), 5
+    from rooms limit 1;
+
+  select case
+    when (select count(*) from room_timeline where kind = 'inventario') = 1
+    then 'OK: «' || (select title from room_timeline where kind = 'inventario') || '» · ' ||
+         (select detail from room_timeline where kind = 'inventario')
+    else 'FALLO: el levantamiento no aparece en el histórico'
+  end as resultado;
+rollback;

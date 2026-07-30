@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { enlaceDeSala, salaDeLaUrl } from './enlace-sala'
+import { enlaceDeSala, salaDeLaUrl, salaDeTextoQR } from './enlace-sala'
 
 const UUID = '0198f2c1-3a4b-7c5d-8e6f-a47b91c2d3e4'
 
@@ -37,5 +37,25 @@ describe('salaDeLaUrl', () => {
     expect(salaDeLaUrl('?sala=../../etc/passwd')).toBeNull()
     expect(salaDeLaUrl("?sala=1' or '1'='1")).toBeNull()
     expect(salaDeLaUrl('?sala=0198f2c1')).toBeNull()
+  })
+})
+
+describe('lo que devuelve la cámara', () => {
+  const SALA = '9f3c1e2a-4b5d-4c6e-8f70-1a2b3c4d5e6f'
+
+  it('lee la URL que imprime la placa', () => {
+    expect(salaDeTextoQR(enlaceDeSala(SALA, 'https://aulas.example'))).toBe(SALA)
+  })
+
+  it('acepta el identificador pelado y lo normaliza', () => {
+    expect(salaDeTextoQR(`  ${SALA.toUpperCase()}  `)).toBe(SALA)
+  })
+
+  it('no confunde un enlace cualquiera que lleve un identificador dentro', () => {
+    // Abrir un aula al azar es peor que no abrir ninguna.
+    expect(salaDeTextoQR(`https://otra-cosa.example/pedido/${SALA}`)).toBeNull()
+    expect(salaDeTextoQR('WIFI:S:Invitados;T:WPA;P:1234;;')).toBeNull()
+    expect(salaDeTextoQR('')).toBeNull()
+    expect(salaDeTextoQR('https://aulas.example/?sala=no-es-un-uuid')).toBeNull()
   })
 })

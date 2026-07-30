@@ -18,6 +18,8 @@ export interface Summary {
   stockBelow: number
   needsReview: number
   quarantine: number
+  /** Salas por las que nadie ha pasado nunca a levantar inventario. */
+  roomsUninventoried: number
 }
 
 export function useSummary() {
@@ -71,6 +73,14 @@ export function useSummary() {
         .select('room_id')
         .gt('open_incidents', 0)
 
+      // Cuántas salas siguen sin que nadie haya confirmado qué hay dentro. Es
+      // trabajo por hacer y no una avería, así que se cuenta aparte de las
+      // alertas: sale en la sección de pendientes, en gris.
+      const { count: roomsUninventoried } = await supabase
+        .from('room_overview')
+        .select('room_id', head)
+        .is('last_inventory_at', null)
+
       return {
         roomsTotal: roomsTotal!,
         inspectedThisMonth: inspectedThisMonth!,
@@ -82,6 +92,7 @@ export function useSummary() {
         stockBelow: stock?.length ?? 0,
         needsReview: needsReview!,
         quarantine: quarantine!,
+        roomsUninventoried: roomsUninventoried ?? 0,
       }
     },
   })

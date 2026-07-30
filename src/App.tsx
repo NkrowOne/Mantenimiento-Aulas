@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { SyncChip } from '@/components/SyncChip'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
@@ -14,7 +14,7 @@ import { db, purgeSyncedInspections, requestPersistentStorage } from '@/db/dexie
 import { pullMaster, startPull, type ResultadoPull } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
 import { configError, supabase } from '@/lib/supabase'
-import { PARAM_SALA, salaDeLaUrl } from '@/lib/enlace-sala'
+import { PARAM_SALA, salaDeLaUrl, salaDeTextoQR } from '@/lib/enlace-sala'
 import type { SealedSession } from '@/auth/pin'
 import { OVERDUE_INSPECTION_DAYS, type Building, type Role, type Room } from '@/domain/types'
 
@@ -49,23 +49,49 @@ const RoomSheet = lazy(() =>
 const PlateSheet = lazy(() =>
   import('@/features/rooms/PlateSheet').then((m) => ({ default: m.PlateSheet })),
 )
+const HistorialPage = lazy(() =>
+  import('@/features/history/HistorialPage').then((m) => ({ default: m.HistorialPage })),
+)
 const ReportsPage = lazy(() =>
   import('@/features/reports/ReportsPage').then((m) => ({ default: m.ReportsPage })),
 )
+/* La cámara y el lector de QR solo se descargan cuando alguien va a escanear. */
+const EscanerQR = lazy(() =>
+  import('@/features/rooms/EscanerQR').then((m) => ({ default: m.EscanerQR })),
+)
 
-type Tab = 'revisar' | 'panel' | 'incidencias' | 'almacen' | 'informes' | 'datos'
+type Tab = 'revisar' | 'panel' | 'incidencias' | 'almacen' | 'historial' | 'informes' | 'datos'
 
+/*
+ * La ficha se intercala entre la lista y la revisión, pero solo por ese camino.
+ * El QR de la puerta y el buscador global siguen entrando directos a revisar:
+ * quien escanea una pegatina ya sabe dónde está y a qué viene, y cobrarle un
+ * toque por información que no ha pedido convertiría el camino corto en uno
+ * largo. Por eso la revisión recuerda de dónde vino: volver tiene que devolver
+ * al sitio del que se salió, no a uno que no se ha visto nunca.
+ */
 type RoomView =
   | { name: 'edificios' }
   | { name: 'salas'; building: Building }
-  | { name: 'revision'; building: Building; room: Room }
+  | { name: 'revision'; building: Building; room: Room; desdeFicha?: boolean }
   /*
-   * La ficha de la sala. No está en el camino de la revisión a propósito: el
-   * prototipo promete edificio → sala → «Todo correcto», y meter una pantalla
-   * intermedia costaría un toque en cada una de las 276 salas de la ronda.
-   * Se llega desde la placa de la cabecera, que ya identifica la sala.
+   * La ficha de la sala.
+   *
+   * Es lo primero que se abre al tocar un aula en la lista: lo que uno se
+   * pregunta llegando a la puerta —qué hay aquí, esto ya falló, queda algo
+   * abierto— viene antes que rellenar comprobaciones, y desde la ficha se
+   * empieza la revisión con un botón que ocupa el ancho.
+   *
+   * El camino corto sigue intacto y es lo que importa: el QR de la puerta y el
+   * buscador global entran DIRECTOS a revisar. Quien escanea una pegatina ya
+   * sabe dónde está y a qué viene; cobrarle una pantalla intermedia convertiría
+   * el atajo en un rodeo, y son 276 salas en una ronda.
+   *
+   * `volverA` existe porque a la ficha se llega por dos sitios —la lista y la
+   * placa de la cabecera de la revisión— y volver tiene que devolver al sitio
+   * del que se salió, no a uno que no se ha visto.
    */
-  | { name: 'ficha'; building: Building; room: Room }
+  | { name: 'ficha'; building: Building; room: Room; volverA: 'salas' | 'revision' }
   /* La hoja de placas del edificio. Vive aquí y no en «Datos» porque se imprime
      desde donde se está trabajando: se decide etiquetar un edificio cuando se
      está recorriendo ese edificio. */
@@ -76,6 +102,7 @@ const TABS: Array<{ id: Tab; label: string; minRole: Role }> = [
   { id: 'panel', label: 'Panel', minRole: 'tecnico' },
   { id: 'incidencias', label: 'Incidencias', minRole: 'tecnico' },
   { id: 'almacen', label: 'Almacén', minRole: 'tecnico' },
+  { id: 'historial', label: 'Historial', minRole: 'tecnico' },
   { id: 'informes', label: 'Informes', minRole: 'supervisor' },
   { id: 'datos', label: 'Datos', minRole: 'admin' },
 ]
@@ -152,6 +179,8 @@ export function App(): React.ReactElement {
   const [tab, setTab] = useState<Tab>('revisar')
   const [view, setView] = useState<RoomView>({ name: 'edificios' })
   const [roomOrder, setRoomOrder] = useState<RoomOrder>('antiguedad')
+  const [escaneando, setEscaneando] = useState(false)
+  const [avisoQR, setAvisoQR] = useState<string | null>(null)
   // Hasta que se intenta rehidratar no se pinta la lista de edificios: si no,
   // se vería un parpadeo desde la raíz hasta donde estabas.
   const [restaurado, setRestaurado] = useState(false)
@@ -256,9 +285,30 @@ export function App(): React.ReactElement {
    * Se guarda solo la ubicación, que es lo barato y lo que se pierde. El trabajo
    * en sí ya sobrevive por otro camino: está en Dexie y respaldado en el servidor.
    */
+  /**
+   * Abre una sala por su identificador, venga de donde venga.
+   *
+   * La usan el enlace de la pegatina y el lector de la cámara, y tiene que
+   * resolver también el edificio: la revisión necesita saber a qué lista volver
+   * al salir, y la cabecera enseña el edificio y la planta.
+   */
+  const abrirSala = useCallback(async (roomId: string): Promise<boolean> => {
+    const room = await db.rooms.get(roomId)
+    if (!room) return false
+    const zone = await db.zones.get(room.zone_id)
+    const building = zone ? await db.buildings.get(zone.building_id) : undefined
+    if (!building) return false
+
+    setTab('revisar')
+    // Directo a revisar: esto lo llama el lector de la cámara, y quien escanea
+    // viene a revisar. La ficha está a un toque, en la placa de la cabecera.
+    setView({ name: 'revision', building, room })
+    return true
+  }, [])
+
+
   useEffect(() => {
     if (!unlocked || restaurado) return
-
     void (async () => {
       try {
         /*
@@ -298,7 +348,7 @@ export function App(): React.ReactElement {
         }
 
         const guardado = (await db.meta.get('ultima-vista'))?.value as
-          | { tab?: Tab; buildingId?: string; roomId?: string }
+          | { tab?: Tab; buildingId?: string; roomId?: string; vista?: RoomView['name'] }
           | undefined
 
         if (guardado?.tab) setTab(guardado.tab)
@@ -307,7 +357,15 @@ export function App(): React.ReactElement {
           const building = await db.buildings.get(guardado.buildingId)
           if (building) {
             const room = guardado.roomId ? await db.rooms.get(guardado.roomId) : undefined
-            setView(room ? { name: 'revision', building, room } : { name: 'salas', building })
+            setView(
+              room
+                ? guardado.vista === 'ficha'
+                  ? // Restaurada desde la lista: es de donde se llega a la
+                    // ficha en frío, y es a donde tiene que devolver «Volver».
+                    ({ name: 'ficha', building, room, volverA: 'salas' } as const)
+                  : { name: 'revision', building, room }
+                : { name: 'salas', building },
+            )
           }
         }
       } finally {
@@ -322,8 +380,9 @@ export function App(): React.ReactElement {
       key: 'ultima-vista',
       value: {
         tab,
+        vista: view.name,
         buildingId: view.name === 'edificios' ? null : view.building.id,
-        roomId: view.name === 'revision' ? view.room.id : null,
+        roomId: view.name === 'revision' || view.name === 'ficha' ? view.room.id : null,
       },
     })
   }, [unlocked, restaurado, tab, view])
@@ -477,6 +536,38 @@ export function App(): React.ReactElement {
 
       {tab === 'revisar' && view.name === 'edificios' && (
         <>
+          {/*
+            Escanear va ANTES del buscador y de la lista, y ocupa el ancho
+            entero, porque es el camino corto: el técnico ya está delante de la
+            puerta. Buscar y bajar por los edificios siguen debajo para cuando no
+            hay pegatina —o no hay cámara—, que es lo que impide que esto se
+            convierta en un callejón.
+          */}
+          <div className="border-b border-line bg-surface px-4 pt-3">
+            <button
+              type="button"
+              onClick={() => {
+                setAvisoQR(null)
+                setEscaneando(true)
+              }}
+              className="key key-accent flex min-h-touch w-full items-center justify-center gap-2 px-4 text-sm"
+            >
+              {/* El icono es el marco de una mirilla: cuatro esquinas y un
+                  punto. Se lee como «apunta» sin necesidad de leerlo. */}
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+                <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" />
+              </svg>
+              Escanear el QR del aula
+            </button>
+            {avisoQR && <p className="pt-2 text-sm text-crit">{avisoQR}</p>}
+          </div>
+
           <BuscadorGlobal
             onPick={(building, room) => setView({ name: 'revision', building, room })}
           />
@@ -560,7 +651,9 @@ export function App(): React.ReactElement {
           onOrderChange={setRoomOrder}
           onBack={() => setView({ name: 'edificios' })}
           onPlacas={() => setView({ name: 'placas', building: view.building })}
-          onPick={(room) => setView({ name: 'revision', building: view.building, room })}
+          onPick={(room) =>
+            setView({ name: 'ficha', building: view.building, room, volverA: 'salas' })
+          }
         />
       )}
 
@@ -570,7 +663,13 @@ export function App(): React.ReactElement {
           userId={userId}
           buildingName={view.building.name}
           zoneName={zoneName}
-          onBack={() => setView({ name: 'salas', building: view.building })}
+          onBack={() =>
+            setView(
+              view.name === 'revision' && view.desdeFicha
+                ? ({ name: 'ficha', building: view.building, room: view.room, volverA: 'salas' } as const)
+                : { name: 'salas', building: view.building },
+            )
+          }
           /*
             «Guardar y siguiente sala» salta de verdad a la siguiente.
             Antes este manejador ignoraba el parámetro, así que los dos botones
@@ -581,7 +680,9 @@ export function App(): React.ReactElement {
             local, así que con el orden por antigüedad la recién terminada cae al
             final y la primera del resto es la que toca.
           */
-          onFicha={() => setView({ name: 'ficha', building: view.building, room: view.room })}
+          onFicha={() =>
+            setView({ name: 'ficha', building: view.building, room: view.room, volverA: 'revision' })
+          }
           onDone={(encadenar) => {
             const siguiente =
               encadenar && rondaActual
@@ -604,9 +705,20 @@ export function App(): React.ReactElement {
             buildingName={view.building.name}
             zoneName={zoneName}
             userId={userId}
-            onBack={() => setView({ name: 'revision', building: view.building, room: view.room })}
+            onBack={() =>
+              setView(
+                view.name === 'ficha' && view.volverA === 'salas'
+                  ? { name: 'salas', building: view.building }
+                  : { name: 'revision', building: view.building, room: view.room },
+              )
+            }
             onRevisar={() =>
-              setView({ name: 'revision', building: view.building, room: view.room })
+              setView({
+                name: 'revision',
+                building: view.building,
+                room: view.room,
+                desdeFicha: true,
+              })
             }
             onImprimir={() => setView({ name: 'placas', building: view.building })}
           />
@@ -638,6 +750,7 @@ export function App(): React.ReactElement {
           )}
           {tab === 'incidencias' && <IncidentsPage />}
           {tab === 'almacen' && <StockPage role={role} />}
+          {tab === 'historial' && <HistorialPage />}
           {tab === 'informes' && <ReportsPage />}
           {tab === 'datos' && <CleanupPage yo={userId} />}
         </Suspense>
@@ -672,6 +785,25 @@ export function App(): React.ReactElement {
           ))}
         </ul>
       </nav>
+      )}
+
+      {escaneando && (
+        <Suspense fallback={<div className="fixed inset-0 z-50 bg-black" />}>
+          <EscanerQR
+            onCerrar={() => setEscaneando(false)}
+            onLeido={(texto) => {
+              setEscaneando(false)
+              const sala = salaDeTextoQR(texto)
+              if (!sala) {
+                setAvisoQR('Ese código no es de una sala.')
+                return
+              }
+              void abrirSala(sala).then((ok) => {
+                if (!ok) setAvisoQR('Ese QR no corresponde a ninguna sala de las que puedes ver.')
+              })
+            }}
+          />
+        </Suspense>
       )}
 
       {/* El aviso lleva z-30 y la barra de la revisión vive en la misma esquina:
