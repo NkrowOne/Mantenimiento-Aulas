@@ -5,6 +5,7 @@ import { AssetTypeTray } from './AssetTypeTray'
 import { EquipoPorDefecto } from './EquipoPorDefecto'
 import { EquiposPendientes } from './EquiposPendientes'
 import { MaestroSalas } from './MaestroSalas'
+import { RetiradasPendientes } from './RetiradasPendientes'
 import { UsersPage } from './UsersPage'
 
 interface ProvisionalBuilding {
@@ -29,8 +30,8 @@ interface QuarantineRow {
  * que por importancia:
  *
  *  1. **Usuarios y roles** — lo que se viene a buscar cuando algo va mal.
- *  2. **Equipos y tipos sin validar** — lo único que crece solo: cada ronda de
- *     revisiones deja trabajo aquí.
+ *  2. **Retiradas, equipos y tipos sin validar** — lo único que crece solo:
+ *     cada ronda de revisiones deja trabajo aquí.
  *  3. **Equipamiento por defecto y maestro** — se tocan cuando cambia el campus.
  *  4. **Depuración de la importación** — importante, pero se hace una vez.
  *
@@ -132,7 +133,10 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
       */}
       <UsersPage yo={yo} />
 
-      {/* Lo que llega solo, y por eso va antes que nada de lo que hay debajo. */}
+      {/* Lo que llega solo, y por eso va antes que nada de lo que hay debajo.
+          Las retiradas van las primeras de las tres: bloquean a alguien que ya
+          no puede tocar ese equipo hasta que se decidan. */}
+      <RetiradasPendientes />
       <EquiposPendientes />
       <AssetTypeTray />
 

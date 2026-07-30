@@ -20,7 +20,7 @@
 
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
-import type { Asset, AssetType, Building, Incident, Room, StockItem,
+import type { Asset, AssetRemoval, AssetType, Building, Incident, Room, StockItem,
   StockLevel, Zone } from '@/domain/types'
 
 /** Dónde queda el parte de la última descarga, para que la interfaz lo lea. */
@@ -116,6 +116,10 @@ export async function pullMaster(): Promise<ResultadoPull> {
         // cuyo tipo se fusionó ayer se quedaría sin nombre en el dispositivo.
         ['asset_types', supabase.from('asset_types').select('*')],
         ['assets', supabase.from('assets').select('*').neq('status', 'retirado')],
+        // Solo las vivas: una retirada ya decidida no tiene nada que enseñar en
+        // el aula —el equipo ya se fue, o sigue ahí— y las decididas crecen sin
+        // parar.
+        ['asset_removals', supabase.from('asset_removals').select('*').eq('state', 'pendiente')],
       ].map(async ([tabla, consulta]) => ({
         tabla: tabla as string,
         res: (await consulta) as Respuesta<Record<string, unknown>>,
@@ -169,13 +173,51 @@ export async function pullMaster(): Promise<ResultadoPull> {
     res: Respuesta<Record<string, unknown>>,
     tabla: { toCollection: () => { primaryKeys: () => Promise<unknown[]> }; bulkDelete: (k: string[]) => Promise<unknown> },
     idDe: (fila: Record<string, unknown>) => string,
+    /** Los que no se tocan aunque el servidor no los mencione. */
+    conservar?: (candidatos: string[]) => Promise<Set<string>>,
   ): Promise<void> => {
     if (res.error || !res.data?.length) return
     const vivos = new Set(res.data.map(idDe))
     const locales = (await tabla.toCollection().primaryKeys()) as string[]
-    const sobran = locales.filter((id) => !vivos.has(id))
+    let sobran = locales.filter((id) => !vivos.has(id))
+    if (sobran.length > 0 && conservar) {
+      const salvados = await conservar(sobran)
+      sobran = sobran.filter((id) => !salvados.has(id))
+    }
     if (sobran.length > 0) await tabla.bulkDelete(sobran)
   }
+
+  /**
+   * La red de seguridad para podar lo que el dispositivo SÍ crea por su cuenta.
+   *
+   * Con los equipos y las retiradas no basta con «no está en la respuesta, se
+   * borra», y por dos motivos distintos:
+   *
+   *  - Lo que espera en la cola de salida todavía no ha llegado al servidor, así
+   *    que por definición no puede venir en su respuesta. Borrarlo sería tirar
+   *    el trabajo del técnico antes de que suba.
+   *  - Y hay una carrera estrecha pero real: si la descarga sale un instante
+   *    antes de que termine la subida, la respuesta no trae el equipo que acaba
+   *    de guardarse y su entrada en la cola ya se ha borrado. Sin margen, el
+   *    aparato desaparecería de la pantalla y volvería dos minutos después.
+   *
+   * De ahí el cuarto de hora de gracia: lo recién creado no se juzga.
+   */
+  const margen = Date.now() - 15 * 60_000
+  const enCola = new Set((await db.outbox.toCollection().primaryKeys()) as string[])
+  const salvarRecientes = (fecha: (id: string) => Promise<string | null>) =>
+    async (candidatos: string[]): Promise<Set<string>> => {
+      const salvados = new Set<string>()
+      for (const id of candidatos) {
+        if (enCola.has(id)) {
+          salvados.add(id)
+          continue
+        }
+        const at = await fecha(id)
+        if (at === null || new Date(at).getTime() > margen) salvados.add(id)
+      }
+      return salvados
+    }
 
   await guardar<Building>(de('buildings'), db.buildings)
   await guardar<Zone>(de('zones'), db.zones)
@@ -184,6 +226,7 @@ export async function pullMaster(): Promise<ResultadoPull> {
   await guardar<Incident>(de('incidents'), db.incidents)
   await guardar<AssetType>(de('asset_types'), db.assetTypes)
   await guardar<Asset>(de('assets'), db.assets)
+  await guardar<AssetRemoval>(de('asset_removals'), db.assetRemovals)
 
   const rooms = de('room_overview')
   if (!rooms.error && rooms.data?.length) {
@@ -210,6 +253,32 @@ export async function pullMaster(): Promise<ResultadoPull> {
   await podar(de('buildings'), db.buildings, (b) => b['id'] as string)
   await podar(de('zones'), db.zones, (z) => z['id'] as string)
   await podar(rooms, db.rooms, (r) => r['room_id'] as string)
+
+  /*
+   * Y los equipos, que es lo que hace que retirar signifique algo.
+   *
+   * La consulta pide los que NO están retirados, así que un equipo que un
+   * coordinador retira —o descarta— deja de venir. Sin podar, se quedaba en el
+   * dispositivo con el estado de antes: seguía saliendo en la sala, seguía
+   * apareciendo en el formulario de revisión y no había forma de que se fuera.
+   * La decisión del panel no llegaba al aula, que es el único sitio donde
+   * importa.
+   */
+  await podar(
+    de('assets'),
+    db.assets,
+    (a) => a['id'] as string,
+    salvarRecientes(async (id) => (await db.assets.get(id))?.created_at ?? null),
+  )
+
+  // Lo mismo con las retiradas: al decidirse dejan de ser pendientes, y la
+  // marca «retirada solicitada» tiene que desaparecer del equipo.
+  await podar(
+    de('asset_removals'),
+    db.assetRemovals,
+    (r) => r['id'] as string,
+    salvarRecientes(async (id) => (await db.assetRemovals.get(id))?.requested_at ?? null),
+  )
 
   const todasVacias = fallos.length === 0 && vacias.length === consultas.length
 

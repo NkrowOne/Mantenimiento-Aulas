@@ -2,7 +2,15 @@ import { useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { labelAvailable, resolveType, searchCatalog } from '@/domain/inventory'
-import { ASSET_STATUS_LABELS, type Asset, type AssetType } from '@/domain/types'
+import {
+  ASSET_STATUS_LABELS,
+  REMOVAL_DESTINO_HINTS,
+  REMOVAL_DESTINO_LABELS,
+  type Asset,
+  type AssetRemoval,
+  type AssetType,
+  type RemovalDestino,
+} from '@/domain/types'
 import { typeRank } from '@/features/inspection/useInspection'
 import { LevantarInventario } from './LevantarInventario'
 import { OrigenDelEquipo } from './OrigenDelEquipo'
@@ -37,9 +45,18 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
   /* Lo que se va a añadir, esperando a que se diga de dónde sale. */
   const [eligiendo, setEligiendo] = useState<{ nombre: string; tipo: AssetType | null } | null>(null)
 
-  const { addAssetConOrigen, confirmarInventario, patchAsset, setStatus } = useRoomInventory(
-    roomId,
-    userId,
+  const { addAssetConOrigen, cancelarRetirada, confirmarInventario, patchAsset, setStatus, solicitarRetirada } =
+    useRoomInventory(roomId, userId)
+
+  /* Las retiradas vivas de esta sala, por equipo. Del espejo: la marca tiene que
+     verse en el aula sin cobertura, o quien la pidió ayer la vuelve a pedir. */
+  const retiradas = useLiveQuery(
+    async () => {
+      const vivas = await db.assetRemovals.where('state').equals('pendiente').toArray()
+      return new Map(vivas.map((r) => [r.asset_id, r]))
+    },
+    [],
+    new Map<string, AssetRemoval>(),
   )
 
   /* Cuándo se confirmó por última vez que el inventario de esta sala está
@@ -245,6 +262,13 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                           Sin validar
                         </span>
                       )}
+                      {/* En gris y no en naranja: aquí no hay nada roto, hay
+                          algo pedido y esperando a otra persona. */}
+                      {retiradas.get(asset.id) && (
+                        <span className="shrink-0 rounded-tag bg-sunken px-1.5 py-0.5 text-[0.6875rem] font-medium text-muted">
+                          retirada pedida
+                        </span>
+                      )}
                       {asset.status === 'averiado' && (
                         <span className="shrink-0 rounded-tag bg-crit-tint px-1.5 py-0.5 text-[0.6875rem] font-medium text-crit">
                           {ASSET_STATUS_LABELS.averiado}
@@ -269,8 +293,19 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                           <AssetFixer
                             asset={asset}
                             assetsInRoom={assets}
+                            retirada={retiradas.get(asset.id) ?? null}
                             onPatch={(patch) => void patchAsset(asset, patch)}
                             onStatus={(status) => void setStatus(asset, status)}
+                            onSolicitar={(destino, motivo) => {
+                              void solicitarRetirada(asset, destino, motivo).then((r) =>
+                                setNote(
+                                  r.ok
+                                    ? `Retirada pedida para «${asset.label ?? 'el equipo'}». Sigue en la sala hasta que la autoricen.`
+                                    : (r.error ?? 'No se pudo pedir la retirada.'),
+                                ),
+                              )
+                            }}
+                            onCancelar={(id) => void cancelarRetirada(id)}
                           />
                         )}
                       </div>
@@ -310,17 +345,29 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
 function AssetFixer({
   asset,
   assetsInRoom,
+  retirada,
   onPatch,
   onStatus,
+  onSolicitar,
+  onCancelar,
 }: {
   asset: Asset
   assetsInRoom: Asset[]
+  /** La solicitud viva de este equipo, si la hay. */
+  retirada: AssetRemoval | null
   onPatch: (patch: Partial<Asset>) => void
-  onStatus: (status: 'averiado' | 'retirado') => void
+  onStatus: (status: 'averiado') => void
+  onSolicitar: (destino: RemovalDestino, motivo: string) => void
+  onCancelar: (solicitudId: string) => void
 }): React.ReactElement {
   const [label, setLabel] = useState(asset.label ?? '')
   const [model, setModel] = useState(asset.model ?? '')
   const [serial, setSerial] = useState(asset.serial ?? '')
+  const [pidiendo, setPidiendo] = useState(false)
+  /* El almacén por defecto: la retirada que más se pierde hoy es justo la del
+     aparato que está bien y vuelve a la estantería sin que nadie lo ingrese. */
+  const [destino, setDestino] = useState<RemovalDestino>('almacen')
+  const [motivo, setMotivo] = useState('')
 
   const clash = label.trim() !== '' && !labelAvailable(assetsInRoom, label, asset.id)
 
@@ -388,24 +435,105 @@ function AssetFixer({
           >
             Averiado
           </button>
-          {/*
-            Se confirma, y va en su propia fila.
-            Retirar un equipo lo saca de la revisión y del inventario, y estaba
-            pegado a «Averiado» en un objetivo de 32px: el fallo de pulsación era
-            cuestión de tiempo. Cerrar sesión ya se confirmaba; esto pesa más.
-          */}
           <button
             type="button"
-            onClick={() => {
-              if (confirm(`¿Retirar «${asset.label ?? 'este equipo'}» de la sala?`)) {
-                onStatus('retirado')
-              }
-            }}
+            disabled={retirada !== null}
+            onClick={() => setPidiendo((v) => !v)}
             className="key key-quiet min-h-11 flex-1 px-2 text-xs text-muted"
           >
-            Retirar de la sala
+            {retirada ? 'Retirada pedida' : 'Sacar de la sala'}
           </button>
         </div>
+
+        {/*
+          Sacar un equipo pasa por una pregunta, y la pregunta es a dónde va.
+          Antes esto era un botón que retiraba el aparato en el acto: el
+          inventario perdía una fila sin que nadie pudiera decir que no, y un
+          proyector perfectamente bueno que volvía a la estantería no llegaba
+          nunca al almacén. Son los dos únicos destinos que existen y pesan
+          distinto, así que se eligen antes de firmar nada.
+        */}
+        {pidiendo && retirada === null && (
+          <div className="rounded-ctl border border-line bg-surface p-3">
+            <p className="text-xs font-medium">¿A dónde va?</p>
+
+            <div role="radiogroup" aria-label="Destino del equipo" className="mt-2 grid gap-2">
+              {(['baja', 'almacen'] as RemovalDestino[]).map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  role="radio"
+                  aria-checked={destino === d}
+                  onClick={() => setDestino(d)}
+                  className={`key px-3 py-2 text-left text-xs ${
+                    destino === d ? 'key-accent' : 'key-quiet text-muted'
+                  }`}
+                >
+                  <span className="block font-semibold">{REMOVAL_DESTINO_LABELS[d]}</span>
+                  <span className="mt-0.5 block font-normal opacity-80">
+                    {REMOVAL_DESTINO_HINTS[d]}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <label className="mt-2 block text-xs text-muted">
+              Por qué
+              <input
+                type="text"
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+                placeholder="No enciende, sobra en el aula…"
+                enterKeyHint="done"
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+              />
+            </label>
+
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onSolicitar(destino, motivo)
+                  setPidiendo(false)
+                  setMotivo('')
+                }}
+                className="key key-accent min-h-11 flex-1 px-2 text-xs"
+              >
+                Pedir la retirada
+              </button>
+              <button
+                type="button"
+                onClick={() => setPidiendo(false)}
+                className="key key-quiet min-h-11 px-3 text-xs text-muted"
+              >
+                Cancelar
+              </button>
+            </div>
+
+            {/* Lo que va a pasar y lo que no. Sin esto, el técnico se va del
+                aula creyendo que el equipo ya no cuenta, y sigue contando. */}
+            <p className="mt-2 text-xs text-muted">
+              El equipo se queda en la sala hasta que un coordinador lo autorice.
+            </p>
+          </div>
+        )}
+
+        {retirada && (
+          <div className="rounded-ctl border border-line bg-sunken p-3">
+            <p className="text-xs text-muted">
+              Retirada pedida ({REMOVAL_DESTINO_LABELS[retirada.destino].toLowerCase()})
+              {retirada.reason ? `: ${retirada.reason}` : ''}. Esperando a que un coordinador la
+              autorice.
+            </p>
+            <button
+              type="button"
+              onClick={() => onCancelar(retirada.id)}
+              className="key key-quiet mt-2 min-h-11 px-3 text-xs text-muted"
+            >
+              Ya no hace falta
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

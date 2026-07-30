@@ -103,19 +103,32 @@ export function EquiposPendientes(): React.ReactElement {
   })
 
   const act = useMutation({
-    mutationFn: async (input: { kind: 'confirmar'; ids: string[] } | { kind: 'retirar'; id: string }) => {
+    mutationFn: async (input: { kind: 'confirmar'; ids: string[] } | { kind: 'descartar'; id: string }) => {
       if (input.kind === 'confirmar') {
         const { data: n, error: err } = await supabase.rpc('confirm_assets', { p_ids: input.ids })
         if (err) throw err
         return `${n as number} equipo(s) validado(s).`
       }
 
-      const { error: err } = await supabase
-        .from('assets')
-        .update({ status: 'retirado' })
-        .eq('id', input.id)
+      /*
+       * No autorizarlo lo BORRA de la sala, no lo deja retirado.
+       *
+       * Un equipo sin validar es una propuesta, y una propuesta rechazada no
+       * tiene por qué convertirse en un aparato retirado en el histórico de una
+       * sala donde nunca hubo nada. Lo que queda es la fila de auditoría de
+       * quien lo descartó, que es todo lo que hay que conservar.
+       *
+       * El servidor lo retira en vez de borrarlo si de él cuelga algo que ya se
+       * firmó —una revisión que lo comprobó, una incidencia que lo señala—, y
+       * dice cuál de las dos ha hecho.
+       */
+      const { data: resultado, error: err } = await supabase.rpc('reject_asset', {
+        p_id: input.id,
+      })
       if (err) throw err
-      return 'Retirado del inventario de la sala.'
+      return resultado === 'borrado'
+        ? 'Borrado de la sala.'
+        : 'Retirado de la sala: alguna revisión ya lo había comprobado, así que la fila se conserva.'
     },
     onSuccess: (mensaje) => {
       setNota(mensaje)
@@ -246,11 +259,15 @@ export function EquiposPendientes(): React.ReactElement {
                             type="button"
                             disabled={act.isPending}
                             onClick={() => {
-                              // Retirar saca el equipo del inventario y de las
-                              // revisiones. Se confirma por lo mismo que en el
-                              // aula: no hay botón de deshacer al lado.
-                              if (confirm(`¿Retirar «${e.label ?? 'este equipo'}»? Deja de contar en la sala.`)) {
-                                act.mutate({ kind: 'retirar', id: e.id })
+                              // Borra el equipo de la sala. Se confirma por lo
+                              // mismo que en el aula: no hay botón de deshacer
+                              // al lado.
+                              if (
+                                confirm(
+                                  `¿Borrar «${e.label ?? 'este equipo'}» de la sala? No se autoriza y desaparece del inventario.`,
+                                )
+                              ) {
+                                act.mutate({ kind: 'descartar', id: e.id })
                               }
                             }}
                             className="key key-quiet min-h-11 shrink-0 px-3 text-xs text-muted"
