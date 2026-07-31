@@ -90,15 +90,28 @@ export interface Ajustes {
  * activar la IA desde la propia aplicación sin reconstruir el contenedor. Si
  * están las dos, gana la del entorno, que es la que el administrador del
  * servidor controla.
+ *
+ * **Manda si DICE algo.** El compose declara las tres variables con
+ * `${GEMINI_API_KEY:-}`, así que en un despliegue sin clave en el `.env` la
+ * variable EXISTE con cadena vacía — y `''` no es nulo: con un `??` ingenuo, esa
+ * cadena vacía pisaba la clave que el administrador había pegado en la
+ * aplicación, y la IA quedaba anulada para siempre mientras el registro decía
+ * «sin clave» con la clave guardada en app_config. Una variable vacía es una
+ * variable que no dice nada, y lo que no dice nada no manda sobre nadie.
  */
+function delEntorno(nombre: string): string | undefined {
+  const v = process.env[nombre]?.trim()
+  return v ? v : undefined
+}
+
 export function configurarIA(ajustes: Ajustes = {}): OpcionesIA | null {
-  const clave = (process.env['GEMINI_API_KEY'] ?? ajustes.clave ?? '').trim()
+  const clave = (delEntorno('GEMINI_API_KEY') ?? ajustes.clave ?? '').trim()
   if (!clave) return null
 
-  const thinking = (process.env['GEMINI_THINKING'] ?? ajustes.thinking ?? THINKING_POR_DEFECTO).trim()
+  const thinking = (delEntorno('GEMINI_THINKING') ?? ajustes.thinking ?? THINKING_POR_DEFECTO).trim()
   return {
     clave,
-    modelo: (process.env['GEMINI_MODEL'] ?? ajustes.modelo ?? MODELO_POR_DEFECTO).trim(),
+    modelo: (delEntorno('GEMINI_MODEL') ?? ajustes.modelo ?? MODELO_POR_DEFECTO).trim(),
     // Un valor inventado en la configuración devolvería 400 en cada informe.
     thinking: (THINKING_VALIDOS as readonly string[]).includes(thinking)
       ? thinking
