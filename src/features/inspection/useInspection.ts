@@ -19,6 +19,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { v7 as uuidv7 } from 'uuid'
 import { borrarFotoDeLaCola, db, enqueue } from '@/db/dexie'
 import { flush } from '@/sync/outbox'
+import { pullSala } from '@/sync/pull'
 import { rangoDeTipo, resolveType } from '@/domain/inventory'
 import { incidenciasDeRevision } from '@/domain/incidencias'
 import { checksDeSemilla, type Semilla } from '@/domain/revisiones'
@@ -178,6 +179,20 @@ export function useInspection(
     async () => (room ? db.assets.where('room_id').equals(room.id).toArray() : []),
     [room?.id],
   )
+
+  /*
+   * Y al abrir la sala, sus equipos se reconcilian con el servidor.
+   *
+   * Es lo que garantiza que esta revisión traiga todos los equipos que trajo la
+   * última: las filas del formulario salen del espejo, y a un espejo le puede
+   * faltar lo que otro dispositivo dio de alta esta mañana — o lo que una
+   * descarga truncada dejó fuera hace días. Sin cobertura no hace nada, y la
+   * consulta en vivo de arriba pinta lo que llegue en cuanto llega.
+   */
+  const roomId = room?.id ?? null
+  useEffect(() => {
+    if (roomId) void pullSala(roomId)
+  }, [roomId])
   const types = useLiveQuery(() => db.assetTypes.toArray(), [])
 
   const typesById = useMemo(

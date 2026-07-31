@@ -36,11 +36,12 @@
  * dispositivo, es una revisión como cualquier otra.
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
+import { pullSala } from '@/sync/pull'
 import { fechaCorta } from '@/domain/fechas'
 import { fechaLegible } from '@/domain/historial'
 import {
@@ -105,6 +106,20 @@ export function RevisionesAnteriores({
   const qc = useQueryClient()
   const [filtro, setFiltro] = useState<Filtro>('todas')
   const [todas, setTodas] = useState(false)
+
+  /*
+   * Antes de sembrar nada, el espejo de esta sala se pone al día.
+   *
+   * La semilla de una corrección filtra por `clavesVigentes`, que sale del
+   * espejo local: si al espejo le falta un equipo —una descarga atrasada, un
+   * alta de otro dispositivo—, la respuesta de aquella revisión sobre ese
+   * equipo se descartaría como si el aparato ya no existiera. Esta pantalla ya
+   * necesita conexión para listar las revisiones, así que reconciliar aquí no
+   * añade ningún requisito nuevo; sin red, simplemente no hace nada.
+   */
+  useEffect(() => {
+    void pullSala(roomId)
+  }, [roomId])
 
   const { data, isPending, isError, refetch } = useQuery({
     queryKey: ['room-inspections', roomId],

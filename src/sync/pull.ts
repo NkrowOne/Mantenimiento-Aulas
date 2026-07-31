@@ -6,6 +6,14 @@
  * sincronización — se baja todo y la interfaz lee siempre de local, sin esperar
  * nunca a la red.
  *
+ * «Todo» se dice pronto, y costó datos aprenderlo: PostgREST puede traer un
+ * tope de filas por respuesta y lo aplica sin avisar, así que cada tabla se
+ * baja **por páginas** (`descargaEntera`) hasta la página corta que confirma el
+ * final. Sin eso, el inventario creció por encima del tope y las descargas
+ * llegaban truncadas: equipos e incidencias perfectamente guardados dejaban de
+ * verse en el dispositivo — y la poda, leyendo la ausencia como borrado, los
+ * quitaba del espejo.
+ *
  * Lo que esta función NO puede volver a hacer es callarse.
  *
  * Antes ignoraba el `error` de cada respuesta y hacía `if (data) bulkPut(data)`.
@@ -20,6 +28,7 @@
 
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
+import { descargaEntera, type Descarga, type Pagina } from './paginada'
 import type { Asset, AssetRemoval, AssetType, Building, Incident, Room, StockItem,
   StockLevel, Zone } from '@/domain/types'
 
@@ -44,10 +53,24 @@ export interface ResultadoPull {
   at: number
 }
 
-interface Respuesta<T> {
-  data: T[] | null
-  error: { message: string; code?: string } | null
-}
+/**
+ * La respuesta de una tabla, ya juntada de todas sus páginas.
+ *
+ * `completa` es la pieza nueva y la que importa: PostgREST puede llevar un tope
+ * de filas por respuesta (el Supabase gestionado trae 1.000 de fábrica) y lo
+ * aplica sin avisar. Antes de paginar, ese tope hacía que `assets` llegara a
+ * trozos en cuanto el inventario creció —los equipos por defecto «desaparecían»
+ * del dispositivo— y, mucho peor, la poda leía la ausencia como borrado y
+ * eliminaba del espejo equipos e incidencias que estaban perfectamente
+ * guardados. Ahora todo se pide por páginas (`descargaEntera`) y **la poda solo
+ * actúa sobre un conjunto completo**.
+ */
+type Respuesta<T> = Descarga<T>
+
+/** Cómo se pide cada página de una tabla. El `order` estable es obligatorio:
+    sin él PostgREST no garantiza el orden entre peticiones y dos páginas
+    podrían solaparse o dejar un hueco. */
+type PorPagina = (desde: number, hasta: number) => PromiseLike<Pagina<Record<string, unknown>>>
 
 /**
  * Cero filas sin error es la firma de RLS.
@@ -102,30 +125,31 @@ export async function pullMaster(): Promise<ResultadoPull> {
     })
   }
 
-  const vacio: Respuesta<Record<string, unknown>> = { data: [], error: null }
-  const consultas: Array<{ tabla: string; res: Respuesta<Record<string, unknown>> }> = (
+  const vacio: Respuesta<Record<string, unknown>> = { data: [], error: null, completa: false }
+  const tablas: Array<[string, PorPagina]> = [
+    ['buildings', (d, h) => supabase.from('buildings').select('*').order('sort_order').order('id').range(d, h)],
+    ['zones', (d, h) => supabase.from('zones').select('*').order('id').range(d, h)],
+    ['room_overview', (d, h) => supabase.from('room_overview').select('*').order('room_id').range(d, h)],
+    ['stock_items', (d, h) => supabase.from('stock_items').select('*').eq('active', true).order('id').range(d, h)],
+    ['stock_levels', (d, h) => supabase.from('stock_levels').select('*').order('stock_item_id').range(d, h)],
+    ['incidents', (d, h) => supabase.from('incidents').select('*').neq('state', 'resuelta').order('id').range(d, h)],
+    // El catálogo entero, fusionados incluidos: sin las lápidas, un elemento
+    // cuyo tipo se fusionó ayer se quedaría sin nombre en el dispositivo.
+    ['asset_types', (d, h) => supabase.from('asset_types').select('*').order('id').range(d, h)],
+    ['assets', (d, h) => supabase.from('assets').select('*').neq('status', 'retirado').order('id').range(d, h)],
+    // Solo las vivas: una retirada ya decidida no tiene nada que enseñar en
+    // el aula —el equipo ya se fue, o sigue ahí— y las decididas crecen sin
+    // parar.
+    ['asset_removals', (d, h) => supabase.from('asset_removals').select('*').eq('state', 'pendiente').order('id').range(d, h)],
+  ]
+
+  const consultas: Array<{ tabla: string; res: Respuesta<Record<string, unknown>> }> =
     await Promise.all(
-      [
-        ['buildings', supabase.from('buildings').select('*').order('sort_order')],
-        ['zones', supabase.from('zones').select('*')],
-        ['room_overview', supabase.from('room_overview').select('*')],
-        ['stock_items', supabase.from('stock_items').select('*').eq('active', true)],
-        ['stock_levels', supabase.from('stock_levels').select('*')],
-        ['incidents', supabase.from('incidents').select('*').neq('state', 'resuelta')],
-        // El catálogo entero, fusionados incluidos: sin las lápidas, un elemento
-        // cuyo tipo se fusionó ayer se quedaría sin nombre en el dispositivo.
-        ['asset_types', supabase.from('asset_types').select('*')],
-        ['assets', supabase.from('assets').select('*').neq('status', 'retirado')],
-        // Solo las vivas: una retirada ya decidida no tiene nada que enseñar en
-        // el aula —el equipo ya se fue, o sigue ahí— y las decididas crecen sin
-        // parar.
-        ['asset_removals', supabase.from('asset_removals').select('*').eq('state', 'pendiente')],
-      ].map(async ([tabla, consulta]) => ({
-        tabla: tabla as string,
-        res: (await consulta) as Respuesta<Record<string, unknown>>,
+      tablas.map(async ([tabla, porPagina]) => ({
+        tabla,
+        res: await descargaEntera(porPagina),
       })),
     )
-  ).map((c) => c)
 
   const de = (tabla: string): Respuesta<Record<string, unknown>> =>
     consultas.find((c) => c.tabla === tabla)?.res ?? vacio
@@ -165,9 +189,13 @@ export async function pullMaster(): Promise<ResultadoPull> {
    * aún en la respuesta del servidor y esto lo borraría antes de que llegue a
    * subir.
    *
-   * Y nunca sobre una respuesta vacía o con error, que es la firma de RLS
-   * bloqueando o de media descarga: eso vaciaría el dispositivo entero por un
-   * token mal emitido.
+   * Y nunca sobre una respuesta vacía, con error o **incompleta**, que es la
+   * firma de RLS bloqueando o de media descarga: eso vaciaría el dispositivo
+   * entero por un token mal emitido. Lo de incompleta es la lección más cara de
+   * este fichero: con el tope de filas de PostgREST, una descarga truncada a
+   * 1.000 equipos hacía «desaparecer» del dispositivo los equipos que quedaban
+   * fuera de la ventana — incluidos los del equipamiento por defecto que sí
+   * estaban sincronizados.
    */
   const podar = async (
     res: Respuesta<Record<string, unknown>>,
@@ -176,7 +204,7 @@ export async function pullMaster(): Promise<ResultadoPull> {
     /** Los que no se tocan aunque el servidor no los mencione. */
     conservar?: (candidatos: string[]) => Promise<Set<string>>,
   ): Promise<void> => {
-    if (res.error || !res.data?.length) return
+    if (res.error || !res.completa || !res.data?.length) return
     const vivos = new Set(res.data.map(idDe))
     const locales = (await tabla.toCollection().primaryKeys()) as string[]
     let sobran = locales.filter((id) => !vivos.has(id))
@@ -316,8 +344,11 @@ export async function pullMaster(): Promise<ResultadoPull> {
    *
    * Lo recién abierto no se juzga, igual que con los equipos y las retiradas.
    */
+  // Y con el mismo requisito de conjunto completo que `podar`: si la lista de
+  // abiertas llegó truncada, la ausencia de una incidencia no significa nada y
+  // borrarla del espejo sería repetir el fallo del tope de filas.
   const incidencias = de('incidents')
-  if (!incidencias.error && !todasVacias) {
+  if (!incidencias.error && incidencias.completa && !todasVacias) {
     const vivas = new Set((incidencias.data ?? []).map((i) => i['id'] as string))
     const enCola = new Set((await db.outbox.toCollection().primaryKeys()) as string[])
     const locales = await db.incidents.toArray()
@@ -417,4 +448,71 @@ export function startPull(alTerminar?: (r: ResultadoPull) => void): () => void {
     document.removeEventListener('visibilitychange', alVolverAlFrente)
     clearInterval(timer)
   }
+}
+
+// -----------------------------------------------------------------------------
+// Reconciliación dirigida: los equipos de UNA sala
+// -----------------------------------------------------------------------------
+
+/** Cuándo se reconcilió cada sala por última vez, para no repetirlo por
+    entrar y salir de la misma revisión. */
+const ultimoRefrescoDeSala = new Map<string, number>()
+
+/**
+ * Pone al día los equipos de una sala con lo que el servidor sabe de ella.
+ *
+ * Se llama al abrir la revisión, y existe por una promesa concreta: **la
+ * siguiente revisión tiene que traer todos los equipos que trajo la última**.
+ * El formulario construye sus filas con el espejo local, así que cualquier
+ * cosa que le falte al espejo —una descarga truncada de hace días, un equipo
+ * dado de alta desde otro dispositivo esta mañana— es una fila que la revisión
+ * pierde sin decirlo. La descarga global ya se defiende del tope de filas;
+ * esto cierra la ventana que queda entre descargas, con una consulta pequeña
+ * y solo de la sala que se tiene delante.
+ *
+ * Sin red no hace nada y no molesta: la revisión sigue funcionando con el
+ * espejo, que es el contrato de toda la aplicación.
+ *
+ * La poda local respeta las tres salvaguardas de la descarga global —cola de
+ * salida, cuarto de hora de gracia y nunca sobre una respuesta vacía o
+ * incompleta— porque el riesgo es el mismo: borrar del dispositivo el trabajo
+ * que todavía no ha subido, o leer un fallo de permisos como una sala vacía.
+ */
+export async function pullSala(roomId: string): Promise<void> {
+  if (!navigator.onLine) return
+
+  const ahora = Date.now()
+  if (ahora - (ultimoRefrescoDeSala.get(roomId) ?? 0) < 60_000) return
+  ultimoRefrescoDeSala.set(roomId, ahora)
+
+  const { data: sesion } = await supabase.auth.getSession()
+  if (!sesion.session) return
+
+  const res = await descargaEntera<Record<string, unknown>>((d, h) =>
+    supabase
+      .from('assets')
+      .select('*')
+      .eq('room_id', roomId)
+      .neq('status', 'retirado')
+      .order('id')
+      .range(d, h),
+  )
+  // Una respuesta vacía no poda: no se distingue de RLS bloqueando, y la
+  // descarga global —que sí tiene la firma para diagnosticarlo— ya se encarga.
+  if (res.error || !res.completa || !res.data || res.data.length === 0) return
+
+  await db.assets.bulkPut(res.data as unknown as Asset[])
+
+  const vivos = new Set(res.data.map((a) => a['id'] as string))
+  const enCola = new Set((await db.outbox.toCollection().primaryKeys()) as string[])
+  const margen = Date.now() - 15 * 60_000
+
+  const locales = await db.assets.where('room_id').equals(roomId).toArray()
+  const sobran = locales
+    .filter((a) => !vivos.has(a.id) && !enCola.has(a.id))
+    // Lo recién creado no se juzga: puede estar subiendo en este instante.
+    .filter((a) => a.created_at !== null && new Date(a.created_at).getTime() <= margen)
+    .map((a) => a.id)
+
+  if (sobran.length > 0) await db.assets.bulkDelete(sobran)
 }
