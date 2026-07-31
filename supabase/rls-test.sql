@@ -2079,3 +2079,35 @@ begin;
     raise notice 'OK: la auditoría es de supervisor para arriba';
   end $$;
 rollback;
+
+\echo ''
+\echo '=== 62. Una observación abierta no enciende la insignia de la sala ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active order by created_at limit 1 \gset
+  select open_incidents as antes from room_overview where room_id = :'sala' \gset
+
+  -- Una nota de seguimiento del histórico: abierta por definición y para siempre.
+  insert into incidents (id, room_id, title, severity, state, kind, opened_at, opened_by)
+  values ('dddddddd-dddd-4ddd-8ddd-ddddddddd010', :'sala',
+          'El mando aparece en el cajón', 'baja', 'abierta', 'observacion',
+          now() - interval '300 days', '11111111-1111-4111-8111-111111111111');
+
+  select case
+    when (select open_incidents from room_overview where room_id = :'sala') = :'antes'
+    then 'OK: la nota no cuenta como incidencia abierta de la sala'
+    else 'FALLO: la insignia de la sala cuenta observaciones'
+  end as resultado;
+
+  -- Y una solicitud SÍ cuenta: es trabajo pedido y está en la pestaña.
+  insert into incidents (id, room_id, title, severity, state, kind, opened_at, opened_by)
+  values ('dddddddd-dddd-4ddd-8ddd-ddddddddd011', :'sala',
+          'Instalar cámara', 'media', 'abierta', 'solicitud',
+          now(), '11111111-1111-4111-8111-111111111111');
+
+  select case
+    when (select open_incidents from room_overview where room_id = :'sala') = :'antes' + 1
+    then 'OK: la solicitud sí cuenta como trabajo pendiente'
+    else 'FALLO: la solicitud no cuenta en la insignia'
+  end as resultado;
+rollback;
