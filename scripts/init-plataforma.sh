@@ -141,7 +141,13 @@ if [ -n "${REPORTS_WORKER_TOKEN:-}" ]; then
   say 'Sincronizando el worker de informes'
   [ ${#REPORTS_WORKER_TOKEN} -ge 16 ] \
     || fail 'REPORTS_WORKER_TOKEN es más corto de 16 caracteres; el worker se niega a arrancar con uno así'
-  URL="${REPORTS_WORKER_URL:-http://reports-worker:8080/generate}"
+  # En una plataforma la URL interna del compose no existe: escribirla como
+  # valor por defecto era dejar los informes llamando a un host imposible, en
+  # silencio y para siempre — el mismo síntoma exacto que pg_net sin precargar.
+  # Aquí el valor no se adivina: se exige.
+  [ -n "${REPORTS_WORKER_URL:-}" ] \
+    || fail 'Falta REPORTS_WORKER_URL: en una plataforma el worker no se llama http://reports-worker:8080. Exporta la URL interna real de tu servicio de informes (p. ej. http://<servicio>.railway.internal:8080/generate)'
+  URL="${REPORTS_WORKER_URL}"
   P <<SQL
 insert into app_config (key, value)
 values ('reports_worker_token', '${REPORTS_WORKER_TOKEN}'),

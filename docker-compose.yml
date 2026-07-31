@@ -150,8 +150,22 @@ services:
       KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
       KONG_DNS_ORDER: LAST,A,CNAME
       KONG_PLUGINS: request-transformer,cors,key-auth
+      # Las lee la plantilla de abajo. Sin este renderizado, las credenciales
+      # de key-auth eran los LITERALES «$SUPABASE_ANON_KEY» y
+      # «$SUPABASE_SERVICE_KEY» — Kong no expande variables en la configuración
+      # declarativa — y toda petición con la clave real moría en un 401.
+      SUPABASE_ANON_KEY: ${ANON_KEY:?falta ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY:?falta SERVICE_ROLE_KEY}
     volumes:
-      - ./supabase/kong.yml:/home/kong/kong.yml:ro
+      # Como plantilla, no como configuración final: el arranque la renderiza
+      # sustituyendo las dos variables y Kong lee el resultado. Es el mismo
+      # truco del compose oficial de Supabase, y es lo que hace que las claves
+      # vivan solo en el .env.
+      - ./supabase/kong.yml:/home/kong/temp.yml:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - eval "echo \"$$(cat /home/kong/temp.yml)\"" > /home/kong/kong.yml && exec /docker-entrypoint.sh kong docker-start
     networks: [interna]
 
   # ── TLS y servicio de la PWA ─────────────────────────────────────────
@@ -188,7 +202,12 @@ services:
       db: { condition: service_healthy }
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
-      SUPABASE_URL: https://${DOMAIN}
+      # Por el nombre interno de Kong, no por https://${DOMAIN}: ese dominio
+      # solo existe en el DNS interno o en el de la VPN, y desde dentro del
+      # contenedor no hay garantía de resolverlo — además de atar la subida del
+      # PDF a que Caddy esté vivo. El worker solo usa esta URL para hablar con
+      # Storage, y Storage está a dos saltos por la red interna.
+      SUPABASE_URL: http://kong:8000
       SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
       WORKER_TOKEN: ${REPORTS_WORKER_TOKEN:?falta REPORTS_WORKER_TOKEN}
       # Sin clave el informe sale igual, con el análisis calculado: por eso no
