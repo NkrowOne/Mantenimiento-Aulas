@@ -140,6 +140,14 @@ Consecuencias prácticas:
 - **No se duplican por ronda.** Si el proyector sigue roto la semana siguiente,
   la revisión no abre una segunda: la que hay sigue contando los días. La
   incidencia guarda de qué comprobación salió, en `incidents.check_key`.
+- **Un fallo apuntado con la app antigua también acaba aquí.** Quien abre la
+  incidencia es el dispositivo al cerrar la revisión, y un iPad puede pasarse
+  días sirviendo la versión anterior desde su caché — sus fallos quedaban
+  guardados en la revisión y sin incidencia. El servidor lo repasa solo
+  (`abrir_incidencias_de_revisiones()`, al desplegar y cada madrugada): mira la
+  última revisión vigente de cada sala y abre lo que falte, con la fecha de la
+  visita y sin tocar lo ya resuelto. Si una revisión con «Falla» no enseña su
+  incidencia hoy, mañana a primera hora estará.
 - **Las observaciones no entran.** Se escriben en la revisión, debajo de las
   fotos, viven en `inspections.notes` y se leen en la ficha del aula. La pestaña
   de Incidencias es la lista de lo que hay que arreglar; una nota de seguimiento
