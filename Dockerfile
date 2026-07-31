@@ -68,18 +68,43 @@ RUN npx esbuild reports-worker/src/migraciones.ts \
       --bundle --platform=node --target=node20 --format=cjs \
       --outfile=/alta/migraciones.cjs
 
-# ── Servicio ─────────────────────────────────────────────────────────────
-FROM caddy:2-alpine
+# Y el worker de informes ENTERO, por el mismo camino que el alta y las
+# migraciones: un solo fichero con sus dependencias dentro (postgres, echarts,
+# supabase — todas están en el package.json de la raíz). Es lo que permite que
+# un despliegue de un solo servicio genere informes sin desplegar nada más: el
+# arranque lo lanza en su propio puerto si hay WORKER_TOKEN, y quien prefiera
+# el worker como servicio aparte sigue teniendo reports-worker/Dockerfile.
+RUN npx esbuild reports-worker/src/server.ts \
+      --bundle --platform=node --target=node20 --format=cjs \
+      --outfile=/alta/informes.cjs
 
-# Node está aquí solo para el alta de usuarios. Son unos 50 MB en una imagen
-# que sirve ficheros estáticos, y es lo que cuesta poder administrar el
-# despliegue desde la terminal del panel en vez de desde un portátil.
-RUN apk add --no-cache nodejs
+# ── Servicio ─────────────────────────────────────────────────────────────
+# Debian con Node, y Caddy como binario copiado — no al revés. El motivo es
+# WeasyPrint: el worker de informes vive ahora dentro de esta imagen y necesita
+# Pango y Cairo, que en Debian son la receta ya probada del Dockerfile del
+# worker; Caddy es un binario estático de Go y viaja bien a cualquier base.
+FROM node:22-slim
+
+COPY --from=caddy:2 /usr/bin/caddy /usr/local/bin/caddy
+
+# WeasyPrint necesita Pango y Cairo; sin ellas falla en tiempo de ejecución con
+# un error poco descriptivo sobre libgobject. `ca-certificates` es para las
+# salidas HTTPS del worker (Gemini) y de `alta`.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      python3 python3-pip \
+      libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libcairo2 \
+      fonts-ibm-plex \
+    && pip3 install --break-system-packages --no-cache-dir weasyprint \
+    && apt-get purge -y python3-pip \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY Caddyfile.skyway /etc/caddy/Caddyfile
 COPY --from=build /app/dist /srv/dist
 COPY --from=build /alta/admin-user.cjs /opt/alta/admin-user.cjs
 COPY --from=build /alta/migraciones.cjs /opt/alta/migraciones.cjs
+COPY --from=build /alta/informes.cjs /opt/alta/informes.cjs
 
 # El informe del build, apartado FUERA de `/srv/dist`. El arranque reescribe
 # `/srv/dist/salud.json` juntando esto con el entorno; si leyera del mismo sitio
@@ -114,8 +139,14 @@ ENV ADMIN_CLI=alta
 # que ser el Postgres del despliegue (`migrar` se niega si no encuentra
 # `auth.users` y `storage.buckets`, que es como se detecta una base equivocada).
 # Sin ella, el arranque lo dice en el registro y sirve la aplicación igual.
+#
+# Con WORKER_TOKEN (y esa misma DATABASE_URL), el arranque levanta además el
+# worker de informes DENTRO de este contenedor, en PORT_INFORMES (8090 por
+# defecto): `app_config.reports_worker_url` apunta entonces a
+# `http://<este-servicio>:8090/generate`. Sin token, no arranca y se dice.
 
 ENV PORT=8080
+ENV PORT_INFORMES=8090
 EXPOSE 8080
 
 # Comprueba que Caddy sirve, no solo que el proceso existe. El estado de la
