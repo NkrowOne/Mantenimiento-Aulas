@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
@@ -101,6 +101,20 @@ export function IncidentsPage(): React.ReactElement {
   const buscado = query.trim()
 
   /*
+   * Cuántas páginas de la lista se están enseñando.
+   *
+   * El tope de 200 era un recorte silencioso: con más incidencias abiertas que
+   * eso, las antiguas simplemente no existían para la pantalla y el único
+   * camino era adivinar qué buscar. Ahora el recorte se ve y tiene botón: «Ver
+   * más antiguas» amplía la ventana. Se pide la ventana entera y no solo la
+   * página nueva a propósito — son consultas de 200 filas en una pantalla de
+   * administración, y una sola consulta no puede coserse mal con la anterior
+   * si algo cambió entre medias.
+   */
+  const [paginas, setPaginas] = useState(1)
+  useEffect(() => setPaginas(1), [showResolved, buscado])
+
+  /*
    * Cuántas hay cerradas, para poder decirlo.
    *
    * Sin este número, la pestaña es la respuesta a «se han perdido mis
@@ -123,6 +137,30 @@ export function IncidentsPage(): React.ReactElement {
     },
   })
 
+  /*
+   * Y cuántas hay EN TOTAL con el filtro activo, para que el recorte nunca
+   * vuelva a ser invisible: «120 de 483» dice exactamente cuánto falta por ver.
+   */
+  const { data: total } = useQuery({
+    queryKey: ['incidents-total', showResolved, buscado],
+    queryFn: async (): Promise<number> => {
+      let q = supabase
+        .from('incidents')
+        .select('id', { count: 'exact', head: true })
+        .neq('state', 'borrador')
+        .neq('kind', 'observacion')
+      if (buscado) {
+        const t = buscado.replace(/[,()*"\\]/g, ' ')
+        q = q.or(`title.ilike.*${t}*,description.ilike.*${t}*,external_ref.ilike.*${t}*`)
+      } else if (!showResolved) {
+        q = q.neq('state', 'resuelta')
+      }
+      const { count, error } = await q
+      if (error) throw error
+      return count ?? 0
+    },
+  })
+
   const { data: incidents, isPending, isError, refetch } = useQuery({
     /*
      * La búsqueda entra en la clave, y con eso deja de ser un filtro en memoria.
@@ -132,7 +170,11 @@ export function IncidentsPage(): React.ReactElement {
      * que existe en la tabla — y la pantalla, encima, invitaba a hacer justo eso:
      * «Afina la búsqueda para ver el resto». Buscar tiene que ser una consulta.
      */
-    queryKey: ['incidents', showResolved, buscado],
+    queryKey: ['incidents', showResolved, buscado, paginas],
+    // Al ampliar la ventana se sigue enseñando la lista de antes mientras
+    // llega la nueva: sin esto, pulsar «Ver más antiguas» vaciaba la pantalla
+    // un instante y el desplazamiento volvía arriba.
+    placeholderData: (prev: IncidentRow[] | undefined) => prev,
     queryFn: async (): Promise<IncidentRow[]> => {
       let q = supabase
         .from('incidents')
@@ -157,8 +199,11 @@ export function IncidentsPage(): React.ReactElement {
          * marcado como tal y no hay otro sitio donde reclamarlo—.
          */
         .neq('kind', 'observacion')
+        // El desempate por id hace la paginación estable: dos incidencias
+        // importadas con la misma fecha no pueden bailar entre dos páginas.
         .order('opened_at', { ascending: false })
-        .limit(LIMITE)
+        .order('id')
+        .range(0, LIMITE * paginas - 1)
 
       /*
        * Quien busca una referencia concreta no está triando trabajo abierto: está
@@ -422,15 +467,21 @@ export function IncidentsPage(): React.ReactElement {
         </p>
       )}
 
-      {/* Que el listado esté recortado tiene que verse: con 283 incidencias, 83
-          desaparecían sin que nada lo dijera. Y ahora la frase es verdad: buscar
-          pregunta al servidor, así que afinar la búsqueda SÍ encuentra el resto. */}
-      {incidents?.length === LIMITE && (
-        <p className="mt-4 text-xs text-muted">
-          Mostrando las {LIMITE} más recientes. Busca por texto o referencia para
-          encontrar cualquiera de las demás.
-        </p>
-      )}
+      {/* Que el listado esté recortado tiene que verse Y tener salida: con 283
+          incidencias, 83 desaparecían sin que nada lo dijera. Ahora el recorte
+          se enseña con la cifra («200 de 283») y las antiguas se piden con un
+          botón, sin tener que adivinar qué buscar. */}
+      {(incidents?.length ?? 0) === LIMITE * paginas &&
+        (total === undefined || (incidents?.length ?? 0) < total) && (
+          <button
+            type="button"
+            onClick={() => setPaginas((n) => n + 1)}
+            className="key key-quiet mt-4 min-h-11 w-full px-3 text-sm"
+          >
+            Ver más antiguas
+            {total !== undefined ? ` — enseñando ${incidents?.length} de ${total}` : ''}
+          </button>
+        )}
 
       {/* `role="alert"` porque ahora sí llega: es la respuesta a un botón que
           parecía funcionar y no hacía nada. */}
