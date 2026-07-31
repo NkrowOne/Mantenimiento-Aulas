@@ -17,9 +17,22 @@
  * contenido y ninguna respuesta reciente.
  */
 
+export interface PeticionDeInforme {
+  id: number
+  kind: string
+  cuando: string
+  codigo: number | null
+  caduco: boolean
+  error: string
+  /** Su respuesta sigue viva en pg_net. Falsa: nadie contestó, o ya caducó. */
+  respondida: boolean
+}
+
 export interface EstadoInformes {
   pg_net: { instalado: boolean; en_cola?: number; ultima_respuesta?: string | null }
   respuestas: Array<{ codigo: number | null; caduco: boolean; error: string; cuando: string }>
+  /** Cada envío al worker, cruzado con su respuesta si sigue viva. */
+  peticiones?: PeticionDeInforme[]
   cron: Array<{ nombre: string; horario: string; activo: boolean }>
   corridas: Array<{ nombre: string; estado: string; detalle: string; cuando: string }>
   informes: Array<{ kind: string; generated_at: string }>
@@ -64,13 +77,50 @@ export function diagnostico(e: EstadoInformes, ahora = Date.now()): Aviso[] {
   const ultima = e.pg_net.ultima_respuesta ? new Date(e.pg_net.ultima_respuesta).getTime() : null
   const muda = ultima === null || ahora - ultima > SILENCIO_MAX_MS
 
+  /*
+   * La cola con contenido y pg_net mudo tiene un falso positivo conocido: las
+   * respuestas caducan (TTL) y una petición recién encolada tarda unos
+   * segundos en despacharse, así que el primer vistazo tras un fin de semana
+   * tranquilo puede parecer la avería. Si hay informes emitidos hace poco, la
+   * tubería demostró funcionar: se avisa sin ordenar reiniciar nada.
+   */
   if (enCola > 0 && muda) {
+    const informeReciente =
+      e.informes[0] && ahora - new Date(e.informes[0].generated_at).getTime() < 2 * 3600_000
+    avisos.push(
+      informeReciente
+        ? {
+            nivel: 'warn',
+            texto:
+              `Hay ${enCola} petición(es) en la cola de pg_net sin respuesta reciente, pero se han emitido informes hace poco: lo más probable es que esté en tránsito. Vuelve a mirar en un minuto; si sigue igual, es la firma de pg_net sin precargar.`,
+          }
+        : {
+            nivel: 'crit',
+            texto:
+              `Hay ${enCola} petición(es) en la cola de pg_net y nadie las está despachando. ` +
+              'Es la firma de pg_net sin precargar: añade pg_net a shared_preload_libraries del servicio db (docker-compose.yml) y reinicia la base. ' +
+              'Con esto roto, todo parece funcionar y ningún informe se genera nunca. ' +
+              'Vuelve a mirar en un minuto para confirmarlo: una petición recién encolada pasa por aquí unos segundos.',
+          },
+    )
+  }
+
+  /*
+   * Y la petición despachada que nadie contestó: la cola está vacía —pg_net
+   * trabajó— pero del envío no queda ni código ni error. O el worker murió a
+   * mitad de generar, o la respuesta ya caducó sin que nadie la mirase.
+   */
+  const pedida = e.peticiones?.[0]
+  if (
+    pedida &&
+    !pedida.respondida &&
+    enCola === 0 &&
+    ahora - new Date(pedida.cuando).getTime() > SILENCIO_MAX_MS
+  ) {
     avisos.push({
-      nivel: 'crit',
+      nivel: 'warn',
       texto:
-        `Hay ${enCola} petición(es) en la cola de pg_net y nadie las está despachando. ` +
-        'Es la firma de pg_net sin precargar: añade pg_net a shared_preload_libraries del servicio db (docker-compose.yml) y reinicia la base. ' +
-        'Con esto roto, todo parece funcionar y ningún informe se genera nunca.',
+        'La última petición se despachó y no consta su respuesta. Si el informe no está en el archivo, mira el registro del contenedor aulas-reports: pudo morir a mitad de generar.',
     })
   }
 

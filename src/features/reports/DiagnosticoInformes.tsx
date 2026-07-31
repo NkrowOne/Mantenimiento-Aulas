@@ -76,9 +76,30 @@ export function DiagnosticoInformes({ sugerido }: { sugerido: boolean }): React.
             </p>
           ))}
 
-          {/* Los hechos debajo del veredicto: las últimas respuestas del worker
-              y las últimas corridas del cron, para poder discutir el veredicto
-              con los datos delante. */}
+          {/* Los hechos debajo del veredicto: cada petición con lo que contestó
+              —o el silencio—, las últimas respuestas del worker y las corridas
+              del cron, para poder discutir el veredicto con los datos delante. */}
+          {data && (data.peticiones?.length ?? 0) > 0 && (
+            <div>
+              <span className="eyebrow">Últimas peticiones de informe</span>
+              <ul className="mt-1 space-y-1">
+                {(data.peticiones ?? []).map((p) => (
+                  <li key={p.id} className="font-mono text-xs text-muted">
+                    {new Date(p.cuando).toLocaleString('es-ES')} · {p.kind} ·{' '}
+                    {p.respondida
+                      ? p.codigo !== null
+                        ? `HTTP ${p.codigo}`
+                        : p.caduco
+                          ? 'sin respuesta a tiempo'
+                          : 'sin conexión'
+                      : 'sin respuesta registrada'}
+                    {p.error ? ` · ${p.error}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {data && data.respuestas.length > 0 && (
             <div>
               <span className="eyebrow">Últimas respuestas del worker</span>

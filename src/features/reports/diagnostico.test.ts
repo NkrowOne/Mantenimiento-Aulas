@@ -7,6 +7,7 @@ function estado(over: Partial<EstadoInformes> = {}): EstadoInformes {
   return {
     pg_net: { instalado: true, en_cola: 0, ultima_respuesta: new Date(AHORA - 30_000).toISOString() },
     respuestas: [],
+    peticiones: [],
     cron: [{ nombre: 'informe-semanal', horario: '0 5,6,7 * * 5', activo: true }],
     corridas: [],
     informes: [],
@@ -24,6 +25,43 @@ describe('diagnostico', () => {
     )
     expect(avisos[0]?.nivel).toBe('crit')
     expect(avisos[0]?.texto).toMatch(/shared_preload_libraries/)
+  })
+
+  it('cola parada pero con informes recién emitidos: aviso, no orden de reiniciar', () => {
+    // El falso positivo del TTL: las respuestas caducan y una petición recién
+    // encolada tarda unos segundos. Si hay informes de hace un rato, la
+    // tubería demostró funcionar — un CRIT que ordena reiniciar sería mentira.
+    const avisos = diagnostico(
+      estado({
+        pg_net: { instalado: true, en_cola: 1, ultima_respuesta: null },
+        informes: [{ kind: 'semanal', generated_at: new Date(AHORA - 30 * 60_000).toISOString() }],
+      }),
+      AHORA,
+    )
+    expect(avisos[0]?.nivel).toBe('warn')
+    expect(avisos.every((a) => a.nivel !== 'crit')).toBe(true)
+  })
+
+  it('la petición despachada sin respuesta apunta al worker, no a pg_net', () => {
+    // La cola vacía dice que pg_net trabajó; el envío sin código ni error dice
+    // que el worker no llegó a contestar — o que la respuesta ya caducó.
+    const avisos = diagnostico(
+      estado({
+        peticiones: [
+          {
+            id: 7,
+            kind: 'semanal',
+            cuando: new Date(AHORA - 10 * 60_000).toISOString(),
+            codigo: null,
+            caduco: false,
+            error: '',
+            respondida: false,
+          },
+        ],
+      }),
+      AHORA,
+    )
+    expect(avisos.some((a) => a.nivel === 'warn' && /aulas-reports/.test(a.texto))).toBe(true)
   })
 
   it('cola con contenido pero respuestas recientes NO es la avería: está trabajando', () => {

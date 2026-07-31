@@ -67,20 +67,31 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
   const [nota, setNota] = useState('')
   const [ajustes, setAjustes] = useState(false)
 
-  /** Desde qué informe se está esperando uno nuevo, y desde cuándo. */
-  const [esperando, setEsperando] = useState<{ ultimoId: string | null; desde: number } | null>(null)
+  /** Desde qué informe se está esperando uno nuevo, desde cuándo y QUÉ se pidió. */
+  const [esperando, setEsperando] = useState<{
+    ultimoId: string | null
+    desde: number
+    pedido: { kind: Kind; start: string; end: string }
+  } | null>(null)
   const [recien, setRecien] = useState<ReportRow | null>(null)
+  /* La espera venció sin informe. Antes esto se tragaba en silencio —la
+     pantalla volvía a su estado normal como si nada— y «nunca llega nada» no
+     tenía ni mensaje ni pista. Ahora se dice, y el diagnóstico se abre solo. */
+  const [agotado, setAgotado] = useState(false)
 
   const { data: estadoIA } = useEstadoIA()
 
-  const { data: reports } = useQuery({
+  const { data: reports, isError: falloArchivo } = useQuery({
     queryKey: ['reports'],
     queryFn: async (): Promise<ReportRow[]> => {
-      const { data } = await supabase
+      // El error se lanza en vez de tragarse: sin esto, un permiso denegado o
+      // un fallo de red pintaban «Aún no hay informes» sobre un archivo lleno.
+      const { data, error } = await supabase
         .from('reports')
         .select('id, kind, period_start, period_end, storage_path, generated_at, params')
         .order('generated_at', { ascending: false })
         .limit(60)
+      if (error) throw error
       return (data ?? []) as ReportRow[]
     },
     // Mientras se espera un informe se pregunta cada tres segundos. El resto del
@@ -117,24 +128,64 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
        * era el último informe y se pregunta hasta que aparezca otro.
        */
       setRecien(null)
-      setEsperando({ ultimoId: reports?.[0]?.id ?? null, desde: Date.now() })
+      setAgotado(false)
+      setEsperando({
+        ultimoId: reports?.[0]?.id ?? null,
+        desde: Date.now(),
+        pedido: { kind, start: rango.start, end: rango.end },
+      })
     },
   })
 
   useEffect(() => {
     if (!esperando) return
     const primero = reports?.[0]
-    if (primero && primero.id !== esperando.ultimoId) {
+    /*
+     * «Listo» solo si es EL informe pedido, no el primero que aparezca.
+     *
+     * El archivo es compartido: mientras se espera puede aterrizar el informe
+     * de otro supervisor —o el automático del viernes— y presentarlo con el
+     * botón «Abrir el PDF» sería darle a alguien un documento que no pidió con
+     * cara de ser el suyo. El tipo y el periodo bastan para distinguirlo: son
+     * exactamente lo que se mandó en la petición.
+     */
+    if (
+      primero &&
+      primero.id !== esperando.ultimoId &&
+      primero.kind === esperando.pedido.kind &&
+      primero.period_start === esperando.pedido.start &&
+      primero.period_end === esperando.pedido.end
+    ) {
       setRecien(primero)
       setEsperando(null)
       return
     }
-    if (Date.now() - esperando.desde > ESPERA_MAX_MS) setEsperando(null)
+    if (Date.now() - esperando.desde > ESPERA_MAX_MS) {
+      // La rendición se DICE. Tragársela dejaba la pantalla como si nada, que
+      // es exactamente cómo una tubería rota estuvo semanas sin diagnóstico.
+      setEsperando(null)
+      setAgotado(true)
+    }
   }, [reports, esperando])
 
+  /* El fallo de una descarga, a la vista. `createSignedUrl` puede denegar por
+     permisos o red, y descartarlo dejaba el botón «Descargar» como un botón
+     que a veces no hace nada. */
+  const [falloDescarga, setFalloDescarga] = useState<string | null>(null)
+
   async function descargar(path: string): Promise<void> {
-    const { data } = await supabase.storage.from('reports').createSignedUrl(path, 60)
-    if (data?.signedUrl) window.open(data.signedUrl, '_blank', 'noopener')
+    setFalloDescarga(null)
+    const { data, error } = await supabase.storage.from('reports').createSignedUrl(path, 60)
+    if (error || !data?.signedUrl) {
+      setFalloDescarga(
+        `No se ha podido preparar la descarga${error ? `: ${error.message}` : ''}.`,
+      )
+      return
+    }
+    // Si el navegador bloquea la pestaña —el gesto caducó mientras se firmaba
+    // la URL— se dice, en vez de fingir que el botón no hizo nada.
+    const abierta = window.open(data.signedUrl, '_blank', 'noopener')
+    if (!abierta) setFalloDescarga('El navegador ha bloqueado la pestaña: vuelve a pulsar Descargar.')
   }
 
   const alternar = (clave: string): void =>
@@ -147,8 +198,9 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
       <header>
         <h1 className="text-xl font-semibold">Informes</h1>
         <p className="mt-1 text-sm text-muted">
-          El automático sale los viernes a las 07:00 con la semana de trabajo entera. Aquí se pide
-          cuando haga falta, y se elige qué lleva dentro.
+          El automático sale los viernes a las 07:00 con la semana hasta el jueves — el viernes aún
+          no ha pasado, y meterlo vacío sesgaba la comparación—. Aquí se pide cuando haga falta, y
+          se elige qué lleva dentro.
         </p>
       </header>
 
@@ -408,6 +460,16 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
           </p>
         )}
 
+        {/* La rendición, dicha. Antes la espera vencía en silencio y la
+            pantalla volvía a su estado normal: una tubería rota podía pasarse
+            semanas sin que nada en la interfaz lo contara. */}
+        {agotado && !esperando && !recien && (
+          <p role="alert" className="mt-3 text-sm text-crit">
+            El informe no ha llegado en dos minutos y medio: algo de la tubería no está
+            respondiendo. El diagnóstico de aquí abajo le pregunta a la base qué pasa.
+          </p>
+        )}
+
         {recien && (
           <div className="mt-3 flex flex-wrap items-center gap-3 rounded-card bg-ok-tint p-3 text-sm">
             <span className="text-ok">
@@ -423,9 +485,15 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
             </button>
           </div>
         )}
+
+        {falloDescarga && (
+          <p role="alert" className="mt-2 text-sm text-crit">
+            {falloDescarga}
+          </p>
+        )}
       </section>
 
-      <DiagnosticoInformes sugerido={Boolean(esperandoDemasiado)} />
+      <DiagnosticoInformes sugerido={Boolean(esperandoDemasiado) || agotado} />
 
       <section>
         <div className="section-head">
@@ -462,9 +530,21 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
           })}
         </ul>
 
-        {reports?.length === 0 && (
+        {falloArchivo && (
+          <p role="alert" className="mt-2 text-sm text-crit">
+            No se ha podido leer el archivo de informes. Hace falta conexión.
+          </p>
+        )}
+
+        {!falloArchivo && reports?.length === 0 && (
           <p className="mt-2 text-sm text-muted">
             Aún no hay informes. El primer automático saldrá el viernes a las 07:00.
+          </p>
+        )}
+
+        {falloDescarga && (
+          <p role="alert" className="mt-2 text-sm text-crit">
+            {falloDescarga}
           </p>
         )}
       </section>

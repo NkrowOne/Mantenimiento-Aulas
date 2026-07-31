@@ -737,8 +737,11 @@ otras pantallas.
 
 ## 8. Informes
 
-**El automático sale los viernes a las 07:00**, con la semana de trabajo entera
-—de lunes a viernes—. Queda archivado en la pestaña **Informes**, con descarga.
+**El automático sale los viernes a las 07:00**, con la semana hasta el jueves
+—de lunes a jueves—. El viernes a esa hora aún no ha pasado: meterlo vacío en el
+periodo hacía que la comparación con la semana anterior saliera «bajando» todos
+los viernes, por diseño. Queda archivado en la pestaña **Informes**, con
+descarga; quien quiera la semana con el viernes dentro la pide a mano el lunes.
 
 Cualquier otro se pide a mano desde esa misma pantalla. Se elige:
 
