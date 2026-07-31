@@ -98,6 +98,24 @@ describe('diagnostico', () => {
     expect(avisos.some((a) => a.nivel === 'crit' && /worker/.test(a.texto))).toBe(true)
   })
 
+  it('un nombre que no resuelve enseña LA URL y manda a corregirla, no a reiniciar', () => {
+    // El caso visto en producción: «Couldn't resolve host name» con la URL del
+    // compose en un despliegue donde el worker se llama de otra manera. Con la
+    // URL delante, el error es el diagnóstico entero.
+    const avisos = diagnostico(
+      estado({
+        worker_url: 'http://reports-worker:8080/generate',
+        respuestas: [
+          { codigo: null, caduco: false, error: "Couldn't resolve host name", cuando: '' },
+        ],
+      }),
+      AHORA,
+    )
+    const aviso = avisos.find((a) => a.nivel === 'crit')
+    expect(aviso?.texto).toMatch(/http:\/\/reports-worker:8080\/generate/)
+    expect(aviso?.texto).toMatch(/reports_worker_url/)
+  })
+
   it('un timeout avisa de mirar el archivo antes de tocar nada', () => {
     // La entrega no se pierde por agotar la espera: el worker termina igual.
     const avisos = diagnostico(
