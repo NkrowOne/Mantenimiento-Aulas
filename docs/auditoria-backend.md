@@ -288,3 +288,70 @@ verdad importan no son las del caso normal:
 - Una incidencia de **las 00:30 del 1 de marzo** cuenta en marzo.
 - A las **00:30 de Madrid**, el diario ya cubre el día que acaba de terminar y no
   el anterior.
+
+## 7. Segunda pasada (31 de julio): la subida que se acumulaba y los recuentos con observaciones
+
+Mismo método que el resto del documento: cada hallazgo se reprodujo ejecutando
+—la cola con su arnés de pruebas sobre IndexedDB y un Supabase simulado, el
+worker levantado contra un Postgres desechable con las 30 migraciones y el seed
+cargados— y cada arreglo dejó una prueba que falla si vuelve.
+
+### La cola de salida acumulaba trabajo CON red
+
+Cinco averías distintas con el mismo síntoma («hay cobertura y los pendientes no
+bajan hasta que alguien pulsa Sincronizar»), y las cinco corregidas:
+
+1. **Recuperar la red no forzaba la subida.** Los fallos en un sótano acumulan
+   backoff (techo: 5 minutos); al volver la cobertura, el evento `online`
+   lanzaba una pasada que *respetaba esas esperas*: no intentaba nada. Ahora
+   `online` fuerza, igual que el botón — la señal de que las esperas ya no
+   hablan del mundo real es exactamente esa.
+2. **Un 401 marcaba el trabajo como rechazado para siempre.** El token caduca
+   con el iPad dormido; cada envío de esa ventana volvía con 401 y, como
+   cualquier 4xx, se declaraba permanente. Un 401 habla de la sesión, no del
+   contenido: ahora reintenta, y `flush()` ya renueva la sesión al arrancar.
+3. **Las fotos se auto-rechazaban al noveno intento, fuera cual fuera el
+   fallo.** Ocho intentos se gastan en nada con una wifi que va y viene. Ahora
+   solo rechaza un fallo permanente (con el código leído también de dentro del
+   error de Storage, que no lo trae en la respuesta); lo temporal reintenta
+   con su backoff, para siempre.
+4. **Capturar una foto no disparaba la subida.** Era el único sitio que
+   encolaba sin avisar a la cola: la foto esperaba al siguiente disparador,
+   hasta un minuto sentada. Ahora encolar una foto es como encolar todo lo
+   demás.
+5. **Una pasada dejaba trabajo listo para la siguiente.** El cierre de una
+   revisión espera a que suban sus comprobaciones — y quedaba «para la pasada
+   siguiente», o sea otro minuto. Ahora la pasada se encadena mientras quede
+   algo con el turno cumplido (con techo de cinco vueltas), así que una
+   revisión cerrada con cobertura llega ENTERA en una sola llamada.
+
+Verificación: `src/sync/outbox.test.ts` (22 pruebas, 4 nuevas y 3 endurecidas).
+
+### Los recuentos del informe y de la insignia contaban observaciones
+
+`alerts_stale_incidents` ya excluía las observaciones —notas de seguimiento
+importadas del Excel, «abiertas» desde 2025 por definición porque no las cierra
+nadie— pero el mismo error seguía vivo en tres sitios que se consultan aparte:
+
+- `data.ts` del worker: «incidencias abiertas» y «estancadas» (la cifra y la
+  tabla) del informe firmado, y «pendientes» por edificio.
+- `room_overview.open_incidents`: la insignia naranja de la lista de salas, que
+  no cuadraba con la pestaña de Incidencias que se abre al pulsarla
+  (migración `20260731000200`; las solicitudes siguen contando, que son
+  trabajo pedido).
+
+Verificación: prueba 62 de `npm run db:verify` (una observación abierta no
+enciende la insignia; una solicitud sí), y un informe semanal real generado de
+punta a punta contra el clúster desechable —consultas nuevas incluidas— hasta
+el PDF (`render-cli`, 46 KB, WeasyPrint 61).
+
+### Lo que se revisó y estaba bien
+
+El endpoint del worker (token en tiempo constante, cuerpo con tope y socket
+drenado, errores sin traza: `npm run worker:test` en verde), el arranque de
+migraciones del contenedor (cerrojo de asesor, registro compartido con
+`init-plataforma.sh`, aviso a PostgREST), la detección del pooler en
+transacción, los periodos en hora de Madrid (`worker:periodos`), el cliente de
+Gemini (tiempo tope, borrador fuera, cifras inventadas invalidan el texto:
+`informe:ia`), WeasyPrint con tiempo tope y EPIPE recogido, el escape de la
+plantilla, y las rutas de Caddy y Kong.
