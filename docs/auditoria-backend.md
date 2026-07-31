@@ -412,3 +412,76 @@ pruebas de `diagnostico.test.ts`, y la batería completa de siempre. La
 precarga corregida no se puede probar aquí —exige la imagen de Supabase—, así
 que la defensa es doble: el comentario en el compose y el diagnóstico en
 pantalla que la delata si vuelve a faltar.
+
+### La pasada adversarial (35 agentes, 21 hallazgos confirmados)
+
+Sobre el mismo síntoma se lanzó una auditoría adversarial por ámbitos —SQL de
+informes, código del worker, despliegue, cliente, permisos, pg_cron/pg_net—
+con un verificador por hallazgo intentando refutarlo. Lo confirmado y
+corregido, además de lo de arriba:
+
+**Despliegue** (dos de ellos reproducidos empíricamente con la imagen real):
+
+- **Kong no arrancaba con la configuración del repo**: `kong.yml` declaraba una
+  sección `acls` sin el plugin «acl» en `KONG_PLUGINS`, y Kong 3.x rechaza el
+  fichero entero. La sección era configuración muerta —ninguna ruta usaba esos
+  grupos— y se retira.
+- **Las credenciales de key-auth eran literales**: Kong no expande variables en
+  configuración declarativa, así que `$SUPABASE_ANON_KEY` era, literalmente, la
+  clave. El arranque ahora renderiza `kong.yml` como plantilla (el mismo truco
+  del compose oficial de Supabase), verificado con un render real.
+- **`backup.sh` podía archivar un volumen vacío**: el nombre
+  «aulas_storage-data» solo existe si el directorio del proyecto se llama
+  «aulas»; con otro nombre, `docker run -v` creaba un volumen nuevo y la
+  «copia» archivaba cero fotos. Ahora se resuelve por la etiqueta de Compose y
+  falla ruidosamente si no aparece. Y `--probar` exige el marcador final de
+  pg_dump: un volcado cortado a la mitad es un .gz válido que restaura a medias.
+- **El worker subía los PDF por `https://${DOMAIN}`**, un nombre que solo
+  resuelve el DNS interno o la VPN, atado además a que Caddy esté vivo. Ahora
+  habla con Kong por su nombre de red interna.
+- **`init-plataforma.sh` escribía la URL interna del compose como valor por
+  defecto** en un despliegue de plataforma donde ese host no existe — el mismo
+  «nunca llega nada» por otro camino. Ahora exige `REPORTS_WORKER_URL`.
+- La purga de la cola muerta corría después de que pg_net disparara el atasco:
+  `deploy.sh` la vacía ahora nada más levantar la base.
+
+**Worker**:
+
+- Un cliente que cortaba la conexión a mitad del cuerpo tumbaba el proceso
+  entero (ECONNRESET sin recoger en el `for await`). Reproducido; recogido.
+- Sin tope por consulta, una query bloqueada colgaba `generate()` para siempre
+  con el healthcheck en verde. Ahora el servidor fija `statement_timeout`;
+  el migrador, deliberadamente, no.
+- `render-cli` fechaba el pie en UTC bajo un rótulo que jura hora de Madrid.
+
+**Trazabilidad** (el hallazgo de más fondo): el id que devuelve `net.http_post`
+no lo guardaba nadie, y `net._http_response` caduca — un cron fallido del
+viernes no dejaba NI UN rastro el lunes. Ahora cada envío queda en
+`report_requests`, el diagnóstico cruza petición y respuesta («tu petición de
+las 10:02 devolvió 401»), y el TTL de pg_net sube a tres días.
+
+**Cliente**: la espera del informe se rendía en silencio a los 150 s (ahora lo
+dice y abre el diagnóstico); un informe ajeno podía presentarse como «Listo»
+(ahora solo si coincide tipo y periodo con lo pedido); la descarga y el listado
+tragaban sus errores (ahora se ven).
+
+**Semanal honesto**: el automático del viernes a las 07:00 cubría lunes→viernes
+con el viernes vacío dentro, y la comparación «frente a la semana anterior»
+enfrentaba cuatro días trabajados contra cinco: el informe firmado «bajaba»
+todos los viernes por diseño. Ahora pide lunes→jueves explícito y compara
+iguales (migración `20260731000400`).
+
+**Casos extremos, medidos**: un informe sobre un periodo sin NINGUNA actividad
+(todos los contadores a cero, todos los arrays vacíos) renderiza hasta el PDF
+sin excepción, contra el clúster desechable.
+
+**La mayor superficie sin leer, leída**: `template.ts` (1.228 líneas) y
+`analisis.ts` (478) se auditaron enteras aparte. Veredicto: sin ningún camino de
+crash con datos válidos, ni siquiera extremos — todas las divisiones, nulos,
+arrays vacíos y escapes están guardados, y se listó caso por caso. Cinco
+defectos leves de salida, corregidos: el «<1 %» sin escapar (frágil ante
+cualquier parser HTML estricto), el titular agramatical con una sola estancada,
+una concordancia de género en la entradilla, el pie de la tabla de edificios
+que llamaba «sin actividad» a los recortados por sitio, y el diario recortado
+afirmando «ningún movimiento» de días cuyos movimientos no cabían. Verificado
+re-renderizando los dos PDF de prueba (con datos y de periodo vacío).
