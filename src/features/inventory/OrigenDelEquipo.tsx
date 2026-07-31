@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
+import { conflictoDeAlta, type ConflictoDeAlta } from '@/domain/inventory'
 import { displayRoomCode } from '@/domain/normalize'
 import type { AssetType } from '@/domain/types'
 import type { Origen } from './useRoomInventory'
@@ -44,7 +45,12 @@ export function OrigenDelEquipo({
    */
   inventariando: boolean
   onCancelar: () => void
-  onConfirmar: (origen: Origen) => void
+  /**
+   * `duplicarEtiqueta` viaja con el origen: dice que quien confirma ya ha visto
+   * que la sala tiene un equipo con ese nombre y aun así quiere otro. Sin ese
+   * aviso delante, el alta se planta en vez de inventarse un «… 2».
+   */
+  onConfirmar: (origen: Origen, opciones: { duplicarEtiqueta: boolean }) => void
 }): React.ReactElement {
   // --- Almacén ---------------------------------------------------------------
   const articulos = useLiveQuery(
@@ -105,6 +111,29 @@ export function OrigenDelEquipo({
     [],
   )
 
+  // --- El choque de nombre, delante y no después -----------------------------
+  /*
+   * ¿La sala ya tiene un equipo que se llama así?
+   *
+   * Se pregunta aquí, con el diálogo abierto, porque este es el último momento
+   * en que la respuesta puede cambiar lo que se hace: antes de esto el técnico
+   * solo ha tecleado un nombre, y después de esto la fila ya existe. El caso
+   * frecuente del choque no es una segunda unidad — es el mismo aparato
+   * apuntado dos veces, y para ese la salida correcta es cancelar y corregir el
+   * que ya está en la lista.
+   *
+   * En un traslado no aplica: el equipo que viene de otra sala es otro aparato
+   * por definición, y su etiqueta se recoloca sola al llegar.
+   */
+  const conflicto = useLiveQuery(
+    async (): Promise<ConflictoDeAlta | null> => {
+      const enSala = await db.assets.where('room_id').equals(roomId).toArray()
+      return conflictoDeAlta(enSala, type?.name ?? typeName)
+    },
+    [roomId, type?.id, typeName],
+    null as ConflictoDeAlta | null,
+  )
+
   // --- Modo ------------------------------------------------------------------
   const sugerido: Modo =
     inventariando || conExistencias.length === 0 ? 'sin_origen' : 'almacen'
@@ -135,10 +164,15 @@ export function OrigenDelEquipo({
     return true
   }, [modo, stockItemId, unidades, assetId])
 
+  // El aviso de choque solo pesa cuando se va a CREAR una fila nueva.
+  const chocaAqui = conflicto !== null && modo !== 'traslado'
+
   function confirmar(): void {
-    if (modo === 'almacen') onConfirmar({ tipo: 'almacen', stockItemId, unidades })
-    else if (modo === 'traslado') onConfirmar({ tipo: 'traslado', assetId, desdeRoomId: origenRoomId })
-    else onConfirmar({ tipo: 'sin_origen' })
+    const opciones = { duplicarEtiqueta: chocaAqui }
+    if (modo === 'almacen') onConfirmar({ tipo: 'almacen', stockItemId, unidades }, opciones)
+    else if (modo === 'traslado')
+      onConfirmar({ tipo: 'traslado', assetId, desdeRoomId: origenRoomId }, opciones)
+    else onConfirmar({ tipo: 'sin_origen' }, opciones)
   }
 
   const MODOS: Array<{ id: Modo; label: string; disponible: boolean }> = [
@@ -321,13 +355,41 @@ export function OrigenDelEquipo({
         </p>
       )}
 
+      {/*
+        El choque de nombre, ANTES del botón y con las dos salidas escritas.
+
+        Aquí es donde nacían los «Monitor Atril 2» fantasma: la sala ya tenía un
+        «Monitor Atril», el alta renombraba en silencio, y el técnico —que casi
+        siempre estaba apuntando el MISMO aparato— acababa con un duplicado que
+        nadie pidió. Ahora el número no se inventa: se anuncia, y añadir otra
+        unidad es una decisión que se toma leyendo esto, no un efecto secundario.
+      */}
+      {chocaAqui && conflicto && (
+        <div className="mt-3 rounded-ctl border border-warn/40 bg-warn-tint p-3">
+          <p className="text-xs font-medium text-warn">
+            Esta sala ya tiene un «{conflicto.existente.label ?? typeName}»
+            {[conflicto.existente.model, conflicto.existente.serial].filter(Boolean).length > 0 &&
+              ` (${[conflicto.existente.model, conflicto.existente.serial].filter(Boolean).join(' · ')})`}
+            .
+          </p>
+          <p className="mt-1 text-xs text-warn">
+            Si es el mismo aparato, cancela y corrígelo en la lista de equipos. Si de verdad hay
+            otro, se añadirá como «{conflicto.siguiente}».
+          </p>
+        </div>
+      )}
+
       <button
         type="button"
         disabled={!listo}
         onClick={confirmar}
         className="key key-accent mt-3 min-h-touch w-full px-4 text-sm"
       >
-        {modo === 'traslado' ? 'Trasladar aquí' : 'Añadir a la sala'}
+        {modo === 'traslado'
+          ? 'Trasladar aquí'
+          : chocaAqui && conflicto
+            ? `Sí, añadir otra unidad («${conflicto.siguiente}»)`
+            : 'Añadir a la sala'}
       </button>
     </div>
   )

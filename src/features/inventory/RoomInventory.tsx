@@ -105,10 +105,10 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
   const hits = searchCatalog(types, query)
   const raw = query.trim()
 
-  async function add(origen: Origen): Promise<void> {
+  async function add(origen: Origen, opciones: { duplicarEtiqueta: boolean }): Promise<void> {
     if (!eligiendo) return
     const { nombre, tipo } = eligiendo
-    const result = await addAssetConOrigen(nombre, tipo, origen)
+    const result = await addAssetConOrigen(nombre, tipo, origen, opciones)
 
     setEligiendo(null)
     setQuery('')
@@ -240,7 +240,7 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                 roomId={roomId}
                 inventariando={levantadoEl === null}
                 onCancelar={() => setEligiendo(null)}
-                onConfirmar={(origen) => void add(origen)}
+                onConfirmar={(origen, opciones) => void add(origen, opciones)}
               />
             )}
 
