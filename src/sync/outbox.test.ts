@@ -279,7 +279,7 @@ describe('flush', () => {
      * quedan fuera en silencio: la corrección se cerraba arriba con los valores de
      * la revisión que venía a corregir.
      */
-    it('el cierre espera a sus comprobaciones, y ellas pisan mientras espera', async () => {
+    it('el cierre espera a sus comprobaciones, y llega ENTERO en la misma llamada', async () => {
       await db.inspections.put({ id: 'insp-4', status: 'completa' } as never)
       await db.outbox.bulkAdd([
         entrada({
@@ -293,25 +293,23 @@ describe('flush', () => {
         }),
       ])
 
-      const primera = await flush()
+      const parte = await flush()
 
-      // La revisión ha subido como borrador —crea la fila, que es lo que sus
-      // comprobaciones necesitan— y su cierre sigue esperando en la cola.
+      // Primera vuelta: la revisión sube como borrador —crea la fila, que es lo
+      // que sus comprobaciones necesitan— y la comprobación va a pisar, no a
+      // «no pises»: es justo el valor que el técnico acaba de cambiar.
       const [payloadRevision] = upsert.mock.calls[0]!
       expect(payloadRevision).toMatchObject({ id: 'insp-4', status: 'borrador' })
-      expect((await db.outbox.get('insp-4'))?.status).toBe('pendiente')
-
-      // Y la comprobación ha ido a pisar, no a «no pises»: es justo el valor que
-      // el técnico acaba de cambiar.
       expect(upsert.mock.calls[1]![1]).toEqual({ onConflict: 'id', ignoreDuplicates: false })
-      expect(primera.subidos).toBe(1)
 
-      // Segunda vuelta: ya no queda nada dentro, así que ahora sí se cierra.
-      upsert.mockClear()
-      const segunda = await flush({ forzar: true })
-
-      expect(upsert.mock.calls[0]![0]).toMatchObject({ id: 'insp-4', status: 'completa' })
-      expect(segunda.subidos).toBe(1)
+      // Y el cierre NO se queda esperando al siguiente disparador: en cuanto sus
+      // comprobaciones están dentro, la pasada se encadena y lo sube. Antes se
+      // quedaba «para la pasada siguiente» — hasta un minuto sentado con la red
+      // perfectamente bien, que es justo la acumulación que no puede haber.
+      expect(upsert.mock.calls[2]![0]).toMatchObject({ id: 'insp-4', status: 'completa' })
+      // Dos entradas subidas de verdad: la comprobación y el cierre. El envío
+      // del borrador es andamiaje del cierre, no una entrada que se complete.
+      expect(parte.subidos).toBe(2)
       expect(await db.outbox.count()).toBe(0)
     })
 
@@ -362,23 +360,47 @@ describe('flush', () => {
       expect(quedo?.nextAttemptAt).toBeGreaterThan(0)
     })
 
-    it('un reencolado durante la subida no se pierde al terminar', async () => {
+    it('un reencolado durante la subida no se pierde: sube en la vuelta encadenada', async () => {
       // El técnico toca otra vez la misma fila mientras está en vuelo. Borrar por
-      // id a secas se llevaba el toque nuevo con la entrada vieja.
+      // id a secas se llevaba el toque nuevo con la entrada vieja; y dejarlo
+      // «pendiente» a secas lo sentaba hasta el siguiente disparador. Ahora la
+      // pasada se encadena y el contenido nuevo sale en la misma llamada.
       const { enqueue } = await import('@/db/dexie')
       const tocada = entrada({ id: 'tocada', payload: { id: 'tocada', v: 1 } })
       await db.outbox.add(tocada)
 
-      upsert.mockImplementation(async () => {
-        await enqueue('incident', 'tocada', { id: 'tocada', v: 2 })
+      let reencolado = false
+      upsert.mockImplementation(async (payload: { v?: number }) => {
+        if (!reencolado) {
+          reencolado = true
+          await enqueue('incident', 'tocada', { id: 'tocada', v: 2 })
+        }
+        void payload
         return { error: null, status: 201 }
       })
 
       await flush()
 
-      const quedo = await db.outbox.get('tocada')
-      expect(quedo?.payload['v']).toBe(2)
+      // Las dos versiones han salido en orden y la cola queda vacía.
+      expect(upsert.mock.calls.map((c) => (c[0] as { v?: number }).v)).toEqual([1, 2])
+      expect(await db.outbox.get('tocada')).toBeUndefined()
+    })
+
+    it('un 401 no es un rechazo: la sesión caduca y se renueva, el contenido está bien', async () => {
+      // Un iPad que pasa la noche dormido llega con el token caducado. Cada
+      // envío de esa ventana volvía con 401 y se marcaba rechazado PARA
+      // SIEMPRE: el trabajo se acumulaba en rojo hasta un «Reintentar» manual
+      // con la sesión ya renovada. Un 401 habla de la sesión, no del contenido.
+      upsert.mockResolvedValue({ error: { message: 'JWT expired' }, status: 401 })
+      const dormida = entrada()
+      await db.outbox.add(dormida)
+
+      const parte = await flush()
+
+      expect(parte.rechazados).toBe(0)
+      const quedo = await db.outbox.get(dormida.id)
       expect(quedo?.status).toBe('pendiente')
+      expect(quedo?.nextAttemptAt).toBeGreaterThan(0)
     })
 
     it('una foto que ya estaba en el almacén cuenta como subida, no como error', async () => {
@@ -406,6 +428,34 @@ describe('flush', () => {
 
     expect(parte.subidos).toBe(1)
     expect(await db.outbox.get(buena.id)).toBeUndefined()
+  })
+
+  it('una foto con fallo de red reintenta siempre: el cansancio no es un motivo', async () => {
+    // Antes se auto-rechazaba al noveno intento fuera cual fuera el fallo, y
+    // ocho intentos se gastan en nada con una wifi que va y viene: la foto
+    // quedaba en rojo pidiendo un «Reintentar» manual por un problema de
+    // cobertura. Un fallo temporal espera su backoff y lo vuelve a intentar.
+    uploadFoto.mockResolvedValue({ error: { message: 'Load failed' } })
+    const id = await encolarFoto({ attempts: 12 })
+
+    await flush()
+
+    const foto = await db.photos.get(id)
+    expect(foto?.status).toBe('pendiente')
+    expect(foto?.attempts).toBe(13)
+  })
+
+  it('una foto rechazada de verdad por el servidor se marca a la primera', async () => {
+    // El cliente de Storage trae el código dentro del error, no en la
+    // respuesta: sin leerlo, un rechazo real se leía como temporal para siempre.
+    uploadFoto.mockResolvedValue({
+      error: { message: 'new row violates row-level security policy', statusCode: '403' },
+    })
+    const id = await encolarFoto()
+
+    await flush()
+
+    expect((await db.photos.get(id))?.status).toBe('rechazado')
   })
 
   it('una foto sin bytes se marca rechazada, en vez de reintentarse para siempre', async () => {
@@ -447,8 +497,11 @@ describe('flush', () => {
     const parte = await flush()
     vi.restoreAllMocks()
 
-    expect(parte.subidos).toBe(1)
+    // La buena subió pese al reventón, y la rota —que seguía lista— se recuperó
+    // en la vuelta encadenada de la misma llamada: nada queda sentado.
+    expect(parte.subidos).toBe(2)
     expect(await db.outbox.get(buena.id)).toBeUndefined()
+    expect(await db.outbox.count()).toBe(0)
   })
 
   it('sube los tipos antes que los equipos que los usan', async () => {
