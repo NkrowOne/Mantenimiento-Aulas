@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { displayRoomCode, norm } from '@/domain/normalize'
+import { salasQueCasan, type SalaBuscable } from './busqueda'
 import { MaterialUsado } from './MaterialUsado'
 import { Borradores } from './Borradores'
 import { INCIDENT_KIND_LABELS, type IncidentKind, type IncidentState } from '@/domain/types'
@@ -77,8 +78,14 @@ export function IncidentsPage(): React.ReactElement {
    * pasa pero no dónde — que es la mitad del dato. Se resuelve contra Dexie y no
    * con un `join` en el servidor porque así también funciona con la copia que ya
    * está en el dispositivo.
+   *
+   * `buscables` es la otra mitad del mismo dato: las salas con su edificio y su
+   * código sueltos, para que la BÚSQUEDA pueda convertir «H» o «1.7 H» en ids
+   * de sala y preguntárselos al servidor. Sin esto, buscar por sala solo
+   * funcionaba sobre las filas que el texto hubiera dejado pasar, y el
+   * histórico de un edificio entero podía «no existir» para el buscador.
    */
-  const salas = useLiveQuery(async () => {
+  const espejo = useLiveQuery(async () => {
     const [rooms, zones, buildings] = await Promise.all([
       db.rooms.toArray(),
       db.zones.toArray(),
@@ -87,14 +94,23 @@ export function IncidentsPage(): React.ReactElement {
     const zoneById = new Map(zones.map((z) => [z.id, z]))
     const buildingById = new Map(buildings.map((b) => [b.id, b]))
 
-    return new Map(
-      rooms.map((r) => {
-        const zone = zoneById.get(r.zone_id)
-        const building = zone ? buildingById.get(zone.building_id) : undefined
-        return [r.id, `${building?.code ?? ''} ${displayRoomCode(r.code)}`.trim()]
-      }),
-    )
+    const etiquetas = new Map<string, string>()
+    const buscables: SalaBuscable[] = []
+    for (const r of rooms) {
+      const zone = zoneById.get(r.zone_id)
+      const building = zone ? buildingById.get(zone.building_id) : undefined
+      etiquetas.set(r.id, `${building?.code ?? ''} ${displayRoomCode(r.code)}`.trim())
+      buscables.push({
+        id: r.id,
+        edificio: building?.code ?? '',
+        codigo: r.code,
+        nombre: r.name,
+      })
+    }
+    return { etiquetas, buscables }
   }, [])
+
+  const salas = espejo?.etiquetas
 
   const LIMITE = 200
 
@@ -113,6 +129,18 @@ export function IncidentsPage(): React.ReactElement {
    */
   const [paginas, setPaginas] = useState(1)
   useEffect(() => setPaginas(1), [showResolved, buscado])
+
+  /*
+   * Las salas que casan con lo tecleado, para que la consulta pregunte también
+   * por `room_id`. «H» pasa a ser el edificio H entero — su histórico completo,
+   * resueltas incluidas — y no solo las filas con una hache en el título.
+   */
+  const idsDeSala = useMemo(
+    () => salasQueCasan(espejo?.buscables ?? [], buscado),
+    [espejo?.buscables, buscado],
+  )
+  /** El trozo `room_id.in.(…)` del filtro, o vacío si ninguna sala casa. */
+  const filtroSalas = idsDeSala.length > 0 ? `,room_id.in.(${idsDeSala.join(',')})` : ''
 
   /*
    * Cuántas hay cerradas, para poder decirlo.
@@ -142,7 +170,7 @@ export function IncidentsPage(): React.ReactElement {
    * vuelva a ser invisible: «120 de 483» dice exactamente cuánto falta por ver.
    */
   const { data: total } = useQuery({
-    queryKey: ['incidents-total', showResolved, buscado],
+    queryKey: ['incidents-total', showResolved, buscado, filtroSalas],
     queryFn: async (): Promise<number> => {
       let q = supabase
         .from('incidents')
@@ -151,7 +179,9 @@ export function IncidentsPage(): React.ReactElement {
         .neq('kind', 'observacion')
       if (buscado) {
         const t = buscado.replace(/[,()*"\\]/g, ' ')
-        q = q.or(`title.ilike.*${t}*,description.ilike.*${t}*,external_ref.ilike.*${t}*`)
+        q = q.or(
+          `title.ilike.*${t}*,description.ilike.*${t}*,external_ref.ilike.*${t}*${filtroSalas}`,
+        )
       } else if (!showResolved) {
         q = q.neq('state', 'resuelta')
       }
@@ -170,7 +200,7 @@ export function IncidentsPage(): React.ReactElement {
      * que existe en la tabla — y la pantalla, encima, invitaba a hacer justo eso:
      * «Afina la búsqueda para ver el resto». Buscar tiene que ser una consulta.
      */
-    queryKey: ['incidents', showResolved, buscado, paginas],
+    queryKey: ['incidents', showResolved, buscado, paginas, filtroSalas],
     // Al ampliar la ventana se sigue enseñando la lista de antes mientras
     // llega la nueva: sin esto, pulsar «Ver más antiguas» vaciaba la pantalla
     // un instante y el desplazamiento volvía arriba.
@@ -217,7 +247,11 @@ export function IncidentsPage(): React.ReactElement {
        */
       if (buscado) {
         const t = buscado.replace(/[,()*"\\]/g, ' ')
-        q = q.or(`title.ilike.*${t}*,description.ilike.*${t}*,external_ref.ilike.*${t}*`)
+        // El texto O la sala: `room_id.in.(…)` sale de resolver lo tecleado
+        // contra el espejo local. Es lo que hace verdad al placeholder.
+        q = q.or(
+          `title.ilike.*${t}*,description.ilike.*${t}*,external_ref.ilike.*${t}*${filtroSalas}`,
+        )
       } else if (!showResolved) {
         q = q.neq('state', 'resuelta')
       }
@@ -233,8 +267,13 @@ export function IncidentsPage(): React.ReactElement {
   const visibles = useMemo(() => {
     const q = norm(query)
     if (!q) return incidents ?? []
+    // Lo que el servidor trajo POR SALA se queda: el filtro de texto de aquí
+    // abajo compara contra la etiqueta «H 1.7» y no casaría «1.7 H», que es
+    // justo como lo escribe el histórico. La sala ya decidió en el servidor.
+    const porSala = new Set(idsDeSala)
     return (incidents ?? []).filter(
       (i) =>
+        (i.room_id !== null && porSala.has(i.room_id)) ||
         norm(i.title).includes(q) ||
         // La descripción entra en la búsqueda desde que se pinta: buscar «no da
         // imagen» y no encontrar la fila que lo dice literalmente en pantalla es
@@ -243,7 +282,7 @@ export function IncidentsPage(): React.ReactElement {
         norm(i.external_ref ?? '').includes(q) ||
         norm(i.room_id ? (salas?.get(i.room_id) ?? '') : '').includes(q),
     )
-  }, [incidents, query, salas])
+  }, [incidents, query, salas, idsDeSala])
 
   const advance = useMutation({
     mutationFn: async (input: { id: string; state: IncidentState; resolution?: string }) => {
@@ -361,6 +400,12 @@ export function IncidentsPage(): React.ReactElement {
                   <p className="font-medium">{i.title}</p>
                   <p className="mt-0.5 text-xs text-muted">
                     {sala && <span className="font-mono font-semibold text-ink-2">{sala} · </span>}
+                    {/* La importación dejó 118 sin sala identificada. Decirlo en
+                        la fila es lo que permite reconocerlas — y el panel de
+                        administración es donde se les asigna la suya. */}
+                    {!sala && i.room_id === null && (
+                      <span className="font-mono text-muted">sin sala · </span>
+                    )}
                     {i.external_ref && <span className="font-mono">{i.external_ref} · </span>}
                     {/* La gravedad, en palabras: es lo que decide qué se atiende
                         primero, y «alta» a secas no dice qué está en juego.

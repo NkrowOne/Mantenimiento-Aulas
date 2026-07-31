@@ -35,6 +35,20 @@ Para cada uno, dos botones:
 Un clic y resuelto. **No corre prisa**: mientras tanto la aplicación funciona
 igual, solo que esas 65 incidencias cuelgan de un edificio provisional.
 
+### Incidencias sin sala
+
+La importación no pudo identificar el aula de parte del histórico («0.1 BC»,
+«2.3 TM», «Ventanilla Única»…) y las guardó **sin sala** en vez de inventarles
+una: no salen en ninguna ficha ni cuentan en ningún edificio. En
+`Incidencias sin sala` se ven con el texto de aula que traía el Excel y se les
+asigna la suya con dos toques. Cada asignación deja además ese texto como
+**alias** de la sala, así que la próxima importación —y el buscador— lo
+resuelven solos, y cierra su fila de cuarentena con autor.
+
+En la pestaña de Incidencias, la búsqueda entiende también salas y edificios de
+verdad: teclear `H` lista el histórico completo del edificio H —resueltas
+incluidas—, y `1.7 H` la sala, se escriba en el orden que se escriba.
+
 ### Cuarentena de importación
 
 208 filas del Excel que no se pudieron interpretar, con su texto original a la
