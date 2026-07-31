@@ -2150,3 +2150,72 @@ begin;
     end if;
   end $$;
 rollback;
+
+\echo ''
+\echo '=== 64. Una incidencia sin sala se rescata: sala puesta, alias aprendido, cuarentena cerrada ==='
+begin;
+  -- Rescatar es de coordinación; un técnico se queda en la puerta.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.incidencias_sin_sala();
+    raise exception 'FALLO: un técnico listó las incidencias sin sala';
+  exception when insufficient_privilege then
+    raise notice 'OK: el rescate es de supervisor para arriba';
+  end $$;
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+
+  -- Una huérfana real del seed, con su texto de aula de la cuarentena delante.
+  select incidencia as huerfana, coalesce(aula_original, '(sin aula)') as aula
+    from public.incidencias_sin_sala() limit 1 \gset
+  select id as sala from rooms where active order by created_at limit 1 \gset
+
+  select case
+    when :'huerfana' <> ''
+    then 'OK: la lista trae huérfanas del seed con su aula original'
+    else 'FALLO: el seed tiene huérfanas y la lista no ve ninguna'
+  end as resultado;
+
+  select public.asignar_sala_a_incidencia(
+    :'huerfana', :'sala', 'Aula De Prueba Rescate') as etiqueta \gset
+
+  select case
+    when (select room_id from incidents where id = :'huerfana') = :'sala'
+    then 'OK: la incidencia recupera su sala (' || :'etiqueta' || ')'
+    else 'FALLO: la incidencia sigue sin sala'
+  end as resultado;
+
+  -- El alias queda aprendido: la próxima importación resolverá ese texto sola.
+  select case
+    when exists (
+      select 1 from room_aliases
+       where room_id = :'sala'
+         and alias_norm = public.norm_text('Aula De Prueba Rescate'))
+    then 'OK: el texto original queda de alias de la sala'
+    else 'FALLO: el alias no se aprendió'
+  end as resultado;
+
+  -- Y ya no vuelve a proponerse.
+  select case
+    when not exists (
+      select 1 from public.incidencias_sin_sala() s where s.incidencia = :'huerfana')
+    then 'OK: la rescatada sale de la lista de huérfanas'
+    else 'FALLO: la lista sigue proponiendo una incidencia ya asignada'
+  end as resultado;
+
+  -- Una que ya tiene sala no se «rescata»: mover de sala es otra operación.
+  do $$
+  declare v uuid;
+  begin
+    select id into v from incidents where room_id is not null limit 1;
+    perform public.asignar_sala_a_incidencia(v, (select id from rooms limit 1), null);
+    raise exception 'FALLO: se reasignó una incidencia que ya tenía sala';
+  exception when others then
+    if sqlerrm like '%ya tiene sala%' then
+      raise notice 'OK: una incidencia con sala no se toca por este camino';
+    else
+      raise exception 'FALLO: el error no es el esperado (%)', sqlerrm;
+    end if;
+  end $$;
+rollback;

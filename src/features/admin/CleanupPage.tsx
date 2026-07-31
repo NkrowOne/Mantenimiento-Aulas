@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { AssetTypeTray } from './AssetTypeTray'
 import { AuditoriaInventario } from './AuditoriaInventario'
 import { EquipoPorDefecto } from './EquipoPorDefecto'
+import { IncidenciasSinSala } from './IncidenciasSinSala'
 import { EquiposPendientes } from './EquiposPendientes'
 import { MaestroSalas } from './MaestroSalas'
 import { RecuperarCopia } from './RecuperarCopia'
@@ -202,6 +203,10 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
       </section>
 
       <RecuperarCopia />
+
+      {/* Antes que la cuarentena cruda: es su mitad accionable. Cada asignación
+          cierra además su fila de ahí abajo. */}
+      <IncidenciasSinSala />
 
       <section>
         <h2 className="text-xl font-semibold">Cuarentena de importación</h2>
