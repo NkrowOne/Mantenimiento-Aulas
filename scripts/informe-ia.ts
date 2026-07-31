@@ -222,6 +222,28 @@ async function main(): Promise<number> {
   console.log('\n▸ Sin clave no se llama a nadie')
   delete process.env['GEMINI_API_KEY']
   comprueba('sin clave, la configuración es nula', configurarIA() === null)
+
+  /*
+   * Y una variable VACÍA no es una clave, ni anula la de app_config.
+   *
+   * El compose declara `GEMINI_API_KEY: ${GEMINI_API_KEY:-}`: en un despliegue
+   * sin clave en el .env, la variable existe con cadena vacía. Con un `??`
+   * ingenuo, ese vacío pisaba la clave que el administrador había pegado en la
+   * aplicación y la IA quedaba anulada para siempre — con el registro diciendo
+   * «sin clave» y la clave guardada en la base.
+   */
+  console.log('\n▸ Una variable vacía del compose no manda sobre app_config')
+  process.env['GEMINI_API_KEY'] = ''
+  process.env['GEMINI_MODEL'] = ''
+  process.env['GEMINI_THINKING'] = '  '
+  const desdeBase = configurarIA({ clave: 'clave-de-app-config', modelo: 'modelo-de-app-config' })
+  comprueba('la clave de app_config sobrevive al GEMINI_API_KEY vacío', desdeBase?.clave === 'clave-de-app-config')
+  comprueba('el modelo de app_config sobrevive al GEMINI_MODEL vacío', desdeBase?.modelo === 'modelo-de-app-config')
+  comprueba('el thinking en blanco cae al valor por defecto', desdeBase?.thinking === 'high')
+  comprueba('vacío y sin app_config sigue siendo «sin clave»', configurarIA() === null)
+  delete process.env['GEMINI_API_KEY']
+  delete process.env['GEMINI_MODEL']
+  delete process.env['GEMINI_THINKING']
   comprueba(
     'la redacción calculada se sostiene sola',
     lecturaCalculada(d).entradilla.length > 80 && lecturaCalculada(d).recomendaciones.length > 0,

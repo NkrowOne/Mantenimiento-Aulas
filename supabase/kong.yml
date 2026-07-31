@@ -5,10 +5,14 @@ _transform: true
 # que aquí solo se reparte el tráfico por prefijo de ruta.
 #
 # No hay plugin de CORS a propósito: la PWA y la API comparten origen
-# (`aulas.tudominio.es`), así que no hay peticiones entre orígenes. Añadirlo
+# («aulas.tudominio.es»), así que no hay peticiones entre orígenes. Añadirlo
 # sería configurar una defensa contra algo que no ocurre, y una cosa más que
 # puede quedar mal puesta.
 
+# Este fichero es una PLANTILLA: el arranque del servicio kong la renderiza
+# sustituyendo $SUPABASE_ANON_KEY y $SUPABASE_SERVICE_KEY desde el entorno.
+# Kong no expande variables por su cuenta en configuración declarativa; sin el
+# renderizado, las credenciales eran los literales y toda la API contestaba 401.
 consumers:
   - username: anon
     keyauth_credentials:
@@ -17,11 +21,10 @@ consumers:
     keyauth_credentials:
       - key: $SUPABASE_SERVICE_KEY
 
-acls:
-  - consumer: anon
-    group: anon
-  - consumer: service_role
-    group: admin
+# Sin sección «acls»: no había ningún plugin acl que usara esos grupos —eran
+# configuración muerta— y declararlos sin el plugin «acl» en KONG_PLUGINS hace
+# que Kong 3.x RECHACE el fichero entero y no arranque. Si algún día una ruta
+# necesita grupos, se añade el plugin a KONG_PLUGINS y se recupera la sección.
 
 services:
   # GoTrue. Sin key-auth: el registro está deshabilitado y los endpoints de

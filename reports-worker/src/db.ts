@@ -48,14 +48,34 @@ export function esPooler(url: string): boolean {
  * disponible», «ya existe, se omite») que en un arranque conviene leer de un
  * vistazo, no en veinte líneas de JSON.
  */
-export function conectar(url: string, max: number, onnotice?: (aviso: postgres.Notice) => void): postgres.Sql {
+export function conectar(
+  url: string,
+  max: number,
+  onnotice?: (aviso: postgres.Notice) => void,
+  opciones?: {
+    /**
+     * Tope por consulta, en milisegundos. Lo fija el SERVIDOR de informes y no
+     * el migrador, y la asimetría es deliberada: una consulta del informe que
+     * se queda esperando un cerrojo colgaba `generate()` para siempre — con el
+     * healthcheck en verde, porque `/salud` no toca la base — y se comía una
+     * de las dos conexiones del pool hasta el siguiente reinicio. Una
+     * migración, en cambio, puede tardar legítimamente lo que tarde.
+     */
+    statementTimeoutMs?: number
+  },
+): postgres.Sql {
   return postgres(url, {
     max,
     ...(onnotice ? { onnotice } : {}),
     // Sin esto, contra el pooler de Supabase no funciona ninguna consulta.
     prepare: !esPooler(url),
-    // Con las consultas ya explícitas esto no cambia ningún número, pero deja la
-    // sesión en hora local para lo que se escriba aquí mañana y para los registros.
-    connection: { timezone: 'Europe/Madrid' },
+    connection: {
+      // Con las consultas ya explícitas esto no cambia ningún número, pero deja la
+      // sesión en hora local para lo que se escriba aquí mañana y para los registros.
+      timezone: 'Europe/Madrid',
+      ...(opciones?.statementTimeoutMs
+        ? { statement_timeout: String(opciones.statementTimeoutMs) }
+        : {}),
+    },
   })
 }

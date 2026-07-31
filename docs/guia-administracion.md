@@ -485,6 +485,41 @@ select at, by_user, old_data->>'name', new_data->>'name'
 from audit_log where table_name = 'rooms' order by at desc limit 20;
 ```
 
+### Auditoría de inventario — el mismo aparato apuntado dos veces
+
+El síntoma con el que se llega aquí: alguien teclea «Monitor Atril», la
+aplicación guarda «Monitor Atril 2», y en la lista de la sala no aparece ningún
+«Monitor Atril». Casi siempre son **dos filas para un solo aparato**: un
+dispositivo con el espejo atrasado volvió a apuntar un equipo que ya existía, y
+el servidor —que no puede rechazar la fila sin perder el trabajo— la guardó con
+el siguiente número libre. Desde entonces cada choque de esos queda además
+**registrado** con el par identificado, así que la bandeja no adivina: enseña.
+
+En `Auditoría de inventario` hay dos cosas:
+
+- **El resumen del servidor**: cuántos equipos, incidencias, revisiones y salas
+  hay de verdad en la base. Si un iPad enseña menos, ese dispositivo no ha
+  terminado de descargar — se arregla sincronizando, no re-apuntando equipos.
+- **Los posibles duplicados**: pares de la misma sala, mismo tipo y mismo nombre
+  base, con lo que cuelga de cada lado (revisiones, incidencias, eventos).
+  Decide siempre una persona, y hay tres salidas:
+
+| | Qué hace |
+|---|---|
+| **Es el mismo: quedarse con uno** | El otro se **retira, no se borra**: su serie y su modelo viajan al que se queda si le faltaban, sus incidencias se repuntan, sus revisiones se siguen leyendo enteras («retirado desde entonces»), y la etiqueta base vuelve al superviviente — el «Monitor Atril 2» vuelve a llamarse «Monitor Atril». |
+| **Quedarse con el otro** | Lo mismo, en el sentido contrario. Mira los registros de cada lado: el que tiene historia es el que conviene conservar. |
+| **Son dos aparatos** | No toca nada y el par deja de proponerse. |
+
+Fusionar no puede perder datos por diseño: todo lo que el duplicado tenía sigue
+guardado y legible. Equivocarse de sentido tampoco pierde nada — solo deja
+retirado el lado con más historia, que se puede consultar igual.
+
+```sql
+-- Los choques de etiqueta que el servidor ha tenido que recolocar
+select at, pedida, asignada, resolved
+  from asset_label_conflicts order by at desc limit 20;
+```
+
 ## 4. Almacén
 
 Desde la pestaña **Almacén**, con `+` y `−` por artículo.
@@ -702,8 +737,11 @@ otras pantallas.
 
 ## 8. Informes
 
-**El automático sale los viernes a las 07:00**, con la semana de trabajo entera
-—de lunes a viernes—. Queda archivado en la pestaña **Informes**, con descarga.
+**El automático sale los viernes a las 07:00**, con la semana hasta el jueves
+—de lunes a jueves—. El viernes a esa hora aún no ha pasado: meterlo vacío en el
+periodo hacía que la comparación con la semana anterior saliera «bajando» todos
+los viernes, por diseño. Queda archivado en la pestaña **Informes**, con
+descarga; quien quiera la semana con el viernes dentro la pide a mano el lunes.
 
 Cualquier otro se pide a mano desde esa misma pantalla. Se elige:
 
@@ -718,6 +756,22 @@ Cualquier otro se pide a mano desde esa misma pantalla. Se elige:
 
 Genera y espera: la pantalla avisa cuando el PDF está. Con IA suele tardar entre
 veinte segundos y un minuto.
+
+### Si no sale ningún informe
+
+En la misma pantalla hay un desplegable — **«¿No sale el informe?»** — que le
+pregunta a la base por la tubería entera y contesta con palabras: si pg_net está
+instalado y **despachando su cola** (que son dos cosas distintas), qué contestó
+el worker las últimas veces, y qué hizo el cron. Se abre solo cuando un informe
+tarda más de la cuenta.
+
+Los tres diagnósticos que resuelven casi todo:
+
+| Lo que dice | Qué significa | Qué hacer |
+|---|---|---|
+| **Peticiones encoladas y nadie las despacha** | `pg_net` no está en `shared_preload_libraries`: todo parece funcionar y ningún informe se genera nunca. Fue un fallo real de este proyecto | Comprueba que la lista del servicio `db` en `docker-compose.yml` incluye `pg_net` y reinicia la base |
+| **El worker rechaza la llamada (401)** | El token de `app_config` no coincide con el del contenedor de informes | `scripts/deploy.sh` los siembra iguales; vuelve a desplegar o iguálalos a mano |
+| **No se alcanza el worker** | El contenedor `aulas-reports` está caído o fuera de la red | `docker compose up -d reports-worker` y mira su registro |
 
 **Un informe emitido no se regenera nunca: se versiona.** Si los datos cambian
 después, el PDF del viernes sigue diciendo lo que decía el viernes. Es lo que le

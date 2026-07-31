@@ -288,3 +288,200 @@ verdad importan no son las del caso normal:
 - Una incidencia de **las 00:30 del 1 de marzo** cuenta en marzo.
 - A las **00:30 de Madrid**, el diario ya cubre el día que acaba de terminar y no
   el anterior.
+
+## 7. Segunda pasada (31 de julio): la subida que se acumulaba y los recuentos con observaciones
+
+Mismo método que el resto del documento: cada hallazgo se reprodujo ejecutando
+—la cola con su arnés de pruebas sobre IndexedDB y un Supabase simulado, el
+worker levantado contra un Postgres desechable con las 30 migraciones y el seed
+cargados— y cada arreglo dejó una prueba que falla si vuelve.
+
+### La cola de salida acumulaba trabajo CON red
+
+Cinco averías distintas con el mismo síntoma («hay cobertura y los pendientes no
+bajan hasta que alguien pulsa Sincronizar»), y las cinco corregidas:
+
+1. **Recuperar la red no forzaba la subida.** Los fallos en un sótano acumulan
+   backoff (techo: 5 minutos); al volver la cobertura, el evento `online`
+   lanzaba una pasada que *respetaba esas esperas*: no intentaba nada. Ahora
+   `online` fuerza, igual que el botón — la señal de que las esperas ya no
+   hablan del mundo real es exactamente esa.
+2. **Un 401 marcaba el trabajo como rechazado para siempre.** El token caduca
+   con el iPad dormido; cada envío de esa ventana volvía con 401 y, como
+   cualquier 4xx, se declaraba permanente. Un 401 habla de la sesión, no del
+   contenido: ahora reintenta, y `flush()` ya renueva la sesión al arrancar.
+3. **Las fotos se auto-rechazaban al noveno intento, fuera cual fuera el
+   fallo.** Ocho intentos se gastan en nada con una wifi que va y viene. Ahora
+   solo rechaza un fallo permanente (con el código leído también de dentro del
+   error de Storage, que no lo trae en la respuesta); lo temporal reintenta
+   con su backoff, para siempre.
+4. **Capturar una foto no disparaba la subida.** Era el único sitio que
+   encolaba sin avisar a la cola: la foto esperaba al siguiente disparador,
+   hasta un minuto sentada. Ahora encolar una foto es como encolar todo lo
+   demás.
+5. **Una pasada dejaba trabajo listo para la siguiente.** El cierre de una
+   revisión espera a que suban sus comprobaciones — y quedaba «para la pasada
+   siguiente», o sea otro minuto. Ahora la pasada se encadena mientras quede
+   algo con el turno cumplido (con techo de cinco vueltas), así que una
+   revisión cerrada con cobertura llega ENTERA en una sola llamada.
+
+Verificación: `src/sync/outbox.test.ts` (22 pruebas, 4 nuevas y 3 endurecidas).
+
+### Los recuentos del informe y de la insignia contaban observaciones
+
+`alerts_stale_incidents` ya excluía las observaciones —notas de seguimiento
+importadas del Excel, «abiertas» desde 2025 por definición porque no las cierra
+nadie— pero el mismo error seguía vivo en tres sitios que se consultan aparte:
+
+- `data.ts` del worker: «incidencias abiertas» y «estancadas» (la cifra y la
+  tabla) del informe firmado, y «pendientes» por edificio.
+- `room_overview.open_incidents`: la insignia naranja de la lista de salas, que
+  no cuadraba con la pestaña de Incidencias que se abre al pulsarla
+  (migración `20260731000200`; las solicitudes siguen contando, que son
+  trabajo pedido).
+
+Verificación: prueba 62 de `npm run db:verify` (una observación abierta no
+enciende la insignia; una solicitud sí), y un informe semanal real generado de
+punta a punta contra el clúster desechable —consultas nuevas incluidas— hasta
+el PDF (`render-cli`, 46 KB, WeasyPrint 61).
+
+### Lo que se revisó y estaba bien
+
+El endpoint del worker (token en tiempo constante, cuerpo con tope y socket
+drenado, errores sin traza: `npm run worker:test` en verde), el arranque de
+migraciones del contenedor (cerrojo de asesor, registro compartido con
+`init-plataforma.sh`, aviso a PostgREST), la detección del pooler en
+transacción, los periodos en hora de Madrid (`worker:periodos`), el cliente de
+Gemini (tiempo tope, borrador fuera, cifras inventadas invalidan el texto:
+`informe:ia`), WeasyPrint con tiempo tope y EPIPE recogido, el escape de la
+plantilla, y las rutas de Caddy y Kong.
+
+## 8. Tercera pasada (31 de julio): los informes que nunca se generaban
+
+El aviso llegó del uso real: «la generación de informes nunca se crea, teniendo
+la API key de Gemini». La clave de Gemini no tenía nada que ver — el worker
+nunca llegaba a recibir ninguna petición.
+
+### La causa: pg_net sin precarga, el fallo perfecto
+
+El `command` del servicio `db` en `docker-compose.yml` fijaba
+`shared_preload_libraries=pg_stat_statements,pg_cron`. La imagen de Supabase
+trae `pg_net` en la lista de su `postgresql.conf`, pero un `-c` en el arranque
+**pisa la lista entera**: lo que no está escrito ahí, no se carga.
+
+Y pg_net sin precarga es una trampa sin ruido en ningún punto de la cadena:
+
+- `create extension pg_net` funciona (la migración no avisó de nada),
+- `net.http_post()` devuelve un id de petición como si trabajara,
+- `request_report()` retorna sin error, el cron corre y anota `succeeded`,
+- …y la petición se queda en `net.http_request_queue` para siempre, porque el
+  proceso de fondo que despacha esa cola **solo existe si la librería está
+  precargada**.
+
+Ni un error en la interfaz, ni en el log del worker (nunca le llegó nada), ni
+en el del cron (su trabajo era encolar, y encoló). La única firma observable:
+la cola con contenido y `net._http_response` vacía.
+
+### Los arreglos
+
+1. **`docker-compose.yml`**: `pg_net` añadido a la precarga, con el porqué
+   escrito encima para que nadie lo quite «simplificando».
+2. **Migración `20260731000300`**:
+   - `estado_de_informes()` — la tubería contada entera para la pantalla:
+     pg_net y su cola, últimas respuestas del worker, trabajos y corridas del
+     cron, últimos informes. Con guardas `to_regclass`, contesta también en un
+     clúster sin extensiones en vez de reventar.
+   - `enviar_informe()` falla claro si pg_net no está instalado (antes: un
+     error de esquema que no orientaba), y pasa
+     `timeout_milliseconds := 120000`: el tope por defecto de pg_net (5 s) no
+     perdía la entrega, pero apuntaba «timeout» sobre informes con Gemini que
+     salieron bien, envenenando el diagnóstico.
+   - La cola muerta se vacía una vez: sin esto, el primer arranque con la
+     precarga corregida disparaba de golpe todas las peticiones acumuladas.
+3. **Pantalla de Informes**: el desplegable «¿No sale el informe?» ejecuta
+   `estado_de_informes()` y traduce los hechos a diagnóstico accionable
+   (`diagnostico.ts`, puro y con pruebas). Se abre solo cuando la espera pasa
+   de lo razonable — y el mensaje de espera ya no promete «sigue trabajando»,
+   que en el despliegue roto fue mentira durante semanas.
+
+### Verificación
+
+Prueba 63 de `npm run db:verify` (el estado es de supervisor para arriba;
+contesta sin pg_net; pedir un informe sin pg_net explica qué falta), las 8
+pruebas de `diagnostico.test.ts`, y la batería completa de siempre. La
+precarga corregida no se puede probar aquí —exige la imagen de Supabase—, así
+que la defensa es doble: el comentario en el compose y el diagnóstico en
+pantalla que la delata si vuelve a faltar.
+
+### La pasada adversarial (35 agentes, 21 hallazgos confirmados)
+
+Sobre el mismo síntoma se lanzó una auditoría adversarial por ámbitos —SQL de
+informes, código del worker, despliegue, cliente, permisos, pg_cron/pg_net—
+con un verificador por hallazgo intentando refutarlo. Lo confirmado y
+corregido, además de lo de arriba:
+
+**Despliegue** (dos de ellos reproducidos empíricamente con la imagen real):
+
+- **Kong no arrancaba con la configuración del repo**: `kong.yml` declaraba una
+  sección `acls` sin el plugin «acl» en `KONG_PLUGINS`, y Kong 3.x rechaza el
+  fichero entero. La sección era configuración muerta —ninguna ruta usaba esos
+  grupos— y se retira.
+- **Las credenciales de key-auth eran literales**: Kong no expande variables en
+  configuración declarativa, así que `$SUPABASE_ANON_KEY` era, literalmente, la
+  clave. El arranque ahora renderiza `kong.yml` como plantilla (el mismo truco
+  del compose oficial de Supabase), verificado con un render real.
+- **`backup.sh` podía archivar un volumen vacío**: el nombre
+  «aulas_storage-data» solo existe si el directorio del proyecto se llama
+  «aulas»; con otro nombre, `docker run -v` creaba un volumen nuevo y la
+  «copia» archivaba cero fotos. Ahora se resuelve por la etiqueta de Compose y
+  falla ruidosamente si no aparece. Y `--probar` exige el marcador final de
+  pg_dump: un volcado cortado a la mitad es un .gz válido que restaura a medias.
+- **El worker subía los PDF por `https://${DOMAIN}`**, un nombre que solo
+  resuelve el DNS interno o la VPN, atado además a que Caddy esté vivo. Ahora
+  habla con Kong por su nombre de red interna.
+- **`init-plataforma.sh` escribía la URL interna del compose como valor por
+  defecto** en un despliegue de plataforma donde ese host no existe — el mismo
+  «nunca llega nada» por otro camino. Ahora exige `REPORTS_WORKER_URL`.
+- La purga de la cola muerta corría después de que pg_net disparara el atasco:
+  `deploy.sh` la vacía ahora nada más levantar la base.
+
+**Worker**:
+
+- Un cliente que cortaba la conexión a mitad del cuerpo tumbaba el proceso
+  entero (ECONNRESET sin recoger en el `for await`). Reproducido; recogido.
+- Sin tope por consulta, una query bloqueada colgaba `generate()` para siempre
+  con el healthcheck en verde. Ahora el servidor fija `statement_timeout`;
+  el migrador, deliberadamente, no.
+- `render-cli` fechaba el pie en UTC bajo un rótulo que jura hora de Madrid.
+
+**Trazabilidad** (el hallazgo de más fondo): el id que devuelve `net.http_post`
+no lo guardaba nadie, y `net._http_response` caduca — un cron fallido del
+viernes no dejaba NI UN rastro el lunes. Ahora cada envío queda en
+`report_requests`, el diagnóstico cruza petición y respuesta («tu petición de
+las 10:02 devolvió 401»), y el TTL de pg_net sube a tres días.
+
+**Cliente**: la espera del informe se rendía en silencio a los 150 s (ahora lo
+dice y abre el diagnóstico); un informe ajeno podía presentarse como «Listo»
+(ahora solo si coincide tipo y periodo con lo pedido); la descarga y el listado
+tragaban sus errores (ahora se ven).
+
+**Semanal honesto**: el automático del viernes a las 07:00 cubría lunes→viernes
+con el viernes vacío dentro, y la comparación «frente a la semana anterior»
+enfrentaba cuatro días trabajados contra cinco: el informe firmado «bajaba»
+todos los viernes por diseño. Ahora pide lunes→jueves explícito y compara
+iguales (migración `20260731000400`).
+
+**Casos extremos, medidos**: un informe sobre un periodo sin NINGUNA actividad
+(todos los contadores a cero, todos los arrays vacíos) renderiza hasta el PDF
+sin excepción, contra el clúster desechable.
+
+**La mayor superficie sin leer, leída**: `template.ts` (1.228 líneas) y
+`analisis.ts` (478) se auditaron enteras aparte. Veredicto: sin ningún camino de
+crash con datos válidos, ni siquiera extremos — todas las divisiones, nulos,
+arrays vacíos y escapes están guardados, y se listó caso por caso. Cinco
+defectos leves de salida, corregidos: el «<1 %» sin escapar (frágil ante
+cualquier parser HTML estricto), el titular agramatical con una sola estancada,
+una concordancia de género en la entradilla, el pie de la tabla de edificios
+que llamaba «sin actividad» a los recortados por sitio, y el diario recortado
+afirmando «ningún movimiento» de días cuyos movimientos no cabían. Verificado
+re-renderizando los dos PDF de prueba (con datos y de periodo vacío).

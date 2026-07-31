@@ -1877,3 +1877,276 @@ begin;
     raise notice 'OK: las comprobaciones son de quien firma la revisión';
   end $$;
 rollback;
+
+\echo ''
+\echo '=== 59. Un choque de etiqueta se recoloca Y deja rastro ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active limit 1 \gset
+  select id as tipo from asset_types where merged_into is null limit 1 \gset
+
+  -- El primero se queda su nombre. El segundo —el espejo desactualizado de otro
+  -- iPad, o dos técnicos en la misma ronda— llega chocando.
+  insert into assets (id, asset_type_id, room_id, label, status, created_by)
+  values ('dddddddd-dddd-4ddd-8ddd-ddddddddd001', :'tipo', :'sala',
+          'Monitor Prueba', 'instalado', '11111111-1111-4111-8111-111111111111');
+  insert into assets (id, asset_type_id, room_id, label, status, created_by)
+  values ('dddddddd-dddd-4ddd-8ddd-ddddddddd002', :'tipo', :'sala',
+          'Monitor Prueba', 'instalado', '11111111-1111-4111-8111-111111111111');
+
+  select case
+    when (select label from assets where id = 'dddddddd-dddd-4ddd-8ddd-ddddddddd002')
+         = 'Monitor Prueba 2'
+    then 'OK: el aparato no se pierde, se recoloca'
+    else 'FALLO: el choque no se recolocó'
+  end as resultado;
+
+  -- Y el rastro existe, con el par entero: es la materia prima de la bandeja.
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  select case
+    when exists (
+      select 1 from asset_label_conflicts
+       where asset_id = 'dddddddd-dddd-4ddd-8ddd-ddddddddd002'
+         and choco_con = 'dddddddd-dddd-4ddd-8ddd-ddddddddd001'
+         and pedida = 'Monitor Prueba' and asignada = 'Monitor Prueba 2'
+         and not resolved)
+    then 'OK: el choque queda apuntado con el par identificado'
+    else 'FALLO: el renombrado no dejó rastro'
+  end as resultado;
+
+  -- Un técnico no lee la bitácora: es una bandeja de coordinación.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select case
+    when (select count(*) from asset_label_conflicts) = 0
+    then 'OK: la bitácora de choques es de supervisor para arriba'
+    else 'FALLO: un técnico lee los choques'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 60. Fusionar un duplicado no pierde nada: ni serie, ni incidencias, ni histórico ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active limit 1 \gset
+  select id as tipo from asset_types where merged_into is null limit 1 \gset
+
+  -- El fantasma antiguo sin serie, y el re-alta del técnico que sí la apuntó.
+  insert into assets (id, asset_type_id, room_id, label, status, created_by)
+  values ('dddddddd-dddd-4ddd-8ddd-ddddddddd003', :'tipo', :'sala',
+          'Tele Prueba', 'instalado', '11111111-1111-4111-8111-111111111111');
+  insert into assets (id, asset_type_id, room_id, label, serial, model, status, created_by)
+  values ('dddddddd-dddd-4ddd-8ddd-ddddddddd004', :'tipo', :'sala',
+          'Tele Prueba', 'SN-FUSION-1', 'X-200', 'instalado',
+          '11111111-1111-4111-8111-111111111111');
+
+  -- Una revisión llegó a comprobar el duplicado, y una avería le apunta.
+  insert into inspections (id, room_id, by_user, occurred_at, status)
+  values ('dddddddd-dddd-4ddd-8ddd-ddddddddd005', :'sala',
+          '11111111-1111-4111-8111-111111111111', now(), 'borrador');
+  insert into inspection_checks (id, inspection_id, check_key, result)
+  values (gen_random_uuid(), 'dddddddd-dddd-4ddd-8ddd-ddddddddd005',
+          'asset:dddddddd-dddd-4ddd-8ddd-ddddddddd004', 'incidencia');
+  insert into incidents (id, room_id, asset_id, title, severity, state, kind, opened_at, opened_by)
+  values ('dddddddd-dddd-4ddd-8ddd-ddddddddd006', :'sala',
+          'dddddddd-dddd-4ddd-8ddd-ddddddddd004', 'Tele Prueba: no enciende',
+          'media', 'abierta', 'incidencia', now(), '11111111-1111-4111-8111-111111111111');
+
+  -- Fusionar es de coordinador; un técnico se queda en la puerta.
+  savepoint s;
+  do $$
+  begin
+    perform public.fusionar_equipo_duplicado(
+      'dddddddd-dddd-4ddd-8ddd-ddddddddd004', 'dddddddd-dddd-4ddd-8ddd-ddddddddd003');
+    raise exception 'FALLO: un técnico fusionó equipos';
+  exception when insufficient_privilege then
+    raise notice 'OK: fusionar es cosa del coordinador';
+  end $$;
+  rollback to savepoint s;
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+
+  -- La bandeja propone el par antes de tocar nada.
+  select case
+    when exists (
+      select 1 from public.auditoria_duplicados()
+       where dup_id = 'dddddddd-dddd-4ddd-8ddd-ddddddddd004'
+         and bueno_id = 'dddddddd-dddd-4ddd-8ddd-ddddddddd003'
+         and choque_registrado)
+    then 'OK: la auditoría propone el par con su choque registrado'
+    else 'FALLO: la auditoría no ve el par'
+  end as resultado;
+
+  select public.fusionar_equipo_duplicado(
+    'dddddddd-dddd-4ddd-8ddd-ddddddddd004',
+    'dddddddd-dddd-4ddd-8ddd-ddddddddd003') as etiqueta_final \gset
+
+  select case
+    when (select status from assets where id = 'dddddddd-dddd-4ddd-8ddd-ddddddddd004')::text
+         = 'retirado'
+     and (select serial from assets where id = 'dddddddd-dddd-4ddd-8ddd-ddddddddd003')
+         = 'SN-FUSION-1'
+     and (select model from assets where id = 'dddddddd-dddd-4ddd-8ddd-ddddddddd003')
+         = 'X-200'
+    then 'OK: retirado sin borrar, y la serie y el modelo viajan al que se queda'
+    else 'FALLO: la fusión perdió datos del duplicado'
+  end as resultado;
+
+  select case
+    when (select asset_id from incidents where id = 'dddddddd-dddd-4ddd-8ddd-ddddddddd006')
+         = 'dddddddd-dddd-4ddd-8ddd-ddddddddd003'
+    then 'OK: la avería sigue al aparato físico'
+    else 'FALLO: la incidencia se quedó apuntando al retirado'
+  end as resultado;
+
+  -- La revisión de aquel día se sigue leyendo entera, con el aparato por su
+  -- nombre y diciendo que hoy está retirado. Es la razón de retirar y no borrar.
+  select case
+    when exists (
+      select 1 from inspection_check_detail
+       where inspection_id = 'dddddddd-dddd-4ddd-8ddd-ddddddddd005'
+         and asset_label = 'Tele Prueba 2'
+         and asset_status = 'retirado')
+    then 'OK: el histórico de la revisión se lee entero tras la fusión'
+    else 'FALLO: la comprobación del duplicado quedó sin nombre'
+  end as resultado;
+
+  -- Y el rastro del choque queda cerrado: ya lo miró alguien.
+  select case
+    when not exists (
+      select 1 from asset_label_conflicts
+       where asset_id = 'dddddddd-dddd-4ddd-8ddd-ddddddddd004' and not resolved)
+    then 'OK: el choque queda resuelto con la fusión'
+    else 'FALLO: el choque sigue vivo tras fusionar'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 61. La fusión inversa recupera la etiqueta base, y descartar calla la bandeja ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active limit 1 \gset
+  select id as tipo from asset_types where merged_into is null limit 1 \gset
+
+  -- Esta vez el que vale es el nuevo: el fantasma viejo no tiene nada dentro.
+  insert into assets (id, asset_type_id, room_id, label, status, created_by)
+  values ('dddddddd-dddd-4ddd-8ddd-ddddddddd007', :'tipo', :'sala',
+          'Atril Prueba', 'instalado', '11111111-1111-4111-8111-111111111111');
+  insert into assets (id, asset_type_id, room_id, label, serial, status, created_by)
+  values ('dddddddd-dddd-4ddd-8ddd-ddddddddd008', :'tipo', :'sala',
+          'Atril Prueba', 'SN-FUSION-2', 'instalado',
+          '11111111-1111-4111-8111-111111111111');
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+
+  -- Se retira el viejo y se queda el nuevo, que hereda la etiqueta base:
+  -- el «Atril Prueba 2» vuelve a llamarse «Atril Prueba».
+  select public.fusionar_equipo_duplicado(
+    'dddddddd-dddd-4ddd-8ddd-ddddddddd007',
+    'dddddddd-dddd-4ddd-8ddd-ddddddddd008') as etiqueta_final \gset
+
+  select case
+    when :'etiqueta_final' = 'Atril Prueba'
+     and (select label from assets where id = 'dddddddd-dddd-4ddd-8ddd-ddddddddd008')
+         = 'Atril Prueba'
+    then 'OK: el que se queda recupera la etiqueta base'
+    else 'FALLO: el superviviente se quedó con el sufijo'
+  end as resultado;
+
+  -- Y un par legítimo se descarta: dos aparatos de verdad no son un duplicado.
+  insert into assets (id, asset_type_id, room_id, label, status)
+  select 'dddddddd-dddd-4ddd-8ddd-ddddddddd009', :'tipo', :'sala',
+         public.next_asset_label(:'sala', 'Atril Prueba'), 'instalado';
+
+  select public.descartar_duplicado(
+    'dddddddd-dddd-4ddd-8ddd-ddddddddd009',
+    'dddddddd-dddd-4ddd-8ddd-ddddddddd008');
+
+  select case
+    when not exists (
+      select 1 from public.auditoria_duplicados()
+       where dup_id = 'dddddddd-dddd-4ddd-8ddd-ddddddddd009')
+    then 'OK: el par descartado no vuelve a proponerse'
+    else 'FALLO: la bandeja sigue proponiendo un par ya revisado'
+  end as resultado;
+
+  -- El resumen es de coordinación, como la bandeja.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.auditoria_inventario();
+    raise exception 'FALLO: un técnico leyó la auditoría';
+  exception when insufficient_privilege then
+    raise notice 'OK: la auditoría es de supervisor para arriba';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 62. Una observación abierta no enciende la insignia de la sala ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active order by created_at limit 1 \gset
+  select open_incidents as antes from room_overview where room_id = :'sala' \gset
+
+  -- Una nota de seguimiento del histórico: abierta por definición y para siempre.
+  insert into incidents (id, room_id, title, severity, state, kind, opened_at, opened_by)
+  values ('dddddddd-dddd-4ddd-8ddd-ddddddddd010', :'sala',
+          'El mando aparece en el cajón', 'baja', 'abierta', 'observacion',
+          now() - interval '300 days', '11111111-1111-4111-8111-111111111111');
+
+  select case
+    when (select open_incidents from room_overview where room_id = :'sala') = :'antes'
+    then 'OK: la nota no cuenta como incidencia abierta de la sala'
+    else 'FALLO: la insignia de la sala cuenta observaciones'
+  end as resultado;
+
+  -- Y una solicitud SÍ cuenta: es trabajo pedido y está en la pestaña.
+  insert into incidents (id, room_id, title, severity, state, kind, opened_at, opened_by)
+  values ('dddddddd-dddd-4ddd-8ddd-ddddddddd011', :'sala',
+          'Instalar cámara', 'media', 'abierta', 'solicitud',
+          now(), '11111111-1111-4111-8111-111111111111');
+
+  select case
+    when (select open_incidents from room_overview where room_id = :'sala') = :'antes' + 1
+    then 'OK: la solicitud sí cuenta como trabajo pendiente'
+    else 'FALLO: la solicitud no cuenta en la insignia'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 63. El estado de los informes se puede preguntar, y contesta también sin pg_net ==='
+begin;
+  -- Un técnico no lo consulta: es una pantalla de coordinación.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.estado_de_informes();
+    raise exception 'FALLO: un técnico leyó el estado de los informes';
+  exception when insufficient_privilege then
+    raise notice 'OK: el estado de los informes es de supervisor para arriba';
+  end $$;
+
+  -- Y el supervisor recibe la foto entera SIN que la función reviente en un
+  -- clúster sin pg_net ni pg_cron — que es exactamente este arnés. La gracia
+  -- del diagnóstico es contestar «pg_net no está instalado» en vez de morirse.
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  select case
+    when (public.estado_de_informes() -> 'pg_net' ->> 'instalado') = 'false'
+     and jsonb_typeof(public.estado_de_informes() -> 'informes') = 'array'
+    then 'OK: sin pg_net lo dice, y el resto de la foto llega igual'
+    else 'FALLO: el diagnóstico no sabe contar un clúster sin extensiones'
+  end as resultado;
+
+  -- Y pedir un informe sin pg_net falla CON EXPLICACIÓN, no con un error de
+  -- esquema: es la diferencia entre arreglarlo y perseguirlo por los logs.
+  do $$
+  begin
+    perform public.request_report('semanal');
+    raise exception 'FALLO: request_report fingió funcionar sin pg_net';
+  exception when others then
+    if sqlerrm like '%pg_net no está instalada%' then
+      raise notice 'OK: sin pg_net, pedir un informe explica qué falta';
+    else
+      raise exception 'FALLO: el error no orienta (%)', sqlerrm;
+    end if;
+  end $$;
+rollback;

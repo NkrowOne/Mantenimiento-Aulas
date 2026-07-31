@@ -53,6 +53,17 @@ docker compose up -d --build db
 docker compose exec -T db bash -c 'until pg_isready -U postgres; do sleep 1; done' >/dev/null
 ok 'base de datos lista'
 
+# La cola muerta de pg_net se vacía AQUÍ, no solo en la migración que hace lo
+# mismo: la migración corre cuando la base ya lleva un rato viva, y si el
+# arranque acaba de estrenar la precarga de pg_net, su proceso de fondo dispara
+# de golpe todo lo que quedó encolado durante la avería — semanas de informes
+# pedidos en balde, todos a la vez contra el worker. Se tira antes de que el
+# worker levante; lo que alguien quiera de verdad se pide y sale en el acto.
+docker compose exec -T db psql -U postgres -d postgres \
+  -c 'delete from net.http_request_queue' >/dev/null 2>&1 \
+  && ok 'cola de pg_net vaciada' \
+  || true
+
 # ── 4. Migraciones ──────────────────────────────────────────────────────
 say 'Aplicando migraciones'
 

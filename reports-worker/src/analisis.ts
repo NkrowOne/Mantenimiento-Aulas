@@ -404,7 +404,11 @@ export function lecturaCalculada(d: ReportData): Lectura {
     sinNada
     ? 'Periodo sin actividad registrada'
     : d.situacion.estancadas > 0
-      ? `${plural(d.situacion.estancadas, 'incidencia')} llevan más de una semana abiertas`
+      // Con una sola, el verbo y el participio concuerdan: «Una incidencia
+      // llevan… abiertas» en el H1 de un PDF firmado se lee como descuido.
+      ? d.situacion.estancadas === 1
+        ? 'Una incidencia lleva más de una semana abierta'
+        : `${plural(d.situacion.estancadas, 'incidencia')} llevan más de una semana abiertas`
       : saldo > 0
         ? 'Se ha cerrado más de lo que se ha abierto'
         : saldo < 0
@@ -439,7 +443,8 @@ export function lecturaCalculada(d: ReportData): Lectura {
         ? `Se cerraron ${d.ahora.resueltas}, las mismas que entraron.`
         : saldo > 0
           ? `Se cerraron ${d.ahora.resueltas}, ${plural(saldo, 'registro')} más de los que entraron.`
-          : `Se cerraron ${d.ahora.resueltas}, ${Math.abs(saldo)} menos de las que entraron.`,
+          // «los que», como la rama de arriba: habla de registros, no de incidencias.
+          : `Se cerraron ${d.ahora.resueltas}, ${Math.abs(saldo)} menos de los que entraron.`,
     )
     frases.push(
       d.situacion.incidenciasAbiertas === 0

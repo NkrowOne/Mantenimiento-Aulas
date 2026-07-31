@@ -126,6 +126,40 @@ export function labelAvailable(assetsInRoom: Asset[], label: string, exceptId?: 
   )
 }
 
+/**
+ * El choque de un alta, ANTES de crear nada.
+ *
+ * `nextLabel` resolvía el choque en silencio: quien tecleaba «Monitor Atril» en
+ * una sala que ya tenía uno recibía un «Monitor Atril 2» sin que nada explicara
+ * de dónde salía el número. Y el caso frecuente no es una segunda unidad: es el
+ * MISMO aparato apuntado dos veces —un espejo local desactualizado, dos
+ * técnicos en la misma ronda— y cada renombrado silencioso era un duplicado
+ * nuevo en el inventario.
+ *
+ * Así que el choque se detecta aparte y se enseña antes de confirmar: aquí está
+ * el equipo con el que chocas, y si de verdad hay otro aparato, así se va a
+ * llamar. Añadir con sufijo pasa a ser una decisión de quien está delante del
+ * aparato, nunca un efecto secundario.
+ */
+export interface ConflictoDeAlta {
+  /** El equipo vivo de la sala que ya usa ese nombre. */
+  existente: Asset
+  /** La etiqueta que recibiría una unidad nueva si aun así se añade. */
+  siguiente: string
+}
+
+export function conflictoDeAlta(assetsInRoom: Asset[], typeName: string): ConflictoDeAlta | null {
+  const objetivo = norm(typeName)
+  if (!objetivo) return null
+
+  const existente = assetsInRoom.find(
+    (a) => a.status !== 'retirado' && norm(a.label ?? '') === objetivo,
+  )
+  if (!existente) return null
+
+  return { existente, siguiente: nextLabel(assetsInRoom, typeName) }
+}
+
 // -----------------------------------------------------------------------------
 // El vocabulario que ya existe, para no volver a teclearlo
 // -----------------------------------------------------------------------------

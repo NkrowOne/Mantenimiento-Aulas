@@ -88,10 +88,19 @@ export function getSyncState(): SyncState {
  * y aparece en la pantalla de pendientes para que alguien lo mire.
  *
  * 408 y 429 son la excepción: son temporales y sí merecen reintento.
+ *
+ * Y el 401 también, y costó una cola entera atascada entenderlo: no habla del
+ * contenido, habla de la sesión. Un iPad que pasa la noche dormido puede llegar
+ * a la mañana con el token caducado y la renovación aún a medias; cada envío de
+ * esa ventana volvía con 401 y se marcaba rechazado PARA SIEMPRE, así que el
+ * trabajo se acumulaba en rojo hasta que alguien pulsaba «Reintentar» — con la
+ * sesión ya renovada y la red perfectamente bien. Renovarse y reintentar es
+ * exactamente lo que la cola sabe hacer sola; `flush()` ya refresca la sesión
+ * al arrancar cada pasada.
  */
 function isPermanentFailure(status: number | undefined): boolean {
   if (status === undefined) return false
-  if (status === 408 || status === 429) return false
+  if (status === 401 || status === 408 || status === 429) return false
   return status >= 400 && status < 500
 }
 
@@ -285,7 +294,19 @@ async function intentar(
 ): Promise<FalloDeRed | null> {
   try {
     const { error, status } = await llamada()
-    return error ? { message: error.message, status } : null
+    if (!error) return null
+
+    // El código puede venir en la respuesta (PostgREST) o dentro del propio
+    // error (el cliente de Storage lo trae como `status` o `statusCode`). Sin
+    // esto, un rechazo real del almacén de fotos llegaba sin código y se leía
+    // como temporal para siempre.
+    const e = error as { message: string; status?: number; statusCode?: number | string }
+    const codigo =
+      status ??
+      (typeof e.status === 'number' ? e.status : undefined) ??
+      (e.statusCode !== undefined ? Number(e.statusCode) || undefined : undefined)
+
+    return { message: error.message, status: codigo }
   } catch (err) {
     // Sin respuesta no hay código: se trata como temporal, que es lo que es.
     return { message: err instanceof Error ? err.message : String(err) }
@@ -437,10 +458,22 @@ function yaEstabaSubida(fallo: FalloDeRed): boolean {
 
 /** @returns si la foto llegó a subir y a enlazarse. */
 async function pushPhoto(photo: QueuedPhoto): Promise<boolean> {
-  const fallar = async (mensaje: string, cuenta = true): Promise<false> => {
-    const attempts = photo.attempts + (cuenta ? 1 : 0)
+  /*
+   * Una foto solo se rechaza por un motivo PERMANENTE, nunca por cansancio.
+   *
+   * Antes se rechazaba sola al noveno intento, fuera cual fuera el fallo. Y ocho
+   * intentos se gastan en nada con una wifi que va y viene: la foto quedaba en
+   * rojo pidiendo un «Reintentar» manual por un problema que era de cobertura,
+   * no de la foto. Eso es exactamente «se acumula hasta que alguien sincroniza
+   * a mano», que es lo que la cola existe para que no pase. Un fallo temporal
+   * reintenta para siempre con su espera —el backoff ya tiene techo—; el que no
+   * va a arreglarse solo (un rechazo 4xx de verdad, unos bytes que ya no están)
+   * se marca a la primera, que es cuando se sabe.
+   */
+  const fallar = async (mensaje: string, permanente = false): Promise<false> => {
+    const attempts = photo.attempts + 1
     await db.photos.update(photo.id, {
-      status: attempts > 8 ? 'rechazado' : 'pendiente',
+      status: permanente ? 'rechazado' : 'pendiente',
       attempts,
       nextAttemptAt: Date.now() + backoffMs(attempts),
       lastError: mensaje,
@@ -466,7 +499,9 @@ async function pushPhoto(photo: QueuedPhoto): Promise<boolean> {
     supabase.storage.from('fotos').upload(path, bytes, { contentType: 'image/jpeg' }),
   )
 
-  if (subida && !yaEstabaSubida(subida)) return fallar(subida.message)
+  if (subida && !yaEstabaSubida(subida)) {
+    return fallar(subida.message, isPermanentFailure(subida.status))
+  }
 
   // La foto ya está arriba; ahora se enlaza con su revisión o incidencia.
   const enlace = await intentar(async () => {
@@ -490,7 +525,7 @@ async function pushPhoto(photo: QueuedPhoto): Promise<boolean> {
     )
   })
 
-  if (enlace) return fallar(enlace.message)
+  if (enlace) return fallar(enlace.message, isPermanentFailure(enlace.status))
 
   await borrarFotoDeLaCola(photo.id)
   return true
@@ -612,46 +647,69 @@ export async function flush(opciones: { forzar?: boolean } = {}): Promise<Result
     // Y rescatar lo que se quedó a medias en una pasada anterior.
     await recuperarEnVuelo()
 
-    const now = Date.now()
-    const toca = (nextAttemptAt: number): boolean => opciones.forzar || nextAttemptAt <= now
-
-    const due = (await db.outbox.toArray())
-      .filter((e) => e.status === 'pendiente' && toca(e.nextAttemptAt))
-      .sort((a, b) => ORDER[a.entity] - ORDER[b.entity] || a.createdAt - b.createdAt)
-
     /*
-     * Cada entrada con su fallo acotado, igual que las fotos.
+     * La cola se vacía en PASADAS ENCADENADAS, no en una sola.
      *
-     * Solo estaban protegidos los errores que devuelve el servidor; un fallo de
-     * la propia base local —la escritura de estado, un `DatabaseClosedError`,
-     * la cuota llena— seguía subiendo hasta el `catch` de abajo y abandonaba
-     * todo lo que viniera detrás en la cola. Una entrada mala no puede decidir
-     * por las otras diecinueve.
+     * Una pasada puede DEJAR trabajo listo para ya: el cierre de una revisión
+     * espera a que suban sus comprobaciones —y quedaba para «la pasada
+     * siguiente», o sea hasta un minuto de espera con la red perfectamente
+     * bien—, y lo que el técnico encola mientras la subida está en vuelo nace
+     * con su turno cumplido. Antes, todo eso se acumulaba hasta el siguiente
+     * disparador aunque hubiera cobertura de sobra. Ahora la pasada se repite
+     * mientras quede algo listo, con un techo por si el trabajo no deja de
+     * entrar — lo que quede lo recoge el temporizador, como siempre.
+     *
+     * `forzar` solo vale para la primera vuelta: es la orden de «inténtalo ya»
+     * sobre lo que estaba en su espera. Lo que falle dentro de ESTA llamada
+     * vuelve a su backoff y no se martillea en la vuelta siguiente.
      */
-    for (const entry of due) {
-      try {
-        if (await pushEntry(entry)) subidos += 1
-      } catch (err) {
-        console.error('pushEntry', entry.entity, err)
+    const MAX_PASADAS = 5
+    for (let pasada = 0; pasada < MAX_PASADAS; pasada++) {
+      const now = Date.now()
+      const toca = (nextAttemptAt: number): boolean =>
+        (pasada === 0 && (opciones.forzar ?? false)) || nextAttemptAt <= now
+
+      const due = (await db.outbox.toArray())
+        .filter((e) => e.status === 'pendiente' && toca(e.nextAttemptAt))
+        .sort((a, b) => ORDER[a.entity] - ORDER[b.entity] || a.createdAt - b.createdAt)
+
+      const duePhotos = (await db.photos.toArray()).filter(
+        (p) => p.status === 'pendiente' && toca(p.nextAttemptAt),
+      )
+
+      if (due.length === 0 && duePhotos.length === 0) break
+
+      /*
+       * Cada entrada con su fallo acotado, igual que las fotos.
+       *
+       * Solo estaban protegidos los errores que devuelve el servidor; un fallo de
+       * la propia base local —la escritura de estado, un `DatabaseClosedError`,
+       * la cuota llena— seguía subiendo hasta el `catch` de abajo y abandonaba
+       * todo lo que viniera detrás en la cola. Una entrada mala no puede decidir
+       * por las otras diecinueve.
+       */
+      for (const entry of due) {
+        try {
+          if (await pushEntry(entry)) subidos += 1
+        } catch (err) {
+          console.error('pushEntry', entry.entity, err)
+        }
       }
-    }
 
-    /*
-     * Las fotos, DESPUÉS de la cola y con su fallo acotado.
-     *
-     * Una foto que reviente no puede volver a llevarse por delante el trabajo
-     * de campo: los partes de revisión son el registro, la foto es la prueba
-     * que lo acompaña. Si hay que perder algo en una pasada, se pierde la
-     * segunda, y solo esa.
-     */
-    const duePhotos = (await db.photos.toArray()).filter(
-      (p) => p.status === 'pendiente' && toca(p.nextAttemptAt),
-    )
-    for (const photo of duePhotos) {
-      try {
-        if (await pushPhoto(photo)) subidos += 1
-      } catch (err) {
-        console.error('pushPhoto', err)
+      /*
+       * Las fotos, DESPUÉS de la cola y con su fallo acotado.
+       *
+       * Una foto que reviente no puede volver a llevarse por delante el trabajo
+       * de campo: los partes de revisión son el registro, la foto es la prueba
+       * que lo acompaña. Si hay que perder algo en una pasada, se pierde la
+       * segunda, y solo esa.
+       */
+      for (const photo of duePhotos) {
+        try {
+          if (await pushPhoto(photo)) subidos += 1
+        } catch (err) {
+          console.error('pushPhoto', err)
+        }
       }
     }
 
@@ -679,7 +737,17 @@ export async function flush(opciones: { forzar?: boolean } = {}): Promise<Result
  */
 export function startSync(): () => void {
   const onOnline = (): void => {
-    void flush()
+    /*
+     * Recuperar la red se lleva el backoff por delante, igual que el botón.
+     *
+     * Las esperas se acumularon SIN cobertura: tres fallos seguidos en un
+     * sótano ponen la siguiente ventana a minutos vista, y sin el forzado, al
+     * salir a la calle la cola seguía sentada esperando su turno — con la red
+     * ya perfecta y el técnico mirando el chip de pendientes. El evento
+     * `online` es exactamente la señal de que aquellas esperas ya no hablan
+     * del mundo real.
+     */
+    void flush({ forzar: true })
   }
   const onVisible = (): void => {
     if (document.visibilityState === 'visible') void flush()

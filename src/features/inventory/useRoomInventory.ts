@@ -11,7 +11,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { db, enqueue } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { flush } from '@/sync/outbox'
-import { assetTypeId, nextLabel } from '@/domain/inventory'
+import { assetTypeId, conflictoDeAlta, nextLabel, type ConflictoDeAlta } from '@/domain/inventory'
 import type {
   Asset,
   AssetRemoval,
@@ -24,6 +24,16 @@ export interface AddResult {
   ok: boolean
   label?: string
   error?: string
+  /**
+   * El alta chocó con un equipo que ya está en la sala y NO se creó nada.
+   *
+   * Es la respuesta al «Monitor Atril 2» fantasma: cuando el nombre pedido ya
+   * está en uso, crear otro con un número detrás casi nunca es lo que se quería
+   * —lo normal es que sea el mismo aparato apuntado dos veces—. Así que el alta
+   * se planta y devuelve el choque, y quien llama decide: enseñar el equipo
+   * existente, o repetir con `comoOtraUnidad` si de verdad hay dos.
+   */
+  conflicto?: ConflictoDeAlta
 }
 
 /**
@@ -52,9 +62,19 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
    * Si el tipo no está en el catálogo se crea sobre la marcha, sin confirmar. El
    * id sale del nombre normalizado, así que dos técnicos que registren lo mismo
    * sin cobertura acaban en la misma fila en vez de duplicarla.
+   *
+   * Y si el nombre ya está en uso en la sala, el alta **no renombra en
+   * silencio**: devuelve el choque sin crear nada. `comoOtraUnidad` es la
+   * confirmación explícita de que hay dos aparatos de verdad —la da el diálogo
+   * de origen, con la etiqueta resultante delante— y solo con ella se acepta el
+   * sufijo.
    */
   const addAsset = useCallback(
-    async (typeName: string, existing: AssetType | null): Promise<AddResult> => {
+    async (
+      typeName: string,
+      existing: AssetType | null,
+      opciones?: { comoOtraUnidad?: boolean },
+    ): Promise<AddResult> => {
       if (!roomId) return { ok: false, error: 'Sin sala.' }
 
       const name = typeName.trim()
@@ -93,6 +113,16 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
       }
 
       const inRoom = await db.assets.where('room_id').equals(roomId).toArray()
+
+      const conflicto = conflictoDeAlta(inRoom, type.name)
+      if (conflicto && !opciones?.comoOtraUnidad) {
+        return {
+          ok: false,
+          conflicto,
+          error: `Esta sala ya tiene un «${conflicto.existente.label ?? type.name}». Si es el mismo aparato, corrígelo en la lista; si hay otro de verdad, confírmalo y se añadirá como «${conflicto.siguiente}».`,
+        }
+      }
+
       const label = nextLabel(inRoom, type.name)
 
       const asset: Asset = {
@@ -143,7 +173,12 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
    * perder.
    */
   const addAssetConOrigen = useCallback(
-    async (typeName: string, existing: AssetType | null, origen: Origen): Promise<AddResult> => {
+    async (
+      typeName: string,
+      existing: AssetType | null,
+      origen: Origen,
+      opciones?: { duplicarEtiqueta?: boolean },
+    ): Promise<AddResult> => {
       if (origen.tipo === 'traslado') {
         return trasladarAsset(origen.assetId, roomId, userId)
       }
@@ -152,9 +187,14 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
 
       // Varias unidades son varios equipos: dos altavoces en un aula son dos
       // filas con dos etiquetas, porque uno se puede averiar sin el otro.
+      //
+      // Solo la primera necesita la confirmación del choque: de la segunda en
+      // adelante, el sufijo no es un choque — es exactamente lo que se pidió.
       let ultimo: AddResult = { ok: false, error: 'No se pudo añadir.' }
       for (let i = 0; i < unidades; i++) {
-        ultimo = await addAsset(typeName, existing)
+        ultimo = await addAsset(typeName, existing, {
+          comoOtraUnidad: (opciones?.duplicarEtiqueta ?? false) || i > 0,
+        })
         if (!ultimo.ok) return ultimo
       }
 

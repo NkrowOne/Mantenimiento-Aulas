@@ -382,7 +382,12 @@ function seccionEdificios(d: ReportData, conTendencia: boolean): string {
     (b) => b.salas > 0 && (b.revisadas > 0 || b.abiertas > 0 || b.pendientes > 0),
   )
   const cobertura = conDatos.slice(0, 12)
-  const fuera = d.porEdificio.filter((b) => b.salas > 0).length - cobertura.length
+  // Los dos recortes por separado, porque el pie los nombra y no son lo mismo:
+  // llamar «sin actividad» a un edificio que se quedó fuera por el tope de doce
+  // filas TENIENDO datos es mentirle al lector en la línea que existe para no
+  // esconderle nada.
+  const recortados = conDatos.length - cobertura.length
+  const sinActividad = d.porEdificio.filter((b) => b.salas > 0).length - conDatos.length
 
   return `
   <section class="bloque">
@@ -413,8 +418,11 @@ function seccionEdificios(d: ReportData, conTendencia: boolean): string {
         {
           cab: 'Revisadas',
           ancho: '26%',
+          // `esc()` también aquí: `porcentaje()` puede devolver «<1 %», y un `<`
+          // seguido de dígito es un error de parseo HTML que hoy tolera el
+          // parser de WeasyPrint y mañana rompe la celda en cualquier otro.
           celda: (b) =>
-            `${medidor(b.revisadas, b.salas)}<span class="med-n">${b.revisadas} · ${porcentaje(b.revisadas, b.salas)}</span>`,
+            `${medidor(b.revisadas, b.salas)}<span class="med-n">${b.revisadas} · ${esc(porcentaje(b.revisadas, b.salas))}</span>`,
         },
         { cab: 'Abiertas', num: true, celda: (b) => (b.abiertas ? String(b.abiertas) : '—') },
         {
@@ -427,8 +435,17 @@ function seccionEdificios(d: ReportData, conTendencia: boolean): string {
         },
       ])}
       ${
-        fuera > 0
-          ? `<p class="apunte">${plural(fuera, 'edificio')} más sin actividad en el periodo, fuera de la tabla.</p>`
+        recortados > 0 || sinActividad > 0
+          ? `<p class="apunte">${[
+              recortados > 0
+                ? `${plural(recortados, 'edificio')} con actividad fuera de la tabla por sitio`
+                : '',
+              sinActividad > 0
+                ? `${plural(sinActividad, 'edificio')} sin actividad en el periodo`
+                : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')}.</p>`
           : ''
       }
     </div>`
@@ -558,6 +575,16 @@ function seccionEventos(d: ReportData, conRevisiones: boolean): string {
   </section>`
   }
 
+  /*
+   * Con el listado recortado, «Solo revisiones: ningún registro nuevo…» pasa a
+   * ser una afirmación que no se puede hacer: los eventos van en orden y el
+   * tope de filas corta por el final, así que del último día listado en
+   * adelante puede haber movimientos que simplemente no caben. Los días
+   * ANTERIORES al corte sí están completos y conservan la frase.
+   */
+  const truncado = d.eventosTotal > d.eventos.length
+  const ultimoDiaListado = d.eventos.length ? d.eventos[d.eventos.length - 1]!.dia : ''
+
   const jornada = (dia: string): string => {
     const s = d.serieDiaria.find((x) => x.dia === dia)
     const resumen = [
@@ -606,7 +633,9 @@ function seccionEventos(d: ReportData, conRevisiones: boolean): string {
             .join('')}
         </tbody>
       </table>`
-          : `<p class="vacio">Solo revisiones: ningún registro nuevo ni consumo de material.</p>`
+          : truncado && dia >= ultimoDiaListado
+            ? `<p class="vacio">Los movimientos de este día no caben en el listado recortado.</p>`
+            : `<p class="vacio">Solo revisiones: ningún registro nuevo ni consumo de material.</p>`
       }
     </div>`
   }

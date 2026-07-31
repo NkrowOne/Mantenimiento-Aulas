@@ -9,6 +9,7 @@
 
 import { v7 as uuidv7 } from 'uuid'
 import { db, guardarBytesDeFoto } from '@/db/dexie'
+import { flush } from '@/sync/outbox'
 
 const MAX_DIMENSION = 1600
 const TARGET_MB = 0.2
@@ -113,6 +114,16 @@ export async function capturePhoto(
     taken_at: takenAt,
     by_user: null,
   })
+
+  /*
+   * Y la subida arranca YA, como en cualquier otra escritura.
+   *
+   * Era el único sitio que encolaba sin avisar a la cola: la foto se quedaba
+   * esperando al siguiente disparador —otro cambio, volver a primer plano, el
+   * temporizador—, o sea hasta un minuto sentada con la cobertura bien. Con
+   * varias fotos seguidas se notaba como un contador que sube y no baja.
+   */
+  void flush()
 
   return { ok: true, id }
 }

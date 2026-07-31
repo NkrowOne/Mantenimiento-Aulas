@@ -259,10 +259,18 @@ export async function loadReportData(
       (select count(*) from rooms where active)                                    as salas_total,
       -- Fuera los borradores, y no solo las resueltas: un borrador es una nota a
       -- medias, y contarlo aquí infla justo el número que más se mira.
-      (select count(*) from incidents
-         where state not in ('resuelta', 'borrador'))                              as incidencias_abiertas,
+      --
+      -- Y fuera las observaciones, por lo mismo que en alerts_stale_incidents:
+      -- las importadas del Excel llevan «abiertas» desde 2025 por definición,
+      -- porque una nota de seguimiento no la cierra nadie. Contarlas aquí
+      -- convertía cientos de notas en «incidencias abiertas» de un informe
+      -- firmado.
       (select count(*) from incidents
          where state not in ('resuelta', 'borrador')
+           and kind <> 'observacion')                                              as incidencias_abiertas,
+      (select count(*) from incidents
+         where state not in ('resuelta', 'borrador')
+           and kind <> 'observacion'
            and opened_at < now() - interval '7 days')                              as estancadas,
       (select count(*) from alerts_lamp_low)                                       as lamparas,
       (select count(*) from room_overview
@@ -345,7 +353,9 @@ export async function loadReportData(
       from incidents i
       join rooms r on r.id = i.room_id
       join zones z on z.id = r.zone_id
-      where i.state not in ('resuelta', 'borrador')
+      -- Sin observaciones, como el resto de «pendiente»: una nota de
+      -- seguimiento no es trabajo que un edificio tenga sin hacer.
+      where i.state not in ('resuelta', 'borrador') and i.kind <> 'observacion'
       group by z.building_id
     )
     select s.code, s.name, s.n as salas,
@@ -418,10 +428,14 @@ export async function loadReportData(
   `
 
   /*
-   * Las estancadas se consultan aquí y no con `alerts_stale_incidents`, que
-   * filtra por `state <> 'resuelta'` y por tanto arrastra borradores. En un
-   * panel se disimula; en un informe firmado, una nota a medias listada como
-   * «47 días abierta» es una acusación falsa.
+   * Las estancadas, con las tres exclusiones y no solo dos.
+   *
+   * Fuera los borradores —una nota a medias listada como «47 días abierta» es
+   * una acusación falsa— y fuera también las observaciones: las importadas del
+   * Excel llevan abiertas desde 2025 por definición, porque una nota de
+   * seguimiento no la cierra nadie, y encabezaban esta tabla en todos los
+   * informes con pinta de avería eterna. Es el mismo arreglo que ya se hizo en
+   * `alerts_stale_incidents`; aquí se consulta aparte y se quedó a medias.
    */
   const estancadas = await sql<
     Array<{ ref: string | null; titulo: string; building: string; room: string; dias: string; gravedad: string }>
@@ -435,6 +449,7 @@ export async function loadReportData(
     from incidents i
     left join room_overview ro on ro.room_id = i.room_id
     where i.state not in ('resuelta', 'borrador')
+      and i.kind <> 'observacion'
       and i.opened_at < now() - interval '7 days'
     order by i.opened_at asc
     limit 12

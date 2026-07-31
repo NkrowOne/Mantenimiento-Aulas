@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   assetTypeId,
+  conflictoDeAlta,
   exactType,
   labelAvailable,
   nextLabel,
@@ -124,6 +125,35 @@ describe('labelAvailable', () => {
 
   it('no deja poner una etiqueta vacía', () => {
     expect(labelAvailable([], '   ')).toBe(false)
+  })
+})
+
+describe('conflictoDeAlta', () => {
+  it('sin choque no hay conflicto: el nombre pedido queda tal cual', () => {
+    expect(conflictoDeAlta([], 'Monitor Atril')).toBeNull()
+    expect(conflictoDeAlta([asset('Pantalla')], 'Monitor Atril')).toBeNull()
+  })
+
+  it('detecta el equipo con el que se choca y anuncia la etiqueta siguiente', () => {
+    // Es el caso del «Monitor Atril 2» fantasma: antes el alta renombraba en
+    // silencio; ahora el choque sale a la luz con el aparato existente delante.
+    const existente = asset('Monitor Atril')
+    const conflicto = conflictoDeAlta([existente], 'monitor atril')
+    expect(conflicto?.existente.id).toBe(existente.id)
+    expect(conflicto?.siguiente).toBe('monitor atril 2')
+  })
+
+  it('compara normalizando, que es como compara el índice de la base', () => {
+    expect(conflictoDeAlta([asset('MONITOR ATRIL')], 'Monitor  Atril')).not.toBeNull()
+  })
+
+  it('un retirado no choca: su etiqueta quedó libre', () => {
+    expect(conflictoDeAlta([asset('Monitor Atril', { status: 'retirado' })], 'Monitor Atril')).toBeNull()
+  })
+
+  it('con la base ocupada y la 2 también, anuncia la 3', () => {
+    const conflicto = conflictoDeAlta([asset('Pantalla'), asset('Pantalla 2')], 'Pantalla')
+    expect(conflicto?.siguiente).toBe('Pantalla 3')
   })
 })
 
