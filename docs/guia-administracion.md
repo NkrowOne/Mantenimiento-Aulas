@@ -485,6 +485,41 @@ select at, by_user, old_data->>'name', new_data->>'name'
 from audit_log where table_name = 'rooms' order by at desc limit 20;
 ```
 
+### Auditoría de inventario — el mismo aparato apuntado dos veces
+
+El síntoma con el que se llega aquí: alguien teclea «Monitor Atril», la
+aplicación guarda «Monitor Atril 2», y en la lista de la sala no aparece ningún
+«Monitor Atril». Casi siempre son **dos filas para un solo aparato**: un
+dispositivo con el espejo atrasado volvió a apuntar un equipo que ya existía, y
+el servidor —que no puede rechazar la fila sin perder el trabajo— la guardó con
+el siguiente número libre. Desde entonces cada choque de esos queda además
+**registrado** con el par identificado, así que la bandeja no adivina: enseña.
+
+En `Auditoría de inventario` hay dos cosas:
+
+- **El resumen del servidor**: cuántos equipos, incidencias, revisiones y salas
+  hay de verdad en la base. Si un iPad enseña menos, ese dispositivo no ha
+  terminado de descargar — se arregla sincronizando, no re-apuntando equipos.
+- **Los posibles duplicados**: pares de la misma sala, mismo tipo y mismo nombre
+  base, con lo que cuelga de cada lado (revisiones, incidencias, eventos).
+  Decide siempre una persona, y hay tres salidas:
+
+| | Qué hace |
+|---|---|
+| **Es el mismo: quedarse con uno** | El otro se **retira, no se borra**: su serie y su modelo viajan al que se queda si le faltaban, sus incidencias se repuntan, sus revisiones se siguen leyendo enteras («retirado desde entonces»), y la etiqueta base vuelve al superviviente — el «Monitor Atril 2» vuelve a llamarse «Monitor Atril». |
+| **Quedarse con el otro** | Lo mismo, en el sentido contrario. Mira los registros de cada lado: el que tiene historia es el que conviene conservar. |
+| **Son dos aparatos** | No toca nada y el par deja de proponerse. |
+
+Fusionar no puede perder datos por diseño: todo lo que el duplicado tenía sigue
+guardado y legible. Equivocarse de sentido tampoco pierde nada — solo deja
+retirado el lado con más historia, que se puede consultar igual.
+
+```sql
+-- Los choques de etiqueta que el servidor ha tenido que recolocar
+select at, pedida, asignada, resolved
+  from asset_label_conflicts order by at desc limit 20;
+```
+
 ## 4. Almacén
 
 Desde la pestaña **Almacén**, con `+` y `−` por artículo.

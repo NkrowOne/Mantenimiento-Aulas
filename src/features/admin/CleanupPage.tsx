@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { AssetTypeTray } from './AssetTypeTray'
+import { AuditoriaInventario } from './AuditoriaInventario'
 import { EquipoPorDefecto } from './EquipoPorDefecto'
 import { EquiposPendientes } from './EquiposPendientes'
 import { MaestroSalas } from './MaestroSalas'
@@ -135,11 +136,14 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
       <UsersPage yo={yo} />
 
       {/* Lo que llega solo, y por eso va antes que nada de lo que hay debajo.
-          Las retiradas van las primeras de las tres: bloquean a alguien que ya
-          no puede tocar ese equipo hasta que se decidan. */}
+          Las retiradas van las primeras: bloquean a alguien que ya no puede
+          tocar ese equipo hasta que se decidan. La auditoría cierra el grupo:
+          también crece sola —cada choque de etiqueta deja un par por decidir—
+          y es donde se recupera el inventario que se apuntó dos veces. */}
       <RetiradasPendientes />
       <EquiposPendientes />
       <AssetTypeTray />
+      <AuditoriaInventario />
 
       <EquipoPorDefecto />
       <MaestroSalas />
