@@ -21,7 +21,15 @@ services:
     command:
       - postgres
       - -c
-      - shared_preload_libraries=pg_stat_statements,pg_cron
+      # `pg_net` TIENE que ir aquí, y que falte es invisible: la extensión se
+      # crea sin quejarse, `net.http_post()` devuelve un id como si trabajara,
+      # y la petición se queda en su cola para siempre porque el proceso de
+      # fondo que la despacha solo arranca si la librería está precargada. Así
+      # es exactamente como los informes estuvieron sin generarse — sin un solo
+      # error en ningún registro. La imagen de Supabase lo trae en su
+      # postgresql.conf, pero este `-c` PISA esa lista entera: lo que no esté
+      # escrito aquí, no se carga.
+      - shared_preload_libraries=pg_stat_statements,pg_cron,pg_net
       - -c
       - cron.database_name=postgres
       # `pg_cron` interpreta sus horarios en `cron.timezone`, que por defecto es

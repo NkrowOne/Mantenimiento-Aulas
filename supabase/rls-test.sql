@@ -2111,3 +2111,42 @@ begin;
     else 'FALLO: la solicitud no cuenta en la insignia'
   end as resultado;
 rollback;
+
+\echo ''
+\echo '=== 63. El estado de los informes se puede preguntar, y contesta también sin pg_net ==='
+begin;
+  -- Un técnico no lo consulta: es una pantalla de coordinación.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.estado_de_informes();
+    raise exception 'FALLO: un técnico leyó el estado de los informes';
+  exception when insufficient_privilege then
+    raise notice 'OK: el estado de los informes es de supervisor para arriba';
+  end $$;
+
+  -- Y el supervisor recibe la foto entera SIN que la función reviente en un
+  -- clúster sin pg_net ni pg_cron — que es exactamente este arnés. La gracia
+  -- del diagnóstico es contestar «pg_net no está instalado» en vez de morirse.
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  select case
+    when (public.estado_de_informes() -> 'pg_net' ->> 'instalado') = 'false'
+     and jsonb_typeof(public.estado_de_informes() -> 'informes') = 'array'
+    then 'OK: sin pg_net lo dice, y el resto de la foto llega igual'
+    else 'FALLO: el diagnóstico no sabe contar un clúster sin extensiones'
+  end as resultado;
+
+  -- Y pedir un informe sin pg_net falla CON EXPLICACIÓN, no con un error de
+  -- esquema: es la diferencia entre arreglarlo y perseguirlo por los logs.
+  do $$
+  begin
+    perform public.request_report('semanal');
+    raise exception 'FALLO: request_report fingió funcionar sin pg_net';
+  exception when others then
+    if sqlerrm like '%pg_net no está instalada%' then
+      raise notice 'OK: sin pg_net, pedir un informe explica qué falta';
+    else
+      raise exception 'FALLO: el error no orienta (%)', sqlerrm;
+    end if;
+  end $$;
+rollback;

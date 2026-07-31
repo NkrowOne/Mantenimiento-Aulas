@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import type { Role } from '@/domain/types'
 import { fechaCorta } from '@/domain/fechas'
+import { DiagnosticoInformes } from './DiagnosticoInformes'
 import { EstadoIA, useEstadoIA } from './EstadoIA'
 import { AUDIENCIAS, POR_DEFECTO, SECCIONES } from './secciones'
 import { type Eleccion, construirPeticion, motivoParaNoPedir } from './peticion'
@@ -398,7 +399,12 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
         {esperando && (
           <p className="mt-3 text-sm text-muted" role="status">
             En marcha. {conIA ? 'Con IA suele tardar entre veinte segundos y un minuto.' : 'Suele tardar unos segundos.'}
-            {esperandoDemasiado && ' Sigue trabajando; aparecerá en el archivo cuando termine.'}
+            {/* «Sigue trabajando» era una suposición, y en el despliegue donde
+                la tubería estaba rota fue una mentira durante semanas. A partir
+                de aquí, la espera larga abre el diagnóstico de abajo, que
+                pregunta a la base qué está pasando de verdad. */}
+            {esperandoDemasiado &&
+              ' Está tardando más de lo normal: mira el diagnóstico de aquí abajo.'}
           </p>
         )}
 
@@ -418,6 +424,8 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
           </div>
         )}
       </section>
+
+      <DiagnosticoInformes sugerido={Boolean(esperandoDemasiado)} />
 
       <section>
         <div className="section-head">

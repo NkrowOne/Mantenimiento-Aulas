@@ -754,6 +754,22 @@ Cualquier otro se pide a mano desde esa misma pantalla. Se elige:
 Genera y espera: la pantalla avisa cuando el PDF está. Con IA suele tardar entre
 veinte segundos y un minuto.
 
+### Si no sale ningún informe
+
+En la misma pantalla hay un desplegable — **«¿No sale el informe?»** — que le
+pregunta a la base por la tubería entera y contesta con palabras: si pg_net está
+instalado y **despachando su cola** (que son dos cosas distintas), qué contestó
+el worker las últimas veces, y qué hizo el cron. Se abre solo cuando un informe
+tarda más de la cuenta.
+
+Los tres diagnósticos que resuelven casi todo:
+
+| Lo que dice | Qué significa | Qué hacer |
+|---|---|---|
+| **Peticiones encoladas y nadie las despacha** | `pg_net` no está en `shared_preload_libraries`: todo parece funcionar y ningún informe se genera nunca. Fue un fallo real de este proyecto | Comprueba que la lista del servicio `db` en `docker-compose.yml` incluye `pg_net` y reinicia la base |
+| **El worker rechaza la llamada (401)** | El token de `app_config` no coincide con el del contenedor de informes | `scripts/deploy.sh` los siembra iguales; vuelve a desplegar o iguálalos a mano |
+| **No se alcanza el worker** | El contenedor `aulas-reports` está caído o fuera de la red | `docker compose up -d reports-worker` y mira su registro |
+
 **Un informe emitido no se regenera nunca: se versiona.** Si los datos cambian
 después, el PDF del viernes sigue diciendo lo que decía el viernes. Es lo que le
 da valor como registro.

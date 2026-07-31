@@ -355,3 +355,60 @@ transacción, los periodos en hora de Madrid (`worker:periodos`), el cliente de
 Gemini (tiempo tope, borrador fuera, cifras inventadas invalidan el texto:
 `informe:ia`), WeasyPrint con tiempo tope y EPIPE recogido, el escape de la
 plantilla, y las rutas de Caddy y Kong.
+
+## 8. Tercera pasada (31 de julio): los informes que nunca se generaban
+
+El aviso llegó del uso real: «la generación de informes nunca se crea, teniendo
+la API key de Gemini». La clave de Gemini no tenía nada que ver — el worker
+nunca llegaba a recibir ninguna petición.
+
+### La causa: pg_net sin precarga, el fallo perfecto
+
+El `command` del servicio `db` en `docker-compose.yml` fijaba
+`shared_preload_libraries=pg_stat_statements,pg_cron`. La imagen de Supabase
+trae `pg_net` en la lista de su `postgresql.conf`, pero un `-c` en el arranque
+**pisa la lista entera**: lo que no está escrito ahí, no se carga.
+
+Y pg_net sin precarga es una trampa sin ruido en ningún punto de la cadena:
+
+- `create extension pg_net` funciona (la migración no avisó de nada),
+- `net.http_post()` devuelve un id de petición como si trabajara,
+- `request_report()` retorna sin error, el cron corre y anota `succeeded`,
+- …y la petición se queda en `net.http_request_queue` para siempre, porque el
+  proceso de fondo que despacha esa cola **solo existe si la librería está
+  precargada**.
+
+Ni un error en la interfaz, ni en el log del worker (nunca le llegó nada), ni
+en el del cron (su trabajo era encolar, y encoló). La única firma observable:
+la cola con contenido y `net._http_response` vacía.
+
+### Los arreglos
+
+1. **`docker-compose.yml`**: `pg_net` añadido a la precarga, con el porqué
+   escrito encima para que nadie lo quite «simplificando».
+2. **Migración `20260731000300`**:
+   - `estado_de_informes()` — la tubería contada entera para la pantalla:
+     pg_net y su cola, últimas respuestas del worker, trabajos y corridas del
+     cron, últimos informes. Con guardas `to_regclass`, contesta también en un
+     clúster sin extensiones en vez de reventar.
+   - `enviar_informe()` falla claro si pg_net no está instalado (antes: un
+     error de esquema que no orientaba), y pasa
+     `timeout_milliseconds := 120000`: el tope por defecto de pg_net (5 s) no
+     perdía la entrega, pero apuntaba «timeout» sobre informes con Gemini que
+     salieron bien, envenenando el diagnóstico.
+   - La cola muerta se vacía una vez: sin esto, el primer arranque con la
+     precarga corregida disparaba de golpe todas las peticiones acumuladas.
+3. **Pantalla de Informes**: el desplegable «¿No sale el informe?» ejecuta
+   `estado_de_informes()` y traduce los hechos a diagnóstico accionable
+   (`diagnostico.ts`, puro y con pruebas). Se abre solo cuando la espera pasa
+   de lo razonable — y el mensaje de espera ya no promete «sigue trabajando»,
+   que en el despliegue roto fue mentira durante semanas.
+
+### Verificación
+
+Prueba 63 de `npm run db:verify` (el estado es de supervisor para arriba;
+contesta sin pg_net; pedir un informe sin pg_net explica qué falta), las 8
+pruebas de `diagnostico.test.ts`, y la batería completa de siempre. La
+precarga corregida no se puede probar aquí —exige la imagen de Supabase—, así
+que la defensa es doble: el comentario en el compose y el diagnóstico en
+pantalla que la delata si vuelve a faltar.
