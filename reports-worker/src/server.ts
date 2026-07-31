@@ -70,7 +70,9 @@ function tokenValido(cabecera: string | undefined): boolean {
   return timingSafeEqual(esperado, recibido)
 }
 
-const sql = conectar(DATABASE_URL, 2)
+// Con tope por consulta: ninguna query del informe puede quedarse colgada
+// reteniendo una de las dos conexiones con el healthcheck en verde.
+const sql = conectar(DATABASE_URL, 2, undefined, { statementTimeoutMs: 120_000 })
 const storage =
   SUPABASE_URL && SERVICE_KEY ? createClient(SUPABASE_URL, SERVICE_KEY) : null
 
@@ -253,18 +255,34 @@ const server = createServer((req, res) => {
     let bytes = 0
     let excedido = false
 
-    for await (const chunk of req) {
-      bytes += (chunk as Buffer).length
-      if (bytes > MAX_BODY) {
-        excedido = true
-        if (bytes > TOPE_DURO) {
-          res.writeHead(413, { Connection: 'close' }).end('Cuerpo demasiado grande')
-          req.destroy()
-          return
+    /*
+     * Y el bucle entero dentro de un try, porque el flujo de entrada es del
+     * CLIENTE: si corta la conexión a mitad del cuerpo —un curl interrumpido,
+     * pg_net cancelando su espera, una red que se cae— el iterador del
+     * `Readable` revienta con ECONNRESET. Sin recogerlo, esa excepción subía
+     * por el `void (async …)()` del handler como un unhandled rejection y
+     * tumbaba EL PROCESO ENTERO del worker: cualquiera que alcanzara el puerto
+     * podía apagar los informes cortando una petición a medias. Reproducido,
+     * no supuesto.
+     */
+    try {
+      for await (const chunk of req) {
+        bytes += (chunk as Buffer).length
+        if (bytes > MAX_BODY) {
+          excedido = true
+          if (bytes > TOPE_DURO) {
+            res.writeHead(413, { Connection: 'close' }).end('Cuerpo demasiado grande')
+            req.destroy()
+            return
+          }
+          continue
         }
-        continue
+        chunks.push(chunk as Buffer)
       }
-      chunks.push(chunk as Buffer)
+    } catch {
+      // El cliente se fue: no hay a quién contestar y no hay nada que hacer.
+      res.destroy()
+      return
     }
 
     if (excedido) {

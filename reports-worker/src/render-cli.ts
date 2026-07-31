@@ -71,7 +71,13 @@ try {
   }
 
   const html = renderReport(data, lectura, opciones, {
-    emitido: new Date().toISOString().slice(0, 16).replace('T', ' '),
+    // En hora de Madrid, como el servidor: `toISOString()` es UTC, y el pie del
+    // informe jura estar en hora local — dos horas de mentira en verano.
+    emitido: new Intl.DateTimeFormat('es-ES', {
+      timeZone: 'Europe/Madrid',
+      dateStyle: 'short',
+      timeStyle: 'short',
+    }).format(new Date()),
   })
 
   if (out.endsWith('.html')) {
