@@ -36,6 +36,8 @@ export interface EstadoInformes {
   cron: Array<{ nombre: string; horario: string; activo: boolean }>
   corridas: Array<{ nombre: string; estado: string; detalle: string; cuando: string }>
   informes: Array<{ kind: string; generated_at: string }>
+  /** A quién llama la tubería, según app_config. */
+  worker_url?: string | null
   /** app_config conserva el token de ejemplo: nadie sembró el de verdad. */
   token_de_ejemplo?: boolean
 }
@@ -138,9 +140,21 @@ export function diagnostico(e: EstadoInformes, ahora = Date.now()): Aviso[] {
         texto: `El worker contesta pero falla generando (${reciente.codigo}). Mira el registro del contenedor aulas-reports.`,
       })
     } else if (reciente.codigo === null && reciente.error) {
+      /*
+       * Con la URL delante, el error se explica solo: un «Couldn't resolve
+       * host name» junto a «http://reports-worker:8080/generate» en una
+       * plataforma donde el worker se llama de otra manera ES el diagnóstico.
+       * Y si lo que no resuelve es el nombre, la salida no es reiniciar nada:
+       * es corregir la URL de app_config (deploy.sh o init-plataforma.sh la
+       * siembran).
+       */
+      const destino = e.worker_url ? ` en ${e.worker_url}` : ''
+      const esDns = /resolve|resolución|getaddrinfo/i.test(reciente.error)
       avisos.push({
         nivel: 'crit',
-        texto: `No se alcanza el worker: «${reciente.error}». ¿Está arrancado el contenedor aulas-reports y en la misma red?`,
+        texto: esDns
+          ? `No se alcanza el worker${destino}: «${reciente.error}». Ese nombre de host no existe en la red de la base: corrige reports_worker_url en app_config con la URL interna real del worker (deploy.sh o init-plataforma.sh la siembran).`
+          : `No se alcanza el worker${destino}: «${reciente.error}». ¿Está arrancado el contenedor aulas-reports y en la misma red?`,
       })
     } else if (reciente.caduco) {
       avisos.push({

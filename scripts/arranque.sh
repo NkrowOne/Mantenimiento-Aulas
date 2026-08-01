@@ -72,6 +72,42 @@ if ! migrar; then
 	escribir_salud
 fi
 
+# El worker de informes, DENTRO de este contenedor.
+#
+# En un despliegue de un solo servicio no hay dónde más ponerlo: viaja
+# empaquetado en la imagen (`/opt/alta/informes.cjs`, como `alta` y `migrar`) y
+# arranca aquí si tiene lo que necesita — el token con el que `request_report`
+# lo llamará y la base de la que saca los datos. En su PROPIO puerto: `PORT` es
+# el de Caddy, y los dos procesos no pueden compartirlo.
+#
+# Con bucle de reinicio, porque aquí no hay un `restart: unless-stopped` que lo
+# rescate: el proceso principal del contenedor es Caddy, y un worker caído sin
+# bucle sería un worker caído hasta el siguiente despliegue. Y en segundo
+# plano, claro: el worker nunca puede impedir que la PWA se sirva.
+if [ -n "${DATABASE_URL:-}" ] && [ -n "${WORKER_TOKEN:-}" ]; then
+	if [ "${#WORKER_TOKEN}" -lt 16 ]; then
+		printf '[informes] WORKER_TOKEN tiene menos de 16 caracteres: el worker se niega a arrancar con uno así.\n'
+	else
+		# La URL de Storage, deducida del mismo SUPABASE_UPSTREAM que ya usa el
+		# Caddyfile: por la red interna y sin depender de ningún dominio público.
+		if [ -z "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_UPSTREAM:-}" ]; then
+			SUPABASE_URL="http://${SUPABASE_UPSTREAM}"
+			export SUPABASE_URL
+		fi
+		printf '[informes] Worker de informes dentro del contenedor, puerto %s.\n' "${PORT_INFORMES:-8090}"
+		printf '[informes] app_config.reports_worker_url debe apuntar a http://<este-servicio>:%s/generate\n' "${PORT_INFORMES:-8090}"
+		(
+			while :; do
+				PORT="${PORT_INFORMES:-8090}" node /opt/alta/informes.cjs
+				printf '[informes] El worker se ha parado; se reinicia en 3 segundos.\n'
+				sleep 3
+			done
+		) &
+	fi
+else
+	printf '[informes] Sin WORKER_TOKEN o sin DATABASE_URL: el worker de informes no arranca en este contenedor.\n'
+fi
+
 # Lo último antes de ceder el proceso, y a propósito: a partir de aquí el
 # registro de acceso de Caddy empuja estas líneas hacia arriba, y cuando un
 # despliegue falla Skyway solo vuelca las últimas quince.

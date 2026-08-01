@@ -2219,3 +2219,175 @@ begin;
     end if;
   end $$;
 rollback;
+
+\echo ''
+\echo '=== 65. Un fallo de revisión sin incidencia acaba abriendo una — sin duplicar ni resucitar ==='
+begin;
+  -- El rescate es interno: lo ejecutan la migración y el cron, no la API.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.abrir_incidencias_de_revisiones();
+    raise exception 'FALLO: un técnico ejecutó el rescate de fallos';
+  exception when insufficient_privilege then
+    raise notice 'OK: el rescate no se puede invocar desde la API';
+  end $$;
+  reset role;
+
+  -- Primera pasada en seco: si el seed trae sus propios fallos enterrados, se
+  -- barren ahora para que las cuentas de abajo sean solo las de esta prueba.
+  select public.abrir_incidencias_de_revisiones() as barrido \gset
+  select :barrido as fallos_del_seed_barridos;
+
+  -- Una sala virgen —sin revisiones ni incidencias vivas— para no pisar seed.
+  \set sala ''
+  select r.id as sala from rooms r
+   where r.active
+     and not exists (select 1 from inspections x where x.room_id = r.id)
+     and not exists (select 1 from incidents i where i.room_id = r.id and i.state <> 'resuelta')
+   order by r.created_at desc limit 1 \gset
+  select case when :'sala' <> ''
+    then 'OK: hay una sala virgen para la prueba'
+    else 'FALLO: no queda ninguna sala sin revisiones ni incidencias en el seed'
+  end as resultado;
+
+  -- La visita de ayer, cerrada por una app que aún no sabía abrir incidencias:
+  -- dos equipos y la red en «Falla», y ni una fila en incidents.
+  insert into asset_types (id, name) values
+    ('aaaaaaaa-0000-4000-8000-00000000006a', 'Tipo De Prueba 65');
+  insert into assets (id, asset_type_id, room_id, label) values
+    ('aaaaaaaa-0000-4000-8000-00000000006b', 'aaaaaaaa-0000-4000-8000-00000000006a', :'sala', 'HDMI Amarillo De Prueba'),
+    ('aaaaaaaa-0000-4000-8000-00000000006c', 'aaaaaaaa-0000-4000-8000-00000000006a', :'sala', 'Proyector De Prueba');
+  insert into inspections (id, room_id, by_user, occurred_at, recorded_at, status, overall)
+  values ('aaaaaaaa-0000-4000-8000-00000000006d', :'sala',
+          '11111111-1111-4111-8111-111111111111',
+          now() - interval '1 day', now() - interval '2 hours',
+          'completa', 'con_incidencias');
+  insert into inspection_checks (id, inspection_id, check_key, result, severity, note) values
+    (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-00000000006d',
+     'asset:aaaaaaaa-0000-4000-8000-00000000006b', 'incidencia', 'baja',
+     e'Falta señalar el HDMI de la segunda entrada\ny revisar la funda'),
+    (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-00000000006d',
+     'asset:aaaaaaaa-0000-4000-8000-00000000006c', 'incidencia', null, null),
+    (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-00000000006d', 'red', 'incidencia', 'alta',
+     'No hay conexión en el puesto'),
+    (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-00000000006d', 'sonido', 'ok', null, null);
+
+  select public.abrir_incidencias_de_revisiones() as creadas \gset
+  select case when :creadas = 3
+    then 'OK: los tres fallos abren sus tres incidencias (y el «Correcto», ninguna)'
+    else 'FALLO: se esperaban 3 incidencias y salieron ' || :creadas
+  end as resultado;
+
+  select case
+    when (select title from incidents
+           where check_key = 'asset:aaaaaaaa-0000-4000-8000-00000000006b')
+       = 'HDMI Amarillo De Prueba: Falta señalar el HDMI de la segunda entrada'
+    then 'OK: el título lleva el equipo y la primera línea de la nota'
+    else 'FALLO: el título no es el esperado'
+  end as resultado;
+
+  select case
+    when (select title || ' · ' || severity || ' · ' || state from incidents
+           where asset_id = 'aaaaaaaa-0000-4000-8000-00000000006c')
+       = 'Proyector De Prueba: fallo detectado en la revisión · media · abierta'
+    then 'OK: sin nota se explica solo, y sin gravedad se queda en media'
+    else 'FALLO: la incidencia sin nota no salió como se esperaba'
+  end as resultado;
+
+  select case
+    when (select opened_at = now() - interval '1 day'
+              and opened_from_inspection_id = 'aaaaaaaa-0000-4000-8000-00000000006d'
+              and opened_by = '11111111-1111-4111-8111-111111111111'
+            from incidents where room_id = :'sala' and check_key = 'red')
+    then 'OK: la incidencia hereda la fecha, la revisión y el autor de la visita'
+    else 'FALLO: la incidencia no apunta a la visita de la que salió'
+  end as resultado;
+
+  select public.abrir_incidencias_de_revisiones() as segunda \gset
+  select case when :segunda = 0
+    then 'OK: la segunda pasada no duplica nada'
+    else 'FALLO: la segunda pasada abrió ' || :segunda || ' incidencias de más'
+  end as resultado;
+
+  -- Se resuelve la de la red (hace 6 horas) y el rescate no la resucita: la
+  -- resolución es posterior a la visita, así que aquello quedó zanjado.
+  update incidents set state = 'resuelta',
+         resolved_at = now() - interval '6 hours', resolution = 'Cable repuesto'
+   where room_id = :'sala' and check_key = 'red';
+  select public.abrir_incidencias_de_revisiones() as tercera \gset
+  select case when :tercera = 0
+    then 'OK: lo resuelto después de la visita se queda resuelto'
+    else 'FALLO: el rescate resucitó una incidencia ya resuelta'
+  end as resultado;
+
+  -- Pero un fallo visto DESPUÉS de resolver es una avería nueva: la visita de
+  -- hace 3 horas vuelve a marcar la red y eso sí abre otra.
+  insert into inspections (id, room_id, by_user, occurred_at, recorded_at, status, overall)
+  values ('aaaaaaaa-0000-4000-8000-00000000006e', :'sala',
+          '11111111-1111-4111-8111-111111111111',
+          now() - interval '3 hours', now() - interval '2 hours',
+          'completa', 'con_incidencias');
+  insert into inspection_checks (id, inspection_id, check_key, result, severity, note)
+  values (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-00000000006e', 'red', 'incidencia', 'media', null);
+  select public.abrir_incidencias_de_revisiones() as cuarta \gset
+  select case when :cuarta = 1
+    then 'OK: un fallo visto después de resolver abre una incidencia nueva'
+    else 'FALLO: el fallo nuevo tras la resolución no abrió nada (' || :cuarta || ')'
+  end as resultado;
+
+  -- La corrección manda: se corrige esa visita diciendo que la red estaba
+  -- bien, y su incidencia se resuelve con fecha ANTERIOR a la visita — si el
+  -- rescate mirase la revisión corregida en vez de la corrección, esa marca
+  -- de resolución no lo pararía y volvería a abrirla.
+  update incidents set state = 'resuelta',
+         resolved_at = now() - interval '4 hours', resolution = 'Falsa alarma'
+   where room_id = :'sala' and check_key = 'red' and state <> 'resuelta';
+  insert into inspections (id, room_id, by_user, occurred_at, recorded_at, status, overall,
+                           corrects, corrected_at)
+  values ('aaaaaaaa-0000-4000-8000-00000000006f', :'sala',
+          '11111111-1111-4111-8111-111111111111',
+          now() - interval '3 hours', now() - interval '2 hours',
+          'completa', 'ok',
+          'aaaaaaaa-0000-4000-8000-00000000006e', now() - interval '90 minutes');
+  insert into inspection_checks (id, inspection_id, check_key, result)
+  values (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-00000000006f', 'red', 'ok');
+  select public.abrir_incidencias_de_revisiones() as quinta \gset
+  select case when :quinta = 0
+    then 'OK: la corrección manda — el fallo corregido no abre nada'
+    else 'FALLO: el rescate leyó la revisión corregida en vez de la corrección'
+  end as resultado;
+
+  -- Lo recién subido espera su hora: la incidencia puede venir de camino en la
+  -- cola del dispositivo. Y un equipo retirado ya no abre nada: su avería se
+  -- fue con él.
+  insert into assets (id, asset_type_id, room_id, label) values
+    ('aaaaaaaa-0000-4000-8000-000000000070', 'aaaaaaaa-0000-4000-8000-00000000006a', :'sala', 'Atril De Prueba');
+  insert into inspections (id, room_id, by_user, occurred_at, recorded_at, status, overall)
+  values ('aaaaaaaa-0000-4000-8000-000000000071', :'sala',
+          '11111111-1111-4111-8111-111111111111',
+          now() - interval '30 minutes', now(), 'completa', 'con_incidencias');
+  insert into inspection_checks (id, inspection_id, check_key, result, severity)
+  values (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-000000000071',
+          'asset:aaaaaaaa-0000-4000-8000-000000000070', 'incidencia', 'media');
+  select public.abrir_incidencias_de_revisiones() as sexta \gset
+  select case when :sexta = 0
+    then 'OK: la revisión recién subida espera su hora'
+    else 'FALLO: el rescate no esperó a que la cola del dispositivo entregara'
+  end as resultado;
+
+  -- El reloj de madurez se adelanta con credenciales de admin: una revisión
+  -- completa es inmutable para cualquier otro rol, también desde aquí.
+  select set_config('request.jwt.claims',
+    json_build_object('sub', '44444444-4444-4444-8444-444444444444',
+                      'app_role', 'admin')::text, true);
+  update inspections set recorded_at = now() - interval '2 hours'
+   where id = 'aaaaaaaa-0000-4000-8000-000000000071';
+  update assets set status = 'retirado'
+   where id = 'aaaaaaaa-0000-4000-8000-000000000070';
+  select public.abrir_incidencias_de_revisiones() as septima \gset
+  select case when :septima = 0
+    then 'OK: el fallo de un equipo retirado se fue con él'
+    else 'FALLO: se abrió una incidencia para un equipo que ya no está'
+  end as resultado;
+rollback;

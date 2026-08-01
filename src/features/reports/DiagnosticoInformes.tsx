@@ -76,6 +76,12 @@ export function DiagnosticoInformes({ sugerido }: { sugerido: boolean }): React.
             </p>
           ))}
 
+          {/* A quién llama la tubería, siempre a la vista: es el dato que
+              convierte «no resuelve el nombre» en «ESE nombre está mal». */}
+          {data?.worker_url && (
+            <p className="font-mono text-xs text-muted">Llamando a: {data.worker_url}</p>
+          )}
+
           {/* Los hechos debajo del veredicto: cada petición con lo que contestó
               —o el silencio—, las últimas respuestas del worker y las corridas
               del cron, para poder discutir el veredicto con los datos delante. */}

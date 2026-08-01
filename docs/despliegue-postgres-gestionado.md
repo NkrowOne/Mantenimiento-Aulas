@@ -177,7 +177,23 @@ sobra aquí, y con ella desaparece el riesgo más grande del proyecto.
 
 ## Paso 7 — Informes
 
-Despliega `reports-worker/` con:
+**El worker viaja dentro de la imagen de la aplicación** (el `Dockerfile` de la
+raíz): si el servicio de la PWA ya tiene `DATABASE_URL` y le añades
+`WORKER_TOKEN` (mínimo 16 caracteres), el arranque lo levanta en el mismo
+contenedor, en el puerto `PORT_INFORMES` (8090 por defecto). No hay que
+desplegar nada más; la URL interna queda:
+
+```
+http://<nombre-del-servicio-de-la-pwa>:8090/generate
+```
+
+La URL de Storage la deduce solo del `SUPABASE_UPSTREAM` que ya usa el
+Caddyfile; `SUPABASE_SERVICE_ROLE_KEY` ya está entre las variables del servicio
+por el alta de usuarios.
+
+**Si prefieres el worker como servicio aparte** —para reiniciarlo o escalarlo
+sin tocar la PWA—, sigue existiendo `reports-worker/Dockerfile`. Despliégalo
+con:
 
 ```
 DATABASE_URL=postgresql://postgres:...@HOST:5432/DB
