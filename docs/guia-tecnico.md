@@ -125,6 +125,10 @@ corrección»** la tira y no cambia nada.
    revisar arriba del todo, así que basta con ir bajando.
    - La franja **naranja** a la izquierda marca las que tocan.
    - La etiqueta **«A medias»** significa que dejaste una revisión sin terminar.
+   - El **triángulo rojo** junto al código dice que esa sala tiene incidencias
+     abiertas — con el número al lado si hay más de una. El mismo triángulo
+     aparece en la lista de edificios sumando las de todas sus salas, así que
+     ya desde ahí se ve dónde hay algo roto.
 3. **Marca cada equipo.** La lista no es fija: son **los aparatos que hay en esa
    sala**, uno por línea, con su modelo y su número de serie debajo. Si el aula
    tiene dos pantallas, verás «Pantalla» y «Pantalla 2» por separado.
