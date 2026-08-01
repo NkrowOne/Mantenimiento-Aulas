@@ -152,8 +152,21 @@ export function stripParenthetical(raw: string): string {
     .trim()
 }
 
-/** Fechas del Excel que son texto mal tecleado, como `29-01-026`. */
-export function parseLooseDate(value: unknown): { date: Date | null; fixed: string | null } {
+/**
+ * Fechas del Excel que son texto mal tecleado, como `29-01-026`.
+ *
+ * `añoMax` acota lo creíble por arriba (por defecto, el año que viene): una
+ * fecha de mantenimiento no puede ser futura. Devolver null ante lo increíble
+ * es deliberado — quien llama decide con contexto (cuarentena, o el año de la
+ * apertura), que siempre es mejor que una fecha inventada con seguridad.
+ * Costó una lección: «27-03-296» convertido a ciegas en 2296 puso dos
+ * incidencias del CRAI doscientos setenta años en el futuro, encabezando el
+ * Historial desde entonces.
+ */
+export function parseLooseDate(
+  value: unknown,
+  añoMax = new Date().getUTCFullYear() + 1,
+): { date: Date | null; fixed: string | null } {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     // Un año de 2005 en una hoja de 2025 es un dedazo, no un dato.
     if (value.getFullYear() < 2015) {
@@ -161,18 +174,35 @@ export function parseLooseDate(value: unknown): { date: Date | null; fixed: stri
       corrected.setFullYear(value.getFullYear() + 20)
       return { date: corrected, fixed: `año ${value.getFullYear()} → ${corrected.getFullYear()}` }
     }
+    // Y uno del futuro también: mejor ilegible que creído.
+    if (value.getFullYear() > añoMax) return { date: null, fixed: null }
     return { date: value, fixed: null }
   }
 
   const s = String(value ?? '').trim()
   if (!s) return { date: null, fixed: null }
 
-  // `29-01-026` → día-mes-año con el año truncado.
+  // `29-01-026` → día-mes-año con el año mal tecleado.
   const m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/)
   if (m && m[1] && m[2] && m[3]) {
     let year = Number(m[3])
     if (year < 100) year += 2000
-    else if (year < 1000) year += 2000 // el caso `026`
+    else if (year < 1000) {
+      /*
+       * Tres cifras nunca son un año: son dos cifras con un dedazo — «026» le
+       * sobra un cero, a «296» le sobra un nueve. Se prueba a quitar cada
+       * dígito y solo se acepta si UNA única lectura cae en la ventana creíble;
+       * con dos lecturas posibles, mejor no adivinar.
+       */
+      const candidatos = new Set<number>()
+      for (let i = 0; i < m[3].length; i++) {
+        const dosCifras = Number(m[3].slice(0, i) + m[3].slice(i + 1)) + 2000
+        if (dosCifras >= 2015 && dosCifras <= añoMax) candidatos.add(dosCifras)
+      }
+      if (candidatos.size !== 1) return { date: null, fixed: null }
+      year = [...candidatos][0]!
+    }
+    if (year > añoMax) return { date: null, fixed: null }
     const d = new Date(Date.UTC(year, Number(m[2]) - 1, Number(m[1])))
     if (!Number.isNaN(d.getTime())) {
       return { date: d, fixed: `texto "${s}" → ${d.toISOString().slice(0, 10)}` }

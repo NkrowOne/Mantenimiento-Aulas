@@ -34,16 +34,30 @@ COPY . .
 ARG VITE_SUPABASE_ANON_KEY
 ARG VITE_SUPABASE_URL
 ARG VITE_LOCK_AFTER_MINUTES=0
-# Qué commit se está compilando, para que `/salud.json` pueda decirlo. Sin esto,
-# saber si lo desplegado incluye un arreglo concreto obliga a descargarse el
-# bundle y buscar cadenas dentro.
-ARG VITE_COMMIT=desconocido
+# Qué commit se está compilando, para que `/salud.json` y el chip de la app
+# puedan decirlo. Sin esto, saber si lo desplegado incluye un arreglo concreto
+# obliga a descargarse el bundle y buscar cadenas dentro. Sin valor por
+# defecto a propósito: «desconocido» acabó recortado a «versión descono» en el
+# chip. Si nadie lo pasa, se saca del clon aquí abajo.
+ARG VITE_COMMIT=
 ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY \
     VITE_SUPABASE_URL=$VITE_SUPABASE_URL \
     VITE_LOCK_AFTER_MINUTES=$VITE_LOCK_AFTER_MINUTES \
     VITE_COMMIT=$VITE_COMMIT
 
-RUN npm run build
+# El commit, leído del clon cuando no llega como ARG — la plataforma no lo
+# pasa. Sin git en la imagen: `.git/HEAD` es un fichero de texto que o lleva
+# el sha (HEAD suelto) o apunta a otro fichero que lo lleva; las refs
+# empaquetadas se miran en `packed-refs`. Si nada de esto da un commit,
+# `vite.config.ts` cae a la fecha y hora de compilación, que distingue
+# despliegues igual de bien.
+RUN if [ -z "$VITE_COMMIT" ] && [ -f .git/HEAD ]; then \
+      ref="$(sed -n 's/^ref: //p' .git/HEAD)"; \
+      if [ -n "$ref" ] && [ -f ".git/$ref" ]; then VITE_COMMIT="$(cut -c1-7 ".git/$ref")"; \
+      elif [ -n "$ref" ] && [ -f .git/packed-refs ]; then VITE_COMMIT="$(grep " $ref\$" .git/packed-refs | cut -c1-7)"; \
+      elif [ -z "$ref" ]; then VITE_COMMIT="$(cut -c1-7 .git/HEAD)"; fi; \
+    fi \
+    && VITE_COMMIT="$VITE_COMMIT" npm run build
 
 # El alta de usuarios, empaquetada en un fichero suelto.
 #

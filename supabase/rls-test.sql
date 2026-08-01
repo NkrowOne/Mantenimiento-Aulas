@@ -2391,3 +2391,30 @@ begin;
     else 'FALLO: se abrió una incidencia para un equipo que ya no está'
   end as resultado;
 rollback;
+
+\echo ''
+\echo '=== 66. Ninguna incidencia vive en el futuro: el año 2296 no vuelve ==='
+begin;
+  -- El caso real: «27-03-296» del Excel convertido a 2296 encabezando el
+  -- Historial. El importador ya no adivina y la migración corrigió lo escrito;
+  -- esto vigila que ninguna de las dos puertas se vuelva a abrir.
+  select case
+    when not exists (
+      select 1 from incidents
+       where extract(year from opened_at)   > extract(year from now()) + 1
+          or extract(year from resolved_at) > extract(year from now()) + 1)
+    then 'OK: ni una incidencia abierta o resuelta más allá del año que viene'
+    else 'FALLO: hay incidencias fechadas en un futuro imposible'
+  end as resultado;
+
+  -- Y las dos del CRAI dicen lo que el Excel quiso decir: resueltas el mismo
+  -- día de 2026 en que se abrieron.
+  select case
+    when (select count(*) from incidents
+           where external_ref in ('I260325_0039', 'I260327_0006')
+             and resolved_at::date = opened_at::date
+             and extract(year from resolved_at) = 2026) = 2
+    then 'OK: las dos incidencias del CRAI vuelven al 27 de marzo de 2026'
+    else 'FALLO: las incidencias de la errata «27-03-296» siguen mal fechadas'
+  end as resultado;
+rollback;

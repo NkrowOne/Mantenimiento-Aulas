@@ -485,6 +485,26 @@ function importIncidents(rows: unknown[][], sheet: string, hasObservacion: boole
       })
       resolved = { date: corrected, fixed: null }
     }
+    /*
+     * Y la fecha que `parseLooseDate` se negó a adivinar (un «27-03-296» que
+     * admite más de una lectura, o un año del futuro). Antes esto acababa en
+     * una fecha inventada —dos incidencias del CRAI se pasaron meses fechadas
+     * en 2296 encabezando el Historial—; ahora, si la fila trae resolución
+     * escrita se cierra con la fecha de la apertura, y si no la trae se queda
+     * abierta. En ambos casos, con su rastro.
+     */
+    if (!resolved.date && String(cell(row, cResuelta) ?? '').trim()) {
+      const hayResolucion = Boolean(text(row, cResolucion))
+      fixes.push({
+        source: sheet, rowRef: ref || `fila ${r + 1}`, field: 'Fecha resuelta',
+        original: String(cell(row, cResuelta)),
+        corrected: hayResolucion ? opened.date.toISOString().slice(0, 10) : '',
+        reason: hayResolucion
+          ? 'Fecha de resolución ilegible → la de la apertura'
+          : 'Fecha de resolución ilegible: la incidencia queda abierta',
+      })
+      if (hayResolucion) resolved = { date: opened.date, fixed: null }
+    }
 
     const roomId = resolveRoom(aula)
     if (!roomId && aula) {
