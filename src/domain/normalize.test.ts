@@ -130,6 +130,26 @@ describe('parseLooseDate', () => {
   it('devuelve null en vez de inventarse una fecha ilegible', () => {
     expect(parseLooseDate('no consta').date).toBeNull()
   })
+
+  it('reconstruye "27-03-296" quitando el dígito que sobra, no sumando 2000', () => {
+    // El caso real del CRAI: dos incidencias fechadas en 2296 —doscientos
+    // setenta años en el futuro— encabezando el Historial. La única lectura
+    // creíble de «296» es «26».
+    const { date, fixed } = parseLooseDate('27-03-296', 2027)
+    expect(date?.toISOString().slice(0, 10)).toBe('2026-03-27')
+    expect(fixed).toContain('296')
+  })
+
+  it('ante un año de tres cifras con dos lecturas posibles no adivina', () => {
+    // «226» puede ser 2022 o 2026: las dos caen en la ventana creíble.
+    expect(parseLooseDate('27-03-226', 2027).date).toBeNull()
+  })
+
+  it('un año del futuro es ilegible, venga como texto o como fecha de Excel', () => {
+    expect(parseLooseDate('27-03-2296', 2027).date).toBeNull()
+    expect(parseLooseDate('27-03-99', 2027).date).toBeNull()
+    expect(parseLooseDate(new Date(Date.UTC(2296, 2, 27)), 2027).date).toBeNull()
+  })
 })
 
 describe('parseMaterialUsed', () => {

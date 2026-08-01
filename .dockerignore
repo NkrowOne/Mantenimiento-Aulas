@@ -11,7 +11,9 @@ dist
 dist-ssr
 dev-dist
 
-.git
+# `.git` entra a propósito: el build saca de ahí el commit que enseña el chip
+# de sincronización («versión 1faa386 · …»). La plataforma no pasa VITE_COMMIT,
+# y sin el clon la versión instalada en cada iPad es inescrutable.
 .github
 coverage
 *.tsbuildinfo

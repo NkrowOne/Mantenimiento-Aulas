@@ -63,7 +63,7 @@ function saludJson(construccion: Construccion): Plugin {
           // Qué commit se compiló. `version` no distingue dos despliegues —nada
           // la sube—, así que sin esto averiguar si el arreglo está en el aire
           // obliga a descargar el bundle y buscar cadenas dentro.
-          commit: process.env['VITE_COMMIT'] ?? 'desconocido',
+          commit: process.env['VITE_COMMIT'] || 'desconocido',
           // `configurada` conserva el significado que tuvo siempre —la clave
           // anónima estaba al compilar— porque el campo ya existía.
           configurada: construccion.clave_anonima,
@@ -109,10 +109,18 @@ export default defineConfig(({ mode }) => {
      */
     define: {
       __BUILD__: JSON.stringify(
-        process.env['VITE_COMMIT']?.slice(0, 7) ??
-          // Sin commit a mano, la hora de compilación distingue despliegues
-          // igual de bien para lo que hace falta aquí.
-          new Date().toISOString().slice(0, 16).replace('T', ' '),
+        (() => {
+          // La hora de compilación va SIEMPRE: es la que contesta «¿este iPad
+          // ya lleva el despliegue de esta mañana?» sin cotejar hashes.
+          const cuando = `${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`
+          const commit = process.env['VITE_COMMIT']
+          // «desconocido» era el relleno del Dockerfile: tratado como commit
+          // real, el chip enseñaba «versión descono» — recortado a 7 y sin
+          // decir nada. Un relleno no es una versión.
+          return commit && commit !== 'desconocido'
+            ? `${commit.slice(0, 7)} · ${cuando}`
+            : cuando
+        })(),
       ),
     },
     plugins: [

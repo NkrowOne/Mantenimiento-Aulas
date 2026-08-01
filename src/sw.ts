@@ -42,6 +42,29 @@ export function registrarServiceWorker(): void {
       hayVersionNueva = true
       anunciar()
     },
+    /*
+     * Buscar la versión nueva, no solo esperarla.
+     *
+     * Por defecto el navegador comprueba el service worker al CARGAR la
+     * página, y una PWA instalada en un iPad no vuelve a cargar la página en
+     * días: iOS la congela y la descongela tal cual. Resultado real: la
+     * versión con el arreglo llevaba horas desplegada y ningún dispositivo
+     * ofrecía actualizar, porque ninguno había preguntado.
+     *
+     * Se pregunta al volver al frente —el momento en que alguien la va a
+     * usar— y cada hora por si se queda en primer plano toda la mañana. Sin
+     * red, `update()` falla y da igual: se vuelve a preguntar la siguiente.
+     */
+    onRegisteredSW(_url, registro) {
+      if (!registro) return
+      const buscar = (): void => {
+        void registro.update().catch(() => {})
+      }
+      setInterval(buscar, 60 * 60_000)
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') buscar()
+      })
+    },
     onRegisterError(error) {
       // Sin service worker no hay modo offline, así que conviene que se vea en
       // la consola en lugar de fallar en silencio. La causa casi siempre es un
