@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!--
+    El icono es una placa de puerta, que es el objeto de la aplicación: la letra
+    grande del edificio y la esquina de QR de las placas impresas. Todo dibujado
+    a trazo, sin fuentes: un icono no puede depender de qué tipografías tenga la
+    máquina que lo renderiza.
+  -->
+  <defs>
+    <linearGradient id="fondo" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#053640"/>
+      <stop offset="1" stop-color="#077A8A"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Fondo a sangre: iOS y las máscaras maskable recortan ellos. -->
+  <rect width="512" height="512" fill="url(#fondo)"/>
+
+  <!-- El contenido va agrupado: la variante maskable lo encoge SOLO a él,
+       dejando el fondo a sangre, para sobrevivir al recorte circular. -->
+  <g id="contenido">
+    <!-- La placa. -->
+    <rect x="72" y="104" width="368" height="304" rx="44" fill="#FBFCFC"/>
+    <rect x="72" y="104" width="368" height="304" rx="44" fill="none" stroke="#0B4650" stroke-opacity=".14" stroke-width="4"/>
+
+    <!-- La A del edificio, a trazo grueso. -->
+    <path d="M 148 344 L 212 168 L 276 344 M 172 286 L 252 286"
+          fill="none" stroke="#046A78" stroke-width="42"
+          stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- La esquina de QR de la placa impresa: el patrón de posición. -->
+    <g fill="none">
+      <rect x="318" y="266" width="86" height="86" rx="16" stroke="#14343B" stroke-width="18"/>
+      <rect x="348" y="296" width="26" height="26" rx="6" fill="#14343B"/>
+    </g>
+  </g>
+</svg>

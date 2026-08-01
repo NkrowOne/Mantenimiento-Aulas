@@ -128,20 +128,24 @@ export default defineConfig(({ mode }) => {
       saludJson(construccion),
       VitePWA({
         registerType: 'prompt',
-        includeAssets: ['favicon.svg'],
+        includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
         manifest: {
           name: 'Mantenimiento de Aulas',
           short_name: 'Aulas',
           description: 'Revisión de salas, inventario y stock',
           lang: 'es',
-          theme_color: '#2B4C8C',
+          // El petróleo de la marca (--accent), no un azul que no sale en
+          // ninguna pantalla de la aplicación.
+          theme_color: '#046A78',
           background_color: '#F6F7F9',
           display: 'standalone',
           start_url: '/',
           icons: [
             { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
             { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
-            { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+            // Con su fichero propio: el recorte circular de Android necesita el
+            // contenido encogido, y servirle el normal cortaba la placa.
+            { src: 'icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
           ],
         },
         workbox: {

@@ -3,6 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- iOS no mira el manifest para el icono de pantalla de inicio: mira esto. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <!--
       `user-scalable=no` lo respeta Android y lo ignora Safari desde iOS 10, a
       propósito. El pinch en WebKit se bloquea desde JavaScript, en main.tsx.
@@ -11,7 +13,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no"
     />
-    <meta name="theme-color" content="#2B4C8C" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#046A78" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0E1216" media="(prefers-color-scheme: dark)" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Aulas" />
