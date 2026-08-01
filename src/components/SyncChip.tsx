@@ -4,7 +4,7 @@ import { pendingSummary } from '@/db/dexie'
 import { flush, getUltimoErrorSync, onSyncState, retryRejected, type SyncState } from '@/sync/outbox'
 import { pullMaster, ultimoPull } from '@/sync/pull'
 import { exportarPendientes, ofrecerFichero } from '@/sync/rescate'
-import { aplicarActualizacion, onVersionNueva } from '@/sw'
+import { aplicarActualizacion, buscarActualizacion, onVersionNueva } from '@/sw'
 import { Diagnostico } from '@/features/admin/Diagnostico'
 
 /**
@@ -44,6 +44,12 @@ export function SyncChip(): React.ReactElement {
   // Si hay versión nueva esperando, este panel es donde hace falta saberlo.
   const [hayActualizacion, setHayActualizacion] = useState(false)
   useEffect(() => onVersionNueva(setHayActualizacion), [])
+
+  // Y si no la hay, poder preguntarlo y recibir respuesta: «no hay nada
+  // nuevo» y «no está buscando» se ven idénticos, que es no viéndose.
+  const [busqueda, setBusqueda] = useState<
+    null | 'buscando' | 'encontrada' | 'al-dia' | 'error'
+  >(null)
 
   /*
    * Cerrar tocando fuera, y con Escape.
@@ -354,7 +360,28 @@ export function SyncChip(): React.ReactElement {
             Sin este dato, diagnosticar desde una captura de pantalla es
             adivinar si el código que falla es siquiera el que está corriendo.
           */}
-          <p className="mt-3 border-t border-line pt-2 text-right font-mono text-[10px] text-muted">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-2">
+            <button
+              type="button"
+              disabled={busqueda === 'buscando'}
+              onClick={() => {
+                setBusqueda('buscando')
+                void buscarActualizacion().then(setBusqueda)
+              }}
+              className="key key-quiet min-h-11 px-3 text-sm"
+            >
+              {busqueda === 'buscando' ? 'Buscando…' : 'Buscar versión nueva'}
+            </button>
+            {busqueda === 'al-dia' && <span className="text-xs text-ok">Estás en la última.</span>}
+            {busqueda === 'encontrada' && (
+              <span className="text-xs text-accent">Encontrada: instalándose.</span>
+            )}
+            {busqueda === 'error' && (
+              <span className="text-xs text-crit">No se pudo comprobar. ¿Hay red?</span>
+            )}
+          </div>
+
+          <p className="mt-2 text-right font-mono text-[10px] text-muted">
             versión {__BUILD__}
           </p>
         </div>
