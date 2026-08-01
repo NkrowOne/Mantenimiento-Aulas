@@ -29,6 +29,24 @@ const listeners = new Set<Listener>()
 let hayVersionNueva = false
 let actualizar: ((recargar?: boolean) => Promise<void>) | null = null
 
+/*
+ * La versión encontrada AL ABRIR se instala sola; la encontrada a mitad de
+ * trabajo se ofrece. Es el punto medio entre `prompt` y `autoUpdate`:
+ *
+ * En iOS la app instalada puede pasar días congelada, así que el momento
+ * real de actualización es el arranque — y en los primeros segundos no hay
+ * nada que interrumpir: el borrador vive en Dexie, y la app restaura la
+ * ubicación al recargar. Esperar un toque en «Actualizar» ahí solo alargaba
+ * la vida de la versión vieja (y en la práctica los arreglos tardaban días
+ * en llegar a los iPads, con la barra sin pulsar).
+ *
+ * Pasado el arranque, mandan las manos del técnico: una recarga espontánea a
+ * mitad de una revisión pierde el foco, el teclado y la paciencia. Ahí la
+ * barra ofrece y la persona decide.
+ */
+const VENTANA_DE_ARRANQUE_MS = 45_000
+const arrancadaEn = Date.now()
+
 function anunciar(): void {
   listeners.forEach((l) => l(hayVersionNueva))
 }
@@ -39,6 +57,14 @@ export function registrarServiceWorker(): void {
   actualizar = registerSW({
     onNeedRefresh() {
       enEspera = true
+      if (Date.now() - arrancadaEn < VENTANA_DE_ARRANQUE_MS) {
+        // Si la activación fallara, la barra de siempre sigue ahí detrás.
+        aplicarActualizacion().catch(() => {
+          hayVersionNueva = true
+          anunciar()
+        })
+        return
+      }
       hayVersionNueva = true
       anunciar()
     },
