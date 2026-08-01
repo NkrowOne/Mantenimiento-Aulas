@@ -90,7 +90,14 @@ COPY --from=caddy:2 /usr/bin/caddy /usr/local/bin/caddy
 # WeasyPrint necesita Pango y Cairo; sin ellas falla en tiempo de ejecución con
 # un error poco descriptivo sobre libgobject. `ca-certificates` es para las
 # salidas HTTPS del worker (Gemini) y de `alta`.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+#
+# El `sed` activa la sección `contrib` de Debian: fonts-ibm-plex vive ahí y no
+# en `main`, que es lo único que trae la imagen — sin esta línea, apt dice que
+# el paquete no existe y el build muere. El paquete es la tipografía entera en
+# TTF, sin dependencias; está en contrib por cómo se construye, no por lo que
+# contiene.
+RUN sed -i 's/Components: main/Components: main contrib/' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       python3 python3-pip \
       libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libcairo2 \
