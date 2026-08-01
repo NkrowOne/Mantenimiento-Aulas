@@ -47,6 +47,30 @@ let actualizar: ((recargar?: boolean) => Promise<void>) | null = null
 const VENTANA_DE_ARRANQUE_MS = 45_000
 const arrancadaEn = Date.now()
 
+/** El registro del navegador, para poder preguntar a demanda. */
+let registro: ServiceWorkerRegistration | null = null
+
+/**
+ * Busca la versión nueva AHORA y cuenta qué encontró.
+ *
+ * Existe porque la opacidad tuvo coste real: iPads semanas atrás sin que
+ * nadie pudiera distinguir «no hay nada nuevo» de «no está buscando» — las
+ * dos se ven igual, que es no viéndose. Con un botón que contesta, el
+ * diagnóstico se hace desde el aparato en diez segundos.
+ */
+export async function buscarActualizacion(): Promise<'encontrada' | 'al-dia' | 'error'> {
+  if (!registro) return 'error'
+  try {
+    await registro.update()
+  } catch {
+    // Sin red, o el servidor no contesta: distinto de «estás en la última».
+    return 'error'
+  }
+  return enEspera || registro.installing !== null || registro.waiting !== null
+    ? 'encontrada'
+    : 'al-dia'
+}
+
 function anunciar(): void {
   listeners.forEach((l) => l(hayVersionNueva))
 }
@@ -81,10 +105,11 @@ export function registrarServiceWorker(): void {
      * usar— y cada hora por si se queda en primer plano toda la mañana. Sin
      * red, `update()` falla y da igual: se vuelve a preguntar la siguiente.
      */
-    onRegisteredSW(_url, registro) {
-      if (!registro) return
+    onRegisteredSW(_url, reg) {
+      if (!reg) return
+      registro = reg
       const buscar = (): void => {
-        void registro.update().catch(() => {})
+        void reg.update().catch(() => {})
       }
       setInterval(buscar, 60 * 60_000)
       document.addEventListener('visibilitychange', () => {
