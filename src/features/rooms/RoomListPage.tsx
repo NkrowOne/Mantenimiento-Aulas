@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { InsigniaAveria, detalleDeAverias } from '@/components/InsigniaAveria'
 import { db } from '@/db/dexie'
 import { displayRoomCode } from '@/domain/normalize'
 import { OVERDUE_INSPECTION_DAYS, type Building, type Room } from '@/domain/types'
+import { averiasPorSala } from './averias'
 import {
   ROOM_ORDER_LABELS,
   daysSince,
@@ -66,6 +68,17 @@ export function RoomListPage({
     () => new Set((drafts ?? []).map((d) => d.room_id)),
     [drafts],
   )
+
+  /*
+   * Las averías vivas, para el triángulo de cada fila.
+   *
+   * Del espejo entero y no solo de este edificio: el espejo únicamente guarda
+   * lo no resuelto —unas decenas de filas— y filtrarlas por sala aquí costaría
+   * más índice del que ahorra. La regla de qué cuenta vive en `averias.ts`,
+   * que es la misma que aplica el servidor en `room_overview`.
+   */
+  const incidencias = useLiveQuery(() => db.incidents.toArray(), [])
+  const averias = useMemo(() => averiasPorSala(incidencias ?? []), [incidencias])
 
   const visible = useMemo(() => {
     if (!rooms || !zones) return []
@@ -194,8 +207,16 @@ export function RoomListPage({
                   en código y la planta queda de apoyo, que es su papel.
                 */}
                 <span className="min-w-0 flex-1">
-                  <span className="block font-mono text-[1.15rem] font-semibold leading-tight tabular">
-                    {displayRoomCode(room.code)}
+                  {/* El triángulo va pegado al código: es un atributo del aula
+                      («aquí hay algo roto»), no de la columna de fechas. */}
+                  <span className="flex items-center gap-2">
+                    <span className="font-mono text-[1.15rem] font-semibold leading-tight tabular">
+                      {displayRoomCode(room.code)}
+                    </span>
+                    <InsigniaAveria
+                      n={averias.get(room.id) ?? 0}
+                      detalle={detalleDeAverias(averias.get(room.id) ?? 0)}
+                    />
                   </span>
                   {/* La planta va en cada fila: aquí el código aparece suelto,
                       y `−2.1` sin contexto se lee como una errata. */}

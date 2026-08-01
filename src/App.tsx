@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { InsigniaAveria, detalleDeAverias } from '@/components/InsigniaAveria'
 import { SyncChip } from '@/components/SyncChip'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { LockScreen } from '@/features/auth/LockScreen'
@@ -8,6 +9,7 @@ import { InspectionPage } from '@/features/inspection/InspectionPage'
 import type { Correccion } from '@/features/inspection/useInspection'
 import { RoomListPage } from '@/features/rooms/RoomListPage'
 import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
+import { averiasPorEdificio, averiasPorSala } from '@/features/rooms/averias'
 import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
 
 import { getSealed, lock, resumeSession, touch, watchSession } from '@/auth/session'
@@ -222,16 +224,28 @@ export function App(): React.ReactElement {
    * recalcula Dexie cuando cambian.
    */
   const porEdificio = useLiveQuery(async () => {
-    const [zones, rooms] = await Promise.all([db.zones.toArray(), db.rooms.toArray()])
+    const [zones, rooms, incidencias] = await Promise.all([
+      db.zones.toArray(),
+      db.rooms.toArray(),
+      db.incidents.toArray(),
+    ])
     const edificioDeZona = new Map(zones.map((z) => [z.id, z.building_id]))
 
-    const acc = new Map<string, { total: number; pendientes: number }>()
+    const acc = new Map<string, { total: number; pendientes: number; averias: number }>()
     const limite = Date.now() - OVERDUE_INSPECTION_DAYS * 86_400_000
+    // Las averías vivas por edificio, con la misma regla que el servidor
+    // (`room_overview.open_incidents`): ni resueltas, ni borradores, ni
+    // observaciones. El triángulo del edificio es la suma de sus salas.
+    const averias = averiasPorEdificio(averiasPorSala(incidencias), rooms, edificioDeZona)
 
     for (const r of rooms) {
       const edificio = edificioDeZona.get(r.zone_id)
       if (!edificio) continue
-      const fila = acc.get(edificio) ?? { total: 0, pendientes: 0 }
+      const fila = acc.get(edificio) ?? {
+        total: 0,
+        pendientes: 0,
+        averias: averias.get(edificio) ?? 0,
+      }
       fila.total++
       const revisada = r.last_inspection_at ? new Date(r.last_inspection_at).getTime() : 0
       if (revisada < limite) fila.pendientes++
@@ -665,6 +679,13 @@ export function App(): React.ReactElement {
                       </span>
                     )}
                   </span>
+
+                  {/* El triángulo del edificio: cuántas averías vivas hay
+                      puertas adentro, sumando todas sus salas. */}
+                  <InsigniaAveria
+                    n={cuenta?.averias ?? 0}
+                    detalle={detalleDeAverias(cuenta?.averias ?? 0)}
+                  />
 
                   {b.needs_review && (
                     <span className="shrink-0 rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
