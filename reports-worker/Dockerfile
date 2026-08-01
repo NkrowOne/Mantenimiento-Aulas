@@ -6,8 +6,11 @@
 FROM node:22-slim
 
 # WeasyPrint necesita Pango y Cairo; sin ellas falla en tiempo de ejecución
-# con un error poco descriptivo sobre libgobject.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# con un error poco descriptivo sobre libgobject. El `sed` activa la sección
+# `contrib` de Debian, donde vive fonts-ibm-plex: la imagen solo trae `main`
+# y sin esa línea apt dice que el paquete no existe.
+RUN sed -i 's/Components: main/Components: main contrib/' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-pip \
       libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libcairo2 \
       fonts-ibm-plex \
