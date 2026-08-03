@@ -18,6 +18,8 @@ const SEALED_KEY = 'sealed-session'
 const ATTEMPTS_KEY = 'pin-attempts'
 /** Fila de `devices` que representa a ESTE navegador, para no crear otra en cada alta. */
 const DEVICE_KEY = 'device-id'
+/** Cuándo se apuntó por última vez que este dispositivo sigue vivo. */
+const VISTO_KEY = 'device-last-seen'
 
 /**
  * Minutos de inactividad antes de volver a pedir el PIN.
@@ -313,10 +315,50 @@ async function registerDevice(profileId: string): Promise<void> {
 
   const { data } = await supabase
     .from('devices')
-    .insert({ profile_id: profileId, label, user_agent: userAgent })
+    .insert({
+      profile_id: profileId,
+      label,
+      user_agent: userAgent,
+      last_seen_at: new Date().toISOString(),
+    })
     .select('id')
     .single()
   if (data?.id) await db.meta.put({ key: DEVICE_KEY, value: data.id })
+}
+
+/** Cada cuánto se molesta al servidor para decir que este aparato sigue ahí. */
+const VISTO_CADA_MS = 6 * 3600 * 1000
+
+/**
+ * Deja constancia de que este dispositivo sigue en uso.
+ *
+ * `devices.last_seen_at` existía desde el primer esquema y no lo escribía
+ * nadie, y esa columna vacía es la que convertía el cupo en una trampa: nada
+ * retira una fila de `devices` —ni al caducar la sesión, ni al reinstalar la
+ * PWA, ni al borrar los datos del navegador—, así que la cuenta acumulaba
+ * dispositivos que ya no existían y, al llenarse el cupo, `/alta/canjear`
+ * rechazaba las altas nuevas de una cuenta que en realidad no tenía a nadie
+ * dentro. Sin fecha de uso no había forma de saber cuál sobraba: todos
+ * parecían igual de vivos.
+ *
+ * Se escribe con cuentagotas —una vez cada varias horas— porque no es una
+ * medida, es una señal: para decidir si un dispositivo lleva meses muerto sobra
+ * con la precisión de un día. Y si falla, se calla: esto no puede estropear un
+ * desbloqueo, y menos en un sótano sin cobertura.
+ */
+async function marcarVisto(): Promise<void> {
+  const id = (await db.meta.get(DEVICE_KEY))?.value as string | undefined
+  if (!id) return
+
+  const ultimo = (await db.meta.get(VISTO_KEY))?.value as number | undefined
+  if (ultimo && Date.now() - ultimo < VISTO_CADA_MS) return
+
+  try {
+    await supabase.from('devices').update({ last_seen_at: new Date().toISOString() }).eq('id', id)
+    await db.meta.put({ key: VISTO_KEY, value: Date.now() })
+  } catch {
+    // Sin red no hay nada que apuntar; en la próxima entrada se reintenta.
+  }
 }
 
 export async function getSealed(): Promise<SealedSession | null> {
@@ -436,6 +478,9 @@ export async function unlockWithPin(pin: string): Promise<UnlockResult> {
     await migrarSobreSiHaceFalta(pin, sealed, fresca)
   }
   await touch()
+  // Solo en el camino con servidor: el desbloqueo sin red de más arriba no
+  // tiene a quién decírselo, y forzarlo allí sería inventarse una fecha.
+  await marcarVisto()
 
   return { ok: true }
 }
@@ -490,6 +535,7 @@ export async function resumeSession(): Promise<boolean> {
     refresh_token: data.session.refresh_token,
   })
   await touch()
+  await marcarVisto()
   return true
 }
 

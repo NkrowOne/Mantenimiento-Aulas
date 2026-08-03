@@ -6,6 +6,9 @@
  *   npm run admin:user -- crear  ana@x.es          # ya existe: código nuevo
  *   npm run admin:user -- codigo ana@x.es          # lo mismo, dicho aparte
  *   npm run admin:user -- rol    ana@x.es supervisor
+ *   npm run admin:user -- dispositivos ana@x.es    # qué ocupa el cupo
+ *   npm run admin:user -- revocar ana@x.es --todos # y liberarlo
+ *   npm run admin:user -- desactivar ana@x.es      # la baja de quien tiene historial
  *   npm run admin:user -- borrar ana@x.es
  *   npm run admin:user -- listar
  *
@@ -43,6 +46,10 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { createHash, randomInt } from 'node:crypto'
+// El mismo número que aplica el canje, importado y no copiado: si los dos se
+// separan, esta orden diría que queda hueco justo cuando `/alta/canjear` está
+// devolviendo 403, y no habría por dónde entender el desacuerdo.
+import { MAX_DISPOSITIVOS } from './alta.js'
 
 /**
  * En el contenedor de la PWA no hay `SUPABASE_URL`, pero sí `SUPABASE_UPSTREAM`
@@ -116,7 +123,7 @@ function has(name: string): boolean {
 }
 
 /** Opciones que no llevan valor detrás; el resto consume el argumento siguiente. */
-const BANDERAS = new Set(['primer-admin'])
+const BANDERAS = new Set(['primer-admin', 'todos'])
 
 /**
  * Argumentos sueltos, los que no son ni una opción ni el valor de una.
@@ -280,12 +287,11 @@ ${renovado ? '\n  Ya existía: este código sustituye al anterior, que queda anu
 async function nuevoCodigo(id: string, email: string, renovado: boolean): Promise<void> {
   const code = generateCode()
 
-  const { count } = await admin
-    .from('devices')
-    .select('id', { count: 'exact', head: true })
-    .eq('profile_id', id)
-    .is('revoked_at', null)
-  const conectados = count ?? 0
+  const dispositivos = await dispositivosDe(id)
+  const conectados = dispositivos.length
+  // Aparatos, no filas: es el criterio del canje, y contar filas aquí daría un
+  // número distinto del que decide si el código va a servir.
+  const aparatos = new Set(dispositivos.map((d) => d.user_agent ?? '')).size
 
   if (conectados === 0) {
     const { error } = await admin.auth.admin.updateUserById(id, { password: code })
@@ -299,8 +305,35 @@ async function nuevoCodigo(id: string, email: string, renovado: boolean): Promis
 
   if (conectados > 0) {
     console.log(
-      `\n  La cuenta tiene ${conectados} dispositivo(s) conectado(s): siguen conectados,\n` +
-        '  este código solo sirve para añadir o recuperar uno.',
+      `\n  La cuenta tiene ${conectados} dispositivo(s) dado(s) de alta` +
+        `${aparatos !== conectados ? ` (${aparatos} aparato(s))` : ''}:\n` +
+        '  siguen conectados, este código solo sirve para añadir o recuperar uno.',
+    )
+  }
+
+  /*
+   * El aviso que faltaba, y que es la diferencia entre un código que sirve y
+   * uno que no.
+   *
+   * Con el cupo lleno, `/alta/canjear` responde 403 antes de mirar el código, y
+   * además arriba no se ha repuesto la contraseña —hay dispositivos, así que no
+   * se toca— con lo que tampoco queda el camino antiguo. O sea: el código sale
+   * impreso, con su caducidad y su pinta de bueno, y no hay forma de usarlo.
+   *
+   * Y las filas de `devices` no caducan solas: nadie escribe `revoked_at` ni
+   * `last_seen_at`, así que un iPad reinstalado, un navegador con los datos
+   * borrados o una sesión que expiró siguen ocupando cupo para siempre. Es
+   * justo el caso en que quien administra jura que no tiene ningún dispositivo
+   * dentro — y tiene razón—, mientras la tabla dice que tiene tres.
+   */
+  if (aparatos >= MAX_DISPOSITIVOS) {
+    console.warn(
+      `\n  ⚠ El cupo está lleno (${aparatos} de ${MAX_DISPOSITIVOS} aparatos), así que este código\n` +
+        '    NO va a servir en un aparato nuevo: el canje lo rechaza antes de mirarlo.\n' +
+        '    Mira cuáles hay y libera los que ya no se usen:\n' +
+        `      ${CLI} dispositivos ${email}\n` +
+        `      ${CLI} revocar ${email} --todos\n` +
+        '    Revocar no borra historial: solo libera el hueco. Después, pide otro código.',
     )
   }
 
@@ -471,6 +504,171 @@ async function codigo(): Promise<void> {
   await nuevoCodigo(user.id, email, true)
 }
 
+interface Dispositivo {
+  id: string
+  label: string
+  user_agent: string | null
+  enrolled_at: string
+  last_seen_at: string | null
+}
+
+/** Los que ocupan cupo: sin revocar, en el orden en que entraron. */
+async function dispositivosDe(profileId: string): Promise<Dispositivo[]> {
+  const { data, error } = await admin
+    .from('devices')
+    .select('id, label, user_agent, enrolled_at, last_seen_at')
+    .eq('profile_id', profileId)
+    .is('revoked_at', null)
+    .order('enrolled_at')
+  if (error) {
+    console.error('No se pudieron leer los dispositivos:', error.message)
+    explicarEsquema(error.message)
+    process.exit(1)
+  }
+  return (data ?? []) as Dispositivo[]
+}
+
+function fecha(iso: string | null): string {
+  if (!iso) return '—'
+  return iso.slice(0, 16).replace('T', ' ')
+}
+
+/**
+ * Qué ocupa el cupo de una cuenta.
+ *
+ * Hacía falta un sitio donde mirarlo. La aplicación no enseña los dispositivos
+ * por ninguna parte —`devices` no aparece en ninguna pantalla—, así que el
+ * «pide a un supervisor que revoque el que ya no se use» con el que el canje
+ * rechaza un alta señalaba a algo que no existía, y la cuenta se quedaba
+ * cerrada sin salida desde el panel.
+ *
+ * Se numeran para poder revocarlos de uno en uno sin teclear un uuid: la lista
+ * va por `enrolled_at`, así que el número es estable mientras no se revoque
+ * nada, y quien revoca acaba de verlo en pantalla.
+ */
+async function dispositivosCmd(): Promise<void> {
+  const email = arg('email') ?? reparto().email
+  if (!email) {
+    console.error(`Uso: ${CLI} dispositivos <email>`)
+    process.exit(1)
+  }
+
+  const user = await findUserByEmail(email)
+  if (!user) {
+    console.error(`No hay ningún usuario con ${email}.`)
+    process.exit(1)
+  }
+
+  const lista = await dispositivosDe(user.id)
+  const aparatos = new Set(lista.map((d) => d.user_agent ?? '')).size
+
+  if (lista.length === 0) {
+    console.log(`\n  ${email} no tiene ningún dispositivo dado de alta. El cupo está entero.\n`)
+    return
+  }
+
+  console.log(`\n  Dispositivos de ${email}:\n`)
+  lista.forEach((d, i) => {
+    console.log(`  ${String(i + 1).padStart(2)}. ${d.label.padEnd(10)} alta ${fecha(d.enrolled_at)}   visto ${fecha(d.last_seen_at)}`)
+    console.log(`      ${(d.user_agent ?? '(sin user-agent)').slice(0, 96)}`)
+  })
+
+  console.log(`
+  ${aparatos} de ${MAX_DISPOSITIVOS} aparatos ocupados${aparatos >= MAX_DISPOSITIVOS ? '  — CUPO LLENO' : ''}.
+  El cupo va por aparato (user-agent), no por fila: en un iPad, Safari y la
+  PWA instalada son el mismo aparato.
+
+  «Visto» en «—» quiere decir que ese dispositivo no ha vuelto a entrar desde
+  que se dio de alta, o que lo hizo antes de que esto se registrara. Una fila
+  aquí NO garantiza una sesión viva: nada la retira sola, así que un aparato
+  reinstalado, un navegador con los datos borrados o una sesión caducada
+  siguen ocupando sitio hasta que se revoquen.
+
+  Para liberar:
+    ${CLI} revocar ${email} 1        (el de la lista)
+    ${CLI} revocar ${email} --todos  (todos, y que se den de alta de nuevo)
+`)
+}
+
+/**
+ * Libera cupo. No borra la fila: le pone fecha de revocación, que es lo que
+ * `devices` ya sabía representar y deja el rastro de que alguien lo hizo.
+ *
+ * Lo que NO hace es echar a un dispositivo que siga vivo: su refresh token
+ * seguirá valiendo hasta que caduque, porque aquí no hay forma de atar una
+ * sesión de GoTrue a una fila de `devices`. Se dice en la salida en vez de
+ * dejar creer que revocar es un cierre de sesión remoto.
+ */
+async function revocar(): Promise<void> {
+  const suelto = reparto()
+  const email = arg('email') ?? suelto.email
+  const todos = has('todos')
+  const cual = arg('n') ?? suelto.nombre
+  if (!email || (!todos && !cual)) {
+    console.error(`Uso: ${CLI} revocar <email> <n>|--todos`)
+    process.exit(1)
+  }
+
+  const user = await findUserByEmail(email)
+  if (!user) {
+    console.error(`No hay ningún usuario con ${email}.`)
+    process.exit(1)
+  }
+
+  const lista = await dispositivosDe(user.id)
+  if (lista.length === 0) {
+    console.log(`\n  ${email} no tiene ningún dispositivo que revocar.\n`)
+    return
+  }
+
+  let objetivo: Dispositivo[]
+  if (todos) {
+    objetivo = lista
+  } else {
+    // El número de la lista, o el principio de un uuid para quien lo tenga a
+    // mano. Un número fuera de rango se dice; elegir el que no era y no
+    // enterarse deja a alguien fuera de la aplicación sin motivo aparente.
+    const n = Number(cual)
+    if (Number.isInteger(n) && n >= 1 && n <= lista.length) {
+      objetivo = [lista[n - 1]!]
+    } else {
+      const porId = lista.filter((d) => d.id.startsWith(String(cual).toLowerCase()))
+      if (porId.length !== 1) {
+        console.error(
+          `No sé cuál es "${cual}". Usa el número que sale en:  ${CLI} dispositivos ${email}`,
+        )
+        process.exit(1)
+      }
+      objetivo = porId
+    }
+  }
+
+  const { error } = await admin
+    .from('devices')
+    .update({ revoked_at: new Date().toISOString() })
+    .in(
+      'id',
+      objetivo.map((d) => d.id),
+    )
+  if (error) {
+    console.error('No se pudo revocar:', error.message)
+    process.exit(1)
+  }
+
+  const quedan = lista.length - objetivo.length
+  console.log(`
+  Revocado(s) ${objetivo.length} dispositivo(s) de ${email}: ${objetivo.map((d) => d.label).join(', ')}.
+  Quedan ${quedan} ocupando cupo.
+
+  Ojo: esto libera el hueco, no cierra una sesión abierta. Un aparato que
+  siguiera dentro lo seguirá estando hasta que su token caduque; lo que ya no
+  puede es impedir que otro se dé de alta.
+
+  Para que vuelva a entrar, dale un código:
+    ${CLI} codigo ${email}
+`)
+}
+
 async function rol(): Promise<void> {
   const suelto = reparto()
   const email = arg('email') ?? suelto.email
@@ -498,6 +696,136 @@ async function rol(): Promise<void> {
   El rol viaja dentro del token, así que el cambio se aplica cuando se
   renueve: puede tardar hasta una hora, o de inmediato si cierra y vuelve
   a entrar con su PIN.
+`)
+}
+
+/**
+ * Dónde queda rastro de una persona: las claves ajenas a `profiles` que NO
+ * llevan `on delete`, o sea `no action`. Mientras haya una sola fila
+ * apuntándole, la base se niega a borrarlo.
+ *
+ * Va escrita a mano porque PostgREST no expone `pg_constraint`, y sirve para
+ * una cosa: que «no se pudo borrar» diga QUÉ lo impide. Si alguien añade una
+ * tabla y no la apunta aquí, el precio es un mensaje menos completo —nunca un
+ * borrado indebido—, porque quien decide sigue siendo la base.
+ */
+const RASTRO: readonly { tabla: string; columna: string; que: string }[] = [
+  { tabla: 'inspections', columna: 'by_user', que: 'revisiones' },
+  { tabla: 'incidents', columna: 'opened_by', que: 'incidencias abiertas' },
+  { tabla: 'incidents', columna: 'resolved_by', que: 'incidencias resueltas' },
+  { tabla: 'asset_events', columna: 'by_user', que: 'movimientos de equipos' },
+  { tabla: 'stock_movements', columna: 'by_user', que: 'movimientos de almacén' },
+  { tabla: 'attachments', columna: 'by_user', que: 'fotos y adjuntos' },
+  { tabla: 'reports', columna: 'generated_by', que: 'informes generados' },
+  { tabla: 'report_requests', columna: 'pedido_por', que: 'informes pedidos' },
+  { tabla: 'room_inventories', columna: 'by_user', que: 'levantamientos de sala' },
+  { tabla: 'asset_removals', columna: 'requested_by', que: 'retiradas pedidas' },
+  { tabla: 'asset_removals', columna: 'decided_by', que: 'retiradas decididas' },
+  { tabla: 'asset_types', columna: 'created_by', que: 'tipos de equipo creados' },
+  { tabla: 'assets', columna: 'created_by', que: 'equipos creados' },
+  { tabla: 'asset_defaults', columna: 'created_by', que: 'equipamiento por defecto' },
+  { tabla: 'asset_label_conflicts', columna: 'resolved_by', que: 'choques de etiqueta resueltos' },
+  { tabla: 'import_quarantine', columna: 'resolved_by', que: 'filas de importación resueltas' },
+  { tabla: 'enrollment_codes', columna: 'created_by', que: 'altas dadas a otros' },
+]
+
+/** Cuánto hay de cada cosa, contando solo lo que existe en esta base. */
+async function rastroDe(profileId: string): Promise<{ que: string; n: number }[]> {
+  const cuentas = await Promise.all(
+    RASTRO.map(async ({ tabla, columna, que }) => {
+      const { count, error } = await admin
+        .from(tabla)
+        .select('*', { count: 'exact', head: true })
+        .eq(columna, profileId)
+      // Una tabla que no está en esta base —migración por aplicar, despliegue
+      // más viejo— no es un fallo aquí: no aporta rastro y se pasa de largo.
+      if (error) return { que, n: 0 }
+      return { que, n: count ?? 0 }
+    }),
+  )
+  return cuentas.filter((c) => c.n > 0).sort((a, b) => b.n - a.n)
+}
+
+/**
+ * La baja de quien tiene historial: pierde el acceso y conserva su nombre en
+ * lo que hizo.
+ *
+ * Estaba escrito en el mensaje de `borrar` como un `update` de SQL, y ese
+ * consejo no se podía seguir: en la terminal del panel solo hay `alta` y
+ * `migrar`, no hay psql ni forma de abrir una conexión a la base. O sea que la
+ * única salida documentada para un usuario que no se puede borrar exigía otra
+ * máquina, que es justo lo que esta orden vino a quitar de en medio.
+ *
+ * `active = false` lo para en seco en RLS, pero deja sus dispositivos ocupando
+ * cupo, así que se revocan a la vez: si vuelve, vuelve con un alta limpia.
+ */
+async function desactivar(): Promise<void> {
+  const email = arg('email') ?? reparto().email
+  if (!email) {
+    console.error(`Uso: ${CLI} desactivar <email>`)
+    process.exit(1)
+  }
+
+  const user = await findUserByEmail(email)
+  if (!user) {
+    console.error(`No hay ningún usuario con ${email}.`)
+    process.exit(1)
+  }
+
+  const { error } = await admin.from('profiles').update({ active: false }).eq('id', user.id)
+  if (error) {
+    // El disparador `profiles_ultimo_admin` es el que habla aquí: desactivar al
+    // último administrador dejaría el despliegue sin nadie que pueda volver a
+    // nombrar a uno, y la pantalla que lo arregla está detrás de ese mismo rol.
+    console.error(`No se pudo desactivar a ${email}: ${error.message}`)
+    explicarEsquema(error.message)
+    process.exit(1)
+  }
+
+  const { count } = await admin
+    .from('devices')
+    .update({ revoked_at: new Date().toISOString() }, { count: 'exact' })
+    .eq('profile_id', user.id)
+    .is('revoked_at', null)
+    .select('id')
+
+  console.log(`
+  ${email} queda desactivado${count ? `, y con él ${count} dispositivo(s) revocado(s)` : ''}.
+
+  Sigue en la lista y sigue firmando su historial, pero RLS no le deja ver ni
+  escribir nada. Un dispositivo suyo que estuviera abierto se queda sin poder
+  hacer nada, aunque su token no caduque hasta dentro de una hora.
+
+  Si vuelve:
+    ${CLI} activar ${email}
+`)
+}
+
+async function activar(): Promise<void> {
+  const email = arg('email') ?? reparto().email
+  if (!email) {
+    console.error(`Uso: ${CLI} activar <email>`)
+    process.exit(1)
+  }
+
+  const user = await findUserByEmail(email)
+  if (!user) {
+    console.error(`No hay ningún usuario con ${email}.`)
+    process.exit(1)
+  }
+
+  const { error } = await admin.from('profiles').update({ active: true }).eq('id', user.id)
+  if (error) {
+    console.error(`No se pudo activar a ${email}: ${error.message}`)
+    explicarEsquema(error.message)
+    process.exit(1)
+  }
+
+  console.log(`
+  ${email} vuelve a estar activo. Sus dispositivos siguen revocados, así que
+  para volver a entrar necesita un código:
+
+    ${CLI} codigo ${email}
 `)
 }
 
@@ -530,15 +858,36 @@ async function borrar(): Promise<void> {
     process.exit(1)
   }
 
+  // Se mira ANTES de pedir el borrado. Lo que devuelve GoTrue cuando la clave
+  // ajena salta es «Database error deleting user», que no dice qué tabla ni de
+  // qué usuario, y desde el panel no hay ninguna forma de averiguarlo.
+  const rastro = await rastroDe(user.id)
+  if (rastro.length > 0) {
+    console.error(`
+  No se puede borrar a ${email}: tiene historial a su nombre.
+
+${rastro.map((r) => `    ${String(r.n).padStart(5)}  ${r.que}`).join('\n')}
+
+  La base lo impide a propósito y hace bien: esas filas dicen quién hizo qué,
+  y borrarlas o dejarlas sin dueño vaciaría de valor el historial entero.
+
+  La baja de alguien con historial es desactivarlo — pierde el acceso, RLS no
+  le deja ver nada, y lo que hizo sigue con su nombre:
+
+    ${CLI} desactivar ${email}
+`)
+    process.exit(1)
+  }
+
   const { error } = await admin.auth.admin.deleteUser(user.id)
   if (error) {
     console.error(`No se pudo borrar a ${email}: ${error.message}`)
     console.error(`
-  Si tiene historial, la base de datos lo impide a propósito: sus revisiones
-  e incidencias guardan quién las hizo. La baja de alguien con historial es
-  desactivarlo, que le quita el rol y RLS no le deja ver nada:
+  No le he encontrado historial, así que lo que lo impide es algo que esta
+  orden no sabe mirar —una tabla añadida después de escribirla—. La baja que
+  siempre funciona, y que conserva lo que hizo:
 
-    update profiles set active = false where email = '${email}';
+    ${CLI} desactivar ${email}
 `)
     process.exit(1)
   }
@@ -572,7 +921,17 @@ async function listar(): Promise<void> {
 }
 
 const command = process.argv[2]
-const commands: Record<string, () => Promise<void>> = { crear, codigo, rol, borrar, listar }
+const commands: Record<string, () => Promise<void>> = {
+  crear,
+  codigo,
+  rol,
+  dispositivos: dispositivosCmd,
+  revocar,
+  desactivar,
+  activar,
+  borrar,
+  listar,
+}
 
 /*
  * Nada de lo que se escribe se ignora en silencio. Un argumento suelto que no
@@ -604,7 +963,16 @@ Uso: ${CLI} <comando> [opciones]
           y respeta el nombre y el rol que no se escriban.
   codigo  <email>
   rol     <email> tecnico|supervisor|admin
-  borrar  <email>
+
+  dispositivos <email>            Qué ocupa el cupo de la cuenta.
+  revocar      <email> <n>|--todos  Libera cupo. Sin esto, una cuenta con el
+                                  cupo lleno de dispositivos muertos no puede
+                                  volver a entrar por mucho código que se le dé.
+
+  desactivar <email>              La baja de quien tiene historial: pierde el
+                                  acceso y conserva su nombre en lo que hizo.
+  activar    <email>
+  borrar     <email>              Solo si no tiene ningún historial.
   listar
 
 Las opciones con nombre (--email, --nombre, --rol) siguen valiendo y ganan.

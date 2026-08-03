@@ -105,7 +105,13 @@ alta crear  ana@x.es "Ana Ruiz" tecnico
 alta crear  ana@x.es                  # ya existe: código nuevo, el viejo anulado
 alta codigo ana@x.es
 alta rol    ana@x.es supervisor
-alta borrar ana@x.es
+
+alta dispositivos ana@x.es            # qué ocupa el cupo de la cuenta
+alta revocar      ana@x.es --todos    # y liberarlo
+
+alta desactivar ana@x.es              # la baja de quien tiene historial
+alta activar    ana@x.es
+alta borrar     ana@x.es              # solo si no tiene historial
 ```
 
 Requisito único: que el servicio tenga `SUPABASE_SERVICE_ROLE_KEY` entre sus
@@ -203,44 +209,76 @@ order by i.opened_at;
 
 ### Dar de baja a alguien
 
-```sql
-update profiles set active = false where email = 'ana@x.es';
+```bash
+alta desactivar ana@x.es
 ```
 
 Deja de tener rol, y **RLS le impide ver absolutamente nada** — comprobado en la
 prueba 13 del proyecto. Sus revisiones e incidencias se conservan, que es justo
-lo que da valor a la trazabilidad.
+lo que da valor a la trazabilidad. De paso revoca sus dispositivos, para que no
+se queden ocupando cupo de una cuenta que ya no entra.
 
 Esta es la baja de casi todo el mundo. `alta borrar` existe para el otro caso:
 el alta equivocada, la persona que nunca llegó a entrar. Al que tenga historial
-la base de datos no lo deja borrar —`by_user`, `opened_by` y `resolved_by`
-apuntan a su perfil sin `on delete`—, así que el comando falla y remite aquí.
-Es la protección funcionando, no una avería.
+la base de datos no lo deja borrar —`by_user`, `opened_by`, `resolved_by`,
+`created_by` y compañía apuntan a su perfil sin `on delete`—, así que el
+comando se planta antes de intentarlo y **dice cuántas revisiones, incidencias
+o informes lo impiden**. Es la protección funcionando, no una avería.
+
+Ojo con un caso que no se ve venir: `enrollment_codes.created_by` también
+cuenta. Un administrador que haya dado de alta a alguien alguna vez ya tiene
+historial, aunque no haya revisado una sola sala.
+
+### Una cuenta que no puede volver a entrar aunque le des código
+
+Síntoma: `alta codigo ana@x.es` imprime un código con buena pinta, y la
+aplicación lo rechaza. Casi siempre es el **cupo de dispositivos**.
+
+Una cuenta admite tres aparatos a la vez, y las filas de `devices` **no se
+retiran solas**: ni al caducar la sesión, ni al reinstalar la PWA, ni al borrar
+los datos del navegador. Con el cupo lleno de dispositivos que ya no existen
+pasan dos cosas a la vez, y las dos cierran la puerta:
+
+- el canje del código responde 403 antes siquiera de mirarlo;
+- y como la cuenta «tiene dispositivos», tampoco se le repone la contraseña
+  temporal, así que el camino antiguo tampoco sirve.
+
+Se ve y se arregla desde la misma terminal:
+
+```bash
+alta dispositivos ana@x.es     # cuáles hay, desde cuándo y cuándo se vieron
+alta revocar      ana@x.es 2   # el segundo de la lista
+alta revocar      ana@x.es --todos
+alta codigo       ana@x.es     # y ahora sí
+```
+
+`alta codigo` avisa por su cuenta cuando el cupo está lleno, así que no hace
+falta acordarse de mirar.
+
+La columna «visto» es la que distingue un dispositivo vivo de un fantasma. Los
+dados de alta antes de esta versión la tienen vacía: no quiere decir que estén
+muertos, solo que nadie lo apuntaba todavía.
 
 ### Un dispositivo perdido
 
 Con `VITE_LOCK_AFTER_MINUTES=0` la sesión no caduca, así que **si se perdió con
 la sesión abierta, quien lo encuentre puede usar la aplicación**. Actúa deprisa:
 
-```sql
--- 1. Cortar el acceso de esa persona a todo, ahora mismo
-update profiles set active = false where email = 'ana@x.es';
-
--- 2. Dejar constancia del dispositivo
-update devices set revoked_at = now()
-where profile_id = (select id from profiles where email = 'ana@x.es');
+```bash
+alta desactivar ana@x.es
 ```
 
-El paso 1 es el que corta de verdad: sin perfil activo el hook deja de dar rol y
+Corta el acceso de esa persona a todo y revoca sus dispositivos de una vez. Lo
+que corta de verdad es lo primero: sin perfil activo el hook deja de dar rol y
 RLS no permite ver nada, en cuanto caduque el token de acceso (una hora como
-mucho). Después, para devolverle el acceso desde otro dispositivo:
+mucho). Revocar libera el cupo, pero **no cierra una sesión abierta** — no hay
+forma de atar una sesión de GoTrue a una fila de `devices`.
 
-```sql
-update profiles set active = true where email = 'ana@x.es';   -- reactivar
-```
+Después, para devolverle el acceso desde otro dispositivo:
 
 ```bash
-npm run admin:user -- codigo ana@x.es                         -- código nuevo
+alta activar ana@x.es
+alta codigo  ana@x.es
 ```
 
 Si el dispositivo se perdió **con la sesión cerrada**, no hay urgencia: sin el
