@@ -40,6 +40,7 @@ export function FichaDeObservacion({
   ids,
   nota,
   anunciadas,
+  conFotoLocal,
 }: {
   /** Las revisiones de la visita: una corregida son varias filas, y las fotos
       de aquel día están repartidas entre ellas. */
@@ -49,24 +50,49 @@ export function FichaDeObservacion({
   /** Cuántas fotos dice el servidor que tiene la visita. Decide si «no hay
       fotos» significa «no las hizo nadie» o «no hay conexión para verlas». */
   anunciadas: number
+  /** Hay fotos de esta visita todavía en la cola del dispositivo. */
+  conFotoLocal: boolean
 }): React.ReactElement | null {
-  const { fotos, sinConexion } = useFotosDeRevision(ids)
-  const [abierta, setAbierta] = useState<number | null>(null)
+  /*
+   * Sin nada anunciado ni en el dispositivo no se pregunta por adjuntos: una
+   * visita con solo observación pintaría su cita igual, y el histórico tiene
+   * cinco tarjetas a la vista — cinco consultas al servidor por nada.
+   */
+  const { fotos, sinConexion, cargando } = useFotosDeRevision(
+    anunciadas > 0 || conFotoLocal ? ids : [],
+  )
+
+  /*
+   * La foto abierta se recuerda por IDENTIDAD, no por posición: la lista
+   * cambia sola por debajo —una foto local que termina de subir se va de la
+   * cola y vuelve por el servidor— y con un índice el visor se reabría solo o
+   * cambiaba de foto en silencio. Si la abierta ya no está, el visor se cierra.
+   */
+  const [abiertaId, setAbiertaId] = useState<string | null>(null)
+  const abierta = abiertaId === null ? -1 : fotos.findIndex((f) => f.id === abiertaId)
 
   const texto = (nota ?? '').trim()
 
   if (fotos.length === 0) {
-    if (!texto && anunciadas === 0) return null
+    const aviso = anunciadas > 0 && sinConexion
+    if (!texto && !aviso) return null
+
     return (
       <div className="mt-3">
         {texto && (
-          <p className="whitespace-pre-line border-l-2 border-line pl-3 text-sm leading-relaxed">
+          /* Con fotos en camino, el filete ya es el de la ficha: sin esto, la
+             cita cambiaba de color al llegar las fotos en cada apertura. */
+          <p
+            className={`whitespace-pre-line break-words border-l-2 pl-3 text-sm leading-relaxed ${
+              anunciadas > 0 || cargando ? 'border-accent/60' : 'border-line'
+            }`}
+          >
             {texto}
           </p>
         )}
         {/* Las fotos existen pero no se pueden traer: se dice, en vez de dejar
             una visita «con fotos» enseñando ninguna. */}
-        {anunciadas > 0 && sinConexion && (
+        {aviso && (
           <p className={`text-xs text-muted ${texto ? 'mt-2' : ''}`}>
             Las {anunciadas === 1 ? 'foto de esta visita necesita' : 'fotos de esta visita necesitan'}{' '}
             conexión.
@@ -83,13 +109,18 @@ export function FichaDeObservacion({
   // una sola foto extra a un tercio del ancho parecería un hueco a medio cargar.
   const columnas = ['grid-cols-1', 'grid-cols-2', 'grid-cols-3'][enFila.length - 1]
 
+  /* El `overflow-hidden` del marco recorta lo que toque el borde, y el anillo
+     de foco se dibuja 4px POR FUERA: sin meterlo hacia dentro, tabular sobre
+     la portada no enseñaba ningún indicador. */
+  const foco = 'focus-visible:outline-offset-[-2px]'
+
   return (
     <>
       <figure className="mt-3 overflow-hidden rounded-ctl border border-line bg-raised">
         <button
           type="button"
-          onClick={() => setAbierta(0)}
-          className="relative block w-full bg-sunken"
+          onClick={() => setAbiertaId(portada.id)}
+          className={`relative block w-full bg-sunken ${foco}`}
           aria-label={fotos.length === 1 ? 'Ver la foto' : `Ver la foto 1 de ${fotos.length}`}
         >
           <img
@@ -107,19 +138,18 @@ export function FichaDeObservacion({
              propia rejilla, sin bordes que sumar en las esquinas. */
           <ul className={`grid ${columnas} gap-px border-t border-line bg-line`}>
             {enFila.map((f, i) => {
-              const indice = i + 1
               const ultima = i === enFila.length - 1 && ocultas > 0
 
               return (
                 <li key={f.id} className="min-w-0">
                   <button
                     type="button"
-                    onClick={() => setAbierta(indice)}
-                    className="relative block w-full bg-sunken"
+                    onClick={() => setAbiertaId(f.id)}
+                    className={`relative block w-full bg-sunken ${foco}`}
                     aria-label={
                       ultima
                         ? `Ver las ${ocultas + 1} fotos restantes`
-                        : `Ver la foto ${indice + 1} de ${fotos.length}`
+                        : `Ver la foto ${i + 2} de ${fotos.length}`
                     }
                   >
                     <img
@@ -146,19 +176,19 @@ export function FichaDeObservacion({
 
         {texto && (
           <figcaption className="border-t border-line p-3">
-            <p className="whitespace-pre-line border-l-2 border-accent/60 pl-3 text-sm leading-relaxed">
+            <p className="whitespace-pre-line break-words border-l-2 border-accent/60 pl-3 text-sm leading-relaxed">
               {texto}
             </p>
           </figcaption>
         )}
       </figure>
 
-      {abierta !== null && fotos[abierta] && (
+      {abierta !== -1 && (
         <VisorDeFotos
           fotos={fotos}
           indice={abierta}
-          onIr={setAbierta}
-          onCerrar={() => setAbierta(null)}
+          onIr={(i) => setAbiertaId(fotos[i]?.id ?? null)}
+          onCerrar={() => setAbiertaId(null)}
         />
       )}
     </>

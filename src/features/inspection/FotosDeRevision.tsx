@@ -24,7 +24,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, leerBytesDeFoto } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
@@ -52,13 +52,20 @@ export interface Foto {
  * Las pendientes van primero: son las de hoy, y son las que alguien quiere
  * comprobar que han salido bien.
  */
-export function useFotosDeRevision(ids: string[]): { fotos: Foto[]; sinConexion: boolean } {
+export function useFotosDeRevision(ids: string[]): {
+  fotos: Foto[]
+  sinConexion: boolean
+  /** La consulta de adjuntos aún no ha contestado. */
+  cargando: boolean
+} {
+  const qc = useQueryClient()
+
   /*
    * Las que ya están arriba. Dos pasos —los adjuntos y luego las firmas— porque
    * el `storage_path` lo sabe la tabla y la firma la da el servicio de Storage.
    * `createSignedUrls` firma las diez de golpe: una petición, no una por foto.
    */
-  const { data: subidas, isError } = useQuery({
+  const { data: subidas, isError, isPending } = useQuery({
     queryKey: ['fotos-revision', [...ids].sort().join(',')],
     enabled: ids.length > 0,
     queryFn: async (): Promise<Foto[]> => {
@@ -104,12 +111,33 @@ export function useFotosDeRevision(ids: string[]): { fotos: Foto[]; sinConexion:
     async () =>
       ids.length === 0
         ? []
-        : await db.photos.filter((p) => p.entityType === 'inspection' && ids.includes(p.entityId)).toArray(),
+        : // Por el índice compuesto, no con `filter`: el escaneo de tabla
+          // completa suscribía este hook a TODA la tabla, y cada reintento de
+          // subida de una foto de otra sala re-emitía y recreaba aquí todas
+          // las object URLs.
+          await db.photos
+            .where('[entityType+entityId]')
+            .anyOf(ids.map((id) => ['inspection', id]))
+            .toArray(),
     [ids.join(',')],
     [],
   )
 
   const [locales, setLocales] = useState<Foto[]>([])
+
+  /*
+   * Cuando una foto sale de la cola es que acaba de subir: se pide la lista de
+   * adjuntos otra vez para que la foto reaparezca en el sitio con su URL
+   * firmada, en vez de desaparecer de la tarjeta hasta el próximo refetch. Es
+   * lo que hace continua la transición dispositivo → servidor.
+   */
+  const idsEnColaAntes = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const ahora = new Set(pendientes.map((p) => p.id))
+    const subioAlguna = [...idsEnColaAntes.current].some((id) => !ahora.has(id))
+    idsEnColaAntes.current = ahora
+    if (subioAlguna) void qc.invalidateQueries({ queryKey: ['fotos-revision'] })
+  }, [pendientes, qc])
 
   useEffect(() => {
     let vivo = true
@@ -141,18 +169,38 @@ export function useFotosDeRevision(ids: string[]): { fotos: Foto[]; sinConexion:
       vivo = false
       for (const url of urls) URL.revokeObjectURL(url)
     }
-  }, [pendientes])
+    // Por las CLAVES, no por la identidad del array: la URL solo depende de los
+    // bytes, y un cambio de estado de la cola (attempts, backoff) no tiene por
+    // qué revocar y volver a crear las URLs de imágenes que no han cambiado.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendientes.map((p) => p.id).join(',')])
 
-  return { fotos: [...locales, ...(subidas ?? [])], sinConexion: isError }
+  /*
+   * Sin repetidas: la fila local y el adjunto del servidor comparten id, y en
+   * la ventana entre «el adjunto ya está arriba» y «la fila sale de la cola»
+   * la misma foto llegaba por los dos lados. Gana la local, que va primera y
+   * tiene los bytes en el dispositivo; al vaciarse la cola pasa sola a la
+   * versión subida.
+   */
+  const idsLocales = new Set(locales.map((f) => f.id))
+  return {
+    fotos: [...locales, ...(subidas ?? []).filter((f) => !idsLocales.has(f.id))],
+    sinConexion: isError,
+    cargando: ids.length > 0 && isPending,
+  }
 }
 
 /**
  * La marca de «aún no ha subido» va sobre la foto y con palabra, no con un
  * color: es la respuesta a «¿se ha guardado esto?».
+ *
+ * El fondo va SÓLIDO a propósito: con transparencia, el contraste del texto
+ * pasaba a depender de la foto que hubiera debajo —una pared blanca lo dejaba
+ * al borde del mínimo— y `check:contrast` solo garantiza el par sólido.
  */
 export function SelloSinSubir(): React.ReactElement {
   return (
-    <span className="absolute inset-x-0 bottom-0 bg-warn-fill/90 py-0.5 text-center text-[0.625rem] font-semibold text-warn-ink">
+    <span className="absolute inset-x-0 bottom-0 bg-warn-fill py-0.5 text-center text-[0.625rem] font-semibold text-warn-ink">
       sin subir
     </span>
   )
@@ -164,8 +212,16 @@ export function SelloSinSubir(): React.ReactElement {
  * recorren con el pulgar y no desplazan nada.
  */
 export function FotosDeRevision({ ids }: { ids: string[] }): React.ReactElement | null {
-  const [abierta, setAbierta] = useState<number | null>(null)
+  /*
+   * La foto abierta se recuerda por IDENTIDAD, no por posición. La lista
+   * cambia sola por debajo —una foto local que termina de subir se va de la
+   * cola y vuelve por el servidor— y con un índice el visor se reabría solo o
+   * cambiaba de foto en silencio. Si la foto abierta ya no está, el visor se
+   * cierra, que es lo único honesto.
+   */
+  const [abiertaId, setAbiertaId] = useState<string | null>(null)
   const { fotos, sinConexion } = useFotosDeRevision(ids)
+  const abierta = abiertaId === null ? -1 : fotos.findIndex((f) => f.id === abiertaId)
 
   if (fotos.length === 0) {
     if (sinConexion) {
@@ -177,11 +233,11 @@ export function FotosDeRevision({ ids }: { ids: string[] }): React.ReactElement 
   return (
     <>
       <ul className="scroll-x -mx-1 flex gap-2 px-1 py-1">
-        {fotos.map((f, i) => (
+        {fotos.map((f) => (
           <li key={f.id} className="shrink-0">
             <button
               type="button"
-              onClick={() => setAbierta(i)}
+              onClick={() => setAbiertaId(f.id)}
               className="relative block overflow-hidden rounded-tag border border-line bg-sunken"
               aria-label={`Ver la foto del ${fechaCorta(f.takenAt)}`}
             >
@@ -198,12 +254,12 @@ export function FotosDeRevision({ ids }: { ids: string[] }): React.ReactElement 
         ))}
       </ul>
 
-      {abierta !== null && fotos[abierta] && (
+      {abierta !== -1 && (
         <VisorDeFotos
           fotos={fotos}
           indice={abierta}
-          onIr={setAbierta}
-          onCerrar={() => setAbierta(null)}
+          onIr={(i) => setAbiertaId(fotos[i]?.id ?? null)}
+          onCerrar={() => setAbiertaId(null)}
         />
       )}
     </>
@@ -236,8 +292,14 @@ export function VisorDeFotos({
 
   useEffect(() => {
     // El foco entra en la capa: sin esto el tabulador sigue recorriendo la ficha
-    // que hay detrás, que para un lector de pantalla no está aquí.
+    // que hay detrás, que para un lector de pantalla no está aquí. Y al cerrar
+    // VUELVE a la miniatura que lo abrió: caía en <body> y el usuario de
+    // teclado reempezaba desde la cabecera en mitad de un histórico largo. El
+    // visor no se desmonta al pasar de foto, así que esto solo corre al abrir
+    // y al cerrar.
+    const origen = document.activeElement instanceof HTMLElement ? document.activeElement : null
     cerrar.current?.focus()
+    return () => origen?.focus()
   }, [])
 
   useEffect(() => {

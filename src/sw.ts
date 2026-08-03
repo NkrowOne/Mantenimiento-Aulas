@@ -84,7 +84,8 @@ const arrancadaEn = Date.now()
 const AUSENCIA_LARGA_MS = 5 * 60_000
 
 /**
- * El respiro antes de cualquier recarga automática que no sea la del arranque.
+ * El respiro antes de cualquier recarga —automática o pedida— que no sea la
+ * del arranque.
  *
  * Dos carreras distintas lo necesitan, y las dos son de milisegundos con
  * cobertura de sobra aquí:
@@ -104,12 +105,30 @@ let ocultadaEn = 0
 /** Hasta cuándo dura la ventana abierta por la última vuelta de ausencia larga. */
 let regresoHasta = 0
 
+/**
+ * El cuarto momento seguro: pantalla encendida y nadie tocándola.
+ *
+ * Sin él, un dispositivo siempre visible no se actualizaba solo NUNCA: el
+ * kiosco, o el iPad clavado en la pantalla del PIN con el autobloqueo
+ * desactivado —justo el caso que motiva registrar antes del candado— no
+ * arranca, no cambia de visibilidad y no termina revisiones, así que ninguna
+ * de las otras tres puertas se abría y la barra volvía a ser la única, que es
+ * lo que esta política vino a quitar. Diez minutos sin un toque significa que
+ * no hay nadie a quien interrumpir; el tic horario que ya busca versión hace
+ * la comprobación.
+ */
+const OCIO_LARGO_MS = 10 * 60_000
+let ultimaInteraccionEn = Date.now()
+
 /** Hay una revisión abierta: la versión nueva espera a que termine. */
 let trabajoDelicado = false
 /** Cuántas fotos están ahora mismo entre la cámara y Dexie. */
 let retenciones = 0
 /** Se intentó instalar con una foto en tránsito: en cuanto se suelte, se instala. */
 let aplicarAlSoltar = false
+/** Alguien PULSÓ actualizar con una foto en tránsito: al soltarse, se obedece
+    sin volver a pasar por las salvaguardas automáticas — fue una orden. */
+let ordenManualAlSoltar = false
 
 /** El registro del navegador, para poder preguntar a demanda. */
 let registro: ServiceWorkerRegistration | null = null
@@ -166,23 +185,41 @@ export function marcarTrabajoDelicado(activo: boolean): void {
 }
 
 /**
- * Retiene cualquier recarga automática mientras una foto viaja de la cámara a
- * Dexie. Devuelve la función que suelta; soltar dos veces no descuenta dos.
+ * Retiene cualquier recarga —automática o pedida con el botón— mientras una
+ * foto viaja de la cámara a Dexie. Devuelve la función que suelta; soltar dos
+ * veces no descuenta dos.
  *
  * Lo usa `capturePhoto` y existe por un fallo silencioso muy concreto: la
  * vuelta de la cámara es también una vuelta a primer plano, y si coincide con
- * una versión en espera, la recarga automática mataría la compresión a mitad y
- * la foto desaparecería sin error ni rastro.
+ * una versión en espera, la recarga mataría la compresión a mitad y la foto
+ * desaparecería sin error ni rastro.
+ *
+ * Con tope de tiempo: si la compresión se cuelga —pasa en WebKit con lienzos
+ * grandes— el `finally` de `capturePhoto` no llega nunca, y sin el tope esa
+ * retención huérfana dejaba la instalación automática bloqueada para siempre.
+ * Ninguna foto legítima tarda un minuto en comprimirse.
  */
 export function retenerRecarga(): () => void {
   retenciones++
   let soltada = false
-  return () => {
+  const soltar = (): void => {
     if (soltada) return
     soltada = true
+    clearTimeout(tope)
     retenciones = Math.max(0, retenciones - 1)
-    if (retenciones === 0 && aplicarAlSoltar) intentarInstalarSola()
+    if (retenciones > 0) return
+    if (ordenManualAlSoltar) {
+      // La orden explícita se obedece tal cual: quien pulsó ya decidió, y
+      // volver a pasarla por las salvaguardas la degradaría a un anuncio.
+      ordenManualAlSoltar = false
+      aplicarAlSoltar = false
+      void aplicarActualizacion()
+      return
+    }
+    if (aplicarAlSoltar) intentarInstalarSola()
   }
+  const tope = setTimeout(soltar, 60_000)
+  return soltar
 }
 
 /**
@@ -201,9 +238,24 @@ export async function buscarActualizacion(): Promise<'encontrada' | 'al-dia' | '
     // Sin red, o el servidor no contesta: distinto de «estás en la última».
     return 'error'
   }
-  return enEspera || registro.installing !== null || registro.waiting !== null
-    ? 'encontrada'
-    : 'al-dia'
+
+  /*
+   * Un `installing` sin controlador es el PRIMER service worker instalándose
+   * —un arranque recién desplegado—, no una versión nueva: la página que lo
+   * registró ya ES la última. Contarlo como «encontrada» hacía decir al panel
+   * «instalándose» en un dispositivo perfectamente al día.
+   */
+  const primeraInstalacion =
+    registro.installing !== null && navigator.serviceWorker.controller === null
+
+  const encontrada =
+    enEspera || registro.waiting !== null || (registro.installing !== null && !primeraInstalacion)
+
+  // Quien busca a mano quiere la versión YA: se reofrece la caja con
+  // «Actualizar ahora» en vez de dejarla esperando al próximo momento seguro.
+  if (encontrada) reofrecerActualizacion()
+
+  return encontrada ? 'encontrada' : 'al-dia'
 }
 
 export function registrarServiceWorker(): void {
@@ -240,6 +292,11 @@ export function registrarServiceWorker(): void {
       registro = reg
       setInterval(() => {
         void reg.update().catch(() => {})
+        // El momento seguro del kiosco: pantalla encendida, nadie tocando. Sin
+        // esto, un dispositivo siempre visible —clavado en el PIN, o de
+        // consulta— no atravesaba nunca ninguna de las otras puertas y se
+        // quedaba con la versión vieja esperando un toque que no llega.
+        if (Date.now() - ultimaInteraccionEn >= OCIO_LARGO_MS) intentarInstalarSola()
       }, 60 * 60_000)
     },
     onRegisterError(error) {
@@ -249,6 +306,19 @@ export function registrarServiceWorker(): void {
       console.error('No se pudo registrar el service worker:', error)
     },
   })
+
+  // Para el momento seguro del ocio hace falta saber cuándo se tocó por última
+  // vez. `pointerdown` y `keydown` cubren dedo y teclado; pasivos, porque aquí
+  // solo se apunta la hora.
+  for (const gesto of ['pointerdown', 'keydown'] as const) {
+    document.addEventListener(
+      gesto,
+      () => {
+        ultimaInteraccionEn = Date.now()
+      },
+      { passive: true },
+    )
+  }
 
   /*
    * El vigía de visibilidad, aquí y no en la interfaz: tiene que funcionar con
@@ -286,8 +356,32 @@ export function onVersionNueva(listener: Listener): () => void {
   return () => listeners.delete(listener)
 }
 
-/** Activa el service worker en espera y recarga. */
+/**
+ * Activa el service worker en espera y recarga.
+ *
+ * También el camino del botón pasa por aquí, y por eso las dos cortesías:
+ *
+ *  - Con una foto en tránsito NO recarga ya: se apunta la orden y se obedece en
+ *    el instante en que la foto quede escrita. El botón «Actualizar ahora» vive
+ *    en la cabecera, visible en plena revisión, y pulsarlo con la compresión a
+ *    medias se tragaba la foto — saltándose la retención que existe para esto.
+ *  - Con una revisión abierta espera el respiro antes de recargar: el
+ *    autoguardado local va con 400 ms de retardo, y la recarga inmediata perdía
+ *    el último toque. La orden se cumple igual, un segundo más tarde.
+ */
 export async function aplicarActualizacion(): Promise<void> {
+  if (retenciones > 0) {
+    ordenManualAlSoltar = true
+    return
+  }
+  if (trabajoDelicado) {
+    await new Promise((listo) => setTimeout(listo, RESPIRO_ANTES_DE_RECARGAR_MS))
+    // Durante el respiro pudo empezar una foto: se vuelve a mirar.
+    if (retenciones > 0) {
+      ordenManualAlSoltar = true
+      return
+    }
+  }
   await actualizar?.(true)
 }
 

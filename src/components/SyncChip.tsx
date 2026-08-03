@@ -355,10 +355,12 @@ export function SyncChip(): React.ReactElement {
 
           {/*
             Qué versión ejecuta ESTE dispositivo.
-            `salud.json` dice qué hay en el servidor, que no es lo mismo: con
-            `registerType: 'prompt'` un iPad puede llevar días con la anterior.
-            Sin este dato, diagnosticar desde una captura de pantalla es
-            adivinar si el código que falla es siquiera el que está corriendo.
+            `salud.json` dice qué hay en el servidor, que no es lo mismo: la
+            versión nueva se instala sola pero espera al siguiente momento
+            seguro (ver src/sw.ts), y un dispositivo con el código de antes de
+            esa política sigue esperando un toque. Sin este dato, diagnosticar
+            desde una captura de pantalla es adivinar si el código que falla es
+            siquiera el que está corriendo.
           */}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-2">
             <button
@@ -373,8 +375,11 @@ export function SyncChip(): React.ReactElement {
               {busqueda === 'buscando' ? 'Buscando…' : 'Buscar versión nueva'}
             </button>
             {busqueda === 'al-dia' && <span className="text-xs text-ok">Estás en la última.</span>}
+            {/* Sin prometer «instalándose»: fuera de un momento seguro la
+                versión queda en espera, y la caja de arriba —que la búsqueda
+                acaba de reofrecer— es la que la instala ya. */}
             {busqueda === 'encontrada' && (
-              <span className="text-xs text-accent">Encontrada: instalándose.</span>
+              <span className="text-xs text-accent">Encontrada: lista para instalar.</span>
             )}
             {busqueda === 'error' && (
               <span className="text-xs text-crit">No se pudo comprobar. ¿Hay red?</span>
