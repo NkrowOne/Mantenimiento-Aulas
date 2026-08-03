@@ -20,10 +20,28 @@ const upsert = vi.fn()
 const uploadFoto = vi.fn()
 /** Lo que contesta el servidor cuando se le pregunta cómo está una fila. */
 const maybeSingle = vi.fn()
+/** Lo que contesta a un UPDATE, y con qué se le llamó. */
+const updateResp = vi.fn()
+const updateArgs: { payload?: unknown; id?: string } = {}
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
-    from: () => ({ upsert, select: () => ({ eq: () => ({ maybeSingle }) }) }),
+    from: () => ({
+      upsert,
+      // La cadena real es `.update(parche).eq('id', fila).select('id')`, y el
+      // `select` importa: sin él PostgREST contesta 204 y no hay forma de saber
+      // si el cambio alcanzó alguna fila.
+      update: (payload: unknown) => {
+        updateArgs.payload = payload
+        return {
+          eq: (_col: string, id: string) => {
+            updateArgs.id = id
+            return { select: () => updateResp() }
+          },
+        }
+      },
+      select: () => ({ eq: () => ({ maybeSingle }) }),
+    }),
     storage: { from: () => ({ upload: uploadFoto }) },
     auth: {
       getSession: () => Promise.resolve({ data: { session: { user: { id: 'u1' } } } }),
@@ -79,6 +97,95 @@ beforeEach(async () => {
   upsert.mockReset().mockResolvedValue({ error: null, status: 201 })
   uploadFoto.mockReset().mockResolvedValue({ error: null })
   maybeSingle.mockReset().mockResolvedValue({ data: null })
+  updateResp.mockReset().mockResolvedValue({ data: [{ id: 'x' }], error: null, status: 200 })
+  delete updateArgs.payload
+  delete updateArgs.id
+})
+
+/**
+ * El cierre de una incidencia: lo único de la cola que no es un alta.
+ *
+ * Va como `update` y no como `upsert` porque un upsert de `incident` no haría
+ * nada —viaja en `IGNORE_DUPLICATES`, así que el servidor lo ignoraría por estar
+ * la fila ya puesta, sin error y sin efecto— y porque la clave de la entrada
+ * lleva sufijo: sin él, encolar el cierre reemplazaría el alta de esa misma fila
+ * y la incidencia no llegaría a existir arriba.
+ */
+describe('el cambio de estado de una incidencia', () => {
+  const cierre = (targetId: string, over: Record<string, unknown> = {}) =>
+    entrada({
+      id: `${targetId}#estado`,
+      op: 'update' as const,
+      targetId,
+      payload: { state: 'resuelta', resolution: 'Pieza sustituida' },
+      ...over,
+    })
+
+  it('sube como UPDATE sobre su fila, no como alta', async () => {
+    await db.outbox.add(cierre('inc-1'))
+
+    const parte = await flush()
+
+    expect(upsert).not.toHaveBeenCalled()
+    expect(updateArgs.id).toBe('inc-1')
+    expect(updateArgs.payload).toEqual({ state: 'resuelta', resolution: 'Pieza sustituida' })
+    expect(parte.subidos).toBe(1)
+    expect(await db.outbox.count()).toBe(0)
+  })
+
+  /*
+   * Cero filas alcanzadas NO es un éxito, y esa es toda la razón de pedir la
+   * fila de vuelta: PostgREST contesta 204 con `error` a null cuando el UPDATE
+   * no llega a nada, y a un técnico no le llega —cerrar incidencias es de
+   * supervisor—. Sin esto, la cola daría por subido un cierre que el servidor
+   * rechazó y la incidencia seguiría abierta sin que nada lo dijera.
+   */
+  it('cero filas alcanzadas se rechaza, y dice por qué', async () => {
+    updateResp.mockResolvedValue({ data: [], error: null, status: 200 })
+    const e = cierre('inc-1')
+    await db.outbox.add(e)
+
+    const parte = await flush()
+
+    expect(parte.subidos).toBe(0)
+    expect(parte.rechazados).toBe(1)
+    const quedo = await db.outbox.get(e.id)
+    expect(quedo?.status).toBe('rechazado')
+    expect(quedo?.lastError).toContain('supervisor')
+  })
+
+  it('un fallo de red vuelve a la cola con su espera, como cualquier otra entrada', async () => {
+    updateResp.mockRejectedValue(new Error('Load failed'))
+    const e = cierre('inc-1')
+    await db.outbox.add(e)
+
+    await flush()
+
+    const quedo = await db.outbox.get(e.id)
+    expect(quedo?.status).toBe('pendiente')
+    expect(quedo?.lastError).toBe('Load failed')
+    expect(quedo?.nextAttemptAt).toBeGreaterThan(Date.now())
+  })
+
+  /*
+   * Y nunca antes que el alta de su propia fila: la incidencia que se abre y se
+   * cierra en la misma sala sin cobertura. Si el alta se queda esperando, el
+   * cierre llegaría a una fila que todavía no existe, no alcanzaría ninguna y se
+   * marcaría rechazado para siempre por un motivo que además es falso.
+   */
+  it('espera al alta de su propia fila en vez de rechazarse', async () => {
+    upsert.mockResolvedValue({ error: { message: 'Bad gateway' }, status: 502 })
+    const alta = entrada({ id: 'inc-1', payload: { id: 'inc-1' }, createdAt: 1 })
+    const e = cierre('inc-1', { createdAt: 2 })
+    await db.outbox.bulkAdd([alta, e])
+
+    await flush()
+
+    expect(updateResp).not.toHaveBeenCalled()
+    const quedo = await db.outbox.get(e.id)
+    expect(quedo?.status).toBe('pendiente')
+    expect(quedo?.lastError).toBeNull()
+  })
 })
 
 describe('flush', () => {

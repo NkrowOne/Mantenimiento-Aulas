@@ -513,16 +513,39 @@ export function useInspection(
      * Se decide con el espejo local —que guarda las incidencias sin resolver— así
      * que funciona igual dentro de un sótano: si ese equipo ya tiene una abierta,
      * no se abre otra, y la revisión de la ronda siguiente no duplica nada.
+     *
+     * Y si esto es una corrección, además **manda sobre lo que abrió la visita
+     * que corrige**: reescribe el parte que sigue vivo con lo que dice ahora, y
+     * retira el que ya no debería existir. Solo lo que abre sube por la cola:
+     * `incident` viaja con «no pises lo que ya está» —lo que evita que un reenvío
+     * choque contra un permiso de supervisor—, así que reescribir desde aquí no
+     * llegaría a ninguna parte. En el servidor lo aplica el disparador de
+     * `inspections` cuando el cierre de esta corrección sube, con la cadena de
+     * versiones entera en la mano.
      */
     const abiertas = await db.incidents.where('room_id').equals(inspection.room_id).toArray()
-    const nuevas = incidenciasDeRevision({
+    const { nuevas, actualizadas, retiradas } = incidenciasDeRevision({
       inspection,
       checks: [...draft.checks.values()],
       etiquetaDe,
       abiertas,
       nuevoId: uuidv7,
+      corrige: inspection.corrects ? [inspection.corrects] : [],
     })
-    if (nuevas.length > 0) await db.incidents.bulkPut(nuevas)
+    /*
+     * Las tres en una sola escritura: el recuento de averías de la sala lo
+     * observa la lista de aulas en vivo, y guardarlas por separado la dejaría
+     * pintar un estado intermedio —la nueva puesta y la retirada todavía no— y
+     * emitir dos eventos de cambio donde basta uno.
+     *
+     * Lo reescrito y lo retirado vive de momento solo aquí. Una descarga que
+     * llegue antes de que suba el cierre puede devolverlo a «abierta» durante los
+     * minutos que tarde la cola; en cuanto el cierre llega, el servidor aplica lo
+     * mismo y la siguiente descarga lo confirma. Sin cobertura —el caso que
+     * importa— no hay descarga que lo pise.
+     */
+    const tocadas = [...nuevas, ...actualizadas, ...retiradas]
+    if (tocadas.length > 0) await db.incidents.bulkPut(tocadas)
 
     /*
      * Y la sala se marca revisada **en local**, no solo en el servidor.
@@ -588,7 +611,7 @@ export function useInspection(
     // cuanto sube, y sin esto la ficha seguiría enseñando la lista de adjuntos de
     // antes de subirla — o sea, ninguna.
     void qc.invalidateQueries({ queryKey: ['fotos-revision'] })
-    if (nuevas.length > 0) void qc.invalidateQueries({ queryKey: ['incidents'] })
+    if (tocadas.length > 0) void qc.invalidateQueries({ queryKey: ['incidents'] })
 
     setDraft(null)
     return inspection

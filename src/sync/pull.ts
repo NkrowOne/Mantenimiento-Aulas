@@ -174,6 +174,39 @@ export async function pullMaster(): Promise<ResultadoPull> {
   }
 
   /**
+   * Las incidencias, con una excepción: lo que este dispositivo ya ha cerrado.
+   *
+   * El cierre de una incidencia viaja por la cola como cambio (`enqueueUpdate`),
+   * así que hay una ventana —de segundos, o de días si no hay cobertura— en la
+   * que aquí está resuelta y arriba todavía no. Sin esta excepción, la primera
+   * descarga que caiga dentro de esa ventana la devuelve a «abierta»: el
+   * supervisor ve reaparecer el parte que acaba de cerrar, la sala vuelve a
+   * contar una avería que no tiene, y no hay nada en pantalla que lo explique.
+   *
+   * Se reconocen por su entrada en la cola —`<id>#…`—, que es exactamente lo que
+   * significa «este dispositivo tiene algo que decir sobre esta fila y aún no lo
+   * ha dicho». En cuanto sube, la entrada desaparece y la descarga siguiente
+   * manda otra vez.
+   */
+  const guardarIncidencias = async (
+    res: Respuesta<Record<string, unknown>>,
+  ): Promise<void> => {
+    if (res.error || !res.data?.length) return
+
+    const claves = (await db.outbox.toCollection().primaryKeys()) as string[]
+    const conCambioPendiente = new Set(
+      claves.filter((k) => k.includes('#')).map((k) => k.slice(0, k.indexOf('#'))),
+    )
+
+    const frescas = (res.data as unknown as Incident[]).filter(
+      (i) => !conCambioPendiente.has(i.id),
+    )
+    if (frescas.length === 0) return
+    await db.incidents.bulkPut(frescas)
+    filas += frescas.length
+  }
+
+  /**
    * Y se borra lo que ya no está.
    *
    * `bulkPut` solo sabe añadir y pisar, así que el espejo era acumulativo: una
@@ -251,7 +284,7 @@ export async function pullMaster(): Promise<ResultadoPull> {
   await guardar<Zone>(de('zones'), db.zones)
   await guardar<StockItem>(de('stock_items'), db.stockItems)
   await guardar<StockLevel>(de('stock_levels'), db.stockLevels)
-  await guardar<Incident>(de('incidents'), db.incidents)
+  await guardarIncidencias(de('incidents'))
   await guardar<AssetType>(de('asset_types'), db.assetTypes)
   await guardar<Asset>(de('assets'), db.assets)
   await guardar<AssetRemoval>(de('asset_removals'), db.assetRemovals)

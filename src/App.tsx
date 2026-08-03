@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { InsigniaAveria, detalleDeAverias } from '@/components/InsigniaAveria'
 import { SyncChip } from '@/components/SyncChip'
@@ -109,7 +109,27 @@ type RoomView =
    * placa de la cabecera de la revisión— y volver tiene que devolver al sitio
    * del que se salió, no a uno que no se ha visto.
    */
-  | { name: 'ficha'; building: Building; room: Room; volverA: 'salas' | 'revision' }
+  | {
+      name: 'ficha'
+      building: Building
+      room: Room
+      volverA: 'salas' | 'revision'
+      /**
+       * De dónde se ha venido, cuando se ha venido de otra pestaña.
+       *
+       * A la ficha se llega ahora también desde una incidencia y desde una línea
+       * del historial, y volver tiene que devolver AHÍ: a la lista que se estaba
+       * triando, con su búsqueda y su desplazamiento. Sin esto, «Volver» dejaría
+       * al supervisor en la lista de aulas de un edificio que no había abierto, y
+       * el camino de vuelta a su cola de trabajo serían tres toques.
+       *
+       * Guarda la vista de «Revisar» tal y como estaba para poder restituirla:
+       * pasar por una incidencia no puede tirar la ronda a medias.
+       */
+      regreso?: { tab: Tab; view: RoomView }
+      /** A qué se ha venido. Lo usa la ficha para abrir por donde toca. */
+      enfocar?: 'incidencias'
+    }
   /* La hoja de placas del edificio. Vive aquí y no en «Datos» porque se imprime
      desde donde se está trabajando: se decide etiquetar un edificio cuando se
      está recorriendo ese edificio. */
@@ -284,6 +304,13 @@ export function App(): React.ReactElement {
     }
   }, [buildingId])
 
+  /* Dónde se está ahora mismo, para poder volver aquí desde otra pestaña sin
+     que ese dato entre en las dependencias de ningún callback. */
+  const ubicacion = useRef<{ tab: Tab; view: RoomView }>({ tab, view })
+  useEffect(() => {
+    ubicacion.current = { tab, view }
+  }, [tab, view])
+
   /*
    * La custodia se engancha ANTES de restaurar nada, y fuera del efecto que
    * depende de `unlocked`: la primera renovación del token puede ocurrir dentro
@@ -359,6 +386,40 @@ export function App(): React.ReactElement {
     // viene a revisar. La ficha está a un toque, en la placa de la cabecera.
     setView({ name: 'revision', building, room })
     return true
+  }, [])
+
+  /*
+   * Abrir la ficha de un aula desde OTRA pestaña.
+   *
+   * Lo llaman la lista de incidencias y el historial, que hasta ahora eran dos
+   * pantallas de solo lectura: decían qué pasa y en qué aula, y el resto era
+   * cosa del usuario —memorizar «H 1.7», cambiar de pestaña, elegir edificio y
+   * bajar por una lista de treinta y nueve—. Con esto, la incidencia lleva al
+   * sitio donde se resuelve.
+   *
+   * Se guarda de dónde se venía, pestaña Y vista, para que «Volver» devuelva a
+   * la cola de trabajo y no a un edificio que nadie había abierto. Se lee de un
+   * ref y no del estado para que el callback sea estable: con `tab` y `view` en
+   * las dependencias se rehace en cada navegación, y con él las dos pantallas
+   * que lo reciben.
+   */
+  const abrirFicha = useCallback((roomId: string): void => {
+    void (async () => {
+      const room = await db.rooms.get(roomId)
+      const zone = room ? await db.zones.get(room.zone_id) : undefined
+      const building = zone ? await db.buildings.get(zone.building_id) : undefined
+      if (!room || !building) return
+
+      setTab('revisar')
+      setView({
+        name: 'ficha',
+        building,
+        room,
+        volverA: 'salas',
+        regreso: { ...ubicacion.current },
+        enfocar: 'incidencias',
+      })
+    })()
   }, [])
 
 
@@ -816,13 +877,23 @@ export function App(): React.ReactElement {
             buildingName={view.building.name}
             zoneName={zoneName}
             userId={userId}
-            onBack={() =>
+            role={role}
+            enfocar={view.enfocar ?? null}
+            onBack={() => {
+              if (view.name !== 'ficha') return
+              /* Se vino de otra pestaña: se devuelve exactamente ahí, con la
+                 vista de «Revisar» tal y como estaba. */
+              if (view.regreso) {
+                setTab(view.regreso.tab)
+                setView(view.regreso.view)
+                return
+              }
               setView(
-                view.name === 'ficha' && view.volverA === 'salas'
+                view.volverA === 'salas'
                   ? { name: 'salas', building: view.building }
                   : { name: 'revision', building: view.building, room: view.room },
               )
-            }
+            }}
             onRevisar={() =>
               setView({
                 name: 'revision',
@@ -870,9 +941,14 @@ export function App(): React.ReactElement {
               }}
             />
           )}
-          {tab === 'incidencias' && <IncidentsPage />}
+          {/* La incidencia lleva a su aula, que es donde se resuelve: la ficha
+              abre por el bloque de incidencias abiertas y «Volver» devuelve
+              aquí, a la cola de trabajo que se estaba triando. */}
+          {tab === 'incidencias' && (
+            <IncidentsPage role={role} userId={userId} onSala={abrirFicha} />
+          )}
           {tab === 'almacen' && <StockPage role={role} />}
-          {tab === 'historial' && <HistorialPage />}
+          {tab === 'historial' && <HistorialPage onSala={abrirFicha} />}
           {/* El rol llega porque la configuración de la IA —que guarda un
               secreto— es de administrador, mientras que pedir informes es de
               supervisor. La pestaña la ven los dos. */}

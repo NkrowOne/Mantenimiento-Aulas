@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { displayRoomCode, norm } from '@/domain/normalize'
 import { salasQueCasan, type SalaBuscable } from './busqueda'
-import { MaterialUsado } from './MaterialUsado'
+import { AccionesDeIncidencia, type PanelDeIncidencia } from './AccionesDeIncidencia'
+import { puedeCerrar } from './acciones'
 import { Borradores } from './Borradores'
-import { INCIDENT_KIND_LABELS, type IncidentKind, type IncidentState } from '@/domain/types'
+import {
+  INCIDENT_KIND_LABELS,
+  type Incident,
+  type IncidentKind,
+  type IncidentState,
+  type Role,
+} from '@/domain/types'
 
 interface IncidentRow {
   id: string
@@ -63,13 +70,28 @@ const STATE_LABEL: Record<IncidentState, string> = {
   resuelta: 'Resuelta',
 }
 
-export function IncidentsPage(): React.ReactElement {
+interface Props {
+  role: Role
+  userId: string | null
+  /**
+   * Ir a la ficha de la sala de esta incidencia.
+   *
+   * Es la mitad de esta pantalla que faltaba. Una incidencia dice qué pasa y
+   * dónde, y hasta ahora el «dónde» era texto muerto: para ver qué más arrastra
+   * esa aula —el inventario, las revisiones, si el mismo aparato ya falló tres
+   * veces— había que memorizar «H 1.7», cambiar de pestaña, elegir edificio y
+   * buscarla en una lista de treinta y nueve.
+   */
+  onSala: (roomId: string) => void
+}
+
+export function IncidentsPage({ role, userId, onSala }: Props): React.ReactElement {
   const qc = useQueryClient()
   const [showResolved, setShowResolved] = useState(false)
   const [query, setQuery] = useState('')
-  /* Qué incidencia tiene abierto el apunte de material. Solo una: el técnico
-     está apuntando lo de una avería, no llevando la contabilidad de seis. */
-  const [apuntando, setApuntando] = useState<string | null>(null)
+  /* Qué incidencia tiene abierto un panel, y cuál. Solo una: el técnico está
+     apuntando lo de una avería, no llevando la contabilidad de seis. */
+  const [abierta, setAbierta] = useState<{ id: string; panel: PanelDeIncidencia } | null>(null)
 
   /*
    * La sala de cada incidencia, resuelta desde el espejo local.
@@ -111,6 +133,31 @@ export function IncidentsPage(): React.ReactElement {
   }, [])
 
   const salas = espejo?.etiquetas
+
+  /*
+   * Lo que este dispositivo ya ha decidido y todavía no ha podido contar.
+   *
+   * La lista la contesta el servidor, pero el cierre viaja por la cola de
+   * salida: hay una ventana —segundos con cobertura, días sin ella— en la que
+   * aquí está resuelta y arriba todavía no. Sin superponer nada, el supervisor
+   * pulsa «Resolver», la lista se refresca y el parte sigue ahí abierto, que es
+   * exactamente la pantalla que enseña a no fiarse del botón.
+   *
+   * Y solo lo que TIENE UN CAMBIO ESPERANDO EN LA COLA, no el espejo entero.
+   * Superponiendo el espejo a secas, una incidencia que un compañero acaba de
+   * poner «en curso» se vería «abierta» aquí hasta la siguiente descarga: el
+   * espejo de este dispositivo es más viejo que la respuesta que se está
+   * pintando, así que ganar no le corresponde. La entrada en la cola —`<id>#…`—
+   * es justo la diferencia entre «esto lo sé yo antes que el servidor» y «esto
+   * lo sabía yo hace un rato».
+   */
+  const estadoLocal = useLiveQuery(async () => {
+    const claves = (await db.outbox.toCollection().primaryKeys()) as string[]
+    const conCambio = claves.filter((k) => k.includes('#')).map((k) => k.slice(0, k.indexOf('#')))
+    if (conCambio.length === 0) return new Map<string, Incident>()
+    const filas = await db.incidents.bulkGet(conCambio)
+    return new Map(filas.filter((i): i is Incident => i !== undefined).map((i) => [i.id, i]))
+  }, [])
 
   const LIMITE = 200
 
@@ -264,14 +311,29 @@ export function IncidentsPage(): React.ReactElement {
     },
   })
 
+  /*
+   * La lista del servidor, con lo que el dispositivo sabe encima.
+   *
+   * Solo el estado y su resolución: el resto lo manda el servidor, que es quien
+   * ve lo que han hecho los demás.
+   */
+  const conEstadoLocal = useMemo(() => {
+    if (!estadoLocal || estadoLocal.size === 0) return incidents ?? []
+    return (incidents ?? []).map((i) => {
+      const local = estadoLocal.get(i.id)
+      if (!local || local.state === i.state) return i
+      return { ...i, state: local.state, resolved_at: local.resolved_at }
+    })
+  }, [incidents, estadoLocal])
+
   const visibles = useMemo(() => {
     const q = norm(query)
-    if (!q) return incidents ?? []
+    if (!q) return conEstadoLocal
     // Lo que el servidor trajo POR SALA se queda: el filtro de texto de aquí
     // abajo compara contra la etiqueta «H 1.7» y no casaría «1.7 H», que es
     // justo como lo escribe el histórico. La sala ya decidió en el servidor.
     const porSala = new Set(idsDeSala)
-    return (incidents ?? []).filter(
+    return conEstadoLocal.filter(
       (i) =>
         (i.room_id !== null && porSala.has(i.room_id)) ||
         norm(i.title).includes(q) ||
@@ -282,43 +344,7 @@ export function IncidentsPage(): React.ReactElement {
         norm(i.external_ref ?? '').includes(q) ||
         norm(i.room_id ? (salas?.get(i.room_id) ?? '') : '').includes(q),
     )
-  }, [incidents, query, salas, idsDeSala])
-
-  const advance = useMutation({
-    mutationFn: async (input: { id: string; state: IncidentState; resolution?: string }) => {
-      const { data: user } = await supabase.auth.getUser()
-      const patch: Record<string, unknown> = { state: input.state }
-
-      if (input.state === 'resuelta') {
-        patch['resolved_at'] = new Date().toISOString()
-        patch['resolved_by'] = user.user?.id ?? null
-        if (input.resolution) patch['resolution'] = input.resolution
-      }
-
-      /*
-       * Se pide la fila de vuelta, y sin ella esto es un fallo.
-       *
-       * Un UPDATE que no alcanza ninguna fila **no es un error** para PostgREST:
-       * responde 204 con `error` a null. Y a un técnico no le alcanza ninguna —la
-       * única política de UPDATE que le sirve exige que sea su propio borrador—,
-       * así que pulsar «Resolver» entraba por `onSuccess`, invalidaba la consulta,
-       * la lista se redibujaba igual y la incidencia seguía abierta. Sin un
-       * mensaje, sin un error, sin nada: la pantalla decía que sí y el servidor
-       * decía que no. Y el aviso «Solo un supervisor cierra incidencias» que hay
-       * escrito ahí abajo cuelga de `advance.isError`, o sea que nunca se pintaba.
-       */
-      const { data, error } = await supabase
-        .from('incidents')
-        .update(patch)
-        .eq('id', input.id)
-        .select('id')
-      if (error) throw error
-      if (!data || data.length === 0) {
-        throw new Error('El servidor no ha aplicado el cambio: hace falta ser supervisor.')
-      }
-    },
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['incidents'] }),
-  })
+  }, [conEstadoLocal, query, salas, idsDeSala])
 
   return (
     <div className="mx-auto max-w-4xl p-4">
@@ -372,6 +398,21 @@ export function IncidentsPage(): React.ReactElement {
         />
       </label>
 
+      {/*
+        Quién cierra, dicho una vez y arriba.
+        Antes cada fila ofrecía «Empezar» y «Resolver» a todo el mundo y a un
+        técnico le fallaban las dos: el servidor no le deja, y la explicación
+        aparecía al pie de la pantalla después de pulsar. Ahora los botones que
+        no van a funcionar no se dibujan, y el motivo se lee antes.
+      */}
+      {!puedeCerrar(role) && (
+        <p className="mt-3 text-xs leading-relaxed text-muted">
+          Cerrar y empezar incidencias es cosa de un supervisor. Lo que sí puedes hacer desde
+          aquí es apuntar el material que has gastado, y abrir la ficha del aula tocando la
+          incidencia.
+        </p>
+      )}
+
       <ul className="mt-3 divide-y divide-line">
         {visibles.map((i) => {
           const days = Math.floor((Date.now() - new Date(i.opened_at).getTime()) / 86_400_000)
@@ -396,8 +437,49 @@ export function IncidentsPage(): React.ReactElement {
                   {STATE_LABEL[i.state]}
                 </span>
 
-                <div className="min-w-0 flex-1 basis-48">
-                  <p className="font-medium">{i.title}</p>
+                {/*
+                  El texto de la fila ES el enlace al aula.
+
+                  Va como botón hermano de las acciones y no envolviéndolas —un
+                  botón dentro de otro no es HTML válido, y en iOS se traduce en
+                  una zona donde el toque no se sabe de quién es—. La superficie
+                  entera del texto abre la ficha, que es lo que se quiere pulsar
+                  cuando lo que hace falta es contexto: qué más hay en esa aula,
+                  si el mismo aparato ya falló tres veces, qué se apuntó la
+                  última vez.
+                */}
+                <button
+                  type="button"
+                  disabled={i.room_id === null}
+                  onClick={() => i.room_id && onSala(i.room_id)}
+                  aria-label={
+                    sala ? `Abrir la ficha del aula ${sala}` : 'Esta incidencia no tiene sala'
+                  }
+                  className="min-w-0 flex-1 basis-48 rounded-ctl text-left disabled:cursor-default disabled:opacity-100"
+                >
+                  <p className="font-medium">
+                    {i.title}
+                    {/* El galón dice «esto lleva a algún sitio» sin gastar una
+                        palabra, y es el mismo de las revisiones anteriores. */}
+                    {i.room_id !== null && (
+                      <svg
+                        aria-hidden="true"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        className="ml-1 inline-block align-[-0.15em] text-muted"
+                      >
+                        <path
+                          d="M9 6l6 6-6 6"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </p>
                   <p className="mt-0.5 text-xs text-muted">
                     {sala && <span className="font-mono font-semibold text-ink-2">{sala} · </span>}
                     {/* La importación dejó 118 sin sala identificada. Decirlo en
@@ -443,42 +525,21 @@ export function IncidentsPage(): React.ReactElement {
                       {i.description}
                     </p>
                   )}
-                </div>
-
-                {i.state !== 'resuelta' && (
-                  <div className="ml-auto flex shrink-0 gap-2">
-                    {i.state === 'abierta' && (
-                      <button
-                        type="button"
-                        onClick={() => advance.mutate({ id: i.id, state: 'en_curso' })}
-                        className="key key-quiet min-h-11 px-3 text-xs"
-                      >
-                        Empezar
-                      </button>
-                    )}
-                    {/* El material se apunta antes de cerrar: después nadie
-                        vuelve a la incidencia, y ese era el dato que no llegaba
-                        nunca al almacén. */}
-                    <button
-                      type="button"
-                      aria-expanded={apuntando === i.id}
-                      onClick={() => setApuntando((a) => (a === i.id ? null : i.id))}
-                      className="key key-quiet min-h-11 px-3 text-xs"
-                    >
-                      Material
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => advance.mutate({ id: i.id, state: 'resuelta' })}
-                      className="key key-accent min-h-11 px-3 text-xs"
-                    >
-                      Resolver
-                    </button>
-                  </div>
-                )}
+                </button>
               </div>
 
-              {apuntando === i.id && <MaterialUsado incidentId={i.id} roomId={i.room_id} />}
+              {i.state !== 'resuelta' && (
+                <div className="mt-2">
+                  <AccionesDeIncidencia
+                    incident={i}
+                    role={role}
+                    userId={userId}
+                    panel={abierta?.id === i.id ? abierta.panel : null}
+                    onPanel={(panel) => setAbierta(panel ? { id: i.id, panel } : null)}
+                    onHecho={() => void qc.invalidateQueries({ queryKey: ['incidents-resueltas'] })}
+                  />
+                </div>
+              )}
             </li>
           )
         })}
@@ -528,14 +589,6 @@ export function IncidentsPage(): React.ReactElement {
           </button>
         )}
 
-      {/* `role="alert"` porque ahora sí llega: es la respuesta a un botón que
-          parecía funcionar y no hacía nada. */}
-      {advance.isError && (
-        <p role="alert" className="mt-4 text-sm text-crit">
-          No se ha podido cambiar el estado: cerrar y empezar incidencias es cosa de
-          un supervisor.
-        </p>
-      )}
     </div>
   )
 }

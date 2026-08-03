@@ -70,8 +70,17 @@ Al tocar un aula en la lista se abre **su ficha**, no el formulario. Es la
 pantalla que contesta a lo que uno se pregunta llegando a la puerta: cuándo se
 revisó, qué hay registrado, qué queda abierto y qué le ha pasado antes.
 
-Dos cosas viven aquí:
+Tres cosas viven aquí:
 
+- **Las incidencias abiertas de esa aula**, con lo que urge primero. Sale del
+  propio dispositivo, así que se lee **también sin cobertura** — es justo la
+  lista que hace falta al abrir la puerta: «¿esto ya está reportado?». Cada una
+  trae al lado **«Material»**, para apuntar lo que has gastado, y **«Resolver»**
+  si eres supervisor. Cerrarla pide decir **cómo** —Reparado, Pieza sustituida,
+  Ajuste o reinicio, Ya funcionaba, No procede— y el detalle es opcional: sin
+  eso, el histórico dice que se cerró y no dice qué se hizo, que es lo único que
+  le sirve a quien se encuentre el mismo aparato dentro de tres meses. El cierre
+  se guarda en el momento y sube cuando haya red, como todo lo demás.
 - **Las revisiones anteriores**, listadas: una fila por visita con la fecha,
   quién la hizo, cómo salió y qué hay dentro (fotos, observación, corregida).
   **Tocando la fila se abre su ficha en una pantalla propia**, con todo lo de
@@ -103,9 +112,20 @@ Lo que pasa al guardar:
   haber arreglado una errata, y en el informe sigue contando una visita, no dos.
 - **La original no se borra.** Se sigue leyendo: en la ficha de la revisión
   aparece «Original / Corrección 1» para ver qué decía antes.
-- **Las incidencias que abrió no se cierran solas.** Si marcas que el proyector
-  estaba bien, el parte que se abrió sigue abierto: eso lo cierra un supervisor,
-  con su resolución. La aplicación te lo dice mientras corriges.
+- **Manda la corrección sobre lo que abrió aquella visita.** Es la parte que más
+  se nota:
+  - Si el equipo **sigue en falla**, conserva el parte que ya tenía: se le pone
+    la gravedad y la nota que escribas ahora, y **no se abre una segunda
+    incidencia** del mismo aparato.
+  - Si marcas que **estaba bien**, el parte se **retira** de Incidencias. No es
+    que alguien lo haya arreglado: la revisión se equivocó, y así queda escrito.
+  - Y si por lo que fuera había **dos partes del mismo equipo**, se queda el más
+    antiguo —el que lleva el ticket y el material apuntado— y el otro se retira
+    como copia.
+
+  Solo alcanza a lo que abrió **esa visita**. Una avería que apuntó otra persona
+  a mano, o la revisión de otro día, no se toca: corregir una errata no puede
+  cerrarle el trabajo a nadie.
 
 Puedes corregir la revisión de un compañero, y él la tuya: queda firmado quién
 corrigió y cuándo. Si empiezas una corrección y la dejas a medias, la ficha te
@@ -333,7 +353,15 @@ de aquel día, y la anterior se queda guardada y legible. Lo que no se puede es
 **reescribirla**: eso es lo que hace que el histórico valga como registro.
 
 **¿Por qué no puedo cerrar una incidencia?**
-Los técnicos las abren; cerrarlas es cosa de supervisores.
+Los técnicos las abren; cerrarlas es cosa de supervisores. Por eso el botón
+«Resolver» no te aparece: antes salía y fallaba al pulsarlo. Lo que sí puedes
+hacer en cualquiera es **apuntar el material** que has gastado, y eso conviene
+hacerlo antes de que alguien la cierre — después nadie vuelve a la incidencia.
+
+**Tengo una incidencia delante y quiero ver el aula. ¿Hay atajo?**
+Sí: **toca la incidencia**. En la pestaña de Incidencias y en el Historial, cada
+línea abre la ficha de su aula por el bloque de incidencias abiertas, y «Volver»
+te devuelve exactamente a la lista que estabas mirando.
 
 **¿Puedo usar mi móvil y el iPad a la vez?**
 Sí, pero cada dispositivo necesita su propia alta con su código.

@@ -84,7 +84,14 @@ const ATAJOS: Array<{ id: Atajo; label: string }> = [
   { id: 'curso', label: 'Este curso' },
 ]
 
-export function HistorialPage(): React.ReactElement {
+/**
+ * Ir al aula de una línea del histórico.
+ *
+ * Es lo que convierte esta pantalla de un informe en un sitio del que se sale a
+ * trabajar: se lee «Proyector: no da imagen · H 1.7» y se abre esa aula, con sus
+ * incidencias abiertas delante y el botón de cerrarlas al lado.
+ */
+export function HistorialPage({ onSala }: { onSala: (roomId: string) => void }): React.ReactElement {
   const [familia, setFamilia] = useState<Familia | null>(null)
   const [buildingId, setBuildingId] = useState('')
   const [roomId, setRoomId] = useState('')
@@ -367,7 +374,11 @@ export function HistorialPage(): React.ReactElement {
           <h2 className="sticky top-12 z-[1] -mx-4 bg-ground px-4 py-1.5 text-xs font-semibold capitalize text-muted">
             {grupo.dia}
           </h2>
-          <LineaTiempo eventos={grupo.eventos} salaDe={roomId ? undefined : nombreDeSala} />
+          <LineaTiempo
+            eventos={grupo.eventos}
+            salaDe={roomId ? undefined : nombreDeSala}
+            onSala={onSala}
+          />
         </section>
       ))}
 

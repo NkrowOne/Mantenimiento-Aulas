@@ -28,7 +28,15 @@ import type {
 
 /** Una operación esperando a subir. El id es la clave de idempotencia. */
 export interface OutboxEntry {
-  /** uuid v7 del registro afectado. Reenviarlo dos veces no duplica nada. */
+  /**
+   * uuid v7 del registro afectado. Reenviarlo dos veces no duplica nada.
+   *
+   * En un `update` NO es el id de la fila: es el de la entrada, que lleva un
+   * sufijo (`<uuid>#cierre`). Sin él, encolar el cierre de una incidencia
+   * recién abierta sin cobertura **reemplazaría el alta** —`enqueue` guarda por
+   * clave primaria— y la incidencia no llegaría a existir en el servidor. Cuál
+   * es la fila lo dice `targetId`.
+   */
   id: string
   entity:
     | 'inspection'
@@ -41,7 +49,18 @@ export interface OutboxEntry {
     | 'asset'
     | 'asset_removal'
     | 'room_inventory'
-  op: 'upsert'
+  /**
+   * `upsert` es el camino de siempre: la fila nace en el dispositivo con su
+   * identidad y se manda entera.
+   *
+   * `update` es para lo que **ya existe arriba** y solo cambia de estado —cerrar
+   * una incidencia—: mandarla entera con un upsert no serviría, porque
+   * `incident` viaja en `IGNORE_DUPLICATES` y el servidor la ignoraría por estar
+   * ya puesta. Ver `pushEntry`.
+   */
+  op: 'upsert' | 'update'
+  /** A qué fila apunta un `update`. En un `upsert` es el propio `id`. */
+  targetId?: string
   payload: Record<string, unknown>
   createdAt: number
   attempts: number
@@ -222,6 +241,41 @@ export async function enqueue<T extends object>(
     attempts: 0,
     // Un reintento pendiente se reinicia: el contenido cambió, merece un
     // intento inmediato en vez de arrastrar el backoff del intento anterior.
+    nextAttemptAt: 0,
+    status: 'pendiente',
+    lastError: null,
+  })
+}
+
+/**
+ * Encola un cambio sobre una fila que ya está en el servidor.
+ *
+ * Existe para una sola cosa hoy —cerrar o empezar una incidencia— y por eso no
+ * intenta ser genérica: lo que se manda es un parche, no la fila entera, así que
+ * dos personas que toquen la misma incidencia a la vez no se pisan campos que
+ * ninguna de las dos ha cambiado.
+ *
+ * La clave de la entrada lleva sufijo para no chocar con el alta de esa misma
+ * fila, que puede seguir en la cola. Y **se reemplaza** si ya había otra del
+ * mismo sufijo: pulsar «Resolver» dos veces es una sola orden.
+ */
+export async function enqueueUpdate<T extends object>(
+  entity: OutboxEntry['entity'],
+  targetId: string,
+  sufijo: string,
+  patch: T,
+): Promise<void> {
+  const id = `${targetId}#${sufijo}`
+  const existing = await db.outbox.get(id)
+
+  await db.outbox.put({
+    id,
+    entity,
+    op: 'update',
+    targetId,
+    payload: { ...patch } as Record<string, unknown>,
+    createdAt: existing?.createdAt ?? Date.now(),
+    attempts: 0,
     nextAttemptAt: 0,
     status: 'pendiente',
     lastError: null,

@@ -161,16 +161,29 @@ export function InspectionPage({
             </p>
           )}
 
-          {/* Las incidencias que abrió la original siguen abiertas, y hay que
-              decirlo: marcar aquí «correcto» un equipo no cierra el parte que ya
-              tiene alguien asignado. Cerrar una incidencia es otro acto y lo hace
-              otra persona. */}
+          {/*
+            Qué pasa con los partes que abrió aquella visita, dicho antes de
+            tocar nada.
+
+            Es el cambio de fondo de esta pantalla, y no puede ser una sorpresa:
+            una corrección MANDA sobre lo que abrió la visita que corrige. Antes
+            no —las incidencias se quedaban abiertas y había que ir a cerrarlas a
+            mano— y eso convertía cada errata en dos trabajos: corregir la
+            revisión y perseguir el parte que no debió existir. Con 276 aulas por
+            ronda, el segundo no se hacía.
+
+            Se dice «se retira», no «se resuelve», porque no es lo mismo y el
+            histórico lo va a distinguir: nadie ha arreglado nada, la revisión se
+            equivocó. Y solo alcanza a lo que abrió ESTA visita: lo que apuntó
+            otra persona a mano sigue siendo suyo.
+          */}
           {(correccion?.fallos ?? 0) > 0 && (
             <p className="mt-2 text-xs leading-relaxed text-muted">
               Aquella revisión dejó {correccion!.fallos}{' '}
-              {correccion!.fallos === 1 ? 'equipo en falla' : 'equipos en falla'}. Si aquí
-              marcas que estaban bien, las incidencias que se abrieron siguen abiertas: se
-              cierran desde Incidencias, con su resolución.
+              {correccion!.fallos === 1 ? 'equipo en falla' : 'equipos en falla'}. Lo que
+              aquí marques manda sobre eso: el que siga en falla conserva su parte —con la
+              gravedad y la nota que pongas ahora, sin abrir uno segundo— y el que marques
+              correcto se retira de Incidencias diciendo que fue una corrección.
             </p>
           )}
 

@@ -370,9 +370,101 @@ async function cerrarEntrada(
   else await enVuelo.modify(cambios)
 }
 
+/**
+ * Un cambio sobre una fila que ya está arriba: cerrar o empezar una incidencia.
+ *
+ * Es la única entrada de la cola que no es un alta, y por eso va por su cuenta.
+ * Tres cosas la separan del camino normal:
+ *
+ *  - Es un `update` y no un `upsert`. Un upsert de `incident` no haría nada:
+ *    viaja en `IGNORE_DUPLICATES` —lo que evita que un reenvío del alta choque
+ *    contra el permiso de supervisor— así que el servidor lo ignoraría por estar
+ *    la fila ya puesta, sin error y sin efecto. Exactamente el fallo que este
+ *    fichero lleva media docena de comentarios intentando no repetir.
+ *  - Se pide la fila de vuelta, y **cero filas es un fallo**. Un UPDATE que no
+ *    alcanza ninguna fila no es un error para PostgREST: contesta 204 con
+ *    `error` a null. Y a un técnico no le alcanza ninguna —cerrar incidencias es
+ *    de supervisor—, así que sin esto la cola daría por subido un cierre que el
+ *    servidor rechazó, y la incidencia seguiría abierta sin que nada lo dijera.
+ *  - Y ese fallo es permanente a propósito: no se arregla reintentando. Sale en
+ *    la pantalla de pendientes con su motivo, que es donde se puede leer.
+ */
+async function pushUpdate(entry: OutboxEntry): Promise<boolean> {
+  const fila = entry.targetId ?? entry.id
+
+  /*
+   * Nunca antes que el alta de su propia fila.
+   *
+   * Pasa con la incidencia que se abre y se cierra en la misma sala sin
+   * cobertura: si el alta se queda esperando —un corte a mitad de subida— el
+   * cierre llegaría a una fila que todavía no existe, no alcanzaría ninguna y se
+   * marcaría rechazado para siempre por «hace falta ser supervisor», que además
+   * es mentira. En la pasada normal el alta va delante (misma familia, más
+   * antigua), así que esto solo actúa cuando algo ha ido mal; el alta rechazada
+   * sí lo deja pasar, porque si no el cierre esperaría eternamente a algo que no
+   * se va a mover solo.
+   */
+  const alta = await db.outbox.get(fila)
+  if (alta && alta.status !== 'rechazado') {
+    await cerrarEntrada(entry.id, {
+      status: 'pendiente',
+      nextAttemptAt: 0,
+      lastError: null,
+    })
+    return false
+  }
+
+  let alcanzadas = 0
+
+  const fallo = await intentar(async () => {
+    const res = await supabase
+      .from(TABLE[entry.entity])
+      .update(entry.payload)
+      .eq('id', fila)
+      .select('id')
+    alcanzadas = res.data?.length ?? 0
+    return res
+  })
+
+  if (!fallo && alcanzadas === 0) {
+    await cerrarEntrada(entry.id, {
+      status: 'rechazado',
+      attempts: entry.attempts + 1,
+      lastError:
+        'El servidor no ha aplicado el cambio: cerrar y empezar incidencias es cosa de un supervisor.',
+    })
+    return false
+  }
+
+  if (!fallo) {
+    await cerrarEntrada(entry.id, null)
+    return true
+  }
+
+  const attempts = entry.attempts + 1
+  if (isPermanentFailure(fallo.status)) {
+    await cerrarEntrada(entry.id, {
+      status: 'rechazado',
+      attempts,
+      lastError: `${fallo.status}: ${fallo.message}`,
+    })
+    return false
+  }
+
+  await cerrarEntrada(entry.id, {
+    status: 'pendiente',
+    attempts,
+    nextAttemptAt: Date.now() + backoffMs(attempts),
+    lastError: fallo.message,
+  })
+  return false
+}
+
 /** @returns si la entrada llegó a subir. */
 async function pushEntry(entry: OutboxEntry): Promise<boolean> {
   await db.outbox.update(entry.id, { status: 'enviando' })
+
+  if (entry.op === 'update') return pushUpdate(entry)
 
   /*
    * El cierre de una revisión es lo ÚLTIMO que sube de ella.

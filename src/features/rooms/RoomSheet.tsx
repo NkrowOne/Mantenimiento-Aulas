@@ -42,7 +42,7 @@
  * medias.
  */
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { v7 as uuidv7 } from 'uuid'
@@ -52,10 +52,23 @@ import { flush } from '@/sync/outbox'
 import { RoomPlate } from '@/components/RoomPlate'
 import { DoorPlate } from '@/components/DoorPlate'
 import { RevisionesAnteriores } from '@/features/inspection/RevisionesAnteriores'
+import {
+  AccionesDeIncidencia,
+  type PanelDeIncidencia,
+} from '@/features/incidents/AccionesDeIncidencia'
+import { puedeCerrar } from '@/features/incidents/acciones'
 import type { Correccion } from '@/features/inspection/useInspection'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaCorta } from '@/domain/fechas'
-import { INCIDENT_KIND_LABELS, type Incident, type IncidentKind, type Room } from '@/domain/types'
+import { esAveriaViva } from './averias'
+import {
+  INCIDENT_KIND_LABELS,
+  STALE_INCIDENT_DAYS,
+  type Incident,
+  type IncidentKind,
+  type Role,
+  type Room,
+} from '@/domain/types'
 
 interface TimelineRow {
   at: string
@@ -104,6 +117,32 @@ interface Reincidencia {
  */
 const TIPOS_REGISTRABLES: IncidentKind[] = ['incidencia', 'solicitud']
 
+/**
+ * En qué orden se despachan las incidencias de un aula.
+ *
+ * Las averías antes que las solicitudes —una cámara por instalar no compite con
+ * un proyector roto—, dentro de las averías primero lo que impide dar clase, y a
+ * igual gravedad lo más viejo. Es el orden en que las miraría alguien que entra a
+ * arreglar, y el único que no necesita explicación al lado.
+ *
+ * La gravedad de una solicitud no entra en el orden a propósito: la columna es
+ * obligatoria en la tabla, así que «Molesta» aplicado a «instalar una cámara» es
+ * un valor por defecto disfrazado de dato. Por eso tampoco se pinta.
+ */
+const GRAVEDAD_ORDEN: Record<string, number> = { alta: 3, media: 2, baja: 1 }
+
+/** Lo que se lee de una gravedad, con las palabras que se eligen en el aula. */
+const GRAVEDAD_TEXTO: Record<string, string> = {
+  alta: 'Impide la clase',
+  media: 'Molesta',
+  baja: 'Leve',
+}
+
+/** Cuántos días lleva abierta. Es lo que decide qué se atiende antes. */
+function diasAbierta(desde: string): number {
+  return Math.max(0, Math.floor((Date.now() - new Date(desde).getTime()) / 86_400_000))
+}
+
 /** Cómo se marca cada cosa en la línea de tiempo. Nunca solo el color. */
 const MARCA: Record<TimelineRow['kind'], { punto: string; texto: string }> = {
   incidencia: { punto: 'bg-crit', texto: 'Incidencia' },
@@ -126,6 +165,17 @@ interface Props {
   buildingName: string
   zoneName: string
   userId: string | null
+  /** Decide si esta persona puede cerrar partes. Lo comprueba también el servidor. */
+  role: Role
+  /**
+   * A qué se ha venido, cuando no se ha venido a revisar.
+   *
+   * Se llega aquí desde una incidencia o desde una línea del historial, y en ese
+   * caso la ficha entera es el rodeo: lo que se buscaba está en el bloque de
+   * incidencias abiertas, a media pantalla de distancia. Con esto, la pantalla
+   * abre donde estaba la pregunta.
+   */
+  enfocar?: 'incidencias' | null
   onBack: () => void
   onRevisar: () => void
   /**
@@ -145,6 +195,8 @@ export function RoomSheet({
   buildingName,
   zoneName,
   userId,
+  role,
+  enfocar,
   onBack,
   onRevisar,
   onCorregir,
@@ -156,6 +208,70 @@ export function RoomSheet({
   const [texto, setTexto] = useState('')
   const [codigo, setCodigo] = useState('')
   const [guardado, setGuardado] = useState<string | null>(null)
+  /* Qué incidencia de esta sala tiene un panel abierto. Una sola, igual que en
+     la pestaña: se está despachando una avería, no seis. */
+  const [enPanel, setEnPanel] = useState<{ id: string; panel: PanelDeIncidencia } | null>(null)
+
+  /*
+   * Las incidencias vivas de esta sala, del espejo local.
+   *
+   * Del espejo y no del servidor, y ahí está el cambio: la ficha se abre en un
+   * sótano y esta es justo la lista que hace falta al llegar —qué queda por
+   * arreglar aquí—. El espejo guarda todo lo que no está resuelto, así que la
+   * respuesta ya estaba en el dispositivo; lo que faltaba era enseñarla. Hasta
+   * ahora la única forma de saber qué tenía abierto un aula era el histórico, que
+   * necesita conexión y mezcla las de hace tres años.
+   */
+  const abiertasAqui = useLiveQuery(
+    async () => {
+      const filas = await db.incidents.where('room_id').equals(room.id).toArray()
+      /*
+       * Y lo que este dispositivo acaba de cerrar sigue a la vista hasta que sube.
+       *
+       * Sin esto, resolver hace desaparecer la fila al instante y con ella la
+       * única confirmación que hay: quedaría la duda de si se guardó o de si se
+       * ha tocado la que no era. Se reconoce por su entrada en la cola.
+       */
+      const claves = (await db.outbox.toCollection().primaryKeys()) as string[]
+      const sinSubir = new Set(
+        claves.filter((k) => k.includes('#')).map((k) => k.slice(0, k.indexOf('#'))),
+      )
+      return filas
+        .filter((i) => esAveriaViva(i) || (i.state === 'resuelta' && sinSubir.has(i.id)))
+        .map((i) => ({ ...i, sinSubir: sinSubir.has(i.id) }))
+        .sort((a, b) => {
+          const averia = (i: Incident): number => (i.kind === 'incidencia' ? 0 : 1)
+          const grave = (i: Incident): number =>
+            i.kind === 'incidencia' ? (GRAVEDAD_ORDEN[i.severity] ?? 0) : 0
+          return (
+            averia(a) - averia(b) ||
+            grave(b) - grave(a) ||
+            a.opened_at.localeCompare(b.opened_at)
+          )
+        })
+    },
+    [room.id],
+    [],
+  )
+
+  const sinCerrar = abiertasAqui.filter((i) => i.state !== 'resuelta').length
+
+  /*
+   * Y si se ha venido a por ellas, la pantalla abre ahí.
+   *
+   * `block: 'start'` con el desplazamiento suave desactivado si el sistema lo
+   * pide: llegar de otra pestaña y que la pantalla se deslice sola es
+   * desorientador para quien ha configurado justo lo contrario.
+   */
+  const incidenciasRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (enfocar !== 'incidencias') return
+    const suave = !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    incidenciasRef.current?.scrollIntoView({
+      behavior: suave ? 'smooth' : 'auto',
+      block: 'start',
+    })
+  }, [enfocar, room.id])
 
   // El inventario sale del espejo local: la ficha tiene que abrirse en un
   // sótano sin cobertura igual que la revisión.
@@ -473,6 +589,119 @@ export function RoomSheet({
             </button>
           </form>
         )}
+
+        {/*
+          Lo que queda por arreglar aquí.
+
+          Es la sección que faltaba y la que contesta a la pregunta con la que se
+          entra al aula: «¿esto ya está reportado?». Antes la respuesta vivía en
+          la pestaña de Incidencias —otra pantalla, filtrada por texto, con las de
+          las 276 salas mezcladas— y en el histórico, que necesita conexión. Aquí
+          sale del espejo local, así que funciona en un sótano, y trae el cierre
+          al lado: se arregla el proyector y se cierra el parte sin salir del aula,
+          que es donde de verdad ocurre.
+        */}
+        <section
+          ref={incidenciasRef}
+          aria-labelledby="sec-abiertas"
+          className="section-tail mt-8 scroll-mt-16"
+        >
+          <div className="section-head">
+            <h2 id="sec-abiertas" className="eyebrow">Incidencias abiertas</h2>
+            {/* La cifra cuenta las que siguen abiertas, no las filas de la lista:
+                la que se acaba de cerrar se queda a la vista hasta que sube —para
+                que la confirmación no desaparezca con ella— y contarla diría que
+                queda trabajo donde ya no queda. */}
+            {sinCerrar > 0 && (
+              <span className="rounded-tag bg-crit-tint px-2 py-0.5 text-xs font-semibold text-crit">
+                {sinCerrar}
+              </span>
+            )}
+          </div>
+
+          {abiertasAqui.length === 0 ? (
+            <p className="text-sm text-muted">
+              Ninguna. Lo que se marque «Falla» en la próxima revisión aparecerá aquí.
+            </p>
+          ) : (
+            <>
+              {!puedeCerrar(role) && (
+                <p className="mb-3 max-w-prose text-xs leading-relaxed text-muted">
+                  Cerrarlas es cosa de un supervisor. Lo que sí puedes hacer aquí es apuntar el
+                  material que has gastado en cada una.
+                </p>
+              )}
+              <ul className="card divide-y divide-line-soft overflow-hidden">
+                {abiertasAqui.map((i) => (
+                  <li key={i.id} className="px-4 py-3">
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <span className="min-w-0 flex-1 basis-48 text-sm font-medium">
+                        {i.title ?? 'Sin describir'}
+                      </span>
+                      {/* La gravedad en palabras, no en color: «alta» a secas no
+                          dice qué está en juego, y el color solo no se lee. */}
+                      {i.kind === 'incidencia' && (
+                        <span
+                          className={`shrink-0 text-xs ${
+                            i.severity === 'alta'
+                              ? 'font-semibold text-crit'
+                              : i.severity === 'media'
+                                ? 'text-warn'
+                                : 'text-muted'
+                          }`}
+                        >
+                          {GRAVEDAD_TEXTO[i.severity] ?? i.severity}
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="mt-0.5 text-xs text-muted">
+                      {i.kind !== 'incidencia' && <>{INCIDENT_KIND_LABELS[i.kind]} · </>}
+                      {i.external_ref && <span className="font-mono">{i.external_ref} · </span>}
+                      {i.state === 'en_curso' && <span className="text-warn">en curso · </span>}
+                      {i.opened_from_inspection_id && <>de la revisión · </>}
+                      {/* «Hace N días» y no la fecha: es la misma frase que usa la
+                          pestaña de Incidencias —quien lee las dos pantallas no
+                          tiene que traducir— y es lo accionable. La fecha exacta
+                          de una avería de hace tres semanas no cambia nada; que
+                          lleve tres semanas, sí. */}
+                      abierta hace{' '}
+                      <span className={diasAbierta(i.opened_at) > STALE_INCIDENT_DAYS ? 'font-semibold text-crit' : ''}>
+                        {diasAbierta(i.opened_at)} días
+                      </span>
+                    </p>
+
+                    {i.description && (
+                      <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-muted">
+                        {i.description}
+                      </p>
+                    )}
+
+                    {i.sinSubir && i.state === 'resuelta' ? (
+                      <p className="mt-2 text-xs text-ok">
+                        Resuelta. Sube en cuanto haya cobertura.
+                      </p>
+                    ) : (
+                      <div className="mt-2">
+                        <AccionesDeIncidencia
+                          incident={i}
+                          role={role}
+                          userId={userId}
+                          panel={enPanel?.id === i.id ? enPanel.panel : null}
+                          onPanel={(panel) => setEnPanel(panel ? { id: i.id, panel } : null)}
+                          onHecho={() => {
+                            void qc.invalidateQueries({ queryKey: ['room-timeline', room.id] })
+                            void qc.invalidateQueries({ queryKey: ['incidents'] })
+                          }}
+                        />
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
 
         <section aria-labelledby="sec-inv" className="mt-8">
           <div className="section-head">

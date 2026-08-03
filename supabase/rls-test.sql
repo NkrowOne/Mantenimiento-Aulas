@@ -2418,3 +2418,219 @@ begin;
     else 'FALLO: las incidencias de la errata «27-03-296» siguen mal fechadas'
   end as resultado;
 rollback;
+
+\echo ''
+\echo '=== 67. La corrección manda sobre la incidencia: la reescribe, la retira, y nunca abre una segunda ==='
+begin;
+  -- Interna, como el rescate: la ejecutan el disparador y el cron, no la API.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.conciliar_incidencias_de_correccion(gen_random_uuid());
+    raise exception 'FALLO: un técnico ejecutó la conciliación de correcciones';
+  exception when insufficient_privilege then
+    raise notice 'OK: la conciliación no se puede invocar desde la API';
+  end $$;
+  reset role;
+
+  -- Una sala virgen, igual que en la prueba 65: sin revisiones ni averías vivas.
+  \set sala ''
+  select r.id as sala from rooms r
+   where r.active
+     and not exists (select 1 from inspections x where x.room_id = r.id)
+     and not exists (select 1 from incidents i where i.room_id = r.id and i.state <> 'resuelta')
+   order by r.created_at desc limit 1 \gset
+  select case when :'sala' <> ''
+    then 'OK: hay una sala virgen para la prueba'
+    else 'FALLO: no queda ninguna sala sin revisiones ni incidencias en el seed'
+  end as resultado;
+
+  insert into asset_types (id, name) values
+    ('aaaaaaaa-0000-4000-8000-000000000670', 'Tipo De Prueba 67');
+  insert into assets (id, asset_type_id, room_id, label) values
+    ('aaaaaaaa-0000-4000-8000-000000000671', 'aaaaaaaa-0000-4000-8000-000000000670', :'sala', 'Proyector De Prueba 67'),
+    ('aaaaaaaa-0000-4000-8000-000000000672', 'aaaaaaaa-0000-4000-8000-000000000670', :'sala', 'Pantalla De Prueba 67');
+
+  -- La visita del martes: proyector y pantalla en falla, cada uno con su parte.
+  insert into inspections (id, room_id, by_user, occurred_at, recorded_at, status, overall)
+  values ('aaaaaaaa-0000-4000-8000-000000000673', :'sala',
+          '11111111-1111-4111-8111-111111111111',
+          now() - interval '2 days', now() - interval '2 days',
+          'completa', 'con_incidencias');
+  insert into inspection_checks (id, inspection_id, check_key, result, severity, note) values
+    (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-000000000673',
+     'asset:aaaaaaaa-0000-4000-8000-000000000671', 'incidencia', 'baja', 'parpadea un poco'),
+    (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-000000000673',
+     'asset:aaaaaaaa-0000-4000-8000-000000000672', 'incidencia', 'media', 'la tela está rota'),
+    (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-000000000673', 'red', 'ok', null, null);
+
+  insert into incidents (id, room_id, asset_id, opened_from_inspection_id, check_key,
+                         external_ref, title, description, severity, state, kind,
+                         opened_at, opened_by, source) values
+    ('aaaaaaaa-0000-4000-8000-000000000674', :'sala',
+     'aaaaaaaa-0000-4000-8000-000000000671', 'aaaaaaaa-0000-4000-8000-000000000673',
+     'asset:aaaaaaaa-0000-4000-8000-000000000671', 'I260801_0001',
+     'Proyector De Prueba 67: parpadea un poco', 'parpadea un poco', 'baja', 'abierta',
+     'incidencia', now() - interval '2 days', '11111111-1111-4111-8111-111111111111', 'app'),
+    ('aaaaaaaa-0000-4000-8000-000000000675', :'sala',
+     'aaaaaaaa-0000-4000-8000-000000000672', 'aaaaaaaa-0000-4000-8000-000000000673',
+     'asset:aaaaaaaa-0000-4000-8000-000000000672', null,
+     'Pantalla De Prueba 67: la tela está rota', 'la tela está rota', 'media', 'abierta',
+     'incidencia', now() - interval '2 days', '11111111-1111-4111-8111-111111111111', 'app');
+
+  -- Y una avería que apuntó OTRA persona a mano sobre el mismo proyector. No es
+  -- de esta visita y la corrección no puede tocarla.
+  insert into incidents (id, room_id, asset_id, opened_from_inspection_id, check_key,
+                         title, severity, state, kind, opened_at, opened_by, source)
+  values ('aaaaaaaa-0000-4000-8000-000000000676', :'sala',
+          'aaaaaaaa-0000-4000-8000-000000000671', null, null,
+          'Alguien pidió mover el proyector', 'media', 'abierta', 'solicitud',
+          now() - interval '1 day', '22222222-2222-4222-8222-222222222222', 'app');
+
+  -- La corrección, subida como la sube la aplicación: primero el borrador con
+  -- sus comprobaciones y el cierre al final. Es el orden que hace que el
+  -- disparador encuentre las filas puestas.
+  insert into inspections (id, room_id, by_user, occurred_at, recorded_at, status, overall,
+                           corrects, corrected_at)
+  values ('aaaaaaaa-0000-4000-8000-000000000677', :'sala',
+          '11111111-1111-4111-8111-111111111111',
+          now() - interval '2 days', now(), 'borrador', null,
+          'aaaaaaaa-0000-4000-8000-000000000673', now());
+  insert into inspection_checks (id, inspection_id, check_key, result, severity, note) values
+    (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-000000000677',
+     'asset:aaaaaaaa-0000-4000-8000-000000000671', 'incidencia', 'alta', 'no da imagen, no parpadea'),
+    (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-000000000677',
+     'asset:aaaaaaaa-0000-4000-8000-000000000672', 'ok', null, null),
+    (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-000000000677', 'red', 'ok', null, null);
+
+  update inspections set status = 'completa', overall = 'con_incidencias'
+   where id = 'aaaaaaaa-0000-4000-8000-000000000677';
+
+  -- Ni una fila más: el proyector sigue roto y conserva SU parte.
+  select case
+    when (select count(*) from incidents
+           where room_id = :'sala' and kind = 'incidencia') = 2
+    then 'OK: la corrección no abre una segunda incidencia del mismo equipo'
+    else 'FALLO: hay '
+      || (select count(*) from incidents where room_id = :'sala' and kind = 'incidencia')
+      || ' incidencias donde debía haber 2'
+  end as resultado;
+
+  select case
+    when (select severity || ' · ' || title || ' · ' || description
+               || ' · ' || coalesce(external_ref, '—')
+               || ' · ' || state
+               || ' · ' || (opened_from_inspection_id = 'aaaaaaaa-0000-4000-8000-000000000677')::text
+               || ' · ' || (opened_at = now() - interval '2 days')::text
+            from incidents where id = 'aaaaaaaa-0000-4000-8000-000000000674')
+       = 'alta · Proyector De Prueba 67: no da imagen, no parpadea · no da imagen, no parpadea · I260801_0001 · abierta · true · true'
+    then 'OK: manda la corrección — gravedad, título y nota nuevos, y el ticket y la fecha intactos'
+    else 'FALLO: la incidencia del proyector no recogió lo que dice la corrección ('
+      || (select severity || ' · ' || title || ' · ' || state from incidents
+           where id = 'aaaaaaaa-0000-4000-8000-000000000674') || ')'
+  end as resultado;
+
+  select case
+    when (select state::text || ' · ' || resolution from incidents
+           where id = 'aaaaaaaa-0000-4000-8000-000000000675')
+       = 'resuelta · Retirada al corregir la revisión: el equipo estaba bien.'
+    then 'OK: lo que la corrección da por bueno se retira, y dice que fue una corrección'
+    else 'FALLO: la incidencia de la pantalla sigue viva tras corregirla'
+  end as resultado;
+
+  select case
+    when (select state from incidents where id = 'aaaaaaaa-0000-4000-8000-000000000676') = 'abierta'
+    then 'OK: lo que apuntó otra persona a mano no lo cierra una corrección'
+    else 'FALLO: la corrección cerró un parte que no era de su visita'
+  end as resultado;
+
+  -- Y la sala lo cuenta bien: una avería y la solicitud, no tres.
+  select case
+    when (select open_incidents from room_overview where room_id = :'sala') = 2
+    then 'OK: el recuento de la sala deja de contar el parte retirado'
+    else 'FALLO: room_overview cuenta '
+      || (select open_incidents from room_overview where room_id = :'sala')
+      || ' donde debía contar 2'
+  end as resultado;
+
+  -- Repetirla no cambia nada: es idempotente, que es lo que permite que la
+  -- ejecuten a la vez el disparador y el repaso nocturno.
+  select public.conciliar_incidencias_de_correccion('aaaaaaaa-0000-4000-8000-000000000677') as otra \gset
+  select case when :otra = 0
+    then 'OK: conciliar dos veces no toca nada la segunda'
+    else 'FALLO: la segunda pasada volvió a escribir ' || :otra || ' filas'
+  end as resultado;
+
+  -- El duplicado que ya existía: dos partes vivos del mismo proyector abiertos
+  -- por esta misma visita. Sobrevive el más antiguo —el que lleva el ticket— y
+  -- la copia se retira diciendo que lo era.
+  insert into incidents (id, room_id, asset_id, opened_from_inspection_id, check_key,
+                         title, severity, state, kind, opened_at, opened_by, source)
+  values ('aaaaaaaa-0000-4000-8000-000000000678', :'sala',
+          'aaaaaaaa-0000-4000-8000-000000000671', 'aaaaaaaa-0000-4000-8000-000000000673',
+          'asset:aaaaaaaa-0000-4000-8000-000000000671',
+          'Proyector De Prueba 67: copia', 'media', 'abierta', 'incidencia',
+          now() - interval '2 days' + interval '1 hour',
+          '11111111-1111-4111-8111-111111111111', 'app');
+
+  select public.conciliar_incidencias_de_correccion('aaaaaaaa-0000-4000-8000-000000000677') as limpieza \gset
+  select case
+    when (select state::text from incidents where id = 'aaaaaaaa-0000-4000-8000-000000000678')
+         = 'resuelta'
+     and (select resolution from incidents where id = 'aaaaaaaa-0000-4000-8000-000000000678')
+         like 'Retirada al corregir la revisión: duplicaba%'
+     and (select state::text from incidents where id = 'aaaaaaaa-0000-4000-8000-000000000674')
+         = 'abierta'
+    then 'OK: de dos partes del mismo equipo sobrevive el más antiguo'
+    else 'FALLO: el duplicado no se retiró (' || :limpieza || ' filas tocadas)'
+  end as resultado;
+
+  -- Corregir la corrección: la cadena se recorre entera, así que lo que abrió la
+  -- visita original se sigue reconociendo dos versiones después.
+  insert into inspections (id, room_id, by_user, occurred_at, recorded_at, status, overall,
+                           corrects, corrected_at)
+  values ('aaaaaaaa-0000-4000-8000-000000000679', :'sala',
+          '11111111-1111-4111-8111-111111111111',
+          now() - interval '2 days', now(), 'borrador', null,
+          'aaaaaaaa-0000-4000-8000-000000000677', now());
+  insert into inspection_checks (id, inspection_id, check_key, result) values
+    (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-000000000679',
+     'asset:aaaaaaaa-0000-4000-8000-000000000671', 'ok'),
+    (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-000000000679',
+     'asset:aaaaaaaa-0000-4000-8000-000000000672', 'ok'),
+    (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-000000000679', 'red', 'ok');
+  update inspections set status = 'completa', overall = 'ok'
+   where id = 'aaaaaaaa-0000-4000-8000-000000000679';
+
+  select case
+    when (select state::text from incidents where id = 'aaaaaaaa-0000-4000-8000-000000000674')
+         = 'resuelta'
+    then 'OK: la cadena se recorre entera — corregir la corrección también retira'
+    else 'FALLO: el parte de la visita original sobrevivió a la segunda corrección'
+  end as resultado;
+
+  -- Y una revisión NORMAL no toca nada de lo que ya está abierto.
+  insert into incidents (id, room_id, asset_id, opened_from_inspection_id, check_key,
+                         title, severity, state, kind, opened_at, opened_by, source)
+  values ('aaaaaaaa-0000-4000-8000-00000000067a', :'sala',
+          'aaaaaaaa-0000-4000-8000-000000000672', 'aaaaaaaa-0000-4000-8000-000000000679',
+          'asset:aaaaaaaa-0000-4000-8000-000000000672',
+          'Pantalla De Prueba 67: vuelve a fallar', 'alta', 'abierta', 'incidencia',
+          now() - interval '2 hours', '11111111-1111-4111-8111-111111111111', 'app');
+  insert into inspections (id, room_id, by_user, occurred_at, recorded_at, status, overall)
+  values ('aaaaaaaa-0000-4000-8000-00000000067b', :'sala',
+          '11111111-1111-4111-8111-111111111111',
+          now() - interval '1 hour', now(), 'borrador', null);
+  insert into inspection_checks (id, inspection_id, check_key, result) values
+    (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-00000000067b',
+     'asset:aaaaaaaa-0000-4000-8000-000000000672', 'ok');
+  update inspections set status = 'completa', overall = 'ok'
+   where id = 'aaaaaaaa-0000-4000-8000-00000000067b';
+
+  select case
+    when (select state::text from incidents where id = 'aaaaaaaa-0000-4000-8000-00000000067a')
+         = 'abierta'
+    then 'OK: una revisión normal no cierra lo que abrió otra visita'
+    else 'FALLO: una revisión que no corrige nada retiró un parte ajeno'
+  end as resultado;
+rollback;

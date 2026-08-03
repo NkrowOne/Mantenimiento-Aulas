@@ -180,9 +180,27 @@ Lo que hay que saber para no interpretar mal una cifra:
   `room_reliability`, `alerts_repeat_offenders`, `room_timeline` y el worker de
   informes. Si escribes una consulta nueva sobre `inspections`, usa esa vista o
   contarás la misma visita dos veces.
-- **Las incidencias que abrió la original no se cierran** porque la corrección
-  diga que el equipo estaba bien. Siguen en la cola del supervisor, con su
-  resolución, que es donde se decide eso.
+- **Las incidencias que abrió la visita las manda la corrección**, y eso lo
+  aplica la base sola: `conciliar_incidencias_de_correccion()`, llamada por un
+  disparador cuando la corrección se cierra y repasada cada madrugada
+  (`conciliar_correcciones_recientes()`, por si alguna llega ya cerrada en un
+  solo INSERT y sus comprobaciones aún no estaban). Tres efectos:
+  - El equipo que **sigue en falla** conserva su fila, con la gravedad, el
+    título y la nota de la corrección. **No se abre una segunda**, que es lo que
+    pasaba cuando el espejo del dispositivo que corregía no traía la incidencia
+    de la ronda anterior.
+  - El que la corrección da por **bueno** se retira: `state = 'resuelta'` con
+    `resolution` diciendo que fue una corrección y no un arreglo. Se lee así en
+    el histórico de la sala.
+  - Si había **dos filas del mismo equipo** abiertas por esa visita, sobrevive
+    la más antigua —la que lleva el `external_ref` y el material apuntado— y la
+    copia se retira marcada como duplicada.
+
+  La frontera es `opened_from_inspection_id` dentro de la cadena de versiones de
+  esa visita: lo abierto a mano desde la ficha, o por la revisión de otro día, no
+  se toca. Y el orden del cron importa —la conciliación a las 4:05, el rescate de
+  fallos a las 4:20— para que el rescate no reabra lo que la conciliación acaba
+  de retirar.
 
 ```sql
 -- Qué se ha corregido y quién, para mirarlo de cuando en cuando
