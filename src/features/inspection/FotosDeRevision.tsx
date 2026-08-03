@@ -304,12 +304,19 @@ export function VisorDeFotos({
 
   useEffect(() => {
     const alPulsar = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onCerrar()
+      if (e.key === 'Escape') {
+        // El visor es la capa de más arriba: su Escape es SUYO. Sin cortar la
+        // propagación, la ficha de la revisión —que escucha lo mismo un piso
+        // por debajo— se cerraba a la vez y un Escape tiraba las dos capas.
+        e.stopPropagation()
+        onCerrar()
+      }
       if (e.key === 'ArrowRight' && indice < fotos.length - 1) onIr(indice + 1)
       if (e.key === 'ArrowLeft' && indice > 0) onIr(indice - 1)
     }
-    window.addEventListener('keydown', alPulsar)
-    return () => window.removeEventListener('keydown', alPulsar)
+    // En captura: se adelanta a los manejadores de burbuja de las capas de debajo.
+    window.addEventListener('keydown', alPulsar, true)
+    return () => window.removeEventListener('keydown', alPulsar, true)
   }, [indice, fotos.length, onIr, onCerrar])
 
   return (
