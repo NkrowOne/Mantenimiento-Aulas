@@ -72,13 +72,14 @@ revisó, qué hay registrado, qué queda abierto y qué le ha pasado antes.
 
 Dos cosas viven aquí:
 
-- **Las revisiones anteriores**, enteras. Una tarjeta por visita: la fecha, quién
-  la hizo, cómo salió, **la observación** que se escribió aquel día —el mando
-  está en el cajón, la persiana cuesta— y **las fotos**, que se abren a pantalla
-  completa tocándolas. Y desplegando **«Ver las comprobaciones»**, lo que se
-  contestó equipo por equipo, con la gravedad y las medidas: «el proyector iba
-  por 1.900 horas». Es lo que hoy se pierde en la columna de texto libre del
-  Excel.
+- **Las revisiones anteriores**, listadas: una fila por visita con la fecha,
+  quién la hizo, cómo salió y qué hay dentro (fotos, observación, corregida).
+  **Tocando la fila se abre su ficha en una pantalla propia**, con todo lo de
+  aquella visita: las fotos en grande, **la observación** que se escribió aquel
+  día —el mando está en el cajón, la persiana cuesta—, y lo que se contestó
+  equipo por equipo, con la gravedad y las medidas: «el proyector iba por 1.900
+  horas». Es lo que hoy se pierde en la columna de texto libre del Excel. Con
+  «Volver» —o Escape— aterrizas donde estabas en la lista.
 - **«Incidencia o solicitud»**, para registrar sin estar revisando: una avería
   que ves de paso, o un trabajo que hay que pedir —«instalar una cámara»—.
 
@@ -91,17 +92,17 @@ revisión vuelves a la ficha.
 
 ### Si una revisión quedó mal apuntada: corrígela
 
-En la tarjeta de esa revisión, **«Corregir esta revisión»**. Se abre el
-formulario de siempre **con lo que contestaste aquel día ya puesto**: cambias lo
-que esté mal y guardas. No hace falta rellenarlo todo otra vez.
+Abre la ficha de esa revisión y, al final, **«Corregir esta revisión»**. Se abre
+el formulario de siempre **con lo que contestaste aquel día ya puesto**: cambias
+lo que esté mal y guardas. No hace falta rellenarlo todo otra vez.
 
 Lo que pasa al guardar:
 
 - Se guarda como una **versión nueva de esa misma visita**, con **la fecha de
   aquel día** — no como una revisión de hoy. El aula no aparece revisada hoy por
   haber arreglado una errata, y en el informe sigue contando una visita, no dos.
-- **La original no se borra.** Se sigue leyendo: en la tarjeta aparece
-  «Original / Corrección 1» para ver qué decía antes.
+- **La original no se borra.** Se sigue leyendo: en la ficha de la revisión
+  aparece «Original / Corrección 1» para ver qué decía antes.
 - **Las incidencias que abrió no se cierran solas.** Si marcas que el proyector
   estaba bien, el parte que se abrió sigue abierto: eso lo cierra un supervisor,
   con su resolución. La aplicación te lo dice mientras corriges.
@@ -295,13 +296,13 @@ zona con cobertura y se resolverá solo.
 
 Pulsa **Añadir foto** y elige cámara o carrete. Se comprimen solas.
 
-**Y se ven después.** En la ficha del aula, cada revisión enseña su observación
-y sus fotos juntas, en una ficha a la vista: la primera foto en grande, las
-demás en fila debajo y la observación como pie. Al tocar una se abre a pantalla
-completa, y con más de una se pasa con *Anterior* y *Siguiente*; si hay muchas,
-la última baldosa dice «+N» y desde ahí se recorren todas. Una foto recién hecha
-aparece marcada **«sin subir»** hasta que haya cobertura: así sabes que la tiene
-el aparato y que todavía no ha salido de él.
+**Y se ven después.** En la ficha del aula, cada revisión de la lista se abre en
+su propia pantalla, con la observación y las fotos juntas: la primera foto en
+grande, las demás en fila debajo y la observación como pie. Al tocar una se abre
+a pantalla completa, y con más de una se pasa con *Anterior* y *Siguiente*; si
+hay muchas, la última baldosa dice «+N» y desde ahí se recorren todas. Una foto
+recién hecha aparece marcada **«sin subir»** hasta que haya cobertura: así sabes
+que la tiene el aparato y que todavía no ha salido de él.
 
 Si sale un aviso sobre **HEIC**, ve a *Ajustes → Cámara → Formatos* y pon **Más
 compatible**. Es cosa del iPhone, no de la aplicación.
@@ -326,10 +327,10 @@ cerrado sesión, sin tu PIN no se puede entrar; si lo perdiste con la sesión
 abierta, quien lo encuentre puede usar la aplicación hasta que se dé de baja.
 
 **¿Puedo corregir una revisión ya guardada?**
-Sí, desde la ficha del aula: en su tarjeta, **«Corregir esta revisión»**. Se
-guarda como una versión nueva de esa visita, con la fecha de aquel día, y la
-anterior se queda guardada y legible. Lo que no se puede es **reescribirla**: eso
-es lo que hace que el histórico valga como registro.
+Sí, desde la ficha del aula: abre esa revisión de la lista y pulsa **«Corregir
+esta revisión»**. Se guarda como una versión nueva de esa visita, con la fecha
+de aquel día, y la anterior se queda guardada y legible. Lo que no se puede es
+**reescribirla**: eso es lo que hace que el histórico valga como registro.
 
 **¿Por qué no puedo cerrar una incidencia?**
 Los técnicos las abren; cerrarlas es cosa de supervisores.
