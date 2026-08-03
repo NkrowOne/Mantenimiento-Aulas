@@ -10,24 +10,19 @@
  * mando aparece en el cajón», que la lámpara iba por 1.900 horas y que hay una
  * foto de la roseta.
  *
- * Y la segunda mitad: **corregir en vez de repetir**. Hasta ahora, un error en
- * una revisión cerrada solo se podía arreglar haciendo otra —la revisión es
- * inmutable, y con razón—. Con 276 aulas por ronda eso son veinte revisiones al
- * mes que no son visitas: son la misma visita apuntada varias veces, y cada una
- * mueve la fecha de «última revisión», cuenta en la fiabilidad y sale en el
- * informe del viernes. Aquí una corrección es una versión nueva de la MISMA
- * visita: reemplaza a la anterior en todo lo que se cuenta y no la borra.
+ * Y la segunda mitad: **corregir en vez de repetir**. Una corrección es una
+ * versión nueva de la MISMA visita: reemplaza a la anterior en todo lo que se
+ * cuenta y no la borra.
  *
- * TRES DECISIONES DE FORMA, y todas salen de lo mismo:
+ * DOS DECISIONES DE FORMA, y las dos salen de lo mismo:
  *
- *  - **Una tarjeta por visita, no por fila.** Una revisión corregida tres veces
- *    es una tarjeta con tres versiones dentro. Pintar cuatro tarjetas sería
- *    trasladar a la pantalla el problema que esto viene a resolver.
- *  - **La observación se lee como una cita**, con su filete a la izquierda y sin
- *    recortar. La escribió una persona que estuvo en el aula; encajada en una
- *    lista de metadatos con su punto de color se lee como un campo más.
- *  - **El detalle se despliega.** Lo normal es mirar la fecha y el resultado; las
- *    nueve filas de aquel día son para cuando algo no cuadra, y se piden.
+ *  - **La lista lista, la ficha aparte.** Aquí una fila limpia por visita —una
+ *    corregida tres veces sigue siendo UNA fila— y todo lo demás en su propia
+ *    pantalla (`FichaDeRevision`): las fotos en grande, la observación entera,
+ *    cada comprobación con su medida y quién firmó qué. Metido en la tarjeta,
+ *    la lista dejaba de recorrerse; y recorrer es para lo que está la lista.
+ *  - **El detalle no se paga por adelantado.** La lista trae contadores; las
+ *    comprobaciones y las fotos se piden al abrir la ficha de esa visita.
  *
  * Necesita conexión, y se dice. El histórico completo de 276 salas no cabe en el
  * espejo local, y descargarlo para el caso en que alguien lo abra sería pagar el
@@ -43,22 +38,15 @@ import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { pullSala } from '@/sync/pull'
 import { fechaCorta } from '@/domain/fechas'
-import { fechaLegible } from '@/domain/historial'
 import {
-  GRAVEDAD_LEGIBLE,
-  RESULTADO_ESTILO,
   agruparEnVisitas,
-  detalleDeComprobacion,
-  etiquetaDeComprobacion,
-  ordenarComprobaciones,
   resultadoLegible,
   semillaDeCorreccion,
-  type ComprobacionDetalle,
   type RevisionResumen,
   type Visita,
 } from '@/domain/revisiones'
 import { ROOM_CHECKS, assetCheckKey } from '@/domain/types'
-import { FichaDeObservacion } from './FichaDeObservacion'
+import { FichaDeRevision, comprobacionesDe } from './FichaDeRevision'
 import type { Correccion } from './useInspection'
 
 /**
@@ -86,15 +74,6 @@ const FILTROS: Array<{ id: Filtro; label: string; cumple: (v: Visita) => boolean
   { id: 'fallos', label: 'Con fallos', cumple: (v) => v.vigente.fallos > 0 },
 ]
 
-async function comprobacionesDe(inspectionId: string): Promise<ComprobacionDetalle[]> {
-  const { data, error } = await supabase
-    .from('inspection_check_detail')
-    .select('*')
-    .eq('inspection_id', inspectionId)
-  if (error) throw error
-  return ordenarComprobaciones((data ?? []) as ComprobacionDetalle[])
-}
-
 export function RevisionesAnteriores({
   roomId,
   onCorregir,
@@ -106,6 +85,21 @@ export function RevisionesAnteriores({
   const qc = useQueryClient()
   const [filtro, setFiltro] = useState<Filtro>('todas')
   const [todas, setTodas] = useState(false)
+
+  /*
+   * Qué visita está abierta en su ficha. Se guarda el identificador y no el
+   * objeto: la lista se refresca por debajo —al guardar una corrección la
+   * versión vigente cambia de id— y una referencia guardada se quedaría
+   * enseñando la visita de antes.
+   *
+   * El ref acompaña al estado para que `preparar` pueda preguntar «¿sigue
+   * abierta?» en el momento de resolverse, no en el de dispararse. Guarda la
+   * visita entera y no el id: si un refetch cambia la vigente con la ficha
+   * abierta, el id con el que se disparó la corrección sigue en su cadena de
+   * versiones y la pregunta tiene que seguir contestando que sí.
+   */
+  const [abiertaId, setAbiertaId] = useState<string | null>(null)
+  const abiertaRef = useRef<Visita | null>(null)
 
   /*
    * Antes de sembrar nada, el espejo de esta sala se pone al día.
@@ -203,8 +197,8 @@ export function RevisionesAnteriores({
    * Se leen las comprobaciones de aquella revisión antes de salir de esta
    * pantalla: es la única parte que necesita red, y hacerla aquí permite decir
    * «no se ha podido» donde está el botón en vez de dejar al técnico en un
-   * formulario a medio sembrar. `fetchQuery` reutiliza lo que ya se hubiera
-   * descargado al desplegar el detalle.
+   * formulario a medio sembrar. `fetchQuery` reutiliza lo que la ficha ya
+   * descargó al abrirse.
    */
   const preparar = useMutation({
     mutationFn: async (r: RevisionResumen): Promise<Correccion> => {
@@ -223,13 +217,33 @@ export function RevisionesAnteriores({
         semilla: semillaDeCorreccion(comprobaciones, clavesVigentes),
       }
     },
-    onSuccess: onCorregir,
+    /*
+     * Solo si la ficha SIGUE abierta: con red lenta, quien pulsa «Corregir»,
+     * ve «Recuperando…» y se arrepiente cerrando con Escape no puede acabar
+     * segundos después en un formulario de corrección que ya no pidió — y que
+     * además crea el borrador. Cerrar la ficha es cancelar.
+     */
+    onSuccess: (correccion, r) => {
+      const abierta = abiertaRef.current
+      if (abierta && abierta.versiones.some((x) => x.id === r.id)) onCorregir(correccion)
+    },
   })
 
   const filtradas = visitas.filter(FILTROS.find((f) => f.id === filtro)!.cumple)
   const visibles = todas ? filtradas : filtradas.slice(0, A_LA_VISTA)
   const cuenta = (f: Filtro): number =>
     visitas.filter(FILTROS.find((x) => x.id === f)!.cumple).length
+
+  /*
+   * La visita abierta se deriva de los datos frescos, no se guarda — y se
+   * busca por CUALQUIER versión de su cadena, no solo por la vigente: si un
+   * compañero guarda una corrección mientras se lee, la vigente cambia de id
+   * pero la visita sigue siendo la misma, y cerrar la ficha en silencio le
+   * robaría el punto de lectura a quien no ha hecho nada. Solo si la visita
+   * desaparece del todo (fuera de la ventana de 24) la ficha se cierra sola.
+   */
+  const abierta = visitas.find((v) => v.versiones.some((r) => r.id === abiertaId)) ?? null
+  abiertaRef.current = abierta
 
   return (
     <section aria-labelledby="sec-rev" className="mt-8">
@@ -245,9 +259,9 @@ export function RevisionesAnteriores({
       </div>
 
       <p className="mb-3 max-w-prose text-sm leading-relaxed text-muted">
-        Qué se comprobó cada vez, lo que se apuntó y las fotos. Si algo quedó mal
-        apuntado, se corrige aquí: la corrección sustituye a esa revisión en vez de
-        añadir una visita que no ocurrió.
+        Una fila por visita. Toca una para abrir su ficha: las fotos, la observación y
+        el detalle de cada comprobación. Si algo quedó mal apuntado, desde la ficha se
+        corrige.
       </p>
 
       {isPending && <p className="text-sm text-muted">Cargando las revisiones…</p>}
@@ -301,23 +315,21 @@ export function RevisionesAnteriores({
         <p className="text-sm text-muted">Ninguna revisión de esta sala cumple ese filtro.</p>
       )}
 
-      <ul className="space-y-3">
-        {visibles.map((v) => (
-          <TarjetaDeVisita
-            key={v.vigente.id}
-            visita={v}
-            enCurso={enCurso.has(v.vigente.id)}
-            conFotoLocal={v.versiones.some((r) => conFotoLocal.has(r.id))}
-            preparando={preparar.isPending && preparar.variables?.id === v.vigente.id}
-            fallo={
-              preparar.isError && preparar.variables?.id === v.vigente.id
-                ? 'No se ha podido recuperar esa revisión. Hace falta conexión para empezar a corregirla.'
-                : null
-            }
-            onCorregir={() => preparar.mutate(v.vigente)}
-          />
-        ))}
-      </ul>
+      {visibles.length > 0 && (
+        /* Las filas comparten tarjeta, como los edificios comparten lista: son
+           entradas de un índice, no cinco documentos sueltos. */
+        <ul className="card divide-y divide-line-soft overflow-hidden">
+          {visibles.map((v) => (
+            <FilaDeVisita
+              key={v.vigente.id}
+              visita={v}
+              enCurso={enCurso.has(v.vigente.id)}
+              conFotoLocal={v.versiones.some((r) => conFotoLocal.has(r.id))}
+              onAbrir={() => setAbiertaId(v.vigente.id)}
+            />
+          ))}
+        </ul>
+      )}
 
       {filtradas.length > visibles.length && (
         <button
@@ -334,64 +346,93 @@ export function RevisionesAnteriores({
           Las más recientes. El histórico completo está en la pestaña Historial.
         </p>
       )}
+
+      {abierta && (
+        <FichaDeRevision
+          /* Por visita: cambiar de visita con la capa abierta —posible por
+             teclado— tiene que remontar la pantalla, o `viendo` seguiría
+             enseñando las comprobaciones de la anterior bajo la fecha nueva. */
+          key={abierta.vigente.id}
+          visita={abierta}
+          enCurso={enCurso.has(abierta.vigente.id)}
+          conFotoLocal={abierta.versiones.some((r) => conFotoLocal.has(r.id))}
+          preparando={preparar.isPending && preparar.variables?.id === abierta.vigente.id}
+          fallo={
+            preparar.isError && preparar.variables?.id === abierta.vigente.id
+              ? 'No se ha podido recuperar esa revisión. Hace falta conexión para empezar a corregirla.'
+              : null
+          }
+          onCorregir={() => preparar.mutate(abierta.vigente)}
+          onCerrar={() => {
+            /* Cerrar también limpia la mutación: sin el reset, reabrir la
+               visita nacía enseñando el fallo de hace un rato, y una
+               recuperación en vuelo navegaría al formulario ya sin público. */
+            preparar.reset()
+            setAbiertaId(null)
+          }}
+        />
+      )}
     </section>
   )
 }
 
-function TarjetaDeVisita({
+/**
+ * Una visita, como fila de índice: la fecha, quién, qué salió y las señales de
+ * que dentro hay algo más — fotos, observación, corrección en curso. Todo lo
+ * demás vive en la ficha, que es donde cabe.
+ */
+function FilaDeVisita({
   visita,
   enCurso,
   conFotoLocal,
-  preparando,
-  fallo,
-  onCorregir,
+  onAbrir,
 }: {
   visita: Visita
   /** Ya hay una corrección de esta visita empezada en el dispositivo. */
   enCurso: boolean
+  /** Hay fotos de esta visita todavía en la cola del dispositivo. */
   conFotoLocal: boolean
-  preparando: boolean
-  fallo: string | null
-  onCorregir: () => void
+  onAbrir: () => void
 }): React.ReactElement {
   const { vigente, versiones } = visita
   const original = versiones[0]!
   const corregida = versiones.length > 1
-
-  /** Qué versión se está mirando por dentro. `null` = el detalle está plegado. */
-  const [viendo, setViendo] = useState<string | null>(null)
-
   const fotos = versiones.reduce((n, r) => n + r.fotos, 0)
-  const nota = (vigente.notes ?? '').trim()
+  const conNota = (vigente.notes ?? '').trim() !== ''
 
-  /*
-   * Que hubo foto local se recuerda, no solo se observa: en el instante en que
-   * la foto de hoy termina de subir sale de la cola, y el recuento del
-   * servidor —cacheado— todavía dice cero. Sin el enclave, la ficha entera
-   * desaparecía de la tarjeta justo al guardarse lo que enseñaba.
-   */
-  const huboFotoLocal = useRef(false)
-  if (conFotoLocal) huboFotoLocal.current = true
-  const fotoLocal = conFotoLocal || huboFotoLocal.current
+  const señas = [
+    original.who ? `Revisó ${original.who}` : 'Sin firma',
+    fotos > 0 ? `${fotos} foto${fotos === 1 ? '' : 's'}` : null,
+    // La foto de hoy, que el recuento del servidor aún no conoce: sin la seña,
+    // la revisión recién hecha parecía no tener su foto hasta que subiera.
+    conFotoLocal && fotos === 0 ? 'foto sin subir' : null,
+    conNota ? 'con observación' : null,
+    corregida ? 'corregida' : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   return (
-    <li className="card p-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className="min-w-0">
-          <p className="font-medium">{fechaLegible(vigente.occurred_at)}</p>
-          <p className="mt-0.5 text-xs text-muted">
-            {original.who ? `Revisó ${original.who}` : 'Sin firma'}
-            {corregida && vigente.corrected_at && (
-              <>
-                {' · '}
-                <span className="text-accent">
-                  corregida el {fechaCorta(vigente.corrected_at)}
-                  {vigente.who ? ` por ${vigente.who}` : ''}
-                </span>
-              </>
-            )}
-          </p>
-        </div>
+    <li>
+      <button
+        type="button"
+        onClick={onAbrir}
+        /* El anillo de foco hacia dentro: la card de la lista recorta con
+           `overflow-hidden` y el anillo por fuera desaparecía en las filas de
+           los extremos — el mismo remedio que las baldosas de la ficha. */
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors duration-100 focus-visible:outline-offset-[-2px] active:bg-raised"
+      >
+        <span className="min-w-0 flex-1">
+          {/* La fecha sola, de índice: la hora la contesta la ficha. */}
+          <span className="block font-medium">{fechaCorta(vigente.occurred_at)}</span>
+          <span className="mt-0.5 block truncate text-xs text-muted">
+            {/* La corrección en curso va PRIMERA y en su color: es la única
+                seña accionable, y al final de la línea era justo la que el
+                truncado se comía con una firma larga. */}
+            {enCurso && <span className="text-accent">corrección en curso · </span>}
+            {señas}
+          </span>
+        </span>
 
         {/* El resultado, con palabra y no solo con color. */}
         <span
@@ -403,200 +444,26 @@ function TarjetaDeVisita({
         >
           {resultadoLegible(vigente)}
         </span>
-      </div>
 
-      {/* La letra pequeña de la visita: de qué está hecho el resultado. */}
-      <p className="mt-2 font-mono text-xs text-muted">
-        {[
-          vigente.comprobaciones > 0
-            ? `${vigente.comprobaciones} comprobacion${vigente.comprobaciones === 1 ? '' : 'es'}`
-            : null,
-          vigente.no_aplica > 0 ? `${vigente.no_aplica} n/a` : null,
-          fotos > 0 ? `${fotos} foto${fotos === 1 ? '' : 's'}` : null,
-          vigente.incidencias > 0
-            ? `${vigente.incidencias} incidencia${vigente.incidencias === 1 ? '' : 's'} abiertas`
-            : null,
-          corregida ? `${versiones.length} versiones` : null,
-        ]
-          .filter(Boolean)
-          .join(' · ')}
-      </p>
-
-      {/* La observación y sus fotos, como una ficha: la frase que escribió
-          alguien que estuvo allí debajo de las fotos que hizo, a la vista y sin
-          desplegar nada. La propia ficha decide si pregunta por adjuntos, así
-          que las visitas con solo observación no cuestan consultas. */}
-      {(nota !== '' || fotos > 0 || fotoLocal) && (
-        <FichaDeObservacion
-          ids={versiones.map((r) => r.id)}
-          nota={vigente.notes}
-          anunciadas={fotos}
-          conFotoLocal={fotoLocal}
-        />
-      )}
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => setViendo(viendo === null ? vigente.id : null)}
-          aria-expanded={viendo !== null}
-          className="key key-quiet min-h-11 flex-1 px-3 text-sm"
+        {/* El galón dice «esto se abre» sin gastar una palabra. Mismo tamaño
+            que el del histórico plegable: un solo galón en toda la aplicación. */}
+        <svg
+          aria-hidden="true"
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          className="shrink-0 text-muted"
         >
-          {viendo !== null
-            ? 'Ocultar el detalle'
-            : vigente.comprobaciones > 0
-              ? `Ver las ${vigente.comprobaciones} comprobaciones`
-              : 'Ver el detalle'}
-        </button>
-
-        {/*
-          Corregir. Es la acción de la tarjeta y por eso lleva el color de la
-          marca, pero va la segunda: nueve de cada diez veces se entra aquí a
-          leer, no a arreglar.
-        */}
-        <button
-          type="button"
-          onClick={onCorregir}
-          disabled={preparando}
-          className={`key min-h-11 flex-1 px-3 text-sm ${enCurso ? 'key-accent' : 'key-quiet'}`}
-        >
-          {preparando
-            ? 'Recuperando…'
-            : enCurso
-              ? 'Continuar la corrección'
-              : 'Corregir esta revisión'}
-        </button>
-      </div>
-
-      {fallo && <p className="mt-2 text-sm text-crit">{fallo}</p>}
-
-      <div className="collapse-y" data-open={viendo !== null} inert={viendo === null}>
-        <div>
-          {viendo !== null && (
-            <div className="border-t border-line pt-3">
-              {/* El selector de versiones solo aparece si hay más de una. Es la
-                  forma de mirar lo que decía la revisión ANTES de corregirse, que
-                  es justamente lo que hace que corregir no sea perder nada. */}
-              {corregida && (
-                <div className="scroll-x -mx-1 mb-3 flex gap-2 px-1 pb-1">
-                  {versiones.map((r, i) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => setViendo(r.id)}
-                      aria-pressed={viendo === r.id}
-                      className={`key min-h-11 shrink-0 px-3 text-xs ${
-                        viendo === r.id ? 'key-accent' : 'key-quiet text-muted'
-                      }`}
-                    >
-                      {i === 0 ? 'Original' : `Corrección ${i}`}
-                      {r.id === vigente.id ? ' · actual' : ''}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              <Comprobaciones inspectionId={viendo} />
-
-              {/* Quién firmó la versión que se está mirando, cuando no es la
-                  vigente: sin esto, «Original» y «Corrección 1» se leen como dos
-                  listas sin autor. */}
-              {corregida && viendo !== vigente.id && (
-                <p className="mt-3 font-mono text-xs text-muted">
-                  {(() => {
-                    const r = versiones.find((x) => x.id === viendo)
-                    if (!r) return null
-                    return [
-                      r.corrected_at
-                        ? `corregida el ${fechaCorta(r.corrected_at)}`
-                        : `revisada el ${fechaCorta(r.occurred_at)}`,
-                      r.who,
-                      resultadoLegible(r),
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')
-                  })()}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+          <path
+            d="M9 6l6 6-6 6"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
     </li>
-  )
-}
-
-/** Lo que aquella revisión contestó, fila a fila. */
-function Comprobaciones({ inspectionId }: { inspectionId: string }): React.ReactElement {
-  const { data, isPending, isError, refetch } = useQuery({
-    queryKey: ['inspection-checks', inspectionId],
-    queryFn: () => comprobacionesDe(inspectionId),
-  })
-
-  if (isPending) return <p className="text-sm text-muted">Cargando el detalle…</p>
-
-  if (isError) {
-    return (
-      <div>
-        <p className="text-sm text-crit">No se ha podido leer el detalle.</p>
-        <button
-          type="button"
-          onClick={() => void refetch()}
-          className="key key-quiet mt-2 min-h-11 px-3 text-sm"
-        >
-          Reintentar
-        </button>
-      </div>
-    )
-  }
-
-  if ((data ?? []).length === 0) {
-    return (
-      <p className="text-sm text-muted">
-        Esta revisión no guardó el resultado fila a fila: viene de la importación del
-        Excel, que solo traía la fecha y cómo salió.
-      </p>
-    )
-  }
-
-  return (
-    <ul className="divide-y divide-line-soft">
-      {(data ?? []).map((c) => {
-        const estilo = RESULTADO_ESTILO[c.result]
-        const detalle = detalleDeComprobacion(c)
-
-        return (
-          <li key={c.id} className="flex items-start gap-3 py-2">
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-medium">{etiquetaDeComprobacion(c)}</span>
-              {detalle && <span className="block font-mono text-xs text-muted">{detalle}</span>}
-
-              {/* La medida, donde la hay: horas de lámpara, Mbps. Es la mitad del
-                  valor de leer una revisión vieja —«iba por 1.900 horas»—. */}
-              {c.measure !== null && (
-                <span className="mt-0.5 block font-mono text-xs text-ink-2">
-                  {c.measure} {c.measure_unit ?? ''}
-                </span>
-              )}
-
-              {c.note && (
-                <span className="mt-0.5 block whitespace-pre-line break-words text-xs leading-relaxed text-muted">
-                  {c.note}
-                </span>
-              )}
-            </span>
-
-            <span
-              className={`shrink-0 rounded-tag px-2 py-0.5 text-xs font-semibold ${estilo.clase}`}
-            >
-              {estilo.etiqueta}
-              {c.result === 'incidencia' && c.severity && (
-                <span className="font-normal"> · {GRAVEDAD_LEGIBLE[c.severity]}</span>
-              )}
-            </span>
-          </li>
-        )
-      })}
-    </ul>
   )
 }
