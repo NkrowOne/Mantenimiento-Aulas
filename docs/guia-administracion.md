@@ -126,7 +126,7 @@ mismo con `npm run admin -- …`.
 | Rol | Puede |
 |---|---|
 | `tecnico` | Revisar salas, abrir incidencias, consumir material del almacén |
-| `supervisor` | Además: cerrar incidencias, registrar compras y generar informes |
+| `supervisor` | Además: reabrir y editar incidencias, registrar compras y generar informes |
 | `admin` | Además: editar edificios y salas, gestionar usuarios, pestaña Datos y configurar la clave de la IA de los informes |
 
 Un cambio de rol tarda hasta una hora en aplicarse, o es inmediato si la persona
@@ -142,7 +142,7 @@ Consecuencias prácticas:
 
 - **El recuento de incidencias abiertas sube** en cuanto esto se despliega. No es
   que se hayan roto más cosas: es que las averías que ya estaban registradas
-  ahora se ven. Y solo un `supervisor` puede cerrarlas, así que la cola es suya.
+  ahora se ven.
 - **No se duplican por ronda.** Si el proyector sigue roto la semana siguiente,
   la revisión no abre una segunda: la que hay sigue contando los días. La
   incidencia guarda de qué comprobación salió, en `incidents.check_key`.
@@ -161,6 +161,39 @@ Consecuencias prácticas:
   sala, con su marca, y siguen puntuando en el índice de fiabilidad.
 - **Las solicitudes sí entran**, marcadas como tal: son trabajo pedido y no hay
   otro sitio donde reclamarlas.
+
+### Quién cierra una incidencia, y con qué
+
+**El técnico que la arregla**, y para cerrarla tiene que escribir qué ha hecho.
+Antes cerraba un `supervisor` que no había visto la reparación: o preguntaba —y
+el dato viajaba por WhatsApp— o cerraba a ciegas, mientras la avería ya resuelta
+seguía contando días abierta.
+
+Cómo está montado, que importa para auditar:
+
+- **La tabla no se ha abierto.** `incidents` conserva la misma política de UPDATE
+  de siempre —solo `supervisor`—, y la prueba 4 de `npm run db:verify` lo sigue
+  comprobando. Un técnico no puede cambiarle el título, la gravedad ni la sala a
+  una incidencia, ni reabrir lo cerrado.
+- **Se abre una transición por una puerta con nombre:**
+  `avanzar_incidencia(id, estado, resolución)`, `security definer`, concedida a
+  `authenticated`. Solo pasa a «en curso» y a «resuelta», exige texto para
+  cerrar —tres caracteres como suelo— y firma con quien llama. Es idempotente:
+  un reenvío de la cola no pisa la resolución ni la fecha del cierre de verdad.
+- **Y queda escrito.** `incidents.resolution` era una columna que la aplicación
+  nunca rellenaba, así que el histórico de la sala contaba la avería y no la
+  reparación. Ahora la resolución sale en la línea de tiempo, debajo de
+  «Resuelta: …».
+
+```sql
+-- Quién cierra, y qué escribe. Para mirarlo de cuando en cuando.
+select r.code, i.title, i.resolution, p.full_name as la_cerro, i.resolved_at
+from incidents i
+left join rooms r    on r.id = i.room_id
+left join profiles p on p.id = i.resolved_by
+where i.state = 'resuelta' and i.resolved_at > now() - interval '30 days'
+order by i.resolved_at desc;
+```
 
 ### Una revisión corregida, y qué significa para los números
 

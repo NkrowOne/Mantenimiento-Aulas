@@ -56,7 +56,6 @@ import {
   AccionesDeIncidencia,
   type PanelDeIncidencia,
 } from '@/features/incidents/AccionesDeIncidencia'
-import { puedeCerrar } from '@/features/incidents/acciones'
 import type { Correccion } from '@/features/inspection/useInspection'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaCorta } from '@/domain/fechas'
@@ -66,7 +65,6 @@ import {
   STALE_INCIDENT_DAYS,
   type Incident,
   type IncidentKind,
-  type Role,
   type Room,
 } from '@/domain/types'
 
@@ -165,8 +163,6 @@ interface Props {
   buildingName: string
   zoneName: string
   userId: string | null
-  /** Decide si esta persona puede cerrar partes. Lo comprueba también el servidor. */
-  role: Role
   /**
    * A qué se ha venido, cuando no se ha venido a revisar.
    *
@@ -195,7 +191,6 @@ export function RoomSheet({
   buildingName,
   zoneName,
   userId,
-  role,
   enfocar,
   onBack,
   onRevisar,
@@ -625,12 +620,6 @@ export function RoomSheet({
             </p>
           ) : (
             <>
-              {!puedeCerrar(role) && (
-                <p className="mb-3 max-w-prose text-xs leading-relaxed text-muted">
-                  Cerrarlas es cosa de un supervisor. Lo que sí puedes hacer aquí es apuntar el
-                  material que has gastado en cada una.
-                </p>
-              )}
               <ul className="card divide-y divide-line-soft overflow-hidden">
                 {abiertasAqui.map((i) => (
                   <li key={i.id} className="px-4 py-3">
@@ -685,7 +674,6 @@ export function RoomSheet({
                       <div className="mt-2">
                         <AccionesDeIncidencia
                           incident={i}
-                          role={role}
                           userId={userId}
                           panel={enPanel?.id === i.id ? enPanel.panel : null}
                           onPanel={(panel) => setEnPanel(panel ? { id: i.id, panel } : null)}

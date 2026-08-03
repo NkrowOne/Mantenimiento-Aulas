@@ -4,10 +4,13 @@ import type { Incident } from '@/domain/types'
 /**
  * Cerrar una incidencia es un cambio, no un alta, y por eso se prueba aparte.
  *
- * Lo que hay que garantizar son dos cosas que no se ven desde la pantalla: que
+ * Lo que hay que garantizar son tres cosas que no se ven desde la pantalla: que
  * la sala deja de contar la avería **en el momento** —el espejo, sin esperar a
- * la red— y que la orden queda encolada con una clave que no pisa el alta de esa
- * misma incidencia, que puede seguir esperando ahí al lado.
+ * la red—, que la orden queda encolada con una clave que no pisa el alta de esa
+ * misma incidencia, y que **no se puede cerrar sin decir qué se ha hecho**. Lo
+ * último lo comprueba también el servidor (`avanzar_incidencia`); aquí se
+ * comprueba antes para no gastar un viaje a la red en decir que no — y ese viaje,
+ * desde un sótano, puede tardar horas en salir.
  */
 
 // `flush()` habla con el servidor y aquí no hay ninguno. Lo que importa es lo
@@ -15,7 +18,7 @@ import type { Incident } from '@/domain/types'
 vi.mock('@/sync/outbox', () => ({ flush: vi.fn() }))
 
 const { db } = await import('@/db/dexie')
-const { avanzarIncidencia, puedeCerrar } = await import('./acciones')
+const { avanzarIncidencia, resolucionSuficiente } = await import('./acciones')
 
 function incidencia(over: Partial<Incident> = {}): Incident {
   return {
@@ -70,17 +73,21 @@ describe('avanzarIncidencia', () => {
     expect(cola[0]).toMatchObject({
       id: 'inc-1#estado',
       entity: 'incident',
-      op: 'update',
+      op: 'rpc',
+      rpc: 'avanzar_incidencia',
       targetId: 'inc-1',
       status: 'pendiente',
     })
-    // Un parche, no la fila entera: dos personas que toquen la misma incidencia
-    // no se pisan campos que ninguna de las dos ha cambiado.
+    /*
+     * Una llamada a la función y no una escritura en la tabla: `incidents` sigue
+     * cerrada a UPDATE para quien no sea supervisor, y la función es la puerta
+     * con nombre por la que un técnico puede cerrar. La firma la pone el
+     * servidor con quien llama, así que aquí no viaja.
+     */
     expect(cola[0]?.payload).toEqual({
-      state: 'resuelta',
-      resolved_at: '2026-08-03T09:00:00.000Z',
-      resolved_by: 'supervisor-1',
-      resolution: 'Pieza sustituida',
+      p_id: 'inc-1',
+      p_estado: 'resuelta',
+      p_resolucion: 'Pieza sustituida',
     })
   })
 
@@ -116,7 +123,11 @@ describe('avanzarIncidencia', () => {
     await avanzarIncidencia({ id: 'inc-1', estado: 'en_curso', userId: 'supervisor-1' })
 
     expect((await db.incidents.get('inc-1'))?.state).toBe('en_curso')
-    expect((await db.outbox.get('inc-1#estado'))?.payload).toEqual({ state: 'en_curso' })
+    expect((await db.outbox.get('inc-1#estado'))?.payload).toEqual({
+      p_id: 'inc-1',
+      p_estado: 'en_curso',
+      p_resolucion: null,
+    })
   })
 
   /*
@@ -131,7 +142,7 @@ describe('avanzarIncidencia', () => {
 
     const cola = await db.outbox.toArray()
     expect(cola).toHaveLength(1)
-    expect((cola[0]?.payload as { state: string }).state).toBe('resuelta')
+    expect((cola[0]?.payload as { p_estado: string }).p_estado).toBe('resuelta')
   })
 
   /*
@@ -146,16 +157,31 @@ describe('avanzarIncidencia', () => {
     expect(await db.outbox.get('inc-vieja#estado')).toBeDefined()
   })
 
-  it('una resolución en blanco no se guarda como texto vacío', async () => {
-    await avanzarIncidencia({ id: 'inc-1', estado: 'resuelta', resolucion: '   ', userId: null })
-    expect((await db.outbox.get('inc-1#estado'))?.payload).toMatchObject({ resolution: null })
+  /*
+   * Cerrar sin decir qué se ha hecho no se encola siquiera. Es lo que sustituye
+   * a la firma del supervisor: sin texto, la fila diría «resuelta» y nada más,
+   * que es exactamente lo que hacía inútil el cierre de antes.
+   */
+  it('no deja cerrar sin escribir qué se ha hecho, y no toca nada al negarse', async () => {
+    await db.incidents.put(incidencia())
+
+    for (const vacia of [undefined, '', '   ', '.', 'x']) {
+      await expect(
+        avanzarIncidencia({ id: 'inc-1', estado: 'resuelta', resolucion: vacia, userId: 'u' }),
+      ).rejects.toThrow(/qué se ha hecho/)
+    }
+
+    expect((await db.incidents.get('inc-1'))?.state).toBe('abierta')
+    expect(await db.outbox.count()).toBe(0)
   })
 })
 
-describe('puedeCerrar', () => {
-  it('es de supervisor para arriba, igual que en el servidor', () => {
-    expect(puedeCerrar('tecnico')).toBe(false)
-    expect(puedeCerrar('supervisor')).toBe(true)
-    expect(puedeCerrar('admin')).toBe(true)
+describe('resolucionSuficiente', () => {
+  it('el suelo está en tres caracteres, y los espacios no cuentan', () => {
+    expect(resolucionSuficiente('')).toBe(false)
+    expect(resolucionSuficiente('   ')).toBe(false)
+    expect(resolucionSuficiente('ok')).toBe(false)
+    expect(resolucionSuficiente(' ok ')).toBe(false)
+    expect(resolucionSuficiente('Cambiada la lámpara')).toBe(true)
   })
 })

@@ -31,8 +31,8 @@ export interface OutboxEntry {
   /**
    * uuid v7 del registro afectado. Reenviarlo dos veces no duplica nada.
    *
-   * En un `update` NO es el id de la fila: es el de la entrada, que lleva un
-   * sufijo (`<uuid>#cierre`). Sin él, encolar el cierre de una incidencia
+   * En un `rpc` NO es el id de la fila: es el de la entrada, que lleva un
+   * sufijo (`<uuid>#estado`). Sin él, encolar el cierre de una incidencia
    * recién abierta sin cobertura **reemplazaría el alta** —`enqueue` guarda por
    * clave primaria— y la incidencia no llegaría a existir en el servidor. Cuál
    * es la fila lo dice `targetId`.
@@ -53,13 +53,17 @@ export interface OutboxEntry {
    * `upsert` es el camino de siempre: la fila nace en el dispositivo con su
    * identidad y se manda entera.
    *
-   * `update` es para lo que **ya existe arriba** y solo cambia de estado —cerrar
-   * una incidencia—: mandarla entera con un upsert no serviría, porque
-   * `incident` viaja en `IGNORE_DUPLICATES` y el servidor la ignoraría por estar
-   * ya puesta. Ver `pushEntry`.
+   * `rpc` es para lo que **ya existe arriba** y solo cambia de estado —empezar o
+   * cerrar una incidencia—. No se manda la fila: se llama a una función del
+   * servidor, que es la única puerta por la que un técnico puede cerrar. Un
+   * upsert no serviría de nada aquí: `incident` viaja en `IGNORE_DUPLICATES`, así
+   * que el servidor lo ignoraría por estar la fila ya puesta, sin error y sin
+   * efecto. Ver `pushEntry`.
    */
-  op: 'upsert' | 'update'
-  /** A qué fila apunta un `update`. En un `upsert` es el propio `id`. */
+  op: 'upsert' | 'rpc'
+  /** Qué función del servidor se llama. Solo en un `rpc`. */
+  rpc?: string
+  /** Sobre qué fila actúa un `rpc`, para poder esperar a que su alta suba. */
   targetId?: string
   payload: Record<string, unknown>
   createdAt: number
@@ -248,22 +252,24 @@ export async function enqueue<T extends object>(
 }
 
 /**
- * Encola un cambio sobre una fila que ya está en el servidor.
+ * Encola una llamada a una función del servidor sobre una fila que ya existe.
  *
- * Existe para una sola cosa hoy —cerrar o empezar una incidencia— y por eso no
- * intenta ser genérica: lo que se manda es un parche, no la fila entera, así que
- * dos personas que toquen la misma incidencia a la vez no se pisan campos que
- * ninguna de las dos ha cambiado.
+ * Existe para una sola cosa hoy —empezar o cerrar una incidencia— y por eso no
+ * intenta ser genérica. Va por función y no por escritura directa porque cerrar
+ * una incidencia es lo único que un técnico puede hacerle a `incidents`: la
+ * tabla sigue cerrada a UPDATE para quien no sea supervisor, y la función es la
+ * puerta con nombre que valida lo que sí se permite.
  *
  * La clave de la entrada lleva sufijo para no chocar con el alta de esa misma
  * fila, que puede seguir en la cola. Y **se reemplaza** si ya había otra del
  * mismo sufijo: pulsar «Resolver» dos veces es una sola orden.
  */
-export async function enqueueUpdate<T extends object>(
+export async function enqueueRpc<T extends object>(
   entity: OutboxEntry['entity'],
+  fn: string,
   targetId: string,
   sufijo: string,
-  patch: T,
+  args: T,
 ): Promise<void> {
   const id = `${targetId}#${sufijo}`
   const existing = await db.outbox.get(id)
@@ -271,9 +277,10 @@ export async function enqueueUpdate<T extends object>(
   await db.outbox.put({
     id,
     entity,
-    op: 'update',
+    op: 'rpc',
+    rpc: fn,
     targetId,
-    payload: { ...patch } as Record<string, unknown>,
+    payload: { ...args } as Record<string, unknown>,
     createdAt: existing?.createdAt ?? Date.now(),
     attempts: 0,
     nextAttemptAt: 0,

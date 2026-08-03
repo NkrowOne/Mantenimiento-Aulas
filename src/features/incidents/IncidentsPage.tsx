@@ -6,14 +6,12 @@ import { supabase } from '@/lib/supabase'
 import { displayRoomCode, norm } from '@/domain/normalize'
 import { salasQueCasan, type SalaBuscable } from './busqueda'
 import { AccionesDeIncidencia, type PanelDeIncidencia } from './AccionesDeIncidencia'
-import { puedeCerrar } from './acciones'
 import { Borradores } from './Borradores'
 import {
   INCIDENT_KIND_LABELS,
   type Incident,
   type IncidentKind,
   type IncidentState,
-  type Role,
 } from '@/domain/types'
 
 interface IncidentRow {
@@ -71,7 +69,6 @@ const STATE_LABEL: Record<IncidentState, string> = {
 }
 
 interface Props {
-  role: Role
   userId: string | null
   /**
    * Ir a la ficha de la sala de esta incidencia.
@@ -85,7 +82,7 @@ interface Props {
   onSala: (roomId: string) => void
 }
 
-export function IncidentsPage({ role, userId, onSala }: Props): React.ReactElement {
+export function IncidentsPage({ userId, onSala }: Props): React.ReactElement {
   const qc = useQueryClient()
   const [showResolved, setShowResolved] = useState(false)
   const [query, setQuery] = useState('')
@@ -398,21 +395,6 @@ export function IncidentsPage({ role, userId, onSala }: Props): React.ReactEleme
         />
       </label>
 
-      {/*
-        Quién cierra, dicho una vez y arriba.
-        Antes cada fila ofrecía «Empezar» y «Resolver» a todo el mundo y a un
-        técnico le fallaban las dos: el servidor no le deja, y la explicación
-        aparecía al pie de la pantalla después de pulsar. Ahora los botones que
-        no van a funcionar no se dibujan, y el motivo se lee antes.
-      */}
-      {!puedeCerrar(role) && (
-        <p className="mt-3 text-xs leading-relaxed text-muted">
-          Cerrar y empezar incidencias es cosa de un supervisor. Lo que sí puedes hacer desde
-          aquí es apuntar el material que has gastado, y abrir la ficha del aula tocando la
-          incidencia.
-        </p>
-      )}
-
       <ul className="mt-3 divide-y divide-line">
         {visibles.map((i) => {
           const days = Math.floor((Date.now() - new Date(i.opened_at).getTime()) / 86_400_000)
@@ -532,7 +514,6 @@ export function IncidentsPage({ role, userId, onSala }: Props): React.ReactEleme
                 <div className="mt-2">
                   <AccionesDeIncidencia
                     incident={i}
-                    role={role}
                     userId={userId}
                     panel={abierta?.id === i.id ? abierta.panel : null}
                     onPanel={(panel) => setAbierta(panel ? { id: i.id, panel } : null)}

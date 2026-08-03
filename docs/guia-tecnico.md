@@ -75,12 +75,8 @@ Tres cosas viven aquí:
 - **Las incidencias abiertas de esa aula**, con lo que urge primero. Sale del
   propio dispositivo, así que se lee **también sin cobertura** — es justo la
   lista que hace falta al abrir la puerta: «¿esto ya está reportado?». Cada una
-  trae al lado **«Material»**, para apuntar lo que has gastado, y **«Resolver»**
-  si eres supervisor. Cerrarla pide decir **cómo** —Reparado, Pieza sustituida,
-  Ajuste o reinicio, Ya funcionaba, No procede— y el detalle es opcional: sin
-  eso, el histórico dice que se cerró y no dice qué se hizo, que es lo único que
-  le sirve a quien se encuentre el mismo aparato dentro de tres meses. El cierre
-  se guarda en el momento y sube cuando haya red, como todo lo demás.
+  trae al lado **«Material»**, para apuntar lo que has gastado, y **«Resolver»**.
+  El cierre se guarda en el momento y sube cuando haya red, como todo lo demás.
 - **Las revisiones anteriores**, listadas: una fila por visita con la fecha,
   quién la hizo, cómo salió y qué hay dentro (fotos, observación, corregida).
   **Tocando la fila se abre su ficha en una pantalla propia**, con todo lo de
@@ -352,11 +348,19 @@ esta revisión»**. Se guarda como una versión nueva de esa visita, con la fech
 de aquel día, y la anterior se queda guardada y legible. Lo que no se puede es
 **reescribirla**: eso es lo que hace que el histórico valga como registro.
 
-**¿Por qué no puedo cerrar una incidencia?**
-Los técnicos las abren; cerrarlas es cosa de supervisores. Por eso el botón
-«Resolver» no te aparece: antes salía y fallaba al pulsarlo. Lo que sí puedes
-hacer en cualquiera es **apuntar el material** que has gastado, y eso conviene
-hacerlo antes de que alguien la cierre — después nadie vuelve a la incidencia.
+**¿Puedo cerrar una incidencia?**
+Sí, y es lo suyo: la arreglas tú. **Para cerrarla tienes que escribir qué has
+hecho** — «Cambiada la lámpara (S/N 4471) y reiniciada la matriz»—. No es
+burocracia: eso es lo que sustituye a que la revise un supervisor, y es lo único
+que le va a servir a quien se encuentre el mismo aparato dentro de tres meses. El
+motivo («Reparado», «Pieza sustituida»…) se pulsa de un toque y encabeza la
+frase; lo que no se puede es cerrar sin decir nada.
+
+Antes de cerrar, **apunta el material** que has gastado: después nadie vuelve a
+la incidencia y ese dato no llega al almacén.
+
+Lo que sigue siendo de un supervisor es **reabrir** una incidencia cerrada y
+cambiarle el título, la gravedad o la sala.
 
 **Tengo una incidencia delante y quiero ver el aula. ¿Hay atajo?**
 Sí: **toca la incidencia**. En la pestaña de Incidencias y en el Historial, cada

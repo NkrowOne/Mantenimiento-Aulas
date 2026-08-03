@@ -10,13 +10,13 @@
  *
  * DOS DECISIONES:
  *
- *  - **Cerrar pide decir cómo.** `resolution` era una columna que nadie
- *    rellenaba: el botón mandaba el estado y nada más. Así, el histórico de la
- *    sala decía «Resuelta: Proyector: no da imagen» — la avería otra vez, no lo
- *    que se hizo con ella, que es lo único que le sirve a quien se encuentre el
- *    mismo aparato dentro de tres meses. Los motivos van como teclas porque esto
- *    se pulsa de pie: un cuadro de texto en blanco y una mano libre son un campo
- *    que se queda vacío.
+ *  - **Cierra quien lo arregla, y para cerrar dice qué ha hecho.** Antes cerraba
+ *    un supervisor que no había visto la reparación, y `resolution` era una
+ *    columna que la aplicación nunca rellenaba: el histórico de la sala decía
+ *    «Resuelta: Proyector: no da imagen» —la avería otra vez, no lo que se hizo
+ *    con ella—. Ahora el campo es obligatorio y es lo que sustituye a la firma
+ *    del supervisor. Los motivos van como teclas porque esto se pulsa de pie:
+ *    encabezan la frase y clasifican, pero no la escriben.
  *  - **El material, antes de cerrar.** Después nadie vuelve a la incidencia, y
  *    ese era el dato que no llegaba nunca al almacén. Así que el recordatorio va
  *    dentro del panel de cierre, con el botón al lado, y no en una frase suelta
@@ -25,19 +25,22 @@
 
 import { useState } from 'react'
 import { MaterialUsado } from './MaterialUsado'
-import { MOTIVOS_DE_CIERRE, avanzarIncidencia, puedeCerrar } from './acciones'
-import type { IncidentState, Role } from '@/domain/types'
+import {
+  MOTIVOS_DE_CIERRE,
+  avanzarIncidencia,
+  resolucionSuficiente,
+} from './acciones'
+import type { IncidentState } from '@/domain/types'
 
 export type PanelDeIncidencia = 'material' | 'cerrar'
 
 interface Props {
   incident: { id: string; state: IncidentState; room_id: string | null }
-  role: Role
   userId: string | null
   /**
    * Qué panel tiene abierto esta fila, o nulo.
    *
-   * Lo lleva la lista y no cada fila a propósito: se está apuntando lo de UNA
+   * Lo lleva la lista y no cada fila a propósito: se está despachando UNA
    * avería, no llevando la contabilidad de seis a la vez. Con el estado dentro,
    * media lista acabaría desplegada y la cola de trabajo dejaría de recorrerse.
    */
@@ -49,7 +52,6 @@ interface Props {
 
 export function AccionesDeIncidencia({
   incident,
-  role,
   userId,
   panel,
   onPanel,
@@ -60,8 +62,6 @@ export function AccionesDeIncidencia({
   const [guardando, setGuardando] = useState(false)
   const [hecho, setHecho] = useState<string | null>(null)
   const [fallo, setFallo] = useState<string | null>(null)
-
-  const puede = puedeCerrar(role)
 
   async function avanzar(
     estado: 'en_curso' | 'resuelta',
@@ -85,12 +85,21 @@ export function AccionesDeIncidencia({
     }
   }
 
+  /*
+   * La resolución es lo escrito, con el motivo delante si se ha elegido uno.
+   *
+   * Lo que decide si se puede cerrar es el TEXTO, no el motivo: «Pieza
+   * sustituida» a secas no dice qué pieza ni en qué aparato, y dentro de tres
+   * meses, cuando el mismo proyector vuelva a fallar, es justo lo que hará falta
+   * saber.
+   */
+  const puedeCerrar = resolucionSuficiente(detalle)
   const resolucion = [motivo, detalle.trim()].filter(Boolean).join(' — ')
 
   return (
     <div className="min-w-0">
       <div className="flex flex-wrap gap-2">
-        {puede && incident.state === 'abierta' && (
+        {incident.state === 'abierta' && (
           <button
             type="button"
             onClick={() => void avanzar('en_curso')}
@@ -110,16 +119,14 @@ export function AccionesDeIncidencia({
           Material
         </button>
 
-        {puede && (
-          <button
-            type="button"
-            aria-expanded={panel === 'cerrar'}
-            onClick={() => onPanel(panel === 'cerrar' ? null : 'cerrar')}
-            className="key key-accent min-h-11 px-3 text-xs"
-          >
-            Resolver
-          </button>
-        )}
+        <button
+          type="button"
+          aria-expanded={panel === 'cerrar'}
+          onClick={() => onPanel(panel === 'cerrar' ? null : 'cerrar')}
+          className="key key-accent min-h-11 px-3 text-xs"
+        >
+          Resolver
+        </button>
       </div>
 
       {/* La confirmación se queda hasta que se toque otra cosa: en un iPad que
@@ -143,44 +150,46 @@ export function AccionesDeIncidencia({
           className="mt-3 rounded-ctl border border-line bg-raised p-3"
           onSubmit={(e) => {
             e.preventDefault()
-            if (!resolucion) return
+            if (!puedeCerrar) return
             void avanzar('resuelta', resolucion)
           }}
         >
-          <fieldset className="min-w-0 border-0 p-0">
-            <legend className="eyebrow mb-2">¿Cómo se ha resuelto?</legend>
-
-            <div className="flex flex-wrap gap-2">
-              {MOTIVOS_DE_CIERRE.map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  aria-pressed={motivo === m}
-                  onClick={() => setMotivo(motivo === m ? null : m)}
-                  className={`key min-h-11 px-3 text-xs ${
-                    motivo === m ? 'key-accent' : 'key-quiet text-muted'
-                  }`}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          <label className="mt-3 block text-xs text-muted">
-            Detalle (opcional)
+          <label className="block">
+            <span className="eyebrow">¿Qué has hecho?</span>
             <textarea
               value={detalle}
               onChange={(e) => setDetalle(e.target.value)}
               rows={2}
-              placeholder="Qué se ha hecho, o el número de serie de la pieza"
-              className="mt-1 w-full rounded-ctl border border-line bg-surface p-2 text-sm text-ink"
+              enterKeyHint="done"
+              placeholder="Cambiada la lámpara (S/N 4471) y reiniciada la matriz"
+              className="mt-2 w-full rounded-ctl border border-line bg-surface p-2 text-sm text-ink"
             />
           </label>
 
+          {/* Debajo del campo y no encima: son un atajo para empezar la frase,
+              no la respuesta. Puestos delante se leerían como el formulario
+              entero y el campo de texto pasaría por opcional, que es justo lo
+              que este cierre no puede permitirse. */}
+          <p className="eyebrow mt-3">Y de qué tipo</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {MOTIVOS_DE_CIERRE.map((m) => (
+              <button
+                key={m}
+                type="button"
+                aria-pressed={motivo === m}
+                onClick={() => setMotivo(motivo === m ? null : m)}
+                className={`key min-h-11 px-3 text-xs ${
+                  motivo === m ? 'key-accent' : 'key-quiet text-muted'
+                }`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+
           {/* Aquí y no en otra pantalla: después de cerrar nadie vuelve, y este
               es el dato que no llegaba nunca al almacén. */}
-          <p className="mt-2 text-xs leading-relaxed text-muted">
+          <p className="mt-3 text-xs leading-relaxed text-muted">
             ¿Has gastado material?{' '}
             <button
               type="button"
@@ -200,7 +209,7 @@ export function AccionesDeIncidencia({
                 alguien pulse el que no era. */}
             <button
               type="submit"
-              disabled={guardando || !resolucion}
+              disabled={guardando || !puedeCerrar}
               className="key key-accent min-h-11 px-3 text-sm"
             >
               {guardando ? 'Guardando…' : 'Cerrar la incidencia'}
@@ -214,10 +223,11 @@ export function AccionesDeIncidencia({
             </button>
           </div>
 
-          {!resolucion && (
-            <p className="mt-2 text-xs text-muted">
-              Elige un motivo, o escribe el detalle. Sin eso, el histórico dice que se
-              cerró y no dice qué se hizo.
+          {!puedeCerrar && (
+            <p className="mt-2 text-xs leading-relaxed text-muted">
+              Escribe qué has hecho para poder cerrarla. Es lo que leerá quien se
+              encuentre este mismo aparato dentro de tres meses — y es lo que sustituye
+              a que la cierre un supervisor.
             </p>
           )}
         </form>

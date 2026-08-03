@@ -371,25 +371,25 @@ async function cerrarEntrada(
 }
 
 /**
- * Un cambio sobre una fila que ya está arriba: cerrar o empezar una incidencia.
+ * Un cambio sobre una fila que ya está arriba: empezar o cerrar una incidencia.
  *
  * Es la única entrada de la cola que no es un alta, y por eso va por su cuenta.
- * Tres cosas la separan del camino normal:
+ * Dos cosas la separan del camino normal:
  *
- *  - Es un `update` y no un `upsert`. Un upsert de `incident` no haría nada:
+ *  - Llama a una función, no escribe en la tabla. `incidents` sigue cerrada a
+ *    UPDATE para quien no sea supervisor, así que un técnico solo puede cerrar
+ *    por la puerta con nombre —`avanzar_incidencia`—, que es la que comprueba
+ *    que se ha escrito qué se ha hecho. Y un upsert tampoco valdría: `incident`
  *    viaja en `IGNORE_DUPLICATES` —lo que evita que un reenvío del alta choque
  *    contra el permiso de supervisor— así que el servidor lo ignoraría por estar
  *    la fila ya puesta, sin error y sin efecto. Exactamente el fallo que este
  *    fichero lleva media docena de comentarios intentando no repetir.
- *  - Se pide la fila de vuelta, y **cero filas es un fallo**. Un UPDATE que no
- *    alcanza ninguna fila no es un error para PostgREST: contesta 204 con
- *    `error` a null. Y a un técnico no le alcanza ninguna —cerrar incidencias es
- *    de supervisor—, así que sin esto la cola daría por subido un cierre que el
- *    servidor rechazó, y la incidencia seguiría abierta sin que nada lo dijera.
- *  - Y ese fallo es permanente a propósito: no se arregla reintentando. Sale en
- *    la pantalla de pendientes con su motivo, que es donde se puede leer.
+ *  - Lo que la función rechaza es un rechazo de verdad. Una resolución en blanco
+ *    o una incidencia que no existe vuelven como 4xx con el motivo escrito por
+ *    el servidor, y eso es permanente a propósito: no se arregla reintentando.
+ *    Sale en la pantalla de pendientes con su texto, que es donde se puede leer.
  */
-async function pushUpdate(entry: OutboxEntry): Promise<boolean> {
+async function pushRpc(entry: OutboxEntry): Promise<boolean> {
   const fila = entry.targetId ?? entry.id
 
   /*
@@ -397,12 +397,12 @@ async function pushUpdate(entry: OutboxEntry): Promise<boolean> {
    *
    * Pasa con la incidencia que se abre y se cierra en la misma sala sin
    * cobertura: si el alta se queda esperando —un corte a mitad de subida— el
-   * cierre llegaría a una fila que todavía no existe, no alcanzaría ninguna y se
-   * marcaría rechazado para siempre por «hace falta ser supervisor», que además
-   * es mentira. En la pasada normal el alta va delante (misma familia, más
-   * antigua), así que esto solo actúa cuando algo ha ido mal; el alta rechazada
-   * sí lo deja pasar, porque si no el cierre esperaría eternamente a algo que no
-   * se va a mover solo.
+   * cierre llegaría a una fila que todavía no existe y el servidor lo rechazaría
+   * para siempre por «esa incidencia no existe», que además es mentira: existe,
+   * está esperando dos líneas más arriba en esta misma cola. En la pasada normal
+   * el alta va delante (misma familia, más antigua), así que esto solo actúa
+   * cuando algo ha ido mal; el alta rechazada sí lo deja pasar, porque si no el
+   * cierre esperaría eternamente a algo que no se va a mover solo.
    */
   const alta = await db.outbox.get(fila)
   if (alta && alta.status !== 'rechazado') {
@@ -414,27 +414,7 @@ async function pushUpdate(entry: OutboxEntry): Promise<boolean> {
     return false
   }
 
-  let alcanzadas = 0
-
-  const fallo = await intentar(async () => {
-    const res = await supabase
-      .from(TABLE[entry.entity])
-      .update(entry.payload)
-      .eq('id', fila)
-      .select('id')
-    alcanzadas = res.data?.length ?? 0
-    return res
-  })
-
-  if (!fallo && alcanzadas === 0) {
-    await cerrarEntrada(entry.id, {
-      status: 'rechazado',
-      attempts: entry.attempts + 1,
-      lastError:
-        'El servidor no ha aplicado el cambio: cerrar y empezar incidencias es cosa de un supervisor.',
-    })
-    return false
-  }
+  const fallo = await intentar(() => supabase.rpc(entry.rpc ?? '', entry.payload))
 
   if (!fallo) {
     await cerrarEntrada(entry.id, null)
@@ -464,7 +444,7 @@ async function pushUpdate(entry: OutboxEntry): Promise<boolean> {
 async function pushEntry(entry: OutboxEntry): Promise<boolean> {
   await db.outbox.update(entry.id, { status: 'enviando' })
 
-  if (entry.op === 'update') return pushUpdate(entry)
+  if (entry.op === 'rpc') return pushRpc(entry)
 
   /*
    * El cierre de una revisión es lo ÚLTIMO que sube de ella.

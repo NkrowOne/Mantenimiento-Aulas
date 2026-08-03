@@ -92,8 +92,11 @@ begin;
 commit;
 
 \echo ''
-\echo '=== 4. Un técnico NO puede cerrar una incidencia ==='
+\echo '=== 4. Un técnico NO puede tocar la tabla de incidencias a mano ==='
 begin;
+  -- Cerrar una incidencia sí puede: por `avanzar_incidencia`, y escribiendo qué
+  -- ha hecho (prueba 68). Lo que no puede es escribir en la tabla — cambiarle el
+  -- título, la gravedad o la sala, o cerrarla sin decir nada.
   select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
   savepoint s;
   do $$
@@ -1294,14 +1297,16 @@ begin;
     else 'FALLO: el fallo del equipo no llegó a ser incidencia'
   end as resultado;
 
-  -- Y no la cierra quien la abrió: cerrar sigue siendo del supervisor, que es
-  -- lo que hace que «hasta que se solucione» signifique algo.
+  -- Y no se cierra sola ni a mano: escribir en la tabla sigue siendo de
+  -- supervisor. El técnico la cierra por `avanzar_incidencia` diciendo qué ha
+  -- hecho (prueba 68), que es lo que hace que «hasta que se solucione»
+  -- signifique algo en vez de ser un botón.
   do $$
   begin
     update incidents set state = 'resuelta', resolved_at = now()
      where id = '77777777-7777-4777-8777-777777777783';
-    if found then raise exception 'FALLO: el técnico cerró su propia incidencia'; end if;
-    raise notice 'OK: sigue abierta hasta que la cierre un supervisor';
+    if found then raise exception 'FALLO: el técnico cerró su incidencia a mano'; end if;
+    raise notice 'OK: sigue abierta mientras nadie diga qué se ha hecho';
   end $$;
 
   -- El técnico ve la suya en la lista de trabajo, y la observación de la
@@ -2633,4 +2638,123 @@ begin;
     then 'OK: una revisión normal no cierra lo que abrió otra visita'
     else 'FALLO: una revisión que no corrige nada retiró un parte ajeno'
   end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 68. Un técnico cierra su incidencia, y para cerrarla dice qué ha hecho ==='
+begin;
+  -- La sala y la incidencia de la prueba, puestas con permisos plenos.
+  \set sala ''
+  select r.id as sala from rooms r where r.active order by r.created_at desc limit 1 \gset
+
+  insert into incidents (id, room_id, title, severity, state, kind,
+                         opened_at, opened_by, source)
+  values ('aaaaaaaa-0000-4000-8000-000000000680', :'sala',
+          'Proyector De Prueba 68: no da imagen', 'alta', 'abierta', 'incidencia',
+          now() - interval '3 days', '11111111-1111-4111-8111-111111111111', 'app'),
+         ('aaaaaaaa-0000-4000-8000-000000000681', :'sala',
+          null, 'media', 'borrador', 'incidencia',
+          now() - interval '1 day', '11111111-1111-4111-8111-111111111111', 'app');
+
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  -- Sin decir qué se ha hecho, no se cierra. Es lo que sustituye a la firma del
+  -- supervisor: sin ese texto la fila diría «resuelta» y nada más.
+  do $$
+  begin
+    perform public.avanzar_incidencia(
+      'aaaaaaaa-0000-4000-8000-000000000680', 'resuelta', null);
+    raise exception 'FALLO: se cerró una incidencia sin decir qué se hizo';
+  exception when check_violation then
+    raise notice 'OK: sin escribir qué se ha hecho no se cierra';
+  end $$;
+
+  do $$
+  begin
+    perform public.avanzar_incidencia(
+      'aaaaaaaa-0000-4000-8000-000000000680', 'resuelta', '  .  ');
+    raise exception 'FALLO: un punto valió como descripción';
+  exception when check_violation then
+    raise notice 'OK: un punto tampoco es decir qué se ha hecho';
+  end $$;
+
+  -- Y la incidencia sigue intacta después de los dos intentos.
+  select case
+    when (select state::text from incidents where id = 'aaaaaaaa-0000-4000-8000-000000000680')
+         = 'abierta'
+    then 'OK: lo que se rechaza no deja nada a medias'
+    else 'FALLO: un cierre rechazado cambió el estado igualmente'
+  end as resultado;
+
+  -- Con el texto, sí. Y queda firmado con quien la cerró.
+  select public.avanzar_incidencia(
+    'aaaaaaaa-0000-4000-8000-000000000680', 'resuelta',
+    'Pieza sustituida — cambiada la lámpara (S/N 4471)') as fila \gset
+  select case
+    when (select state::text || ' · ' || resolution
+               || ' · ' || (resolved_by = '11111111-1111-4111-8111-111111111111')::text
+               || ' · ' || (resolved_at is not null)::text
+            from incidents where id = 'aaaaaaaa-0000-4000-8000-000000000680')
+       = 'resuelta · Pieza sustituida — cambiada la lámpara (S/N 4471) · true · true'
+    then 'OK: el técnico cierra diciendo qué ha hecho, y queda su firma'
+    else 'FALLO: el cierre del técnico no quedó como se esperaba'
+  end as resultado;
+
+  -- Reenviar el cierre no pisa la firma ni la fecha del cierre de verdad: la
+  -- respuesta de la cola se pierde más de lo que parece.
+  select public.avanzar_incidencia(
+    'aaaaaaaa-0000-4000-8000-000000000680', 'resuelta', 'Otra cosa distinta') as otra \gset
+  select case
+    when (select resolution from incidents where id = 'aaaaaaaa-0000-4000-8000-000000000680')
+       = 'Pieza sustituida — cambiada la lámpara (S/N 4471)'
+    then 'OK: reenviar un cierre no reescribe el que ya estaba'
+    else 'FALLO: el reenvío pisó la resolución original'
+  end as resultado;
+
+  -- Lo que la puerta NO abre: reabrir, y cerrar un borrador.
+  do $$
+  begin
+    perform public.avanzar_incidencia(
+      'aaaaaaaa-0000-4000-8000-000000000680', 'abierta', 'me arrepiento');
+    raise exception 'FALLO: un técnico reabrió una incidencia';
+  exception when check_violation then
+    raise notice 'OK: reabrir sigue siendo cosa de un supervisor';
+  end $$;
+
+  do $$
+  begin
+    perform public.avanzar_incidencia(
+      'aaaaaaaa-0000-4000-8000-000000000681', 'resuelta', 'lo que sea');
+    raise exception 'FALLO: se cerró un borrador sin título';
+  exception when check_violation then
+    raise notice 'OK: un borrador se completa en su bandeja, no se cierra';
+  end $$;
+
+  -- Y la tabla sigue cerrada: la puerta es la función, no un permiso nuevo.
+  savepoint s;
+  do $$
+  declare n int;
+  begin
+    update incidents set severity = 'baja'
+     where id = 'aaaaaaaa-0000-4000-8000-000000000680';
+    get diagnostics n = row_count;
+    if n > 0 then
+      raise exception 'FALLO: un técnico reescribió % incidencias a mano', n;
+    end if;
+    raise notice 'OK: la tabla sigue cerrada a UPDATE para el técnico';
+  exception when insufficient_privilege then
+    raise notice 'OK: la tabla sigue cerrada a UPDATE para el técnico';
+  end $$;
+  rollback to savepoint s;
+
+  -- Quien no es del equipo, ni eso.
+  select set_config('request.jwt.claims', '{}', true);
+  do $$
+  begin
+    perform public.avanzar_incidencia(
+      'aaaaaaaa-0000-4000-8000-000000000681', 'en_curso', null);
+    raise exception 'FALLO: alguien de fuera del equipo tocó una incidencia';
+  exception when insufficient_privilege then
+    raise notice 'OK: fuera del equipo, la puerta no se abre';
+  end $$;
 rollback;

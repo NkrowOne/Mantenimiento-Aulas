@@ -877,7 +877,6 @@ export function App(): React.ReactElement {
             buildingName={view.building.name}
             zoneName={zoneName}
             userId={userId}
-            role={role}
             enfocar={view.enfocar ?? null}
             onBack={() => {
               if (view.name !== 'ficha') return
@@ -944,9 +943,7 @@ export function App(): React.ReactElement {
           {/* La incidencia lleva a su aula, que es donde se resuelve: la ficha
               abre por el bloque de incidencias abiertas y «Volver» devuelve
               aquí, a la cola de trabajo que se estaba triando. */}
-          {tab === 'incidencias' && (
-            <IncidentsPage role={role} userId={userId} onSala={abrirFicha} />
-          )}
+          {tab === 'incidencias' && <IncidentsPage userId={userId} onSala={abrirFicha} />}
           {tab === 'almacen' && <StockPage role={role} />}
           {tab === 'historial' && <HistorialPage onSala={abrirFicha} />}
           {/* El rol llega porque la configuración de la IA —que guarda un
