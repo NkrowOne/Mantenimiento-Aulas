@@ -15,8 +15,8 @@
  *    decía «Resuelta: Proyector: no da imagen» —la avería otra vez, no lo que se
  *    hizo con ella—. Ahora el campo es obligatorio y es lo que sustituye a la
  *    firma del supervisor.
- *  - **Coger una incidencia la pone a tu nombre.** «En curso» sin dueño es dos
- *    técnicos subiendo al mismo aula el mismo día.
+ *  - **Asignársela la pone a tu nombre.** «En curso» sin dueño es dos técnicos
+ *    subiendo al mismo aula el mismo día.
  *  - **La pieza sale del almacén aquí mismo.** El motivo pregunta cuál, se elige
  *    del catálogo, se descuenta apuntada a esta incidencia y su nombre se
  *    escribe en la resolución. Antes eran dos gestos detrás de dos botones y el
@@ -111,9 +111,9 @@ export function AccionesDeIncidencia({
       setHecho(
         accion === 'cerrar'
           ? 'Resuelta. Sube en cuanto haya cobertura.'
-          : accion === 'coger'
-            ? 'La llevas tú. Sube en cuanto haya cobertura.'
-            : 'Suelta. Vuelve a la cola de todos.',
+          : accion === 'asignar'
+            ? 'Asignada a ti. Sube en cuanto haya cobertura.'
+            : 'Desasignada. Vuelve a la cola de todos.',
       )
       onPanel(null)
       onHecho?.()
@@ -152,7 +152,7 @@ export function AccionesDeIncidencia({
   return (
     <div className="min-w-0">
       {/*
-        Quién la lleva NO se pinta aquí.
+        A quién está asignada NO se pinta aquí.
 
         Lo dicen las dos pantallas que montan esto, en la línea de datos de la
         fila, junto a la sala y a los días que lleva abierta — que es donde se
@@ -164,23 +164,23 @@ export function AccionesDeIncidencia({
         {incident.state !== 'resuelta' && !deOtro && !mio && (
           <button
             type="button"
-            onClick={() => void avanzar('coger')}
+            onClick={() => void avanzar('asignar')}
             disabled={guardando}
             className="key key-quiet min-h-11 px-3 text-xs"
           >
-            La cojo yo
+            Asignármela
           </button>
         )}
 
-        {/* Soltarla es deshacer lo tuyo, así que solo aparece si es tuya. */}
+        {/* Desasignársela es deshacer lo tuyo, así que solo aparece si es tuya. */}
         {mio && incident.state !== 'resuelta' && (
           <button
             type="button"
-            onClick={() => void avanzar('soltar')}
+            onClick={() => void avanzar('desasignar')}
             disabled={guardando}
             className="key key-quiet min-h-11 px-3 text-xs"
           >
-            Soltar
+            Desasignármela
           </button>
         )}
 
@@ -233,8 +233,8 @@ export function AccionesDeIncidencia({
               lista haya menguado. */}
           {deOtro && (
             <p className="mb-3 text-xs leading-relaxed text-warn">
-              Esta la lleva {quienLaLleva ?? 'otra persona'}. Puedes cerrarla igual, pero quedará
-              a tu nombre.
+              Esta está asignada a {quienLaLleva ?? 'otra persona'}. Puedes cerrarla igual, pero
+              quedará a tu nombre.
             </p>
           )}
 

@@ -2761,7 +2761,7 @@ begin;
 rollback;
 
 \echo ''
-\echo '=== 69. Una incidencia tiene dueño, y tiene vuelta atrás ==='
+\echo '=== 69. Una incidencia se asigna, se desasigna, y tiene vuelta atrás ==='
 begin;
   \set sala ''
   select r.id as sala from rooms r where r.active order by r.created_at desc limit 1 \gset
@@ -2773,7 +2773,7 @@ begin;
           'abierta', 'incidencia', now() - interval '5 days',
           '11111111-1111-4111-8111-111111111111', 'app');
 
-  -- Un técnico la coge: pasa a en curso Y queda a su nombre.
+  -- Un técnico se la asigna: pasa a en curso Y queda a su nombre.
   select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
   select public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'en_curso') as f \gset
   select case
@@ -2782,8 +2782,8 @@ begin;
                || ' · ' || (assigned_at is not null)::text
             from incidents where id = 'aaaaaaaa-0000-4000-8000-000000000690')
        = 'en_curso · true · true'
-    then 'OK: cogerla la pone en curso y a nombre de quien la coge'
-    else 'FALLO: coger la incidencia no dejó dueño'
+    then 'OK: asignársela la pone en curso y a nombre de quien lo hace'
+    else 'FALLO: asignarse la incidencia no dejó dueño'
   end as resultado;
 
   -- Y otro técnico no se la quita de las manos.
@@ -2793,26 +2793,26 @@ begin;
     perform public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'en_curso');
     raise exception 'FALLO: un compañero se quedó una incidencia ajena';
   exception when check_violation then
-    raise notice 'OK: lo que lleva otro no se le quita pulsando un botón';
+    raise notice 'OK: lo asignado a otro no se le quita pulsando un botón';
   end $$;
 
   do $$
   begin
     perform public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'abierta');
-    raise exception 'FALLO: un compañero soltó una incidencia ajena';
+    raise exception 'FALLO: un compañero desasignó una incidencia ajena';
   exception when check_violation then
-    raise notice 'OK: tampoco la suelta quien no la lleva';
+    raise notice 'OK: tampoco la desasigna quien no la tiene';
   end $$;
 
-  -- Su dueño sí la suelta, y vuelve a la cola de todos sin dueño.
+  -- Quien la tiene sí puede desasignársela, y vuelve a la cola de todos.
   select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
   select public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'abierta') as g \gset
   select case
     when (select state::text || ' · ' || (assigned_to is null)::text
             from incidents where id = 'aaaaaaaa-0000-4000-8000-000000000690')
        = 'abierta · true'
-    then 'OK: soltarla la devuelve a la cola sin dueño'
-    else 'FALLO: soltar la incidencia no la liberó'
+    then 'OK: desasignársela la devuelve a la cola sin dueño'
+    else 'FALLO: desasignar la incidencia no la liberó'
   end as resultado;
 
   -- Se cierra, y reabrir NO lo puede hacer un técnico.
@@ -2856,15 +2856,15 @@ begin;
            where id = 'aaaaaaaa-0000-4000-8000-000000000690') || ')'
   end as resultado;
 
-  -- Y coger una cerrada no es coger: hay que reabrirla antes.
+  -- Y una cerrada no se asigna: hay que reabrirla antes.
   select public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'resuelta',
     'Sustituida la placa') as j \gset
   do $$
   begin
     perform public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'en_curso');
-    raise exception 'FALLO: se cogió una incidencia ya cerrada';
+    raise exception 'FALLO: se asignó una incidencia ya cerrada';
   exception when check_violation then
-    raise notice 'OK: lo cerrado se reabre, no se coge';
+    raise notice 'OK: lo cerrado se reabre, no se asigna';
   end $$;
 
   -- El nombre de un compañero se lee, y el email no.

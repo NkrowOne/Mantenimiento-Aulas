@@ -15,12 +15,12 @@
  *
  * Los verbos, y por qué son cuatro y no dos estados:
  *
- *  - **Coger** — la pone en curso Y a tu nombre. Antes «en curso» decía que
+ *  - **Asignar** — la pone en curso Y a tu nombre. Antes «en curso» decía que
  *    alguien la había empezado sin decir quién, que con varios técnicos es dos
  *    personas subiendo al mismo aula el mismo día.
  *  - **Cerrar** — exige escribir qué se ha hecho. Ese texto es lo que sustituye
  *    a la firma del supervisor.
- *  - **Soltar** — deshacer lo tuyo: vuelve a la cola de todos, sin dueño.
+ *  - **Desasignar** — deshacer lo tuyo: vuelve a la cola de todos, sin dueño.
  *  - **Reabrir** — revisar la decisión de otro. Es de supervisor, pide motivo, y
  *    lo que se cerró no desaparece: baja a la descripción.
  *
@@ -96,13 +96,13 @@ export function conLaPieza(texto: string, nombre: string, qty: number): string {
   return base ? `${base} · ${linea}` : linea
 }
 
-export type AccionDeIncidencia = 'coger' | 'cerrar' | 'soltar' | 'reabrir'
+export type AccionDeIncidencia = 'asignar' | 'cerrar' | 'desasignar' | 'reabrir'
 
 /** A qué estado lleva cada verbo. La función del servidor habla de estados. */
 const ESTADO_DE: Record<AccionDeIncidencia, 'abierta' | 'en_curso' | 'resuelta'> = {
-  coger: 'en_curso',
+  asignar: 'en_curso',
   cerrar: 'resuelta',
-  soltar: 'abierta',
+  desasignar: 'abierta',
   reabrir: 'abierta',
 }
 
@@ -157,9 +157,9 @@ export async function avanzarIncidencia(entrada: AvanceDeIncidencia): Promise<vo
           resolved_by: entrada.userId,
           resolution: texto,
         }
-      : entrada.accion === 'coger'
+      : entrada.accion === 'asignar'
         ? { state: 'en_curso', assigned_to: entrada.userId, assigned_at: ahora }
-        : entrada.accion === 'soltar'
+        : entrada.accion === 'desasignar'
           ? { state: 'abierta', assigned_to: null, assigned_at: null }
           : {
               /*
@@ -187,7 +187,7 @@ export async function avanzarIncidencia(entrada: AvanceDeIncidencia): Promise<vo
     await db.incidents.put({ ...entrada.fila, ...parche })
   }
 
-  // Mismo sufijo para los cuatro: pulsar «La cojo yo» y luego «Resolver» es una
+  // Mismo sufijo para los cuatro: pulsar «Asignármela» y luego «Resolver» es una
   // sola orden con el estado final, no dos que compiten por la misma fila.
   await enqueueRpc('incident', 'avanzar_incidencia', entrada.id, 'estado', {
     p_id: entrada.id,

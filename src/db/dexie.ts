@@ -141,7 +141,7 @@ export class AulasDB extends Dexie {
   stockLevels!: EntityTable<StockLevel, 'stock_item_id'>
   incidents!: EntityTable<Incident, 'id'>
   assetTypes!: EntityTable<AssetType, 'id'>
-  /* Los nombres del equipo. Sin esto, «la lleva Fulano» sería un uuid — y el
+  /* Los nombres del equipo. Sin esto, «asignada a Fulano» sería un uuid — y el
      aula, que es donde se lee, es donde no hay cobertura para preguntarlo. */
   personal!: EntityTable<Persona, 'id'>
 

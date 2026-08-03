@@ -120,9 +120,9 @@ describe('avanzarIncidencia', () => {
     ])
   })
 
-  it('cogerla la pone a tu nombre y no inventa una resolución', async () => {
+  it('asignársela la pone a tu nombre y no inventa una resolución', async () => {
     await db.incidents.put(incidencia())
-    await avanzarIncidencia({ id: 'inc-1', accion: 'coger', userId: 'supervisor-1' })
+    await avanzarIncidencia({ id: 'inc-1', accion: 'asignar', userId: 'supervisor-1' })
 
     expect(await db.incidents.get('inc-1')).toMatchObject({
       state: 'en_curso',
@@ -144,7 +144,7 @@ describe('avanzarIncidencia', () => {
    */
   it('el segundo toque reemplaza al primero en vez de competir con él', async () => {
     await db.incidents.put(incidencia())
-    await avanzarIncidencia({ id: 'inc-1', accion: 'coger', userId: 'u' })
+    await avanzarIncidencia({ id: 'inc-1', accion: 'asignar', userId: 'u' })
     await avanzarIncidencia({ id: 'inc-1', accion: 'cerrar', texto: 'Reparado', userId: 'u' })
 
     const cola = await db.outbox.toArray()
@@ -229,14 +229,14 @@ describe('conLaPieza', () => {
 })
 
 /*
- * Soltar y reabrir son los dos que devuelven trabajo, y no son lo mismo:
- * soltar es deshacer lo tuyo —vuelve a la cola sin dueño— y reabrir es revisar
- * la decisión de otro, que además pide motivo.
+ * Desasignar y reabrir son los dos que devuelven trabajo, y no son lo mismo:
+ * desasignársela es deshacer lo tuyo —vuelve a la cola sin dueño— y reabrir es
+ * revisar la decisión de otro, que además pide motivo.
  */
-describe('avanzarIncidencia · soltar y reabrir', () => {
-  it('soltar la devuelve a la cola sin dueño', async () => {
+describe('avanzarIncidencia · desasignar y reabrir', () => {
+  it('desasignársela la devuelve a la cola sin dueño', async () => {
     await db.incidents.put(incidencia({ state: 'en_curso', assigned_to: 'u1' }))
-    await avanzarIncidencia({ id: 'inc-1', accion: 'soltar', userId: 'u1' })
+    await avanzarIncidencia({ id: 'inc-1', accion: 'desasignar', userId: 'u1' })
 
     expect(await db.incidents.get('inc-1')).toMatchObject({
       state: 'abierta',

@@ -28,11 +28,11 @@
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
--- 1 — Quién lleva cada incidencia
+-- 1 — A quién está asignada cada incidencia
 --
--- Autoasignación y no reparto: la coge quien va a subir, no la manda nadie. Es
--- lo que encaja con cómo se trabaja —el técnico ve la lista, elige y sube— y lo
--- que evita inventar una pantalla de asignación que nadie ha pedido.
+-- Autoasignación y no reparto: se la asigna quien va a subir, no la manda nadie.
+-- Es lo que encaja con cómo se trabaja —el técnico ve la lista, elige y sube— y
+-- lo que evita inventar una pantalla de reparto que nadie ha pedido.
 --
 -- `assigned_to` y no «el que la puso en curso»: son la misma persona hoy, pero
 -- el estado dice en qué punto está el trabajo y esto dice de quién es. Mezclarlos
@@ -44,12 +44,12 @@ alter table incidents
   add column if not exists assigned_at timestamptz;
 
 comment on column incidents.assigned_to is
-  'Quién la lleva. Se autoasigna al pulsar «La cojo yo»; se suelta al liberarla y se limpia al reabrirla. NULL = nadie la ha cogido.';
+  'A quién está asignada. Se autoasigna al pulsar «Asignármela», se limpia con «Desasignármela» y al reabrirla. NULL = no está asignada a nadie.';
 
 comment on column incidents.assigned_at is
-  'Cuándo la cogió. Separado de `state`: el estado dice en qué punto está el trabajo, esto de quién es.';
+  'Cuándo se asignó. Separado de `state`: el estado dice en qué punto está el trabajo, esto de quién es.';
 
--- «¿Qué llevo yo?» es la consulta que hace cada técnico al abrir la aplicación.
+-- «¿Qué tengo yo asignado?» es la consulta que hace cada técnico al abrir la app.
 create index if not exists incidents_asignadas_idx
   on incidents(assigned_to) where assigned_to is not null and state <> 'resuelta';
 
@@ -62,8 +62,8 @@ create index if not exists incidents_resueltas_idx
 --
 -- Una vista con dos columnas y nada más. `profiles` guarda además el email, el
 -- rol y si la cuenta está activa, y eso sí es de administración: por eso no se
--- abre la tabla, se abre exactamente lo que hace falta para escribir «la lleva
--- Ana Ruiz» debajo de una avería.
+-- abre la tabla, se abre exactamente lo que hace falta para escribir «asignada
+-- a Ana Ruiz» debajo de una avería.
 --
 -- Sin `security_invoker`, o sea que la vista lee `profiles` con el permiso de su
 -- dueño y el filtro lo pone ella: `is_staff()`. Quien no es del equipo no ve ni
@@ -76,7 +76,7 @@ from profiles p
 where public.is_staff();
 
 comment on view personal is
-  'Los nombres del equipo, y solo los nombres. Para poder decir quién lleva una incidencia o quién firmó una revisión sin abrir `profiles`, que guarda el email y el rol.';
+  'Los nombres del equipo, y solo los nombres. Para poder decir a quién está asignada una incidencia o quién firmó una revisión sin abrir `profiles`, que guarda el email y el rol.';
 
 grant select on personal to authenticated;
 
@@ -306,10 +306,10 @@ alter view room_inspections set (security_invoker = on);
 -- significar dos cosas distintas según de dónde se venga, que es justo como se
 -- dice en voz alta:
 --
---   en curso → abierta   «la suelto»      — el dueño, o un supervisor
---   resuelta → abierta   «hay que volver» — supervisor, y diciendo por qué
+--   en curso → abierta   «me la desasigno» — quien la tiene, o un supervisor
+--   resuelta → abierta   «hay que volver»  — supervisor, y diciendo por qué
 --
--- Soltar lo puede hacer quien la lleva porque es deshacer lo suyo. Reabrir no:
+-- Desasignarla la puede hacer quien la tiene porque es deshacer lo suyo. Reabrir no:
 -- es revisar la decisión de otro, y encima es el único camino que devuelve
 -- trabajo a la cola de todos.
 -- -----------------------------------------------------------------------------
@@ -378,17 +378,17 @@ begin
     return v;
   end if;
 
-  -- --------------------------------------------------------------- cogerla ---
+  -- ------------------------------------------------------------- asignarla ---
   if p_estado = 'en_curso' then
     if v.state = 'resuelta' then
       raise exception 'Esa incidencia ya está cerrada: para volver a ella hay que reabrirla (id=%)', p_id
         using errcode = 'check_violation';
     end if;
 
-    -- Ya la lleva alguien y no soy yo: no se le quita de las manos a nadie por
-    -- pulsar un botón. Que la suelte él, o que la reasigne un supervisor.
+    -- Ya está asignada a alguien que no soy yo: no se le quita de las manos a
+    -- nadie por pulsar un botón. Que se la desasigne él, o un supervisor.
     if v.assigned_to is not null and v.assigned_to <> v_yo and not public.is_supervisor() then
-      raise exception 'Esa incidencia ya la lleva otra persona (id=%)', p_id
+      raise exception 'Esa incidencia ya está asignada a otra persona (id=%)', p_id
         using errcode = 'check_violation';
     end if;
 
@@ -403,7 +403,7 @@ begin
     return v;
   end if;
 
-  -- --------------------------------------------------- soltarla o reabrirla ---
+  -- ----------------------------------------------- desasignarla o reabrirla ---
   if v.state = 'resuelta' then
     if not public.is_supervisor() then
       raise exception 'Reabrir una incidencia cerrada es cosa de un supervisor (id=%)', p_id
@@ -441,13 +441,13 @@ begin
     return v;
   end if;
 
-  -- Soltar: solo tiene sentido sobre lo que uno lleva.
+  -- Desasignar: solo tiene sentido sobre lo que uno tiene asignado.
   if v.state <> 'en_curso' then
     return v;
   end if;
 
   if v.assigned_to is not null and v.assigned_to <> v_yo and not public.is_supervisor() then
-    raise exception 'Esa incidencia la lleva otra persona: no puedes soltarla tú (id=%)', p_id
+    raise exception 'Esa incidencia está asignada a otra persona: no puedes desasignarla tú (id=%)', p_id
       using errcode = 'check_violation';
   end if;
 
@@ -461,7 +461,7 @@ end;
 $fn$;
 
 comment on function public.avanzar_incidencia(uuid, incident_state, text) is
-  'La única puerta por la que el personal mueve una incidencia: cogerla (en_curso, se autoasigna), cerrarla (resuelta, exige escribir qué se ha hecho), soltarla (abierta desde en_curso, el dueño o un supervisor) y reabrirla (abierta desde resuelta, supervisor y diciendo por qué). La tabla sigue cerrada a UPDATE para quien no sea supervisor.';
+  'La única puerta por la que el personal mueve una incidencia: asignársela (en_curso, se autoasigna), cerrarla (resuelta, exige escribir qué se ha hecho), desasignársela (abierta desde en_curso, quien la tiene o un supervisor) y reabrirla (abierta desde resuelta, supervisor y diciendo por qué). La tabla sigue cerrada a UPDATE para quien no sea supervisor.';
 
 revoke all on function public.avanzar_incidencia(uuid, incident_state, text) from public, anon;
 grant execute on function public.avanzar_incidencia(uuid, incident_state, text) to authenticated;

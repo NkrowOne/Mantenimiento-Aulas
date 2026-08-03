@@ -192,13 +192,14 @@ Cómo está montado, que importa para auditar:
   independientes detrás de dos botones, y el segundo se hacía la mitad de las
   veces: se cerraba «Pieza sustituida» sin decir qué pieza y sin descontar nada.
 
-### Quién lleva cada incidencia, y cómo se vuelve atrás
+### A quién está asignada cada incidencia, y cómo se vuelve atrás
 
-- **Se autoasigna, no se reparte.** «La cojo yo» pone la incidencia en curso y a
-  nombre de quien la coge (`incidents.assigned_to`); «Soltar» la devuelve a la
-  cola sin dueño. No hay pantalla de reparto porque no hay reparto: la coge quien
-  va a subir. Lo que lleva otro no se le quita pulsando un botón — cerrarla sí se
-  puede, y la aplicación avisa de que quedará a nombre de quien cierre.
+- **Se autoasigna, no se reparte.** «Asignármela» pone la incidencia en curso y a
+  nombre de quien lo pulsa (`incidents.assigned_to`); «Desasignármela» la devuelve
+  a la cola sin dueño. No hay pantalla de reparto porque no hay reparto: se la
+  asigna quien va a subir. Lo asignado a otro no se le quita pulsando un botón —
+  cerrarla sí se puede, y la aplicación avisa de que quedará a nombre de quien
+  cierre.
 - **Reabrir es de `supervisor`**, y pide motivo. Lo que se había escrito al
   cerrar no se borra: baja a `description` junto al motivo y la fecha, que es el
   campo que la lista y el histórico sí pintan. Con `resolution` a secas,

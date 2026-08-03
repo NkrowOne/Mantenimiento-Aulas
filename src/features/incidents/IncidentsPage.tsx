@@ -144,8 +144,8 @@ export function IncidentsPage({ role, userId, onSala }: Props): React.ReactEleme
 
   const salas = espejo?.etiquetas
 
-  /* Los nombres del equipo, para poder escribir «la lleva Ana Ruiz» en vez de un
-     uuid. Del espejo: son diez filas y viajan con el maestro. */
+  /* Los nombres del equipo, para poder escribir «asignada a Ana Ruiz» en vez de
+     un uuid. Del espejo: son diez filas y viajan con el maestro. */
   const nombres = useLiveQuery(
     async () => new Map((await db.personal.toArray()).map((p) => [p.id, p.full_name])),
     [],
@@ -524,14 +524,15 @@ export function IncidentsPage({ role, userId, onSala }: Props): React.ReactEleme
                         delante del aparato y lo vio fallar, que es información
                         distinta de haberlo apuntado desde el escritorio. */}
                     {i.opened_from_inspection_id && <>de la revisión · </>}
-                    {/* Quién la lleva, en la propia fila: es lo que decide si
-                        hay que subir al aula o llamar a un compañero. */}
+                    {/* A quién está asignada, en la propia fila: es lo que decide
+                        si hay que subir al aula o llamar a un compañero. Con las
+                        mismas palabras del botón que la asigna. */}
                     {i.state !== 'resuelta' && i.assigned_to && (
                       <>
                         <span className="text-accent">
                           {i.assigned_to === userId
-                            ? 'la llevas tú'
-                            : `la lleva ${nombreDe(i.assigned_to) ?? 'otra persona'}`}
+                            ? 'asignada a ti'
+                            : `asignada a ${nombreDe(i.assigned_to) ?? 'otra persona'}`}
                         </span>
                         {' · '}
                       </>

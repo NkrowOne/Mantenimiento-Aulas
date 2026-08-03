@@ -75,7 +75,7 @@ Tres cosas viven aquí:
 - **Las incidencias abiertas de esa aula**, con lo que urge primero. Sale del
   propio dispositivo, así que se lee **también sin cobertura** — es justo la
   lista que hace falta al abrir la puerta: «¿esto ya está reportado?». Cada una
-  trae al lado **«La cojo yo»**, **«Material»** y **«Resolver»**. Todo se guarda
+  trae al lado **«Asignármela»**, **«Material»** y **«Resolver»**. Todo se guarda
   en el momento y sube cuando haya red, como el resto de la aplicación.
 - **Las revisiones anteriores**, listadas: una fila por visita con la fecha,
   quién la hizo, cómo salió y qué hay dentro (fotos, observación, corregida).
@@ -348,15 +348,15 @@ esta revisión»**. Se guarda como una versión nueva de esa visita, con la fech
 de aquel día, y la anterior se queda guardada y legible. Lo que no se puede es
 **reescribirla**: eso es lo que hace que el histórico valga como registro.
 
-**«La cojo yo», ¿para qué sirve?**
+**«Asignármela», ¿para qué sirve?**
 Para que se sepa que subes tú. La incidencia pasa a «en curso» y **a tu nombre**,
-y el resto del equipo lo ve en la lista: «la lleva Marta Ferrer». Antes «en
+y el resto del equipo lo ve en la lista: «asignada a Marta Ferrer». Antes «en
 curso» no decía quién, y eso son dos personas subiendo al mismo aula el mismo
-día. Si al final no vas, **«Soltar»** la devuelve a la cola de todos.
+día. Si al final no vas, **«Desasignármela»** la devuelve a la cola de todos.
 
-Lo que lleva otra persona no se le quita pulsando un botón: si de verdad hace
-falta, cerrarla sí puedes —puede estar de baja— y la aplicación te avisa de que
-quedará a tu nombre.
+Lo que está asignado a otra persona no se le quita pulsando un botón: si de
+verdad hace falta, cerrarla sí puedes —puede estar de baja— y la aplicación te
+avisa de que quedará a tu nombre.
 
 **¿Puedo cerrar una incidencia?**
 Sí, y es lo suyo: la arreglas tú. **Para cerrarla tienes que escribir qué has

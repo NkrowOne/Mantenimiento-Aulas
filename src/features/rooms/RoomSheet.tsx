@@ -220,8 +220,8 @@ export function RoomSheet({
 
   const sinCerrar = abiertasAqui.filter((i) => i.state !== 'resuelta').length
 
-  /* Quién lleva cada una. Del espejo, que es lo que hace que esto se lea en un
-     sótano igual que el resto de la sección. */
+  /* A quién está asignada cada una. Del espejo, que es lo que hace que esto se
+     lea en un sótano igual que el resto de la sección. */
   const nombres = useLiveQuery(
     async () => new Map((await db.personal.toArray()).map((n) => [n.id, n.full_name])),
     [],
@@ -630,8 +630,8 @@ export function RoomSheet({
                       {i.assigned_to && (
                         <span className="text-accent">
                           {i.assigned_to === userId
-                            ? 'la llevas tú'
-                            : `la lleva ${nombreDe(i.assigned_to) ?? 'otra persona'}`}
+                            ? 'asignada a ti'
+                            : `asignada a ${nombreDe(i.assigned_to) ?? 'otra persona'}`}
                           {' · '}
                         </span>
                       )}

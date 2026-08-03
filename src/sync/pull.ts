@@ -134,7 +134,7 @@ export async function pullMaster(): Promise<ResultadoPull> {
     ['stock_levels', (d, h) => supabase.from('stock_levels').select('*').order('stock_item_id').range(d, h)],
     ['incidents', (d, h) => supabase.from('incidents').select('*').neq('state', 'resuelta').order('id').range(d, h)],
     /* Los nombres del equipo. Son una decena de filas y se leen en el aula
-       —«la lleva Ana Ruiz» debajo de una avería—, así que viajan con el resto
+       —«asignada a Ana Ruiz» debajo de una avería—, así que viajan con el resto
        del maestro en vez de resolverse con una consulta por pantalla. */
     ['personal', (d, h) => supabase.from('personal').select('*').order('id').range(d, h)],
     // El catálogo entero, fusionados incluidos: sin las lápidas, un elemento
