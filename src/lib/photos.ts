@@ -41,6 +41,29 @@ export async function capturePhoto(
   entityType: 'inspection' | 'incident',
   entityId: string,
 ): Promise<PhotoResult> {
+  /*
+   * Mientras la foto viaja de la cámara a Dexie, la aplicación no puede
+   * recargarse: la vuelta de la cámara es también una vuelta a primer plano, y
+   * la actualización automática (ver `@/sw`) elige justo esos momentos para
+   * instalarse. Recargar con la compresión a medias se tragaría la foto sin
+   * error. El import es dinámico por lo mismo que el de la compresión — y
+   * porque `virtual:pwa-register` solo existe dentro de Vite, así que
+   * importarlo arriba rompería cualquier prueba que toque este fichero.
+   */
+  const { retenerRecarga } = await import('@/sw')
+  const soltar = retenerRecarga()
+  try {
+    return await guardarFoto(file, entityType, entityId)
+  } finally {
+    soltar()
+  }
+}
+
+async function guardarFoto(
+  file: File,
+  entityType: 'inspection' | 'incident',
+  entityId: string,
+): Promise<PhotoResult> {
   const kind = await sniffType(file)
   if (kind === 'heic') {
     return {

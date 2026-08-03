@@ -58,7 +58,7 @@ import {
   type Visita,
 } from '@/domain/revisiones'
 import { ROOM_CHECKS, assetCheckKey } from '@/domain/types'
-import { FotosDeRevision } from './FotosDeRevision'
+import { FichaDeObservacion } from './FichaDeObservacion'
 import type { Correccion } from './useInspection'
 
 /**
@@ -412,18 +412,16 @@ function TarjetaDeVisita({
           .join(' · ')}
       </p>
 
-      {/* La observación, como lo que es: una frase que escribió alguien que estuvo
-          allí. Sin recortar y con el salto de línea que le costó poner. */}
-      {nota && (
-        <p className="mt-3 whitespace-pre-line border-l-2 border-line pl-3 text-sm leading-relaxed">
-          {nota}
-        </p>
-      )}
-
-      {(fotos > 0 || conFotoLocal) && (
-        <div className="mt-3">
-          <FotosDeRevision ids={versiones.map((r) => r.id)} />
-        </div>
+      {/* La observación y sus fotos, como una ficha: la frase que escribió
+          alguien que estuvo allí debajo de las fotos que hizo, a la vista y sin
+          desplegar nada. La condición evita montar la consulta de adjuntos en
+          las visitas que no tienen nada que enseñar. */}
+      {(nota !== '' || fotos > 0 || conFotoLocal) && (
+        <FichaDeObservacion
+          ids={versiones.map((r) => r.id)}
+          nota={vigente.notes}
+          anunciadas={fotos}
+        />
       )}
 
       <div className="mt-3 flex flex-wrap gap-2">

@@ -1,5 +1,5 @@
 /**
- * Las fotos de una revisión, que hasta ahora no se veían en ninguna parte.
+ * Las fotos de una revisión: la fontanería y la tira.
  *
  * Se hacían en el aula, se comprimían, se subían a un bucket privado, se
  * enlazaban en `attachments`… y ahí acababa el viaje: ni la ficha de la sala ni
@@ -7,18 +7,20 @@
  * incidencia y después no se la enseñaba a nadie, que es la peor forma de pedir
  * algo — se deja de hacer en tres semanas.
  *
- * Tres decisiones que importan:
+ * Aquí viven las tres piezas que comparten las dos presentaciones —la tira de
+ * miniaturas de esta misma pantalla y la ficha del histórico
+ * (`FichaDeObservacion`)—:
  *
- *  - **URL firmada y corta.** El bucket es privado a propósito: las fotos
- *    enseñan instalaciones y a veces personas. Se pide un enlace de una hora al
- *    abrir el bloque, no un enlace público permanente.
- *  - **También las que aún no han subido.** La cola de fotos guarda el `Blob` en
- *    el dispositivo hasta que hay cobertura. Sin mirarla, la foto que acabas de
- *    hacer en un sótano no existe para la aplicación durante toda la mañana, y
+ *  - **`useFotosDeRevision`**, que junta las subidas con las que esperan en el
+ *    dispositivo. URL firmada y corta para las de arriba: el bucket es privado
+ *    a propósito —las fotos enseñan instalaciones y a veces personas— y se pide
+ *    un enlace de una hora al abrir el bloque, no uno público permanente. Y
+ *    también las que aún no han subido: sin mirar la cola, la foto que acabas
+ *    de hacer en un sótano no existe para la aplicación en toda la mañana, y
  *    quien la hizo no tiene forma de saber si salió bien.
- *  - **Miniaturas en una tira, no una rejilla.** Doce fotos en rejilla son un
- *    bloque más alto que la pantalla en mitad de una ficha que ya tiene siete
- *    secciones; en tira se recorren con el pulgar y no desplazan nada.
+ *  - **`VisorDeFotos`**, la foto a tamaño completo en su capa.
+ *  - **`FotosDeRevision`**, la tira de miniaturas: la usa la cabecera de una
+ *    corrección, donde las fotos de aquel día son contexto y no protagonista.
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -31,7 +33,7 @@ import { fechaCorta } from '@/domain/fechas'
 /** Una hora: sobra para mirar, y el enlace no se guarda en ningún sitio. */
 const VALIDEZ_S = 3600
 
-interface Foto {
+export interface Foto {
   id: string
   url: string
   takenAt: string
@@ -39,24 +41,18 @@ interface Foto {
   pendiente: boolean
 }
 
-export function FotosDeRevision({
-  ids,
-  vacio,
-}: {
-  /**
-   * Las revisiones de las que traer fotos.
-   *
-   * Es una lista y no un identificador porque una visita corregida son varias
-   * filas de `inspections`, y las fotos de aquel día están repartidas entre
-   * ellas: se hicieron en la misma aula el mismo rato. Enseñar solo las de la
-   * última versión sería esconder las de la original sin decirlo.
-   */
-  ids: string[]
-  /** Qué poner cuando no hay ninguna. Sin texto, no se dibuja nada. */
-  vacio?: string
-}): React.ReactElement | null {
-  const [abierta, setAbierta] = useState<number | null>(null)
-
+/**
+ * Las fotos de una o varias revisiones, listas para pintar.
+ *
+ * Es una lista de revisiones y no un identificador porque una visita corregida
+ * son varias filas de `inspections`, y las fotos de aquel día están repartidas
+ * entre ellas: se hicieron en la misma aula el mismo rato. Enseñar solo las de
+ * la última versión sería esconder las de la original sin decirlo.
+ *
+ * Las pendientes van primero: son las de hoy, y son las que alguien quiere
+ * comprobar que han salido bien.
+ */
+export function useFotosDeRevision(ids: string[]): { fotos: Foto[]; sinConexion: boolean } {
   /*
    * Las que ya están arriba. Dos pasos —los adjuntos y luego las firmas— porque
    * el `storage_path` lo sabe la tabla y la firma la da el servicio de Storage.
@@ -147,15 +143,35 @@ export function FotosDeRevision({
     }
   }, [pendientes])
 
-  // Las pendientes primero: son las de hoy, y son las que alguien quiere
-  // comprobar que han salido bien.
-  const fotos = [...locales, ...(subidas ?? [])]
+  return { fotos: [...locales, ...(subidas ?? [])], sinConexion: isError }
+}
+
+/**
+ * La marca de «aún no ha subido» va sobre la foto y con palabra, no con un
+ * color: es la respuesta a «¿se ha guardado esto?».
+ */
+export function SelloSinSubir(): React.ReactElement {
+  return (
+    <span className="absolute inset-x-0 bottom-0 bg-warn-fill/90 py-0.5 text-center text-[0.625rem] font-semibold text-warn-ink">
+      sin subir
+    </span>
+  )
+}
+
+/**
+ * La tira de miniaturas. Doce fotos en rejilla son un bloque más alto que la
+ * pantalla en mitad de una cabecera que ya cuenta tres cosas; en tira se
+ * recorren con el pulgar y no desplazan nada.
+ */
+export function FotosDeRevision({ ids }: { ids: string[] }): React.ReactElement | null {
+  const [abierta, setAbierta] = useState<number | null>(null)
+  const { fotos, sinConexion } = useFotosDeRevision(ids)
 
   if (fotos.length === 0) {
-    if (isError) {
+    if (sinConexion) {
       return <p className="text-xs text-muted">Las fotos necesitan conexión.</p>
     }
-    return vacio ? <p className="text-xs text-muted">{vacio}</p> : null
+    return null
   }
 
   return (
@@ -176,20 +192,14 @@ export function FotosDeRevision({
                 decoding="async"
                 className="h-20 w-20 object-cover"
               />
-              {/* La marca de «aún no ha subido» va sobre la foto y con palabra,
-                  no con un color: es la respuesta a «¿se ha guardado esto?». */}
-              {f.pendiente && (
-                <span className="absolute inset-x-0 bottom-0 bg-warn-fill/90 py-0.5 text-center text-[0.625rem] font-semibold text-warn-ink">
-                  sin subir
-                </span>
-              )}
+              {f.pendiente && <SelloSinSubir />}
             </button>
           </li>
         ))}
       </ul>
 
       {abierta !== null && fotos[abierta] && (
-        <Visor
+        <VisorDeFotos
           fotos={fotos}
           indice={abierta}
           onIr={setAbierta}
@@ -210,7 +220,7 @@ export function FotosDeRevision({
  * `Escape` cierra y las flechas pasan de una a otra, porque esto también se usa
  * con teclado desde el escritorio del coordinador.
  */
-function Visor({
+export function VisorDeFotos({
   fotos,
   indice,
   onIr,

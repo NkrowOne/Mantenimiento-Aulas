@@ -99,9 +99,10 @@ export default defineConfig(({ mode }) => {
      * `salud.json` ya lo publica, pero eso responde «qué hay en el servidor», y
      * la pregunta que hace falta cuando algo no cuadra es otra: **qué está
      * ejecutando ESTE iPad**. Con `registerType: 'prompt'` las dos pueden no
-     * coincidir durante días —el service worker nuevo espera a que alguien pulse
-     * «Actualizar»—, así que un dispositivo puede estar enseñando un fallo que
-     * se arregló hace horas.
+     * coincidir un rato —la versión nueva se instala sola, pero espera al
+     * siguiente momento seguro (ver `src/sw.ts`), y un dispositivo con el
+     * código de antes de esa política sigue esperando un toque—, así que un
+     * aparato puede estar enseñando un fallo que se arregló hace horas.
      *
      * Sin esto no hay forma de distinguirlo desde el aparato, que es donde
      * ocurre: se diagnostica a ciegas un código que ni siquiera es el que está

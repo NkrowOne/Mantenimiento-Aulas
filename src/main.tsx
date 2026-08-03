@@ -2,7 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from './App'
-import { reofrecerActualizacion, registrarServiceWorker } from './sw'
+import { registrarServiceWorker } from './sw'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -40,21 +40,12 @@ for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
 /*
  * Antes de pintar nada, y en particular antes del candado: si lo que impide
  * entrar es un fallo de la versión instalada, el registro tiene que ocurrir de
- * todos modos para que la versión que lo arregla pueda llegar.
+ * todos modos para que la versión que lo arregla pueda llegar. El registro
+ * trae consigo el vigía de visibilidad —buscar versión al volver al frente,
+ * instalarla sola tras una ausencia larga—, que por lo mismo vive en `./sw` y
+ * no en la interfaz.
  */
 registrarServiceWorker()
-
-/*
- * Y al volver a primer plano se vuelve a ofrecer lo que se pospuso.
- *
- * «Ahora no» tiene que significar ahora no, no nunca. Va aquí y no dentro de la
- * interfaz por lo mismo que el registro: esto debe seguir funcionando con la
- * aplicación bloqueada, que es justo cuando un dispositivo atascado necesita el
- * arreglo que trae la versión nueva.
- */
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') reofrecerActualizacion()
-})
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
