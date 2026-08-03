@@ -51,6 +51,11 @@ export function SyncChip(): React.ReactElement {
     null | 'buscando' | 'encontrada' | 'al-dia' | 'error'
   >(null)
 
+  // Lo mismo con «Actualizar ahora»: el único final que no acaba en recarga
+  // —una foto a medio guardar aplaza la orden— dejaba la caja idéntica, o sea
+  // indistinguible de que el botón no funcionara.
+  const [retenida, setRetenida] = useState(false)
+
   /*
    * Cerrar tocando fuera, y con Escape.
    *
@@ -197,11 +202,18 @@ export function SyncChip(): React.ReactElement {
               </p>
               <button
                 type="button"
-                onClick={() => void aplicarActualizacion()}
+                onClick={() => {
+                  void aplicarActualizacion().then((parte) => setRetenida(parte === 'retenida'))
+                }}
                 className="key key-accent mt-2 min-h-11 w-full px-3 text-sm"
               >
                 Actualizar ahora
               </button>
+              {retenida && (
+                <p aria-live="polite" className="mt-2 text-xs text-muted">
+                  Se instalará en cuanto termine de guardarse la foto que está en curso.
+                </p>
+              )}
             </div>
           )}
 

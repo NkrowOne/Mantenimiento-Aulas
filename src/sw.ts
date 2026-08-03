@@ -70,6 +70,18 @@ const VENTANA_DE_ARRANQUE_MS = 45_000
 const arrancadaEn = Date.now()
 
 /**
+ * Cuánto se espera al relevo antes de darlo por fallido.
+ *
+ * El relevo son dos pasos del navegador —el worker en espera acepta
+ * `skipWaiting()` y luego toma el control, lo que se ve aquí como
+ * `controllerchange`— y en marcha son milisegundos. Ocho segundos cubren un
+ * arranque en frío del worker (el navegador lo mata cuando está ocioso, así que
+ * el mensaje llega a un hilo que hay que volver a levantar) con holgura de
+ * sobra. Pasado el plazo, lo que hay no es lentitud: es que no va a pasar.
+ */
+const PLAZO_DE_RELEVO_MS = 8_000
+
+/**
  * Cuánto tiene que durar una ausencia para que la vuelta cuente como un
  * arranque.
  *
@@ -162,7 +174,7 @@ function intentarInstalarSola(): void {
     return
   }
   aplicarAlSoltar = false
-  aplicarActualizacion().catch(() => {
+  activar('automatica').catch(() => {
     // Si la activación falla, la barra de siempre sigue ahí detrás.
     hayVersionNueva = true
     anunciar()
@@ -213,7 +225,7 @@ export function retenerRecarga(): () => void {
       // volver a pasarla por las salvaguardas la degradaría a un anuncio.
       ordenManualAlSoltar = false
       aplicarAlSoltar = false
-      void aplicarActualizacion()
+      void activar('manual')
       return
     }
     if (aplicarAlSoltar) intentarInstalarSola()
@@ -248,14 +260,39 @@ export async function buscarActualizacion(): Promise<'encontrada' | 'al-dia' | '
   const primeraInstalacion =
     registro.installing !== null && navigator.serviceWorker.controller === null
 
+  /*
+   * Lo que hay AHORA en el navegador, no lo que se anunció alguna vez.
+   *
+   * `enEspera` estaba en esta cuenta y no podía estar: es la memoria de un
+   * anuncio, y un anuncio puede quedarse viejo —el worker que lo motivó lo
+   * deja `redundant` el siguiente despliegue, o se activó por otra vía—. Con
+   * él dentro, el botón contestaba «encontrada» sobre un worker que ya no
+   * existe y reofrecía una caja cuyo «Actualizar ahora» no podía hacer nada.
+   */
   const encontrada =
-    enEspera || registro.waiting !== null || (registro.installing !== null && !primeraInstalacion)
+    registro.waiting !== null || (registro.installing !== null && !primeraInstalacion)
 
-  // Quien busca a mano quiere la versión YA: se reofrece la caja con
-  // «Actualizar ahora» en vez de dejarla esperando al próximo momento seguro.
-  if (encontrada) reofrecerActualizacion()
+  if (encontrada) {
+    enEspera = true
+    // Quien busca a mano quiere la versión YA: se reofrece la caja con
+    // «Actualizar ahora» en vez de dejarla esperando al próximo momento seguro.
+    reofrecerActualizacion()
+  } else if (enEspera) {
+    // Se anunciaba una versión que ya no está: se retira el anuncio. Dejarlo
+    // puesto es peor que no haberlo dado, porque convierte el botón en un
+    // adorno —se pulsa, no pasa nada, y no hay forma de saber por qué—.
+    olvidarLaEspera()
+  }
 
   return encontrada ? 'encontrada' : 'al-dia'
+}
+
+/** El anuncio se retira: no hay ninguna versión esperando de verdad. */
+function olvidarLaEspera(): void {
+  enEspera = false
+  aplicarAlSoltar = false
+  hayVersionNueva = false
+  anunciar()
 }
 
 export function registrarServiceWorker(): void {
@@ -372,6 +409,159 @@ export function onVersionNueva(listener: Listener): () => void {
 }
 
 /**
+ * Cómo acabó el intento de instalar la versión nueva.
+ *
+ * Se devuelve en vez de tragárselo porque el modo de fallo que trajo todo esto
+ * era exactamente ese: un botón que no contaba nada.
+ */
+export type ParteDeActivacion =
+  /** El relevo ocurrió: el worker nuevo manda y la página se está recargando. */
+  | 'activada'
+  /** Hay una foto entre la cámara y Dexie: se hará en cuanto quede escrita. */
+  | 'retenida'
+  /** Se anunciaba una versión que ya no existe en el navegador. */
+  | 'sin-worker'
+  /** El worker en espera no tomó el control dentro del plazo. */
+  | 'sin-relevo'
+  /** No hubo relevo y se recargó igualmente, porque alguien lo pidió. */
+  | 'recargada'
+
+/** Una sola recarga, venga de donde venga la orden. */
+let recargando = false
+function recargar(): void {
+  if (recargando) return
+  recargando = true
+  window.location.reload()
+}
+
+/** Corta la espera de una promesa que puede no volver nunca. */
+function conTope<T>(promesa: Promise<T>, ms: number, siTarda: T): Promise<T> {
+  return Promise.race([
+    promesa,
+    new Promise<T>((listo) => setTimeout(() => listo(siTarda), ms)),
+  ])
+}
+
+/** Espera a que el worker recién descargado termine de instalarse. */
+function esperarInstalacion(sw: ServiceWorker): Promise<void> {
+  return new Promise((listo) => {
+    const fin = (): void => {
+      clearTimeout(tope)
+      sw.removeEventListener('statechange', alCambiar)
+      listo()
+    }
+    const alCambiar = (): void => {
+      if (sw.state !== 'installing') fin()
+    }
+    const tope = setTimeout(fin, PLAZO_DE_RELEVO_MS)
+    sw.addEventListener('statechange', alCambiar)
+  })
+}
+
+/** Espera al relevo de verdad: que el worker nuevo pase a controlar la página. */
+function esperarRelevo(): Promise<boolean> {
+  return new Promise((resolver) => {
+    const fin = (ocurrio: boolean): void => {
+      clearTimeout(tope)
+      navigator.serviceWorker.removeEventListener('controllerchange', alRelevo)
+      resolver(ocurrio)
+    }
+    const alRelevo = (): void => fin(true)
+    const tope = setTimeout(() => fin(false), PLAZO_DE_RELEVO_MS)
+    navigator.serviceWorker.addEventListener('controllerchange', alRelevo)
+  })
+}
+
+/**
+ * Pide el relevo al worker en espera y espera a que ocurra.
+ *
+ * ESTE es el arreglo. Antes se llamaba a `updateSW(true)` de vite-plugin-pwa y
+ * se daba por hecho lo demás, y lo demás no estaba garantizado:
+ *
+ *  - `updateSW` ignora su propio argumento `reloadPage`. Lo único que hace es
+ *    `messageSkipWaiting()`, y la recarga la dispara aparte un oyente de
+ *    `controlling` que workbox instala al anunciar la versión.
+ *  - `messageSkipWaiting()` es, literalmente, `if (registration.waiting)
+ *    postMessage(...)`. **Sin worker en espera no hace nada y no lo dice.**
+ *
+ * Así que bastaba con que el worker anunciado dejara de estar en espera —lo
+ * deja `redundant` cualquier despliegue posterior, que es lo normal cuando pasan
+ * horas entre el aviso y el toque; o se activó ya por otra ventana— para que
+ * «Actualizar» fuera un botón muerto: sin mensaje, sin recarga, sin error y con
+ * la barra intacta ofreciendo lo mismo otra vez. Que es exactamente lo que se
+ * vio en campo.
+ *
+ * Ahora se conduce desde el registro: se recupera el worker que haya AHORA, se
+ * le manda el relevo y se espera a `controllerchange`, que es el único hecho que
+ * significa «ya mandas tú».
+ */
+async function relevar(): Promise<'activada' | 'sin-worker' | 'sin-relevo'> {
+  if (!('serviceWorker' in navigator)) return 'sin-worker'
+
+  registro ??= (await navigator.serviceWorker.getRegistration().catch(() => null)) ?? null
+  const reg = registro
+  if (!reg) return 'sin-worker'
+
+  // El anuncio pudo quedarse viejo. Preguntar otra vez recupera el worker que
+  // haya ahora, y no cuesta nada cuando ya hay uno en la puerta.
+  if (!reg.waiting && !reg.installing) {
+    await conTope(reg.update().catch(() => {}), PLAZO_DE_RELEVO_MS, undefined)
+  }
+
+  // Uno a medio instalar todavía no acepta el relevo: se le deja terminar.
+  if (!reg.waiting && reg.installing) await esperarInstalacion(reg.installing)
+
+  const enCola = reg.waiting
+  if (!enCola) return 'sin-worker'
+
+  const relevo = esperarRelevo()
+  enCola.postMessage({ type: 'SKIP_WAITING' })
+  return (await relevo) ? 'activada' : 'sin-relevo'
+}
+
+/**
+ * El camino común de la instalación, automática o pedida.
+ *
+ * La diferencia entre las dos es qué se hace cuando el relevo NO ocurre, y es
+ * una diferencia de fondo:
+ *
+ *  - `manual` es una orden. Recargar por las bravas trae el código nuevo igual
+ *    —el worker viejo sirve el precache viejo, pero un `reload` vuelve a pedir
+ *    el service worker y el navegador reintenta el ciclo entero— y, sobre todo,
+ *    hace que pulsar el botón SIEMPRE haga algo. Recargar de más es un segundo
+ *    perdido; un botón que no responde cuesta semanas de versión vieja.
+ *  - `automatica` no fuerza nada, y no es simetría mal entendida: nadie ha
+ *    pedido esto, y una recarga forzada aquí se repetiría en cada arranque
+ *    mientras el relevo siguiera sin ocurrir — un bucle de recargas en la cara
+ *    de alguien que solo quería abrir la aplicación. Se deja la barra puesta,
+ *    que es lo que ya hacía.
+ */
+async function activar(orden: 'manual' | 'automatica'): Promise<ParteDeActivacion> {
+  const parte = await relevar()
+
+  if (parte === 'activada') {
+    // `controllerchange` significa que el worker nuevo manda, no que esta página
+    // ejecute su código: eso solo lo cambia recargar.
+    recargar()
+    return 'activada'
+  }
+
+  if (orden === 'manual') {
+    recargar()
+    return 'recargada'
+  }
+
+  if (parte === 'sin-worker') {
+    olvidarLaEspera()
+    return parte
+  }
+
+  hayVersionNueva = true
+  anunciar()
+  return parte
+}
+
+/**
  * Activa el service worker en espera y recarga.
  *
  * También el camino del botón pasa por aquí, y por eso las dos cortesías:
@@ -384,20 +574,20 @@ export function onVersionNueva(listener: Listener): () => void {
  *    autoguardado local va con 400 ms de retardo, y la recarga inmediata perdía
  *    el último toque. La orden se cumple igual, un segundo más tarde.
  */
-export async function aplicarActualizacion(): Promise<void> {
+export async function aplicarActualizacion(): Promise<ParteDeActivacion> {
   if (retenciones > 0) {
     ordenManualAlSoltar = true
-    return
+    return 'retenida'
   }
   if (trabajoDelicado) {
     await new Promise((listo) => setTimeout(listo, RESPIRO_ANTES_DE_RECARGAR_MS))
     // Durante el respiro pudo empezar una foto: se vuelve a mirar.
     if (retenciones > 0) {
       ordenManualAlSoltar = true
-      return
+      return 'retenida'
     }
   }
-  await actualizar?.(true)
+  return activar('manual')
 }
 
 /*

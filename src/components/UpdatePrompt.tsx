@@ -22,6 +22,15 @@ import { aplicarActualizacion, onVersionNueva, posponerActualizacion } from '@/s
  */
 export function UpdatePrompt(): React.ReactElement | null {
   const [needRefresh, setNeedRefresh] = useState(false)
+  /*
+   * El único final del botón que no se ve solo.
+   *
+   * Los demás acaban en recarga —la pantalla parpadea y se sabe que ha pasado
+   * algo—, pero con una foto en tránsito la orden queda apuntada y la barra se
+   * quedaría exactamente igual que si no se hubiera pulsado. Eso ya es el fallo
+   * que se está arreglando; repetirlo aquí sería absurdo.
+   */
+  const [retenida, setRetenida] = useState(false)
 
   useEffect(() => onVersionNueva(setNeedRefresh), [])
 
@@ -37,7 +46,11 @@ export function UpdatePrompt(): React.ReactElement | null {
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
-        <p className="flex-1 text-sm">Hay una versión nueva.</p>
+        <p aria-live="polite" className="flex-1 text-sm">
+          {retenida
+            ? 'Se instalará en cuanto termine de guardarse la foto.'
+            : 'Hay una versión nueva.'}
+        </p>
 
         <button
           type="button"
@@ -48,7 +61,9 @@ export function UpdatePrompt(): React.ReactElement | null {
         </button>
         <button
           type="button"
-          onClick={() => void aplicarActualizacion()}
+          onClick={() => {
+            void aplicarActualizacion().then((parte) => setRetenida(parte === 'retenida'))
+          }}
           className="key key-accent px-3 py-2 text-sm"
         >
           Actualizar
