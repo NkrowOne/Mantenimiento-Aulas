@@ -276,16 +276,63 @@ texto() {
 	linea '────────────────────────────────────────────────────────────'
 }
 
+# Pedir una URL con lo que haya en la imagen, que no siempre es lo mismo.
+#
+# Esto costó una caída entera del dominio y merece contarse. La sonda llamaba a
+# `wget` a pelo. Funcionó mientras la imagen de servicio fue `caddy:2-alpine`,
+# donde BusyBox lo trae; el día que pasó a `node:22-slim` —para que WeasyPrint y
+# el worker de informes viajaran dentro— dejó de existir: el Dockerfile oficial
+# de Node instala `wget` y `curl` para bajarse el binario y los PURGA después.
+#
+# A partir de ahí la sonda no fallaba «un poco»: `command not found` cae por el
+# mismo `||` que «Caddy no contesta», así que el HEALTHCHECK daba ENFERMO
+# siempre, con Caddy sirviendo perfectamente al otro lado.
+#
+# Y un contenedor enfermo no es un contenedor con una etiqueta fea: **Traefik
+# lo borra del enrutador**. Su `keepContainer` descarta lo que no esté
+# `healthy` y lo apunta solo en el registro de depuración, que por defecto no
+# se imprime. Resultado: el dominio devolviendo 404 desde el primer despliegue
+# que usó la imagen nueva, con las etiquetas correctas, la red correcta y NI UN
+# ERROR en ningún registro de ninguna pieza. Se tardó una mañana en encontrarlo.
+#
+# Por eso ahora se pregunta qué hay antes de usarlo, y `node` cierra la lista:
+# en esta imagen es lo único garantizado, porque es de lo que va la imagen.
+descargar() {
+	if command -v wget >/dev/null 2>&1; then
+		wget -q -O - -T 3 "$1" 2>/dev/null
+	elif command -v curl >/dev/null 2>&1; then
+		curl -fsS --max-time 3 "$1" 2>/dev/null
+	elif command -v node >/dev/null 2>&1; then
+		node -e 'const r=require("http").get(process.argv[1],{timeout:3000},s=>{if(s.statusCode<200||s.statusCode>299){process.exit(1)}let d="";s.on("data",c=>d+=c);s.on("end",()=>process.stdout.write(d))});r.on("timeout",()=>{r.destroy();process.exit(1)});r.on("error",()=>process.exit(1))' "$1" 2>/dev/null
+	else
+		return 127
+	fi
+}
+
 # La sonda del HEALTHCHECK. Solo dice enfermo cuando Caddy no sirve; una
 # variable ausente sale por el cuerpo, nunca por el código de salida.
 sonda() {
-	cuerpo=$(wget -q -O - -T 3 "http://127.0.0.1:${PORT:-8080}/salud.json" 2>/dev/null) || {
+	cuerpo=$(descargar "http://127.0.0.1:${PORT:-8080}/salud.json")
+	estado=$?
+
+	# Sin NADA con que preguntar, la respuesta honesta es «no lo sé», y «no lo
+	# sé» no puede significar «enfermo»: eso es exactamente lo que tiró el
+	# dominio: el enrutador retira los contenedores enfermos, así que una sonda
+	# que no puede sondear apagaría el servicio en vez de informar sobre él.
+	# Se dice en voz alta y se deja pasar; el fallo, si lo hay, se verá por
+	# donde tiene que verse.
+	if [ "$estado" -eq 127 ]; then
+		echo 'SANO (sin comprobar: no hay wget, curl ni node en esta imagen)'
+		exit 0
+	fi
+
+	if [ "$estado" -ne 0 ]; then
 		# Ni respuesta, o una que no es 2xx. Aquí sí: el servicio no sirve. Un
 		# 404 significa que ni siquiera hay `index.html` al que caer, es decir,
 		# que `/srv/dist` está vacío.
 		echo "ENFERMO: Caddy no responde, o no devuelve 2xx, en el puerto ${PORT:-8080}"
 		exit 1
-	}
+	fi
 	case "$cuerpo" in
 		*'"ok":true'*) ;;
 		*)
