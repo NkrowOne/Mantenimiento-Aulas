@@ -83,7 +83,10 @@
 		#
 		# `salud.json` tampoco: es lo que mira la plataforma para decidir si el
 		# despliegue está sano, y una respuesta cacheada describiría al anterior.
-		@nocache path /index.html / /sw.js /manifest.webmanifest /salud.json
+		# `rescate-sw.js` va con el service worker: es un `importScripts` suyo,
+		# y esos el navegador SÍ los sirve de la caché HTTP por defecto. Cacheado,
+		# el rescate de dispositivos atascados llegaría rancio o no llegaría.
+		@nocache path /index.html / /sw.js /rescate-sw.js /manifest.webmanifest /salud.json
 		header @nocache Cache-Control "no-cache, must-revalidate"
 
 		header {

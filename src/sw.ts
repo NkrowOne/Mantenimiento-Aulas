@@ -261,6 +261,21 @@ export async function buscarActualizacion(): Promise<'encontrada' | 'al-dia' | '
 export function registrarServiceWorker(): void {
   if (actualizar) return
 
+  /*
+   * La contraseña del rescate. El service worker recién instalado pregunta a
+   * las ventanas abiertas si entienden la política de momentos seguros
+   * (`public/rescate-sw.js`): las que contestan son páginas como esta, que
+   * activarán ellas mismas cuando toque; las que callan son código de antes
+   * de la política y se las rescata con una recarga forzada. Contestar es lo
+   * que protege a esta página de esa recarga, así que el oyente se registra
+   * ANTES que el service worker: no puede haber ventana en la que la pregunta
+   * llegue y el oyente todavía no esté.
+   */
+  navigator.serviceWorker?.addEventListener('message', (evento: MessageEvent) => {
+    const datos = evento.data as { tipo?: string } | null
+    if (datos?.tipo === 'sondeo-de-politica') evento.ports[0]?.postMessage('entendida')
+  })
+
   actualizar = registerSW({
     onNeedRefresh() {
       enEspera = true

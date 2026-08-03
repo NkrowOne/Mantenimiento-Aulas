@@ -151,6 +151,16 @@ export default defineConfig(({ mode }) => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+          /*
+           * El rescate de dispositivos atascados en una versión vieja, dentro
+           * del propio service worker: es el único código nuevo que ejecuta un
+           * dispositivo cuyo código de página nunca va a activar el worker en
+           * espera (ver public/rescate-sw.js). Fuera del precache: se carga
+           * por `importScripts`, que no pasa por el manejador de fetch, y
+           * precachearlo solo duplicaría la copia.
+           */
+          importScripts: ['rescate-sw.js'],
+          globIgnores: ['**/rescate-sw.js'],
           // El API nunca se cachea: los datos vienen de Dexie, no del service worker.
           // Cachear PostgREST daría lecturas rancias indistinguibles de las frescas.
           //
