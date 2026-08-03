@@ -26,13 +26,31 @@ import { norm } from '@/domain/normalize'
  * Va por la cola de salida y no directo contra el servidor —a diferencia del
  * resto del almacén— porque este apunte se hace en el aula, que es justo donde
  * no hay cobertura. El id nace con la pulsación, así que reenviarlo no duplica.
+ *
+ * Se usa en dos sitios, y el segundo es el que lo pone donde de verdad ocurre:
+ * suelto, detrás del botón «Material», y **dentro del cierre de la incidencia**
+ * cuando se elige «Pieza sustituida». Ahí deja de ser un apunte opcional que
+ * alguien tiene que acordarse de hacer y pasa a ser la respuesta a «¿qué pieza?»
+ * — que es la pregunta que el cierre ya estaba haciendo.
  */
 export function MaterialUsado({
   incidentId,
   roomId,
+  variante = 'panel',
+  onApuntado,
 }: {
   incidentId: string
   roomId: string | null
+  /**
+   * `panel` es el bloque suelto de siempre, con su caja.
+   *
+   * `incrustado` va dentro de otra caja —el formulario de cierre— y renuncia a
+   * la suya: dos superficies elevadas una dentro de otra se leen como un error
+   * de maquetación, no como una jerarquía.
+   */
+  variante?: 'panel' | 'incrustado'
+  /** Qué se acaba de apuntar, para que quien lo incrusta pueda nombrarlo. */
+  onApuntado?: (linea: { nombre: string; qty: number }) => void
 }): React.ReactElement {
   const [query, setQuery] = useState('')
   const [elegido, setElegido] = useState<{ id: string; name: string } | null>(null)
@@ -41,6 +59,20 @@ export function MaterialUsado({
 
   // Del espejo local: la lista de artículos ya está en el dispositivo.
   const articulos = useLiveQuery(() => db.stockItems.toArray(), [], [])
+
+  /*
+   * Cuánto queda de cada artículo, también del espejo.
+   *
+   * Estaba descargado y no se enseñaba en ningún sitio del aula. Y es la mitad
+   * de la decisión: elegir «Cable HDMI 5 m» sabiendo que quedan dos es distinto
+   * de elegirlo a ciegas, y quien está delante del armario es justo quien puede
+   * avisar de que no queda ninguno. Es una foto y puede estar vieja —el saldo
+   * vive en el servidor—, así que se enseña sin dramatizar: una cifra al lado.
+   */
+  const existencias = useLiveQuery(
+    async () => new Map((await db.stockLevels.toArray()).map((n) => [n.stock_item_id, n])),
+    [],
+  )
 
   const coincidencias = useMemo(() => {
     const q = norm(query)
@@ -95,6 +127,7 @@ export function MaterialUsado({
         by_user: data.session?.user.id ?? null,
       })
       void flush()
+      onApuntado?.({ nombre: elegido.name, qty })
       setElegido(null)
       setQuery('')
       setQty(1)
@@ -104,7 +137,11 @@ export function MaterialUsado({
   }
 
   return (
-    <div className="mt-3 rounded-ctl border border-line bg-raised p-3">
+    <div
+      className={
+        variante === 'panel' ? 'mt-3 rounded-ctl border border-line bg-raised p-3' : 'mt-2'
+      }
+    >
       {(yaApuntado ?? []).length > 0 && (
         <ul className="mb-3 space-y-1 text-xs text-muted">
           {(yaApuntado ?? []).map((m) => (
@@ -176,9 +213,24 @@ export function MaterialUsado({
                   <button
                     type="button"
                     onClick={() => setElegido({ id: a.id, name: a.name })}
-                    className="min-h-11 w-full py-2 text-left text-sm"
+                    className="flex min-h-11 w-full items-center gap-3 py-2 text-left text-sm"
                   >
-                    {a.name}
+                    <span className="min-w-0 flex-1">{a.name}</span>
+                    {/* Lo que queda, en la propia fila. Teñido solo cuando la
+                        cifra cambia la decisión: cero es «no lo cojas, avisa». */}
+                    {existencias?.get(a.id) && (
+                      <span
+                        className={`shrink-0 font-mono text-xs tabular ${
+                          (existencias.get(a.id)?.on_hand ?? 0) <= 0
+                            ? 'font-semibold text-crit'
+                            : existencias.get(a.id)?.below_threshold
+                              ? 'text-warn'
+                              : 'text-muted'
+                        }`}
+                      >
+                        quedan {existencias.get(a.id)?.on_hand}
+                      </span>
+                    )}
                   </button>
                 </li>
               ))}

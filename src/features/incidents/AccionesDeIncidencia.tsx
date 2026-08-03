@@ -27,7 +27,9 @@ import { useState } from 'react'
 import { MaterialUsado } from './MaterialUsado'
 import {
   MOTIVOS_DE_CIERRE,
+  PIEZA_SUSTITUIDA,
   avanzarIncidencia,
+  conLaPieza,
   resolucionSuficiente,
 } from './acciones'
 import type { IncidentState } from '@/domain/types'
@@ -187,19 +189,51 @@ export function AccionesDeIncidencia({
             ))}
           </div>
 
-          {/* Aquí y no en otra pantalla: después de cerrar nadie vuelve, y este
-              es el dato que no llegaba nunca al almacén. */}
-          <p className="mt-3 text-xs leading-relaxed text-muted">
-            ¿Has gastado material?{' '}
-            <button
-              type="button"
-              onClick={() => onPanel('material')}
-              className="text-accent underline-offset-4 hover:underline"
-            >
-              Apúntalo antes de cerrar
-            </button>
-            .
-          </p>
+          {/*
+            «Pieza sustituida» pregunta CUÁL, y la pregunta se contesta aquí.
+
+            Era la costura que faltaba. El apunte de material vivía detrás de otro
+            botón, en otro panel, y nada ataba las dos cosas: se cerraba «Pieza
+            sustituida» sin decir qué pieza, el almacén no se enteraba de que
+            faltaba una, y el histórico decía que se cambió algo sin decir el qué.
+            Los dos datos son el mismo gesto y ahora se piden juntos.
+
+            Elegir la pieza hace dos cosas a la vez: descuenta la unidad del
+            almacén apuntándola a ESTA incidencia y a esta sala —así el gasto tiene
+            destino, que es lo que permite responder cuánto material se llevó un
+            edificio— y escribe su nombre en la resolución, que es lo que leerá
+            quien se encuentre el mismo aparato dentro de tres meses.
+          */}
+          {motivo === PIEZA_SUSTITUIDA ? (
+            <div className="mt-3 rounded-ctl border border-line bg-surface p-3">
+              <p className="eyebrow">¿Qué pieza?</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted">
+                Sale del almacén, queda apuntada en esta incidencia y se escribe arriba.
+              </p>
+              <MaterialUsado
+                incidentId={incident.id}
+                roomId={incident.room_id}
+                variante="incrustado"
+                onApuntado={({ nombre, qty }) => setDetalle((t) => conLaPieza(t, nombre, qty))}
+              />
+            </div>
+          ) : (
+            /* Para el resto de motivos sigue habiendo material que apuntar —un
+               cable en un «Reparado»— y sigue siendo aquí: después de cerrar
+               nadie vuelve a la incidencia, y ese era el dato que no llegaba
+               nunca al almacén. */
+            <p className="mt-3 text-xs leading-relaxed text-muted">
+              ¿Has gastado material?{' '}
+              <button
+                type="button"
+                onClick={() => onPanel('material')}
+                className="text-accent underline-offset-4 hover:underline"
+              >
+                Apúntalo antes de cerrar
+              </button>
+              .
+            </p>
+          )}
 
           <div className="mt-3 flex flex-wrap gap-2">
             {/* «Cerrar la incidencia» y no «Resolver»: la tecla que abre este

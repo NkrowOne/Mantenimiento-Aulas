@@ -18,7 +18,7 @@ import type { Incident } from '@/domain/types'
 vi.mock('@/sync/outbox', () => ({ flush: vi.fn() }))
 
 const { db } = await import('@/db/dexie')
-const { avanzarIncidencia, resolucionSuficiente } = await import('./acciones')
+const { avanzarIncidencia, conLaPieza, resolucionSuficiente } = await import('./acciones')
 
 function incidencia(over: Partial<Incident> = {}): Incident {
   return {
@@ -183,5 +183,40 @@ describe('resolucionSuficiente', () => {
     expect(resolucionSuficiente('ok')).toBe(false)
     expect(resolucionSuficiente(' ok ')).toBe(false)
     expect(resolucionSuficiente('Cambiada la lámpara')).toBe(true)
+  })
+})
+
+/*
+ * «Pieza sustituida» pregunta cuál, y la respuesta se escribe en el cierre. El
+ * nombre del artículo del almacén describe lo hecho mejor que cualquier frase
+ * —«Lámpara Epson ELPLP96» dice más que «cambiada la lámpara»— así que no se
+ * queda solo en el movimiento de almacén: entra en la resolución.
+ */
+describe('conLaPieza', () => {
+  it('escribe la pieza cuando no había nada escrito', () => {
+    expect(conLaPieza('', 'Lámpara Epson ELPLP96', 1)).toBe('Lámpara Epson ELPLP96')
+    expect(conLaPieza('   ', 'Cable HDMI 5 m', 1)).toBe('Cable HDMI 5 m')
+  })
+
+  it('lleva la cantidad solo cuando es más de una', () => {
+    expect(conLaPieza('', 'Cable HDMI 5 m', 1)).toBe('Cable HDMI 5 m')
+    expect(conLaPieza('', 'Cable HDMI 5 m', 3)).toBe('Cable HDMI 5 m ×3')
+  })
+
+  /*
+   * Añade y no sustituye: en una avería se cambian dos cosas más veces de las
+   * que parece, y lo que el técnico haya escrito a mano es suyo.
+   */
+  it('se suma a lo que ya estuviera escrito, sin pisarlo', () => {
+    expect(conLaPieza('Reiniciada la matriz', 'Cable HDMI 5 m', 1)).toBe(
+      'Reiniciada la matriz · Cable HDMI 5 m',
+    )
+    expect(conLaPieza('Cable HDMI 5 m', 'Conector RJ45', 2)).toBe(
+      'Cable HDMI 5 m · Conector RJ45 ×2',
+    )
+  })
+
+  it('y lo que escribe basta para poder cerrar', () => {
+    expect(resolucionSuficiente(conLaPieza('', 'Lámpara Epson ELPLP96', 1))).toBe(true)
   })
 })

@@ -46,6 +46,33 @@ export const MOTIVOS_DE_CIERRE: string[] = [
 ]
 
 /**
+ * El motivo que además pregunta CUÁL.
+ *
+ * Es el único que arrastra un dato que vive en otra tabla: la pieza sale del
+ * almacén. Con el motivo a secas, el cierre decía que se había cambiado algo sin
+ * decir el qué, y el almacén no se enteraba de que faltaba una unidad — las dos
+ * mitades del mismo gesto, cada una esperando a que alguien se acordara de la
+ * otra. Va como constante y no como literal suelto porque la pantalla decide con
+ * él qué enseñar, y una errata ahí sería un desplegable que no aparece nunca.
+ */
+export const PIEZA_SUSTITUIDA = 'Pieza sustituida'
+
+/**
+ * Añade a lo escrito la pieza que se acaba de sacar del almacén.
+ *
+ * El nombre del artículo es la mejor descripción posible de «qué has hecho»
+ * —«Lámpara Epson ELPLP96» dice bastante más que «cambiada la lámpara»— así que
+ * se escribe en el campo en vez de quedarse solo en el movimiento de almacén.
+ * Y se AÑADE, no se sustituye: en una avería se cambian dos cosas más veces de
+ * las que parece, y lo que el técnico haya escrito a mano es suyo.
+ */
+export function conLaPieza(texto: string, nombre: string, qty: number): string {
+  const linea = qty > 1 ? `${nombre} ×${qty}` : nombre
+  const base = texto.trim()
+  return base ? `${base} · ${linea}` : linea
+}
+
+/**
  * Lo mínimo que se acepta como «qué has hecho».
  *
  * Tres caracteres no son una descripción y no pretenden serlo: son el suelo que

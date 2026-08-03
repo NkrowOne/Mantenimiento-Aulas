@@ -356,8 +356,15 @@ que le va a servir a quien se encuentre el mismo aparato dentro de tres meses. E
 motivo («Reparado», «Pieza sustituida»…) se pulsa de un toque y encabeza la
 frase; lo que no se puede es cerrar sin decir nada.
 
-Antes de cerrar, **apunta el material** que has gastado: después nadie vuelve a
-la incidencia y ese dato no llega al almacén.
+Si el motivo es **«Pieza sustituida»**, el propio cierre te pregunta **cuál**:
+buscas el artículo en el almacén —con las unidades que quedan al lado, en rojo si
+no queda ninguna— y al apuntarlo pasan dos cosas de una vez. Se descuenta del
+almacén apuntado a esta incidencia y a esta aula, y su nombre se escribe en el
+cuadro de arriba: «Cable HDMI 5 m ×2». Puedes añadir varias piezas y escribir lo
+que quieras alrededor.
+
+Con cualquier otro motivo el material se apunta igual, en el enlace de debajo:
+después de cerrar nadie vuelve a la incidencia y ese dato no llega al almacén.
 
 Lo que sigue siendo de un supervisor es **reabrir** una incidencia cerrada y
 cambiarle el título, la gravedad o la sala.

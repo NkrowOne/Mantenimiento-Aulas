@@ -184,6 +184,13 @@ Cómo está montado, que importa para auditar:
   nunca rellenaba, así que el histórico de la sala contaba la avería y no la
   reparación. Ahora la resolución sale en la línea de tiempo, debajo de
   «Resuelta: …».
+- **«Pieza sustituida» pregunta cuál, y el almacén se entera.** El motivo abre el
+  buscador de artículos dentro del propio cierre: elegir la pieza escribe un
+  `stock_movements` de consumo con su `incident_id` y su `room_id` —o sea, gasto
+  con destino, que es lo que permite responder cuánto material se llevó un
+  edificio— y escribe su nombre en la resolución. Antes eran dos gestos
+  independientes detrás de dos botones, y el segundo se hacía la mitad de las
+  veces: se cerraba «Pieza sustituida» sin decir qué pieza y sin descontar nada.
 
 ```sql
 -- Quién cierra, y qué escribe. Para mirarlo de cuando en cuando.
