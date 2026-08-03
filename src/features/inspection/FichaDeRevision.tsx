@@ -11,8 +11,14 @@
  * Es una capa a pantalla completa y no una vista más de la navegación, por lo
  * mismo que el visor de fotos: leer una revisión es un paréntesis dentro de la
  * ficha de la sala, y quien vuelve tiene que aterrizar exactamente donde
- * estaba en la lista, no al principio de la sala. `Escape` cierra y el foco
- * vuelve a la fila que la abrió.
+ * estaba en la lista, no al principio de la sala. De esa promesa salen tres
+ * detalles que no son adorno: el documento de detrás se congela mientras la
+ * capa está abierta (sin ello, el arrastre que llega al final de la ficha
+ * seguía desplazando la sala por debajo), el tabulador da la vuelta dentro de
+ * la capa (declararse `aria-modal` con el fondo alcanzable era mentirle al
+ * lector de pantalla), y `Escape` cierra devolviendo el foco a la fila que la
+ * abrió — salvo que otra capa por encima, el visor, o un control de debajo ya
+ * lo hayan consumido.
  *
  * El detalle no se pide hasta que se abre la pantalla — la lista trae solo los
  * contadores— y la corrección se prepara desde aquí: es la acción de la ficha,
@@ -74,26 +80,89 @@ export function FichaDeRevision({
   const [viendo, setViendo] = useState(vigente.id)
   const versionVista = versiones.find((r) => r.id === viendo) ?? vigente
 
+  const capa = useRef<HTMLDivElement>(null)
   const volver = useRef<HTMLButtonElement>(null)
+
+  /*
+   * `onCerrar` se lee a través de un ref para que los efectos de abajo puedan
+   * montarse UNA vez. Con la prop como dependencia —y el padre pasándola como
+   * flecha nueva en cada render— cada emisión de sus consultas vivas
+   * re-ejecutaba el efecto de foco: el cleanup enfocaba la fila de DETRÁS de
+   * la capa (desplazando el fondo que esta pantalla promete preservar) y el
+   * setup volvía a robar el foco hacia «Volver» a mitad de lectura.
+   */
+  const cerrar = useRef(onCerrar)
+  cerrar.current = onCerrar
 
   useEffect(() => {
     /*
-     * El foco entra en la pantalla y al cerrar vuelve a la fila que la abrió:
-     * sin esto, el usuario de teclado reempezaba desde la cabecera en mitad de
-     * un histórico largo. `Escape` cierra — el visor de fotos, que se abre por
-     * encima, captura su propio Escape antes de que llegue aquí.
+     * Solo al montar: el foco entra en la pantalla y al cerrar vuelve a la
+     * fila que la abrió — sin esto, el usuario de teclado reempezaba desde la
+     * cabecera en mitad de un histórico largo. Y el documento de detrás se
+     * congela: `overscroll-contain` corta el encadenado en los límites del
+     * scroll propio, pero cuando el contenido cabe entero no hay scroll
+     * propio que consumir y iOS pasaba el gesto a la sala de debajo.
      */
     const origen = document.activeElement instanceof HTMLElement ? document.activeElement : null
     volver.current?.focus()
-    const alPulsar = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onCerrar()
-    }
-    window.addEventListener('keydown', alPulsar)
+
+    const previo = document.documentElement.style.overflow
+    document.documentElement.style.overflow = 'hidden'
+
     return () => {
-      window.removeEventListener('keydown', alPulsar)
+      document.documentElement.style.overflow = previo
       origen?.focus()
     }
-  }, [onCerrar])
+  }, [])
+
+  useEffect(() => {
+    const alPulsar = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        // Consumido es consumido: el combobox del inventario, por ejemplo,
+        // cierra su desplegable con `preventDefault` y ese Escape no es para
+        // esta capa. El del visor de fotos ni llega: lo captura por encima.
+        if (e.defaultPrevented) return
+        cerrar.current()
+        return
+      }
+
+      /*
+       * El tabulador da la vuelta DENTRO de la capa. `aria-modal` promete un
+       * fondo imperceptible, pero el fondo sigue en el árbol: sin esto, Tab
+       * desde el último botón seguía hacia las secciones tapadas —hasta el
+       * nav inferior, donde activar una pestaña invisible desmontaba la sala
+       * entera— y Shift+Tab desde «Volver» aterrizaba en la lista de detrás.
+       */
+      if (e.key === 'Tab') {
+        const raiz = capa.current
+        if (!raiz) return
+        const enfocables = [
+          ...raiz.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ),
+        ]
+        if (enfocables.length === 0) return
+        const primero = enfocables[0]!
+        const ultimo = enfocables[enfocables.length - 1]!
+        const activo = document.activeElement
+
+        if (!raiz.contains(activo)) {
+          e.preventDefault()
+          primero.focus()
+          return
+        }
+        if (!e.shiftKey && activo === ultimo) {
+          e.preventDefault()
+          primero.focus()
+        } else if (e.shiftKey && activo === primero) {
+          e.preventDefault()
+          ultimo.focus()
+        }
+      }
+    }
+    window.addEventListener('keydown', alPulsar)
+    return () => window.removeEventListener('keydown', alPulsar)
+  }, [])
 
   /*
    * Que hubo foto local se recuerda, no solo se observa: al terminar de subir,
@@ -105,13 +174,22 @@ export function FichaDeRevision({
   const fotoLocal = conFotoLocal || huboFotoLocal.current
 
   const fotos = versiones.reduce((n, r) => n + r.fotos, 0)
+  const unaIncidencia = vigente.incidencias === 1
 
   return (
     <div
+      ref={capa}
       role="dialog"
       aria-modal="true"
       aria-label={`Revisión del ${fechaLegible(vigente.occurred_at)}`}
-      className="fixed inset-0 z-20 overflow-y-auto bg-ground"
+      /*
+       * z-40: por encima del aviso de versión nueva (z-30), que caía sobre el
+       * pie de la ficha y tapaba justo el mensaje de fallo de «Corregir»; el
+       * visor de fotos (z-50) sigue quedando por encima. La barra reaparece
+       * al cerrar, que es cuando recargar no molesta — el mismo trato que ya
+       * tiene la revisión.
+       */
+      className="fixed inset-0 z-40 overflow-y-auto overscroll-contain bg-ground"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {/* El hueco del notch lo pone la cabecera, no el contenedor: pegada
@@ -121,7 +199,7 @@ export function FichaDeRevision({
         className="sticky top-0 z-10 border-b border-line bg-ground"
         style={{ paddingTop: 'env(safe-area-inset-top)' }}
       >
-        <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-2">
+        <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-2">
           <button
             ref={volver}
             type="button"
@@ -132,7 +210,7 @@ export function FichaDeRevision({
           </button>
           <div className="min-w-0 flex-1">
             <p className="eyebrow">Revisión</p>
-            {/* Con la hora: es la pregunta que la lista no contesta. */}
+            {/* Con la hora: es la pregunta que la fila del índice no contesta. */}
             <p className="truncate text-sm font-medium">{fechaLegible(vigente.occurred_at)}</p>
           </div>
           <span
@@ -147,7 +225,7 @@ export function FichaDeRevision({
         </div>
       </header>
 
-      <div className="mx-auto max-w-3xl px-4 pb-16 pt-4">
+      <div className="mx-auto max-w-2xl px-4 pb-16 pt-4">
         {/* Quién y cuándo, con palabras: es la mitad de «todo detalle». */}
         <p className="text-sm">
           {original.who ? `Revisó ${original.who}` : 'Sin firma'}
@@ -168,7 +246,7 @@ export function FichaDeRevision({
             vigente.no_aplica > 0 ? `${vigente.no_aplica} n/a` : null,
             fotos > 0 ? `${fotos} foto${fotos === 1 ? '' : 's'}` : null,
             vigente.incidencias > 0
-              ? `${vigente.incidencias} incidencia${vigente.incidencias === 1 ? '' : 's'} abiertas`
+              ? `${vigente.incidencias} incidencia${unaIncidencia ? '' : 's'} abierta${unaIncidencia ? '' : 's'}`
               : null,
             corregida ? `${versiones.length} versiones` : null,
           ]
@@ -213,24 +291,37 @@ export function FichaDeRevision({
           )}
 
           <div className="card px-4 py-2">
-            <Comprobaciones inspectionId={viendo} />
+            {/* Por `versionVista.id` y no por el estado crudo: validado contra
+                las versiones que existen, no puede pintar las filas de una
+                revisión que ya no está en la cadena. */}
+            <Comprobaciones inspectionId={versionVista.id} />
           </div>
 
           {/* Quién firmó la versión que se está mirando, cuando no es la
               vigente: sin esto, «Original» y «Corrección 1» se leen como dos
               listas sin autor. */}
-          {corregida && viendo !== vigente.id && (
-            <p className="mt-3 font-mono text-xs text-muted">
-              {[
-                versionVista.corrected_at
-                  ? `corregida el ${fechaCorta(versionVista.corrected_at)}`
-                  : `revisada el ${fechaCorta(versionVista.occurred_at)}`,
-                versionVista.who,
-                resultadoLegible(versionVista),
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-            </p>
+          {corregida && versionVista.id !== vigente.id && (
+            <>
+              <p className="mt-3 font-mono text-xs text-muted">
+                {[
+                  versionVista.corrected_at
+                    ? `corregida el ${fechaCorta(versionVista.corrected_at)}`
+                    : `revisada el ${fechaCorta(versionVista.occurred_at)}`,
+                  versionVista.who,
+                  resultadoLegible(versionVista),
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+              {/* Y su observación, si la corrección la reescribió: es la mitad
+                  de «mirar lo que decía antes», no solo sus casillas. */}
+              {(versionVista.notes ?? '').trim() !== '' &&
+                (versionVista.notes ?? '').trim() !== (vigente.notes ?? '').trim() && (
+                  <p className="mt-2 whitespace-pre-line break-words border-l-2 border-line pl-3 text-sm leading-relaxed">
+                    {versionVista.notes}
+                  </p>
+                )}
+            </>
           )}
         </section>
 

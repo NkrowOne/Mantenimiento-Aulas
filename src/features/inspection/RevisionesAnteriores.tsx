@@ -31,13 +31,13 @@
  * dispositivo, es una revisión como cualquier otra.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { pullSala } from '@/sync/pull'
-import { fechaLegible } from '@/domain/historial'
+import { fechaCorta } from '@/domain/fechas'
 import {
   agruparEnVisitas,
   resultadoLegible,
@@ -91,8 +91,15 @@ export function RevisionesAnteriores({
    * objeto: la lista se refresca por debajo —al guardar una corrección la
    * versión vigente cambia de id— y una referencia guardada se quedaría
    * enseñando la visita de antes.
+   *
+   * El ref acompaña al estado para que `preparar` pueda preguntar «¿sigue
+   * abierta?» en el momento de resolverse, no en el de dispararse. Guarda la
+   * visita entera y no el id: si un refetch cambia la vigente con la ficha
+   * abierta, el id con el que se disparó la corrección sigue en su cadena de
+   * versiones y la pregunta tiene que seguir contestando que sí.
    */
   const [abiertaId, setAbiertaId] = useState<string | null>(null)
+  const abiertaRef = useRef<Visita | null>(null)
 
   /*
    * Antes de sembrar nada, el espejo de esta sala se pone al día.
@@ -210,7 +217,16 @@ export function RevisionesAnteriores({
         semilla: semillaDeCorreccion(comprobaciones, clavesVigentes),
       }
     },
-    onSuccess: onCorregir,
+    /*
+     * Solo si la ficha SIGUE abierta: con red lenta, quien pulsa «Corregir»,
+     * ve «Recuperando…» y se arrepiente cerrando con Escape no puede acabar
+     * segundos después en un formulario de corrección que ya no pidió — y que
+     * además crea el borrador. Cerrar la ficha es cancelar.
+     */
+    onSuccess: (correccion, r) => {
+      const abierta = abiertaRef.current
+      if (abierta && abierta.versiones.some((x) => x.id === r.id)) onCorregir(correccion)
+    },
   })
 
   const filtradas = visitas.filter(FILTROS.find((f) => f.id === filtro)!.cumple)
@@ -218,9 +234,16 @@ export function RevisionesAnteriores({
   const cuenta = (f: Filtro): number =>
     visitas.filter(FILTROS.find((x) => x.id === f)!.cumple).length
 
-  /* La visita abierta se deriva de los datos frescos, no se guarda: si ya no
-     está —la lista se refrescó y su vigente cambió—, la ficha se cierra sola. */
-  const abierta = visitas.find((v) => v.vigente.id === abiertaId) ?? null
+  /*
+   * La visita abierta se deriva de los datos frescos, no se guarda — y se
+   * busca por CUALQUIER versión de su cadena, no solo por la vigente: si un
+   * compañero guarda una corrección mientras se lee, la vigente cambia de id
+   * pero la visita sigue siendo la misma, y cerrar la ficha en silencio le
+   * robaría el punto de lectura a quien no ha hecho nada. Solo si la visita
+   * desaparece del todo (fuera de la ventana de 24) la ficha se cierra sola.
+   */
+  const abierta = visitas.find((v) => v.versiones.some((r) => r.id === abiertaId)) ?? null
+  abiertaRef.current = abierta
 
   return (
     <section aria-labelledby="sec-rev" className="mt-8">
@@ -301,6 +324,7 @@ export function RevisionesAnteriores({
               key={v.vigente.id}
               visita={v}
               enCurso={enCurso.has(v.vigente.id)}
+              conFotoLocal={v.versiones.some((r) => conFotoLocal.has(r.id))}
               onAbrir={() => setAbiertaId(v.vigente.id)}
             />
           ))}
@@ -325,6 +349,10 @@ export function RevisionesAnteriores({
 
       {abierta && (
         <FichaDeRevision
+          /* Por visita: cambiar de visita con la capa abierta —posible por
+             teclado— tiene que remontar la pantalla, o `viendo` seguiría
+             enseñando las comprobaciones de la anterior bajo la fecha nueva. */
+          key={abierta.vigente.id}
           visita={abierta}
           enCurso={enCurso.has(abierta.vigente.id)}
           conFotoLocal={abierta.versiones.some((r) => conFotoLocal.has(r.id))}
@@ -335,7 +363,13 @@ export function RevisionesAnteriores({
               : null
           }
           onCorregir={() => preparar.mutate(abierta.vigente)}
-          onCerrar={() => setAbiertaId(null)}
+          onCerrar={() => {
+            /* Cerrar también limpia la mutación: sin el reset, reabrir la
+               visita nacía enseñando el fallo de hace un rato, y una
+               recuperación en vuelo navegaría al formulario ya sin público. */
+            preparar.reset()
+            setAbiertaId(null)
+          }}
         />
       )}
     </section>
@@ -350,11 +384,14 @@ export function RevisionesAnteriores({
 function FilaDeVisita({
   visita,
   enCurso,
+  conFotoLocal,
   onAbrir,
 }: {
   visita: Visita
   /** Ya hay una corrección de esta visita empezada en el dispositivo. */
   enCurso: boolean
+  /** Hay fotos de esta visita todavía en la cola del dispositivo. */
+  conFotoLocal: boolean
   onAbrir: () => void
 }): React.ReactElement {
   const { vigente, versiones } = visita
@@ -366,6 +403,9 @@ function FilaDeVisita({
   const señas = [
     original.who ? `Revisó ${original.who}` : 'Sin firma',
     fotos > 0 ? `${fotos} foto${fotos === 1 ? '' : 's'}` : null,
+    // La foto de hoy, que el recuento del servidor aún no conoce: sin la seña,
+    // la revisión recién hecha parecía no tener su foto hasta que subiera.
+    conFotoLocal && fotos === 0 ? 'foto sin subir' : null,
     conNota ? 'con observación' : null,
     corregida ? 'corregida' : null,
   ]
@@ -377,14 +417,20 @@ function FilaDeVisita({
       <button
         type="button"
         onClick={onAbrir}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors duration-100 active:bg-raised"
+        /* El anillo de foco hacia dentro: la card de la lista recorta con
+           `overflow-hidden` y el anillo por fuera desaparecía en las filas de
+           los extremos — el mismo remedio que las baldosas de la ficha. */
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors duration-100 focus-visible:outline-offset-[-2px] active:bg-raised"
       >
         <span className="min-w-0 flex-1">
-          <span className="block font-medium">{fechaLegible(vigente.occurred_at)}</span>
+          {/* La fecha sola, de índice: la hora la contesta la ficha. */}
+          <span className="block font-medium">{fechaCorta(vigente.occurred_at)}</span>
           <span className="mt-0.5 block truncate text-xs text-muted">
+            {/* La corrección en curso va PRIMERA y en su color: es la única
+                seña accionable, y al final de la línea era justo la que el
+                truncado se comía con una firma larga. */}
+            {enCurso && <span className="text-accent">corrección en curso · </span>}
             {señas}
-            {/* En su color: es trabajo a medias, no un dato más. */}
-            {enCurso && <span className="text-accent"> · corrección en curso</span>}
           </span>
         </span>
 
@@ -399,11 +445,12 @@ function FilaDeVisita({
           {resultadoLegible(vigente)}
         </span>
 
-        {/* El galón dice «esto se abre» sin gastar una palabra. */}
+        {/* El galón dice «esto se abre» sin gastar una palabra. Mismo tamaño
+            que el del histórico plegable: un solo galón en toda la aplicación. */}
         <svg
           aria-hidden="true"
-          width="18"
-          height="18"
+          width="20"
+          height="20"
           viewBox="0 0 24 24"
           fill="none"
           className="shrink-0 text-muted"
