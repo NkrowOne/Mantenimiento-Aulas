@@ -52,6 +52,7 @@ import { flush } from '@/sync/outbox'
 import { RoomPlate } from '@/components/RoomPlate'
 import { DoorPlate } from '@/components/DoorPlate'
 import { RevisionesAnteriores } from '@/features/inspection/RevisionesAnteriores'
+import { LineaTiempo } from '@/features/history/LineaTiempo'
 import {
   AccionesDeIncidencia,
   type PanelDeIncidencia,
@@ -60,6 +61,7 @@ import type { Correccion } from '@/features/inspection/useInspection'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaCorta } from '@/domain/fechas'
 import { esAveriaViva } from './averias'
+import type { EventoSala } from '@/domain/historial'
 import {
   INCIDENT_KIND_LABELS,
   STALE_INCIDENT_DAYS,
@@ -67,22 +69,6 @@ import {
   type IncidentKind,
   type Room,
 } from '@/domain/types'
-
-interface TimelineRow {
-  at: string
-  kind: 'incidencia' | 'solicitud' | 'observacion' | 'revision_ok' | 'revision_ko'
-    | 'material' | 'equipo' | 'inventario'
-  /** El matiz del evento. En una revisión, `corregida` si lo que se ve es una corrección. */
-  subkind: string
-  title: string
-  /** La letra pequeña del evento: la nota de la revisión, la descripción, la resolución. */
-  detail: string | null
-  ref: string | null
-  who: string | null
-  state: string
-  /** Unidades, en las filas de material. Negativo sale del almacén. */
-  qty: number | null
-}
 
 interface Fiabilidad {
   score: number
@@ -139,23 +125,6 @@ const GRAVEDAD_TEXTO: Record<string, string> = {
 /** Cuántos días lleva abierta. Es lo que decide qué se atiende antes. */
 function diasAbierta(desde: string): number {
   return Math.max(0, Math.floor((Date.now() - new Date(desde).getTime()) / 86_400_000))
-}
-
-/** Cómo se marca cada cosa en la línea de tiempo. Nunca solo el color. */
-const MARCA: Record<TimelineRow['kind'], { punto: string; texto: string }> = {
-  incidencia: { punto: 'bg-crit', texto: 'Incidencia' },
-  solicitud: { punto: 'bg-accent', texto: 'Solicitud' },
-  observacion: { punto: 'bg-warn', texto: 'Observación' },
-  revision_ok: { punto: 'bg-ok', texto: 'Revisión' },
-  revision_ko: { punto: 'bg-crit', texto: 'Revisión' },
-  /*
-   * Las tres que trae la línea de tiempo desde que se fundió con la del
-   * almacén. Sin ellas aquí, `MARCA[h.kind]` era `undefined` y la ficha
-   * reventaba al abrir cualquier sala donde se hubiera gastado un cable.
-   */
-  material: { punto: 'bg-mark', texto: 'Material' },
-  equipo: { punto: 'bg-warn', texto: 'Equipo' },
-  inventario: { punto: 'bg-ok', texto: 'Inventario' },
 }
 
 interface Props {
@@ -251,6 +220,14 @@ export function RoomSheet({
 
   const sinCerrar = abiertasAqui.filter((i) => i.state !== 'resuelta').length
 
+  /* Quién lleva cada una. Del espejo, que es lo que hace que esto se lea en un
+     sótano igual que el resto de la sección. */
+  const nombres = useLiveQuery(
+    async () => new Map((await db.personal.toArray()).map((n) => [n.id, n.full_name])),
+    [],
+  )
+  const nombreDe = (id: string): string | null => nombres?.get(id) ?? null
+
   /*
    * Y si se ha venido a por ellas, la pantalla abre ahí.
    *
@@ -306,7 +283,7 @@ export function RoomSheet({
 
   const { data: historial, isError: historialFalla } = useQuery({
     queryKey: ['room-timeline', room.id],
-    queryFn: async (): Promise<TimelineRow[]> => {
+    queryFn: async (): Promise<EventoSala[]> => {
       const { data, error } = await supabase
         .from('room_timeline')
         .select('*')
@@ -314,7 +291,7 @@ export function RoomSheet({
         .order('at', { ascending: false })
         .limit(30)
       if (error) throw error
-      return (data ?? []) as TimelineRow[]
+      return (data ?? []) as EventoSala[]
     },
   })
 
@@ -362,6 +339,8 @@ export function RoomSheet({
         resolved_at: null,
         resolved_by: null,
         resolution: null,
+        assigned_to: null,
+        assigned_at: null,
         source: 'app',
       }
 
@@ -648,6 +627,14 @@ export function RoomSheet({
                       {i.kind !== 'incidencia' && <>{INCIDENT_KIND_LABELS[i.kind]} · </>}
                       {i.external_ref && <span className="font-mono">{i.external_ref} · </span>}
                       {i.state === 'en_curso' && <span className="text-warn">en curso · </span>}
+                      {i.assigned_to && (
+                        <span className="text-accent">
+                          {i.assigned_to === userId
+                            ? 'la llevas tú'
+                            : `la lleva ${nombreDe(i.assigned_to) ?? 'otra persona'}`}
+                          {' · '}
+                        </span>
+                      )}
                       {i.opened_from_inspection_id && <>de la revisión · </>}
                       {/* «Hace N días» y no la fecha: es la misma frase que usa la
                           pestaña de Incidencias —quien lee las dos pantallas no
@@ -675,6 +662,7 @@ export function RoomSheet({
                         <AccionesDeIncidencia
                           incident={i}
                           userId={userId}
+                          nombreDe={nombreDe}
                           panel={enPanel?.id === i.id ? enPanel.panel : null}
                           onPanel={(panel) => setEnPanel(panel ? { id: i.id, panel } : null)}
                           onHecho={() => {
@@ -728,6 +716,20 @@ export function RoomSheet({
         */}
         <RevisionesAnteriores roomId={room.id} onCorregir={onCorregir} />
 
+        {/*
+          El histórico, con la MISMA línea de tiempo que las otras dos pantallas.
+
+          Esta sección tenía su propio dibujo —cuadraditos de dos píxeles, su
+          propio mapa de colores, su propia jerarquía— para pintar exactamente la
+          misma consulta que `HistorialSala` y la pestaña de Historial pintan con
+          `LineaTiempo`. Dos diseños del mismo dato en la misma aplicación es lo
+          que el comentario de cabecera de ese componente dice literalmente que no
+          puede pasar: quien lo lee en las dos pantallas tiene que reconocer las
+          mismas filas, no traducir entre dos maquetas.
+
+          Sin `onSala`: aquí ya se está en la sala, y un enlace que no lleva a
+          ninguna parte es peor que no ofrecerlo.
+        */}
         <section aria-labelledby="sec-hist" className="mt-8">
           <div className="section-head">
             <h2 id="sec-hist" className="eyebrow">Historial</h2>
@@ -737,57 +739,12 @@ export function RoomSheet({
               El historial necesita conexión; lo demás de esta ficha funciona sin ella.
             </p>
           )}
-          <ul className="mt-2 space-y-3">
-            {(historial ?? []).map((h, i) => (
-              <li key={`${h.at}-${i}`} className="flex gap-3">
-                <span
-                  aria-hidden
-                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-[1px] ${MARCA[h.kind].punto}`}
-                />
-                <div className="min-w-0 flex-1 text-sm">
-                  <p>
-                    <span className="text-muted">{MARCA[h.kind].texto} — </span>
-                    {h.title}
-                    {h.qty !== null && h.qty !== 0 && (
-                      <span className="ml-2 font-mono text-xs font-semibold tabular text-ink-2">
-                        {h.qty > 0 ? `+${h.qty}` : `−${Math.abs(h.qty)}`}
-                      </span>
-                    )}
-                    {h.state === 'borrador' && (
-                      <span className="ml-2 rounded-tag bg-warn-tint px-1.5 py-0.5 text-xs text-warn">
-                        sin completar
-                      </span>
-                    )}
-                    {/* Lo que se ve es la versión corregida de aquella visita, no
-                        una visita más. Sin decirlo, quien compara esta lista con
-                        la de revisiones de arriba no entiende por qué la fecha es
-                        vieja y el texto ha cambiado. */}
-                    {h.subkind === 'corregida' && (
-                      <span className="ml-2 rounded-tag bg-accent-tint px-1.5 py-0.5 text-xs text-accent">
-                        corregida
-                      </span>
-                    )}
-                  </p>
-                  {/* El detalle se pinta. La vista lo traía —la nota de la
-                      revisión, la descripción de la incidencia, la resolución— y
-                      esta lista lo tiraba: un evento decía «Revisión con
-                      incidencias» y no lo que se vio. `line-clamp-3` porque aquí
-                      es contexto; la observación entera se lee arriba. */}
-                  {h.detail && (
-                    <p className="mt-0.5 line-clamp-3 text-xs leading-relaxed text-muted">
-                      {h.detail}
-                    </p>
-                  )}
-                  <p className="mt-0.5 font-mono text-xs text-muted">
-                    {[fechaCorta(h.at), h.who, h.ref].filter(Boolean).join(' · ')}
-                  </p>
-                </div>
-              </li>
-            ))}
-            {historial?.length === 0 && (
-              <li className="text-sm text-muted">Todavía no hay nada registrado en esta sala.</li>
-            )}
-          </ul>
+          {(historial ?? []).length > 0 && <LineaTiempo eventos={historial ?? []} />}
+          {historial?.length === 0 && (
+            <p className="mt-2 text-sm text-muted">
+              Todavía no hay nada registrado en esta sala.
+            </p>
+          )}
         </section>
       </div>
     </div>

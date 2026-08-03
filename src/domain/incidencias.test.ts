@@ -64,6 +64,8 @@ function incidencia(over: Partial<Incident>): Incident {
     resolved_at: null,
     resolved_by: null,
     resolution: null,
+    assigned_to: null,
+    assigned_at: null,
     source: 'app',
     ...over,
   }

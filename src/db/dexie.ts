@@ -20,6 +20,7 @@ import type {
   Incident,
   Inspection,
   InspectionCheck,
+  Persona,
   Room,
   StockItem,
   StockLevel,
@@ -140,6 +141,9 @@ export class AulasDB extends Dexie {
   stockLevels!: EntityTable<StockLevel, 'stock_item_id'>
   incidents!: EntityTable<Incident, 'id'>
   assetTypes!: EntityTable<AssetType, 'id'>
+  /* Los nombres del equipo. Sin esto, «la lleva Fulano» sería un uuid — y el
+     aula, que es donde se lee, es donde no hay cobertura para preguntarlo. */
+  personal!: EntityTable<Persona, 'id'>
 
   // El inventario es a la vez maestro y cosa que el técnico produce: lo lee de
   // aquí para revisar y escribe aquí al dar de alta un elemento en el aula.
@@ -213,6 +217,11 @@ export class AulasDB extends Dexie {
      */
     this.version(5).stores({
       photoBlobs: 'id',
+    })
+
+    // Los nombres del equipo, para poner cara a quien lleva cada incidencia.
+    this.version(6).stores({
+      personal: 'id',
     })
   }
 }

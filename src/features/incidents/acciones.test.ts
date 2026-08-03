@@ -38,6 +38,8 @@ function incidencia(over: Partial<Incident> = {}): Incident {
     resolved_at: null,
     resolved_by: null,
     resolution: null,
+    assigned_to: null,
+    assigned_at: null,
     source: 'app',
     ...over,
   }
@@ -54,8 +56,8 @@ describe('avanzarIncidencia', () => {
 
     await avanzarIncidencia({
       id: 'inc-1',
-      estado: 'resuelta',
-      resolucion: 'Pieza sustituida',
+      accion: 'cerrar',
+      texto: 'Pieza sustituida',
       userId: 'supervisor-1',
       ahora: '2026-08-03T09:00:00.000Z',
     })
@@ -110,7 +112,7 @@ describe('avanzarIncidencia', () => {
       lastError: null,
     })
 
-    await avanzarIncidencia({ id: 'inc-1', estado: 'resuelta', resolucion: 'Reparado', userId: null })
+    await avanzarIncidencia({ id: 'inc-1', accion: 'cerrar', texto: 'Reparado', userId: null })
 
     expect((await db.outbox.toArray()).map((e) => e.id).sort()).toEqual([
       'inc-1',
@@ -118,11 +120,16 @@ describe('avanzarIncidencia', () => {
     ])
   })
 
-  it('empezar no inventa una resolución', async () => {
+  it('cogerla la pone a tu nombre y no inventa una resolución', async () => {
     await db.incidents.put(incidencia())
-    await avanzarIncidencia({ id: 'inc-1', estado: 'en_curso', userId: 'supervisor-1' })
+    await avanzarIncidencia({ id: 'inc-1', accion: 'coger', userId: 'supervisor-1' })
 
-    expect((await db.incidents.get('inc-1'))?.state).toBe('en_curso')
+    expect(await db.incidents.get('inc-1')).toMatchObject({
+      state: 'en_curso',
+      // Y a tu nombre: «en curso» sin dueño era dos técnicos subiendo al mismo
+      // aula el mismo día y enterándose al llegar.
+      assigned_to: 'supervisor-1',
+    })
     expect((await db.outbox.get('inc-1#estado'))?.payload).toEqual({
       p_id: 'inc-1',
       p_estado: 'en_curso',
@@ -137,8 +144,8 @@ describe('avanzarIncidencia', () => {
    */
   it('el segundo toque reemplaza al primero en vez de competir con él', async () => {
     await db.incidents.put(incidencia())
-    await avanzarIncidencia({ id: 'inc-1', estado: 'en_curso', userId: 'u' })
-    await avanzarIncidencia({ id: 'inc-1', estado: 'resuelta', resolucion: 'Reparado', userId: 'u' })
+    await avanzarIncidencia({ id: 'inc-1', accion: 'coger', userId: 'u' })
+    await avanzarIncidencia({ id: 'inc-1', accion: 'cerrar', texto: 'Reparado', userId: 'u' })
 
     const cola = await db.outbox.toArray()
     expect(cola).toHaveLength(1)
@@ -151,7 +158,7 @@ describe('avanzarIncidencia', () => {
    * cambio viaja igual.
    */
   it('funciona aunque la incidencia no esté en el espejo', async () => {
-    await avanzarIncidencia({ id: 'inc-vieja', estado: 'resuelta', resolucion: 'Reparado', userId: null })
+    await avanzarIncidencia({ id: 'inc-vieja', accion: 'cerrar', texto: 'Reparado', userId: null })
 
     expect(await db.incidents.count()).toBe(0)
     expect(await db.outbox.get('inc-vieja#estado')).toBeDefined()
@@ -167,7 +174,7 @@ describe('avanzarIncidencia', () => {
 
     for (const vacia of [undefined, '', '   ', '.', 'x']) {
       await expect(
-        avanzarIncidencia({ id: 'inc-1', estado: 'resuelta', resolucion: vacia, userId: 'u' }),
+        avanzarIncidencia({ id: 'inc-1', accion: 'cerrar', texto: vacia, userId: 'u' }),
       ).rejects.toThrow(/qué se ha hecho/)
     }
 
@@ -218,5 +225,65 @@ describe('conLaPieza', () => {
 
   it('y lo que escribe basta para poder cerrar', () => {
     expect(resolucionSuficiente(conLaPieza('', 'Lámpara Epson ELPLP96', 1))).toBe(true)
+  })
+})
+
+/*
+ * Soltar y reabrir son los dos que devuelven trabajo, y no son lo mismo:
+ * soltar es deshacer lo tuyo —vuelve a la cola sin dueño— y reabrir es revisar
+ * la decisión de otro, que además pide motivo.
+ */
+describe('avanzarIncidencia · soltar y reabrir', () => {
+  it('soltar la devuelve a la cola sin dueño', async () => {
+    await db.incidents.put(incidencia({ state: 'en_curso', assigned_to: 'u1' }))
+    await avanzarIncidencia({ id: 'inc-1', accion: 'soltar', userId: 'u1' })
+
+    expect(await db.incidents.get('inc-1')).toMatchObject({
+      state: 'abierta',
+      assigned_to: null,
+      assigned_at: null,
+    })
+  })
+
+  it('no deja reabrir sin decir por qué', async () => {
+    await expect(
+      avanzarIncidencia({ id: 'inc-1', accion: 'reabrir', texto: '  ', userId: 'u1' }),
+    ).rejects.toThrow(/por qué/)
+    expect(await db.outbox.count()).toBe(0)
+  })
+
+  /*
+   * Una incidencia cerrada no está en el espejo —solo guarda lo que sigue
+   * vivo—, así que reabrir tiene que poder devolverla: sin esto, la pantalla
+   * seguiría enseñándola cerrada hasta la siguiente descarga.
+   */
+  it('reabrir devuelve al espejo la fila que vuelve a estar viva', async () => {
+    const cerrada = incidencia({
+      state: 'resuelta',
+      resolved_at: '2026-08-01T09:00:00.000Z',
+      resolved_by: 'u2',
+      resolution: 'Cambiada la fuente',
+    })
+
+    await avanzarIncidencia({
+      id: 'inc-1',
+      accion: 'reabrir',
+      texto: 'Se vuelve a apagar a los diez minutos',
+      userId: 'u1',
+      fila: cerrada,
+    })
+
+    expect(await db.incidents.get('inc-1')).toMatchObject({
+      state: 'abierta',
+      resolution: null,
+      resolved_at: null,
+      resolved_by: null,
+      assigned_to: null,
+    })
+    expect((await db.outbox.get('inc-1#estado'))?.payload).toEqual({
+      p_id: 'inc-1',
+      p_estado: 'abierta',
+      p_resolucion: 'Se vuelve a apagar a los diez minutos',
+    })
   })
 })

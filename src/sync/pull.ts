@@ -29,8 +29,8 @@
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { descargaEntera, type Descarga, type Pagina } from './paginada'
-import type { Asset, AssetRemoval, AssetType, Building, Incident, Room, StockItem,
-  StockLevel, Zone } from '@/domain/types'
+import type { Asset, AssetRemoval, AssetType, Building, Incident, Persona, Room,
+  StockItem, StockLevel, Zone } from '@/domain/types'
 
 /** Dónde queda el parte de la última descarga, para que la interfaz lo lea. */
 export const DIAGNOSTICO_PULL = 'ultimo-pull'
@@ -133,6 +133,10 @@ export async function pullMaster(): Promise<ResultadoPull> {
     ['stock_items', (d, h) => supabase.from('stock_items').select('*').eq('active', true).order('id').range(d, h)],
     ['stock_levels', (d, h) => supabase.from('stock_levels').select('*').order('stock_item_id').range(d, h)],
     ['incidents', (d, h) => supabase.from('incidents').select('*').neq('state', 'resuelta').order('id').range(d, h)],
+    /* Los nombres del equipo. Son una decena de filas y se leen en el aula
+       —«la lleva Ana Ruiz» debajo de una avería—, así que viajan con el resto
+       del maestro en vez de resolverse con una consulta por pantalla. */
+    ['personal', (d, h) => supabase.from('personal').select('*').order('id').range(d, h)],
     // El catálogo entero, fusionados incluidos: sin las lápidas, un elemento
     // cuyo tipo se fusionó ayer se quedaría sin nombre en el dispositivo.
     ['asset_types', (d, h) => supabase.from('asset_types').select('*').order('id').range(d, h)],
@@ -285,6 +289,7 @@ export async function pullMaster(): Promise<ResultadoPull> {
   await guardar<StockItem>(de('stock_items'), db.stockItems)
   await guardar<StockLevel>(de('stock_levels'), db.stockLevels)
   await guardarIncidencias(de('incidents'))
+  await guardar<Persona>(de('personal'), db.personal)
   await guardar<AssetType>(de('asset_types'), db.assetTypes)
   await guardar<Asset>(de('assets'), db.assets)
   await guardar<AssetRemoval>(de('asset_removals'), db.assetRemovals)

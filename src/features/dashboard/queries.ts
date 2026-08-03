@@ -180,3 +180,40 @@ export function useIncidentsByMonth() {
     },
   })
 }
+
+/**
+ * Cuánto se tarda en cerrar una avería.
+ *
+ * El panel sabía cuántas hay abiertas y cuántas estancadas, y no sabía si el
+ * equipo cierra rápido o lento — porque hasta hace nada `resolved_at` no lo
+ * rellenaba nadie: la aplicación cambiaba el estado y ya. Con el cierre
+ * escribiendo fecha, firma y resolución, esta es la primera cifra que se puede
+ * dar de verdad.
+ *
+ * Mediana además de media, y no por gusto estadístico: una avería del histórico
+ * importado que se quedó ocho meses colgada se lleva la media del mes entero. La
+ * mediana dice lo que pasa normalmente; la media, si hay algo atascado. La
+ * comparación con los treinta días anteriores está porque un número solo no dice
+ * nada: «3,4 días» es buena o mala noticia según de dónde se venga.
+ */
+export interface VelocidadDeCierre {
+  cerradas_30d: number
+  dias_medio_30d: number | null
+  dias_mediana_30d: number | null
+  cerradas_previo: number
+  dias_medio_previo: number | null
+}
+
+export function useVelocidadDeCierre() {
+  return useQuery({
+    queryKey: ['incident-speed'],
+    queryFn: async (): Promise<VelocidadDeCierre | null> => {
+      const { data, error } = await supabase
+        .from('incident_resolution_speed')
+        .select('*')
+        .maybeSingle()
+      if (error) throw error
+      return (data as VelocidadDeCierre | null) ?? null
+    },
+  })
+}

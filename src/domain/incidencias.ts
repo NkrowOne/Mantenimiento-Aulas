@@ -314,6 +314,9 @@ export function incidenciasDeRevision(entrada: EntradaIncidencias): PlanDeIncide
         resolved_at: null,
         resolved_by: null,
         resolution: null,
+        // Nace sin dueño: la coge quien vaya a subir, no la reparte nadie.
+        assigned_to: null,
+        assigned_at: null,
         source: 'app',
       }
       nuevas.push(fila)

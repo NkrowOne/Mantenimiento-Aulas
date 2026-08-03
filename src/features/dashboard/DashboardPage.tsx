@@ -8,7 +8,28 @@ import {
   useLampAlerts,
   useStaleIncidents,
   useSummary,
+  useVelocidadDeCierre,
+  type VelocidadDeCierre,
 } from './queries'
+
+/**
+ * Qué se lee debajo de «Días en cerrar».
+ *
+ * Un número de días suelto no dice si eso es bueno. Al lado va cuántas se
+ * cerraron —tres cierres no sostienen una mediana— y, cuando hay con qué
+ * comparar, si el mes va mejor o peor que el anterior. Sin datos se dice que no
+ * los hay, en vez de enseñar un cero que se leería como «se cierran el mismo día».
+ */
+function detalleDeVelocidad(v: VelocidadDeCierre | null): string {
+  if (!v || v.cerradas_30d === 0) return 'Nada cerrado en 30 días'
+
+  const cierres = `${v.cerradas_30d} cerrada${v.cerradas_30d === 1 ? '' : 's'}`
+  if (v.dias_medio_30d == null || v.dias_medio_previo == null) return `${cierres} · mediana`
+
+  const salto = Math.round((v.dias_medio_30d - v.dias_medio_previo) * 10) / 10
+  if (salto === 0) return `${cierres} · igual que el mes pasado`
+  return `${cierres} · ${salto < 0 ? '−' : '+'}${Math.abs(salto)} d vs. mes pasado`
+}
 
 /**
  * A dónde lleva cada cifra del panel.
@@ -28,6 +49,7 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
   const { data: s, isPending, isError, refetch } = useSummary()
   const { data: lamps } = useLampAlerts()
   const { data: stale } = useStaleIncidents()
+  const { data: velocidad } = useVelocidadDeCierre()
   const { data: byBuilding } = useIncidentsByBuilding()
   const { data: byMonth } = useIncidentsByMonth()
 
@@ -90,6 +112,33 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
             tone={s.staleIncidents > 0 ? 'critico' : s.openIncidents > 0 ? 'aviso' : 'ok'}
             onClick={ir.incidencias}
             accion={s.openIncidents > 0 ? 'Atenderlas' : 'Ver el histórico'}
+          />
+          {/*
+            Cuánto se tarda en cerrar. Sustituye a «Salas con problemas», que
+            decía casi lo mismo que la baldosa de al lado —las incidencias
+            abiertas viven en salas— y llevaba al mismo sitio. Esta contesta la
+            pregunta que ninguna otra contestaba: si el trabajo sale o se
+            acumula.
+          */}
+          <StatTile
+            label="Días en cerrar"
+            value={
+              velocidad?.dias_mediana_30d != null
+                ? velocidad.dias_mediana_30d.toLocaleString('es-ES')
+                : '—'
+            }
+            detail={detalleDeVelocidad(velocidad ?? null)}
+            tone={
+              velocidad?.dias_mediana_30d == null
+                ? 'neutro'
+                : velocidad.dias_mediana_30d <= 7
+                  ? 'ok'
+                  : velocidad.dias_mediana_30d <= 21
+                    ? 'aviso'
+                    : 'critico'
+            }
+            onClick={ir.incidencias}
+            accion="Ver la cola"
           />
           <StatTile
             label="Salas con problemas"

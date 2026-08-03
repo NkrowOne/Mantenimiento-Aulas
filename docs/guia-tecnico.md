@@ -75,8 +75,8 @@ Tres cosas viven aquí:
 - **Las incidencias abiertas de esa aula**, con lo que urge primero. Sale del
   propio dispositivo, así que se lee **también sin cobertura** — es justo la
   lista que hace falta al abrir la puerta: «¿esto ya está reportado?». Cada una
-  trae al lado **«Material»**, para apuntar lo que has gastado, y **«Resolver»**.
-  El cierre se guarda en el momento y sube cuando haya red, como todo lo demás.
+  trae al lado **«La cojo yo»**, **«Material»** y **«Resolver»**. Todo se guarda
+  en el momento y sube cuando haya red, como el resto de la aplicación.
 - **Las revisiones anteriores**, listadas: una fila por visita con la fecha,
   quién la hizo, cómo salió y qué hay dentro (fotos, observación, corregida).
   **Tocando la fila se abre su ficha en una pantalla propia**, con todo lo de
@@ -348,6 +348,16 @@ esta revisión»**. Se guarda como una versión nueva de esa visita, con la fech
 de aquel día, y la anterior se queda guardada y legible. Lo que no se puede es
 **reescribirla**: eso es lo que hace que el histórico valga como registro.
 
+**«La cojo yo», ¿para qué sirve?**
+Para que se sepa que subes tú. La incidencia pasa a «en curso» y **a tu nombre**,
+y el resto del equipo lo ve en la lista: «la lleva Marta Ferrer». Antes «en
+curso» no decía quién, y eso son dos personas subiendo al mismo aula el mismo
+día. Si al final no vas, **«Soltar»** la devuelve a la cola de todos.
+
+Lo que lleva otra persona no se le quita pulsando un botón: si de verdad hace
+falta, cerrarla sí puedes —puede estar de baja— y la aplicación te avisa de que
+quedará a tu nombre.
+
 **¿Puedo cerrar una incidencia?**
 Sí, y es lo suyo: la arreglas tú. **Para cerrarla tienes que escribir qué has
 hecho** — «Cambiada la lámpara (S/N 4471) y reiniciada la matriz»—. No es
@@ -365,6 +375,16 @@ que quieras alrededor.
 
 Con cualquier otro motivo el material se apunta igual, en el enlace de debajo:
 después de cerrar nadie vuelve a la incidencia y ese dato no llega al almacén.
+
+Y puedes **añadir una foto de la reparación** antes de cerrar. Es opcional, y es
+el único momento en que esa foto existe: con el aparato arreglado delante. Se ve
+después en la propia incidencia, igual que las de la revisión.
+
+**Me he equivocado y he cerrado una que no era.**
+Habla con un supervisor: reabrir una incidencia cerrada es cosa suya. Se hace
+desde la pestaña de Incidencias, marcando «Incluir resueltas», y hay que decir
+por qué se vuelve a ella. Lo que escribiste al cerrarla no se pierde: baja a la
+descripción, para que quien la coja sepa lo que ya se intentó.
 
 Lo que sigue siendo de un supervisor es **reabrir** una incidencia cerrada y
 cambiarle el título, la gravedad o la sala.

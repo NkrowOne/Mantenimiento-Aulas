@@ -366,7 +366,33 @@ export interface Incident {
   resolved_at: string | null
   resolved_by: string | null
   resolution: string | null
+  /**
+   * Quién la lleva.
+   *
+   * Se autoasigna al cogerla y se limpia al soltarla o al reabrirla. Antes esto
+   * no existía y «en curso» decía que alguien la había empezado sin decir quién:
+   * con varios técnicos y 276 aulas, eso son dos personas subiendo al mismo aula
+   * el mismo día y enterándose al llegar.
+   *
+   * Nulo también en el espejo de un dispositivo que sincronizó antes de que la
+   * columna existiera, que significa lo mismo: no la lleva nadie.
+   */
+  assigned_to: string | null
+  assigned_at: string | null
   source: 'app' | 'import' | 'system'
+}
+
+/**
+ * Un nombre del equipo.
+ *
+ * Sale de la vista `personal`, que expone de `profiles` exactamente dos cosas y
+ * nada más. Se espeja para poder escribir «la lleva Ana Ruiz» debajo de una
+ * avería sin preguntarle a la red — que es donde se lee, en un aula.
+ */
+export interface Persona {
+  id: string
+  full_name: string
+  active: boolean
 }
 
 export interface StockItem {

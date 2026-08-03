@@ -192,6 +192,31 @@ Cómo está montado, que importa para auditar:
   independientes detrás de dos botones, y el segundo se hacía la mitad de las
   veces: se cerraba «Pieza sustituida» sin decir qué pieza y sin descontar nada.
 
+### Quién lleva cada incidencia, y cómo se vuelve atrás
+
+- **Se autoasigna, no se reparte.** «La cojo yo» pone la incidencia en curso y a
+  nombre de quien la coge (`incidents.assigned_to`); «Soltar» la devuelve a la
+  cola sin dueño. No hay pantalla de reparto porque no hay reparto: la coge quien
+  va a subir. Lo que lleva otro no se le quita pulsando un botón — cerrarla sí se
+  puede, y la aplicación avisa de que quedará a nombre de quien cierre.
+- **Reabrir es de `supervisor`**, y pide motivo. Lo que se había escrito al
+  cerrar no se borra: baja a `description` junto al motivo y la fecha, que es el
+  campo que la lista y el histórico sí pintan. Con `resolution` a secas,
+  reabrir habría hecho desaparecer en silencio lo que alguien dijo que hizo.
+- **Los nombres del equipo** se leen por la vista `personal` (id y nombre, nada
+  más). Antes un técnico no podía leer `profiles` de sus compañeros, así que el
+  histórico y las revisiones le salían **sin quién** en todo lo que no hubiera
+  firmado él — sin error y sin hueco visible. `room_timeline` y
+  `room_inspections` resuelven el nombre por ahí desde esta versión.
+
+### Cuánto se tarda en cerrar
+
+La vista `incident_resolution_speed` da los cierres y los días —media y
+mediana— de los últimos 30 días, con los 30 anteriores al lado. El panel la
+enseña en la baldosa «Días en cerrar». Mediana además de media a propósito: una
+avería del histórico importado que se quedó ocho meses colgada se lleva la media
+del mes entero.
+
 ```sql
 -- Quién cierra, y qué escribe. Para mirarlo de cuando en cuando.
 select r.code, i.title, i.resolution, p.full_name as la_cerro, i.resolved_at

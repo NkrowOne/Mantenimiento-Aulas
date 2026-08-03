@@ -5,13 +5,20 @@ import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { displayRoomCode, norm } from '@/domain/normalize'
 import { salasQueCasan, type SalaBuscable } from './busqueda'
-import { AccionesDeIncidencia, type PanelDeIncidencia } from './AccionesDeIncidencia'
+import {
+  AccionesDeIncidencia,
+  ReabrirIncidencia,
+  type PanelDeIncidencia,
+} from './AccionesDeIncidencia'
+import { puedeReabrir } from './acciones'
+import { fechaCorta } from '@/domain/fechas'
 import { Borradores } from './Borradores'
 import {
   INCIDENT_KIND_LABELS,
   type Incident,
   type IncidentKind,
   type IncidentState,
+  type Role,
 } from '@/domain/types'
 
 interface IncidentRow {
@@ -23,6 +30,11 @@ interface IncidentRow {
   kind: IncidentKind
   opened_at: string
   resolved_at: string | null
+  /** Qué se hizo con ella. La columna existía y nadie la rellenaba ni la leía. */
+  resolution: string | null
+  resolved_by: string | null
+  /** Quién la lleva. Nulo en el histórico importado y en lo que nadie ha cogido. */
+  assigned_to: string | null
   external_ref: string | null
   room_id: string | null
   /** Salió de una revisión: un equipo marcado «Falla» en el aula. */
@@ -69,6 +81,7 @@ const STATE_LABEL: Record<IncidentState, string> = {
 }
 
 interface Props {
+  role: Role
   userId: string | null
   /**
    * Ir a la ficha de la sala de esta incidencia.
@@ -82,7 +95,7 @@ interface Props {
   onSala: (roomId: string) => void
 }
 
-export function IncidentsPage({ userId, onSala }: Props): React.ReactElement {
+export function IncidentsPage({ role, userId, onSala }: Props): React.ReactElement {
   const qc = useQueryClient()
   const [showResolved, setShowResolved] = useState(false)
   const [query, setQuery] = useState('')
@@ -130,6 +143,14 @@ export function IncidentsPage({ userId, onSala }: Props): React.ReactElement {
   }, [])
 
   const salas = espejo?.etiquetas
+
+  /* Los nombres del equipo, para poder escribir «la lleva Ana Ruiz» en vez de un
+     uuid. Del espejo: son diez filas y viajan con el maestro. */
+  const nombres = useLiveQuery(
+    async () => new Map((await db.personal.toArray()).map((p) => [p.id, p.full_name])),
+    [],
+  )
+  const nombreDe = (id: string): string | null => nombres?.get(id) ?? null
 
   /*
    * Lo que este dispositivo ya ha decidido y todavía no ha podido contar.
@@ -319,7 +340,14 @@ export function IncidentsPage({ userId, onSala }: Props): React.ReactElement {
     return (incidents ?? []).map((i) => {
       const local = estadoLocal.get(i.id)
       if (!local || local.state === i.state) return i
-      return { ...i, state: local.state, resolved_at: local.resolved_at }
+      return {
+        ...i,
+        state: local.state,
+        resolved_at: local.resolved_at,
+        resolution: local.resolution,
+        resolved_by: local.resolved_by,
+        assigned_to: local.assigned_to ?? null,
+      }
     })
   }, [incidents, estadoLocal])
 
@@ -496,6 +524,18 @@ export function IncidentsPage({ userId, onSala }: Props): React.ReactElement {
                         delante del aparato y lo vio fallar, que es información
                         distinta de haberlo apuntado desde el escritorio. */}
                     {i.opened_from_inspection_id && <>de la revisión · </>}
+                    {/* Quién la lleva, en la propia fila: es lo que decide si
+                        hay que subir al aula o llamar a un compañero. */}
+                    {i.state !== 'resuelta' && i.assigned_to && (
+                      <>
+                        <span className="text-accent">
+                          {i.assigned_to === userId
+                            ? 'la llevas tú'
+                            : `la lleva ${nombreDe(i.assigned_to) ?? 'otra persona'}`}
+                        </span>
+                        {' · '}
+                      </>
+                    )}
                     abierta hace{' '}
                     <span className={stale ? 'font-semibold text-crit' : ''}>{days} días</span>
                   </p>
@@ -507,20 +547,66 @@ export function IncidentsPage({ userId, onSala }: Props): React.ReactElement {
                       {i.description}
                     </p>
                   )}
+
+                  {/*
+                    Lo que se hizo con ella.
+
+                    `resolution` era una columna que la aplicación no rellenaba y
+                    que ninguna pantalla leía. Ahora se rellena, y esta lista
+                    —que es donde un supervisor repasa lo cerrado— seguía
+                    enseñando la avería y no la reparación: «Resuelta ·
+                    Proyector: no da imagen» y nada más. Lo útil es lo otro.
+                  */}
+                  {i.state === 'resuelta' && (
+                    <p className="mt-1 rounded-ctl border-l-2 border-ok/40 bg-ok-tint/40 px-2 py-1 text-xs leading-relaxed">
+                      {i.resolution ? (
+                        <span className="text-ink-2">{i.resolution}</span>
+                      ) : (
+                        /* El histórico importado del Excel viene cerrado y sin
+                           una palabra de qué se hizo. Decirlo es mejor que dejar
+                           un hueco que se lee como un fallo de la pantalla. */
+                        <span className="text-muted">Se cerró sin decir qué se hizo.</span>
+                      )}
+                      <span className="mt-0.5 block text-muted">
+                        {[
+                          i.resolved_by ? nombreDe(i.resolved_by) : null,
+                          i.resolved_at ? fechaCorta(i.resolved_at) : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </span>
+                    </p>
+                  )}
                 </button>
               </div>
 
-              {i.state !== 'resuelta' && (
-                <div className="mt-2">
+              <div className="mt-2">
+                {i.state === 'resuelta' ? (
+                  /* Cerrar es fácil para todo el equipo desde que cierra quien
+                     arregla; volver atrás es revisar la decisión de otro, y eso
+                     sigue siendo de supervisor. Sin este botón, el primer cierre
+                     equivocado solo se arreglaba con SQL. */
+                  puedeReabrir(role) && (
+                    <ReabrirIncidencia
+                      incident={i as unknown as Incident}
+                      userId={userId}
+                      onHecho={() => {
+                        void qc.invalidateQueries({ queryKey: ['incidents'] })
+                        void qc.invalidateQueries({ queryKey: ['incidents-resueltas'] })
+                      }}
+                    />
+                  )
+                ) : (
                   <AccionesDeIncidencia
                     incident={i}
                     userId={userId}
+                    nombreDe={nombreDe}
                     panel={abierta?.id === i.id ? abierta.panel : null}
                     onPanel={(panel) => setAbierta(panel ? { id: i.id, panel } : null)}
                     onHecho={() => void qc.invalidateQueries({ queryKey: ['incidents-resueltas'] })}
                   />
-                </div>
-              )}
+                )}
+              </div>
             </li>
           )
         })}

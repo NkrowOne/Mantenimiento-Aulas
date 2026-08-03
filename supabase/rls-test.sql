@@ -2711,13 +2711,14 @@ begin;
     else 'FALLO: el reenvío pisó la resolución original'
   end as resultado;
 
-  -- Lo que la puerta NO abre: reabrir, y cerrar un borrador.
+  -- Lo que la puerta NO abre para un técnico: reabrir lo cerrado (prueba 69) y
+  -- cerrar un borrador.
   do $$
   begin
     perform public.avanzar_incidencia(
       'aaaaaaaa-0000-4000-8000-000000000680', 'abierta', 'me arrepiento');
     raise exception 'FALLO: un técnico reabrió una incidencia';
-  exception when check_violation then
+  exception when insufficient_privilege then
     raise notice 'OK: reabrir sigue siendo cosa de un supervisor';
   end $$;
 
@@ -2756,5 +2757,128 @@ begin;
     raise exception 'FALLO: alguien de fuera del equipo tocó una incidencia';
   exception when insufficient_privilege then
     raise notice 'OK: fuera del equipo, la puerta no se abre';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 69. Una incidencia tiene dueño, y tiene vuelta atrás ==='
+begin;
+  \set sala ''
+  select r.id as sala from rooms r where r.active order by r.created_at desc limit 1 \gset
+
+  insert into incidents (id, room_id, title, description, severity, state, kind,
+                         opened_at, opened_by, source)
+  values ('aaaaaaaa-0000-4000-8000-000000000690', :'sala',
+          'Proyector De Prueba 69: no enciende', 'Se oye el ventilador', 'alta',
+          'abierta', 'incidencia', now() - interval '5 days',
+          '11111111-1111-4111-8111-111111111111', 'app');
+
+  -- Un técnico la coge: pasa a en curso Y queda a su nombre.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'en_curso') as f \gset
+  select case
+    when (select state::text
+               || ' · ' || (assigned_to = '11111111-1111-4111-8111-111111111111')::text
+               || ' · ' || (assigned_at is not null)::text
+            from incidents where id = 'aaaaaaaa-0000-4000-8000-000000000690')
+       = 'en_curso · true · true'
+    then 'OK: cogerla la pone en curso y a nombre de quien la coge'
+    else 'FALLO: coger la incidencia no dejó dueño'
+  end as resultado;
+
+  -- Y otro técnico no se la quita de las manos.
+  select test_as('33333333-3333-4333-8333-333333333333', 'tecnico');
+  do $$
+  begin
+    perform public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'en_curso');
+    raise exception 'FALLO: un compañero se quedó una incidencia ajena';
+  exception when check_violation then
+    raise notice 'OK: lo que lleva otro no se le quita pulsando un botón';
+  end $$;
+
+  do $$
+  begin
+    perform public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'abierta');
+    raise exception 'FALLO: un compañero soltó una incidencia ajena';
+  exception when check_violation then
+    raise notice 'OK: tampoco la suelta quien no la lleva';
+  end $$;
+
+  -- Su dueño sí la suelta, y vuelve a la cola de todos sin dueño.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'abierta') as g \gset
+  select case
+    when (select state::text || ' · ' || (assigned_to is null)::text
+            from incidents where id = 'aaaaaaaa-0000-4000-8000-000000000690')
+       = 'abierta · true'
+    then 'OK: soltarla la devuelve a la cola sin dueño'
+    else 'FALLO: soltar la incidencia no la liberó'
+  end as resultado;
+
+  -- Se cierra, y reabrir NO lo puede hacer un técnico.
+  select public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'resuelta',
+    'Cambiada la fuente de alimentación') as h \gset
+  do $$
+  begin
+    perform public.avanzar_incidencia(
+      'aaaaaaaa-0000-4000-8000-000000000690', 'abierta', 'sigue sin ir');
+    raise exception 'FALLO: un técnico reabrió una incidencia cerrada';
+  exception when insufficient_privilege then
+    raise notice 'OK: reabrir es cosa de un supervisor';
+  end $$;
+
+  -- Ni un supervisor sin decir por qué.
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  begin
+    perform public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'abierta', null);
+    raise exception 'FALLO: se reabrió sin decir por qué';
+  exception when check_violation then
+    raise notice 'OK: reabrir sin motivo tampoco';
+  end $$;
+
+  -- Con motivo sí, y lo que se cerró no desaparece: baja a la descripción.
+  select public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'abierta',
+    'El aula vuelve a avisar: se apaga a los diez minutos') as i \gset
+  select case
+    when (select state::text
+               || ' · ' || (resolution is null)::text
+               || ' · ' || (resolved_at is null)::text
+               || ' · ' || (assigned_to is null)::text
+            from incidents where id = 'aaaaaaaa-0000-4000-8000-000000000690')
+       = 'abierta · true · true · true'
+     and (select description from incidents
+           where id = 'aaaaaaaa-0000-4000-8000-000000000690')
+         like '%Se oye el ventilador%Reabierta el %se apaga a los diez minutos%Se había cerrado con: Cambiada la fuente de alimentación%'
+    then 'OK: reabrir conserva lo que se dijo, en la descripción'
+    else 'FALLO: al reabrir se perdió el cierre anterior ('
+      || (select coalesce(description, '—') from incidents
+           where id = 'aaaaaaaa-0000-4000-8000-000000000690') || ')'
+  end as resultado;
+
+  -- Y coger una cerrada no es coger: hay que reabrirla antes.
+  select public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'resuelta',
+    'Sustituida la placa') as j \gset
+  do $$
+  begin
+    perform public.avanzar_incidencia('aaaaaaaa-0000-4000-8000-000000000690', 'en_curso');
+    raise exception 'FALLO: se cogió una incidencia ya cerrada';
+  exception when check_violation then
+    raise notice 'OK: lo cerrado se reabre, no se coge';
+  end $$;
+
+  -- El nombre de un compañero se lee, y el email no.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select case
+    when (select count(*) from personal) >= 2
+    then 'OK: un técnico lee los nombres del equipo'
+    else 'FALLO: la vista de nombres no deja ver a los compañeros'
+  end as resultado;
+  do $$
+  declare n int;
+  begin
+    select count(*) into n from profiles where id <> (select auth.uid());
+    if n > 0 then raise exception 'FALLO: un técnico leyó % perfiles ajenos', n; end if;
+    raise notice 'OK: y la tabla de perfiles sigue cerrada';
   end $$;
 rollback;

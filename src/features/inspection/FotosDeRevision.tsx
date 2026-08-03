@@ -52,7 +52,18 @@ export interface Foto {
  * Las pendientes van primero: son las de hoy, y son las que alguien quiere
  * comprobar que han salido bien.
  */
-export function useFotosDeRevision(ids: string[]): {
+export function useFotosDeRevision(
+  ids: string[],
+  /**
+   * De qué cuelgan las fotos.
+   *
+   * `attachments` y la cola aceptaban `'incident'` desde el primer día —el
+   * bucket guarda en `incident/<id>/`— y ninguna pantalla lo usaba: la
+   * fontanería estaba entera y sin grifo. Desde que el cierre de una incidencia
+   * pide la foto de la reparación, hace falta también para leerlas.
+   */
+  entidad: 'inspection' | 'incident' = 'inspection',
+): {
   fotos: Foto[]
   sinConexion: boolean
   /** La consulta de adjuntos aún no ha contestado. */
@@ -66,13 +77,13 @@ export function useFotosDeRevision(ids: string[]): {
    * `createSignedUrls` firma las diez de golpe: una petición, no una por foto.
    */
   const { data: subidas, isError, isPending } = useQuery({
-    queryKey: ['fotos-revision', [...ids].sort().join(',')],
+    queryKey: ['fotos-revision', entidad, [...ids].sort().join(',')],
     enabled: ids.length > 0,
     queryFn: async (): Promise<Foto[]> => {
       const { data: adjuntos, error } = await supabase
         .from('attachments')
         .select('id, storage_path, taken_at')
-        .eq('entity_type', 'inspection')
+        .eq('entity_type', entidad)
         .in('entity_id', ids)
         .order('taken_at', { ascending: true })
       if (error) throw error
@@ -117,9 +128,9 @@ export function useFotosDeRevision(ids: string[]): {
           // las object URLs.
           await db.photos
             .where('[entityType+entityId]')
-            .anyOf(ids.map((id) => ['inspection', id]))
+            .anyOf(ids.map((id) => [entidad, id]))
             .toArray(),
-    [ids.join(',')],
+    [ids.join(','), entidad],
     [],
   )
 
@@ -211,7 +222,13 @@ export function SelloSinSubir(): React.ReactElement {
  * pantalla en mitad de una cabecera que ya cuenta tres cosas; en tira se
  * recorren con el pulgar y no desplazan nada.
  */
-export function FotosDeRevision({ ids }: { ids: string[] }): React.ReactElement | null {
+export function FotosDeRevision({
+  ids,
+  entidad = 'inspection',
+}: {
+  ids: string[]
+  entidad?: 'inspection' | 'incident'
+}): React.ReactElement | null {
   /*
    * La foto abierta se recuerda por IDENTIDAD, no por posición. La lista
    * cambia sola por debajo —una foto local que termina de subir se va de la
@@ -220,7 +237,7 @@ export function FotosDeRevision({ ids }: { ids: string[] }): React.ReactElement 
    * cierra, que es lo único honesto.
    */
   const [abiertaId, setAbiertaId] = useState<string | null>(null)
-  const { fotos, sinConexion } = useFotosDeRevision(ids)
+  const { fotos, sinConexion } = useFotosDeRevision(ids, entidad)
   const abierta = abiertaId === null ? -1 : fotos.findIndex((f) => f.id === abiertaId)
 
   if (fotos.length === 0) {
