@@ -4,15 +4,16 @@ import { aplicarActualizacion, onVersionNueva, posponerActualizacion } from '@/s
 /**
  * Aviso de versión nueva.
  *
- * `vite-plugin-pwa` está configurado en `registerType: 'prompt'`, que **exige**
- * una interfaz que lo atienda: sin ella el service worker descarga la versión
- * nueva y no la activa nunca, y los técnicos se quedan con la vieja
- * indefinidamente. En un iPad que no cierra la pestaña, eso puede durar meses.
+ * Ya no es la puerta: es el respaldo. La versión nueva se instala sola en los
+ * momentos seguros —el arranque, la vuelta tras una ausencia larga, el final
+ * de una revisión; la política vive en `@/sw`— así que esta barra solo se ve
+ * cuando la versión se encontró a mitad de trabajo y todavía no ha llegado
+ * ninguno de esos momentos, o cuando la activación automática falló. Ahí sigue
+ * haciendo falta: quien quiera el arreglo YA no tiene por qué esperar a
+ * guardar el iPad.
  *
- * Se mantiene en `prompt` y no se pasa a `autoUpdate` a propósito: recargar la
- * página bajo los pies de alguien que está rellenando una revisión en un aula
- * es peor que esperar a que termine. El borrador sobreviviría —está en Dexie y
- * respaldado en el servidor— pero perdería el sitio donde iba.
+ * «Ahora no» ya no puede significar «nunca», que es lo que significaba en la
+ * práctica: solo aplaza hasta el próximo momento seguro.
  *
  * El **registro** ya no vive aquí (está en `@/sw`, y lo arranca `main.tsx`).
  * Estaba dentro de este componente, que se monta detrás del candado: un

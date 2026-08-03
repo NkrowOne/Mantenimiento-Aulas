@@ -13,6 +13,7 @@ import { averiasPorEdificio, averiasPorSala } from '@/features/rooms/averias'
 import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
 
 import { getSealed, lock, resumeSession, touch, watchSession } from '@/auth/session'
+import { marcarTrabajoDelicado } from '@/sw'
 import { db, pendingSummary, purgeSyncedInspections, requestPersistentStorage } from '@/db/dexie'
 import { pullMaster, startPull, type ResultadoPull } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
@@ -292,6 +293,27 @@ export function App(): React.ReactElement {
    */
   useEffect(() => watchSession(), [])
 
+  /*
+   * La revisión abierta es trabajo delicado: mientras dura, la versión nueva no
+   * se instala sola (ver `@/sw`). Se marca desde aquí porque App es quien sabe
+   * qué pantalla hay delante; al salir de la revisión —guardar, descartar,
+   * volver— lo que estuviera esperando se instala en ese momento, que es
+   * exactamente cuando la barra «reaparecía porque recargar no cuesta nada».
+   *
+   * La ficha abierta DESDE la revisión cuenta como parte de ella: tocar la
+   * placa para consultar algo y volver es un paréntesis dentro del mismo
+   * trabajo, y recargar en ese desvío devolvería a una ficha cuyo «Volver» ya
+   * no sabe de la revisión a medias. La ficha llegada desde la lista —incluida
+   * la vuelta tras guardar una corrección— sí es un final de verdad.
+   */
+  useEffect(() => {
+    marcarTrabajoDelicado(
+      unlocked &&
+        tab === 'revisar' &&
+        (view.name === 'revision' || (view.name === 'ficha' && view.volverA === 'revision')),
+    )
+  }, [unlocked, tab, view])
+
   useEffect(() => {
     void (async () => {
       setSealed(await getSealed())
@@ -505,16 +527,22 @@ export function App(): React.ReactElement {
 
   if (!unlocked) {
     return (
-      <LockScreen
-        sealed={sealed}
-        onUnlocked={() => {
-          void (async () => {
-            const { data } = await supabase.auth.getSession()
-            setUserId(data.session?.user.id ?? null)
-            setUnlocked(true)
-          })()
-        }}
-      />
+      <>
+        <LockScreen
+          sealed={sealed}
+          onUnlocked={() => {
+            void (async () => {
+              const { data } = await supabase.auth.getSession()
+              setUserId(data.session?.user.id ?? null)
+              setUnlocked(true)
+            })()
+          }}
+        />
+        {/* La barra de versión nueva también detrás del candado: el dispositivo
+            que no consigue entrar es justo el que necesita el arreglo, y sin
+            esto la única activación posible ahí era la de los momentos seguros. */}
+        <UpdatePrompt />
+      </>
     )
   }
 

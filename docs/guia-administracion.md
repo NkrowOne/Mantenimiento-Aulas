@@ -281,6 +281,29 @@ puede mandar nada al servidor. Si alguien cierra sesión creyendo que así se
 guarda, está haciendo justo lo contrario. La aplicación avisa cuando quedan
 cambios sin subir.
 
+### Un dispositivo con la versión antigua
+
+El síntoma clásico: dos iPads enseñan cosas distintas para la misma sala —a uno
+le falta el triángulo de averías, a otro le sobra un equipo que ya se retiró—.
+Casi nunca son los datos: es que uno de los dos lleva días ejecutando la
+**versión anterior de la aplicación** desde su caché, con el código de antes de
+los arreglos. Se comprueba en la lámpara → el número de `versión` de abajo del
+panel, contrastado con el `commit` de `/salud.json`.
+
+La aplicación **se actualiza sola**: al abrirse, al volver a primer plano tras
+un rato guardada, y al terminar una revisión si la versión llegó en mitad de
+una. Nunca recarga con una revisión abierta ni con una foto a medio guardar, y
+no toca nada de lo pendiente: la cola vive en el dispositivo, sobrevive a la
+recarga y los reenvíos son idempotentes — actualizar no puede pisar ni duplicar
+trabajo.
+
+Lo único que la actualización automática no alcanza es al dispositivo que
+todavía ejecuta una versión **anterior a ella**: ese sigue con la política
+vieja de «ofrecer y esperar». Hay que empujarlo una vez a mano — en el
+dispositivo, lámpara → **Buscar versión nueva** y aceptar, o simplemente cerrar
+la pestaña y volver a abrirla con cobertura—. A partir de ahí ya se mantiene
+solo.
+
 ### El despliegue muere con «policy … already exists»
 
 Le pasó a este proyecto y bloqueó la salida del arreglo que la gente de campo

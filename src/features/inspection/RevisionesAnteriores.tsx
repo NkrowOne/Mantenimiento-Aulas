@@ -36,7 +36,7 @@
  * dispositivo, es una revisión como cualquier otra.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
@@ -58,7 +58,7 @@ import {
   type Visita,
 } from '@/domain/revisiones'
 import { ROOM_CHECKS, assetCheckKey } from '@/domain/types'
-import { FotosDeRevision } from './FotosDeRevision'
+import { FichaDeObservacion } from './FichaDeObservacion'
 import type { Correccion } from './useInspection'
 
 /**
@@ -364,6 +364,16 @@ function TarjetaDeVisita({
   const fotos = versiones.reduce((n, r) => n + r.fotos, 0)
   const nota = (vigente.notes ?? '').trim()
 
+  /*
+   * Que hubo foto local se recuerda, no solo se observa: en el instante en que
+   * la foto de hoy termina de subir sale de la cola, y el recuento del
+   * servidor —cacheado— todavía dice cero. Sin el enclave, la ficha entera
+   * desaparecía de la tarjeta justo al guardarse lo que enseñaba.
+   */
+  const huboFotoLocal = useRef(false)
+  if (conFotoLocal) huboFotoLocal.current = true
+  const fotoLocal = conFotoLocal || huboFotoLocal.current
+
   return (
     <li className="card p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -412,18 +422,17 @@ function TarjetaDeVisita({
           .join(' · ')}
       </p>
 
-      {/* La observación, como lo que es: una frase que escribió alguien que estuvo
-          allí. Sin recortar y con el salto de línea que le costó poner. */}
-      {nota && (
-        <p className="mt-3 whitespace-pre-line border-l-2 border-line pl-3 text-sm leading-relaxed">
-          {nota}
-        </p>
-      )}
-
-      {(fotos > 0 || conFotoLocal) && (
-        <div className="mt-3">
-          <FotosDeRevision ids={versiones.map((r) => r.id)} />
-        </div>
+      {/* La observación y sus fotos, como una ficha: la frase que escribió
+          alguien que estuvo allí debajo de las fotos que hizo, a la vista y sin
+          desplegar nada. La propia ficha decide si pregunta por adjuntos, así
+          que las visitas con solo observación no cuestan consultas. */}
+      {(nota !== '' || fotos > 0 || fotoLocal) && (
+        <FichaDeObservacion
+          ids={versiones.map((r) => r.id)}
+          nota={vigente.notes}
+          anunciadas={fotos}
+          conFotoLocal={fotoLocal}
+        />
       )}
 
       <div className="mt-3 flex flex-wrap gap-2">
@@ -571,7 +580,7 @@ function Comprobaciones({ inspectionId }: { inspectionId: string }): React.React
               )}
 
               {c.note && (
-                <span className="mt-0.5 block whitespace-pre-line text-xs leading-relaxed text-muted">
+                <span className="mt-0.5 block whitespace-pre-line break-words text-xs leading-relaxed text-muted">
                   {c.note}
                 </span>
               )}

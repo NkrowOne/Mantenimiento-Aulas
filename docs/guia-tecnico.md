@@ -295,11 +295,13 @@ zona con cobertura y se resolverá solo.
 
 Pulsa **Añadir foto** y elige cámara o carrete. Se comprimen solas.
 
-**Y se ven después.** En la ficha del aula, cada revisión enseña las suyas en una
-tira; al tocar una se abre a pantalla completa, y con más de una se pasa con
-*Anterior* y *Siguiente*. Una foto recién hecha aparece marcada **«sin subir»**
-hasta que haya cobertura: así sabes que la tiene el aparato y que todavía no ha
-salido de él.
+**Y se ven después.** En la ficha del aula, cada revisión enseña su observación
+y sus fotos juntas, en una ficha a la vista: la primera foto en grande, las
+demás en fila debajo y la observación como pie. Al tocar una se abre a pantalla
+completa, y con más de una se pasa con *Anterior* y *Siguiente*; si hay muchas,
+la última baldosa dice «+N» y desde ahí se recorren todas. Una foto recién hecha
+aparece marcada **«sin subir»** hasta que haya cobertura: así sabes que la tiene
+el aparato y que todavía no ha salido de él.
 
 Si sale un aviso sobre **HEIC**, ve a *Ajustes → Cámara → Formatos* y pon **Más
 compatible**. Es cosa del iPhone, no de la aplicación.
@@ -308,6 +310,15 @@ compatible**. Es cosa del iPhone, no de la aplicación.
 
 **¿Puedo revisar sin cobertura?**
 Sí. Es para lo que está hecha. Revisa con normalidad y se subirá al salir.
+
+**¿Tengo que actualizar la aplicación?**
+No: se actualiza sola. Lo hace al abrirla y al sacarla después de un rato
+guardada, y nunca en mitad de una revisión — si la versión nueva llega mientras
+revisas, espera a que termines. Tu trabajo no se toca: lo pendiente sigue en el
+aparato y sube igual después de actualizar. Si aparece la barra de «Hay una
+versión nueva», pulsarla la instala ya; «Ahora no» solo la aplaza hasta que
+guardes el iPad. Y en la lámpara de estado tienes **Buscar versión nueva** para
+comprobarlo cuando quieras.
 
 **¿Y si pierdo el iPad?**
 Avisa a administración cuanto antes para dar de baja el dispositivo. Si habías
