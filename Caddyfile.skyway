@@ -67,6 +67,15 @@
 		reverse_proxy {$SUPABASE_UPSTREAM}
 	}
 
+	# ── Alta de dispositivos ───────────────────────────────────────────
+	# El canje del código va al worker de dentro del contenedor, que es quien
+	# tiene la clave de servicio. Solo se expone `/alta/*`: `/generate` sigue
+	# siendo interno y con token. Si el worker no corre (sin WORKER_TOKEN), el
+	# 502 hace que la aplicación caiga sola al flujo de alta antiguo.
+	handle /alta/* {
+		reverse_proxy 127.0.0.1:{$PORT_INFORMES:8090}
+	}
+
 	# ── PWA ────────────────────────────────────────────────────────────
 	handle {
 		root * /srv/dist

@@ -22,10 +22,43 @@ export const MIN_PIN_LENGTH = 4
 export const MAX_PIN_LENGTH = 8
 export const MAX_PIN_ATTEMPTS = 5
 
+/**
+ * Las llaves del sobre: una pareja ECDH P-256.
+ *
+ * Existen por un fallo que costó dispositivos enteros: el sobre se cifraba
+ * directamente con el PIN, así que solo podía REESCRIBIRSE teniendo el PIN a
+ * mano. Tras recargar, el PIN ya no estaba en memoria; el token se renovaba
+ * —GoTrue rota el refresh token en cada renovación y revoca el anterior— y el
+ * sobre se quedaba congelado con el token viejo. Al cerrar sesión y volver a
+ * entrar, el PIN abría el sobre… y dentro había un token que el servidor ya
+ * había revocado. Peor: presentarlo hacía que GoTrue revocara la familia
+ * entera. «Tu PIN es correcto, pero el servidor ya no acepta esta sesión», y
+ * el dispositivo muerto hasta pedir otro código de alta.
+ *
+ * Con una pareja de llaves, sellar y abrir se separan: se SELLA con la
+ * pública, que va en claro y no necesita PIN — cualquier renovación del token
+ * puede dejar el sobre al día, haya pasado lo que haya pasado con la pestaña.
+ * Se ABRE con la privada, que viaja cifrada con el PIN. El PIN protege
+ * exactamente lo mismo que antes; lo único que cambia es que mantener el sobre
+ * fresco ya no lo necesita.
+ */
+export interface LlavesDeSobre {
+  /** Pública P-256 (formato raw, base64). Con ella se sella, sin PIN. */
+  pub: string
+  /** Privada (PKCS#8) cifrada con la clave derivada del PIN. */
+  priv: { salt: string; iv: string; data: string }
+}
+
 export interface SealedSession {
-  salt: string
+  /** Presente en el formato asimétrico. Los sobres antiguos no lo llevan. */
+  v?: 2
+  llaves?: LlavesDeSobre
+  /** Pública efímera del último sellado (raw, base64). Solo v2. */
+  eph?: string
   iv: string
   ciphertext: string
+  /** Sal del cifrado directo con el PIN. Solo sobres antiguos (v1). */
+  salt?: string
   /** Para poder mostrar "Sesión de Ana" antes de pedir el PIN. */
   hint: { email: string; fullName: string }
 }
@@ -56,24 +89,71 @@ async function deriveKey(pin: string, salt: Uint8Array): Promise<CryptoKey> {
   )
 }
 
-/** Cifra la sesión con el PIN. Lo que se guarda es indescifrable sin él. */
+const ECDH = { name: 'ECDH', namedCurve: 'P-256' } as const
+
+/**
+ * Genera las llaves del sobre y deja la privada bajo el PIN.
+ *
+ * Se llama una vez por alta (y una más al migrar un sobre antiguo). El PIN no
+ * se guarda: si es incorrecto, descifrar la privada falla — AES-GCM está
+ * autenticado — y eso ES la comprobación del PIN.
+ */
+export async function crearLlaves(pin: string): Promise<LlavesDeSobre> {
+  const pareja = await crypto.subtle.generateKey(ECDH, true, ['deriveKey'])
+  const pub = await crypto.subtle.exportKey('raw', pareja.publicKey)
+  const pkcs8 = await crypto.subtle.exportKey('pkcs8', pareja.privateKey)
+
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES))
+  const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES))
+  const llaveDelPin = await deriveKey(pin, salt)
+  const data = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: iv as BufferSource },
+    llaveDelPin,
+    pkcs8,
+  )
+
+  return {
+    pub: toBase64(pub),
+    priv: {
+      salt: toBase64(salt.buffer as ArrayBuffer),
+      iv: toBase64(iv.buffer as ArrayBuffer),
+      data: toBase64(data),
+    },
+  }
+}
+
+/**
+ * Sella la sesión con la llave PÚBLICA del sobre: no necesita el PIN, y por
+ * eso puede llamarse en cada renovación del token, que es lo que mantiene el
+ * sobre siempre al día. Cifrado ECIES de manual: pareja efímera + ECDH con la
+ * pública del sobre + AES-GCM con la clave compartida.
+ */
 export async function sealSession(
-  pin: string,
+  llaves: LlavesDeSobre,
   session: unknown,
   hint: SealedSession['hint'],
 ): Promise<SealedSession> {
-  const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES))
-  const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES))
-  const key = await deriveKey(pin, salt)
+  const pub = await crypto.subtle.importKey('raw', fromBase64(llaves.pub) as BufferSource, ECDH, false, [])
+  const efimera = await crypto.subtle.generateKey(ECDH, false, ['deriveKey'])
+  const clave = await crypto.subtle.deriveKey(
+    { name: 'ECDH', public: pub },
+    efimera.privateKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt'],
+  )
 
+  const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES))
   const ciphertext = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv: iv as BufferSource },
-    key,
+    clave,
     new TextEncoder().encode(JSON.stringify(session)),
   )
 
   return {
-    salt: toBase64(salt.buffer as ArrayBuffer),
+    v: 2,
+    llaves,
+    eph: toBase64(await crypto.subtle.exportKey('raw', efimera.publicKey)),
     iv: toBase64(iv.buffer as ArrayBuffer),
     ciphertext: toBase64(ciphertext),
     hint,
@@ -84,13 +164,42 @@ export async function sealSession(
  * Descifra la sesión. Devuelve null si el PIN es incorrecto — AES-GCM está
  * autenticado, así que un PIN erróneo hace que el descifrado falle, no que
  * produzca basura.
+ *
+ * Abre los dos formatos: el asimétrico (v2) y el antiguo, cifrado directo con
+ * el PIN, que es el que llevan los dispositivos dados de alta antes de este
+ * cambio. Quien desbloquea uno antiguo lo migra (ver `unlockWithPin`).
  */
 export async function openSession<T = unknown>(
   pin: string,
   sealed: SealedSession,
 ): Promise<T | null> {
   try {
-    const key = await deriveKey(pin, fromBase64(sealed.salt))
+    if (sealed.llaves && sealed.eph) {
+      const llaveDelPin = await deriveKey(pin, fromBase64(sealed.llaves.priv.salt))
+      const pkcs8 = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: fromBase64(sealed.llaves.priv.iv) as BufferSource },
+        llaveDelPin,
+        fromBase64(sealed.llaves.priv.data) as BufferSource,
+      )
+      const priv = await crypto.subtle.importKey('pkcs8', pkcs8, ECDH, false, ['deriveKey'])
+      const eph = await crypto.subtle.importKey('raw', fromBase64(sealed.eph) as BufferSource, ECDH, false, [])
+      const clave = await crypto.subtle.deriveKey(
+        { name: 'ECDH', public: eph },
+        priv,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['decrypt'],
+      )
+      const plain = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: fromBase64(sealed.iv) as BufferSource },
+        clave,
+        fromBase64(sealed.ciphertext) as BufferSource,
+      )
+      return JSON.parse(new TextDecoder().decode(plain)) as T
+    }
+
+    // Sobre antiguo: AES-GCM con la clave derivada del PIN, tal cual.
+    const key = await deriveKey(pin, fromBase64(sealed.salt ?? ''))
     const plain = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: fromBase64(sealed.iv) as BufferSource },
       key,

@@ -19,6 +19,7 @@ import { htmlToPdf } from './pdf.js'
 import { lecturaCalculada, senales } from './analisis.js'
 import { configurarIA, redactar } from './ia.js'
 import { leerOpciones } from './opciones.js'
+import { canjearAlta, leerCuerpoPequeno } from './alta.js'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type postgres from 'postgres'
 
@@ -217,6 +218,19 @@ const server = createServer((req, res) => {
     // Sin token: solo dice que el proceso responde, nada más.
     if (req.method === 'GET' && req.url?.startsWith('/salud')) {
       res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}')
+      return
+    }
+
+    /*
+     * El canje del código de alta. SIN token: quien llama es un dispositivo
+     * que todavía no tiene sesión, y Caddy solo enruta hasta aquí `/alta/*` —
+     * `/generate` sigue siendo interno y con token. La validación del código
+     * y el cupo de dispositivos viven en `alta.ts`.
+     */
+    if (req.method === 'POST' && req.url?.startsWith('/alta/canjear')) {
+      const cuerpo = await leerCuerpoPequeno(req, res)
+      if (cuerpo === null) return
+      await canjearAlta(req, res, cuerpo)
       return
     }
 
