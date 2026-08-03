@@ -7,6 +7,7 @@ import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import {
   MAX_PIN_ATTEMPTS,
+  crearLlaves,
   generateStrongPassword,
   openSession,
   sealSession,
@@ -15,6 +16,8 @@ import {
 
 const SEALED_KEY = 'sealed-session'
 const ATTEMPTS_KEY = 'pin-attempts'
+/** Fila de `devices` que representa a ESTE navegador, para no crear otra en cada alta. */
+const DEVICE_KEY = 'device-id'
 
 /**
  * Minutos de inactividad antes de volver a pedir el PIN.
@@ -50,29 +53,6 @@ interface TabSession {
   refresh_token: string
 }
 
-/**
- * El PIN, mientras la pestaña viva. En memoria y en ninguna otra parte.
- *
- * Está aquí por una razón concreta: GoTrue **rota** el refresh token en cada
- * renovación (`GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED`) y revoca el
- * anterior diez segundos después. El token viaja a memoria del cliente de
- * Supabase y ahí se quedaba: ni el respaldo de `localStorage` ni la sesión
- * sellada con el PIN se volvían a escribir nunca.
- *
- * O sea que una hora después de entrar —`GOTRUE_JWT_EXP` son 3600 segundos— los
- * dos sitios donde guardamos la sesión contenían un token muerto. Recargar
- * dejaba de funcionar, y el PIN también: `unlockWithPin()` mandaba el token
- * revocado, `setSession()` fallaba... y como su error no se miraba, la
- * aplicación se daba por desbloqueada **sin sesión ninguna**. Desde fuera se ve
- * igual que lo que se ve cuando RLS bloquea: todo vacío, ningún error, y el rol
- * atascado en `tecnico` porque `getUser()` devuelve null.
- *
- * Guardar el PIN es lo que permite volver a sellar la sesión cada vez que el
- * token se renueva. No sale de aquí, no se persiste y se borra al cerrar sesión;
- * la pestaña ya lo tuvo en memoria para descifrar, así que no expone nada nuevo.
- */
-let pinEnMemoria: string | null = null
-
 function cacheForTab(session: TabSession): void {
   try {
     localStorage.setItem(TAB_SESSION_KEY, JSON.stringify(session))
@@ -101,20 +81,25 @@ function clearTabCache(): void {
 
 /**
  * Guarda la sesión que acaba de emitir el servidor en los dos sitios: el
- * respaldo que sobrevive a recargar, y el sobre cifrado con el PIN.
+ * respaldo que sobrevive a recargar, y el sobre cifrado.
  *
- * El segundo solo se puede reescribir si tenemos el PIN a mano, que es el caso
- * mientras la pestaña siga viva desde que alguien lo tecleó. Cuando no lo está
- * —una recarga reanuda con el respaldo, sin pedir PIN— se actualiza al menos el
- * respaldo, y el sobre se pone al día en el siguiente desbloqueo.
+ * El sobre se resella con su llave PÚBLICA, así que esto funciona siempre, con
+ * o sin PIN a mano. No es un detalle: GoTrue rota el refresh token en cada
+ * renovación y revoca el anterior, así que un sobre que no se resella es una
+ * bomba de relojería — el siguiente desbloqueo tras cerrar sesión presentaría
+ * un token viejo y GoTrue revocaría la familia entera. Pasó: «tu PIN es
+ * correcto, pero el servidor ya no acepta esta sesión», y el dispositivo
+ * muerto hasta pedir otro código de alta.
+ *
+ * Los sobres antiguos (v1, sin llaves) no pueden resellarse sin el PIN: esos
+ * se migran al formato nuevo en el primer desbloqueo y desde ahí ya van solos.
  */
 async function custodiar(session: TabSession): Promise<void> {
   cacheForTab(session)
 
-  if (!pinEnMemoria) return
   const sealed = await getSealed()
-  if (!sealed) return
-  await db.meta.put({ key: SEALED_KEY, value: await sealSession(pinEnMemoria, session, sealed.hint) })
+  if (!sealed?.llaves) return
+  await db.meta.put({ key: SEALED_KEY, value: await sealSession(sealed.llaves, session, sealed.hint) })
 }
 
 /**
@@ -183,68 +168,155 @@ export interface EnrollResult {
 }
 
 /**
+ * Qué respondió el canje del código en `/alta/canjear`.
+ *
+ * `sin-endpoint` no es un error del código: es que este despliegue no tiene el
+ * endpoint (worker apagado, Caddy de antes de esta versión, `npm run dev`). En
+ * ese caso se cae al flujo antiguo, el del código-como-contraseña, que sigue
+ * funcionando — con su límite conocido: al rotar la contraseña, GoTrue revoca
+ * las sesiones del resto de dispositivos de la cuenta.
+ */
+type Canje =
+  | { estado: 'canjeado'; tokenHash: string }
+  | { estado: 'rechazado'; error: string }
+  | { estado: 'sin-endpoint' }
+
+async function canjearCodigo(email: string, code: string): Promise<Canje> {
+  let respuesta: Response
+  try {
+    // Mismo origen que la PWA: lo enruta Caddy hacia el worker de servicio.
+    respuesta = await fetch('/alta/canjear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, code }),
+    })
+  } catch {
+    return { estado: 'sin-endpoint' }
+  }
+
+  if (respuesta.status === 400 || respuesta.status === 403) {
+    const cuerpo = (await respuesta.json().catch(() => null)) as { error?: string } | null
+    return {
+      estado: 'rechazado',
+      error: cuerpo?.error ?? 'Email o código incorrectos, o el código ha caducado.',
+    }
+  }
+
+  if (!respuesta.ok) return { estado: 'sin-endpoint' }
+
+  const cuerpo = (await respuesta.json().catch(() => null)) as { token_hash?: string } | null
+  if (!cuerpo?.token_hash) return { estado: 'sin-endpoint' }
+  return { estado: 'canjeado', tokenHash: cuerpo.token_hash }
+}
+
+/**
  * Alta del dispositivo con email + código de un solo uso.
  *
- * El código es la contraseña temporal que el admin ha creado. En cuanto entra,
- * se rota a una aleatoria fuerte que no se guarda en ningún sitio: así el
- * código deja de ser una credencial válida y la única llave que queda es el
- * refresh token, cifrado con el PIN.
+ * El camino bueno pasa por `/alta/canjear`: el servidor valida el código,
+ * vigila el cupo de dispositivos y emite un pase de un solo uso que aquí se
+ * cambia por una sesión — **sin tocar la contraseña de la cuenta**. Importa
+ * porque GoTrue revoca las sesiones del usuario al cambiarla (verificado en su
+ * código, v2.177.0): con el flujo antiguo, dar de alta un segundo dispositivo
+ * mataba la sesión del primero, y una cuenta solo podía tener un dispositivo
+ * vivo a la vez por mucho que la tabla `devices` dijera otra cosa.
+ *
+ * El flujo antiguo queda como red: código-como-contraseña, rotada al entrar
+ * para quemarla. Solo se usa si el endpoint no existe en este despliegue.
  */
 export async function enrollDevice(
   email: string,
   code: string,
   pin: string,
 ): Promise<EnrollResult> {
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password: code })
-  if (error || !data.session) {
-    return { ok: false, error: 'Email o código incorrectos, o el código ha caducado.' }
-  }
+  const canje = await canjearCodigo(email.trim(), code.trim())
+  if (canje.estado === 'rechazado') return { ok: false, error: canje.error }
 
-  const { error: rotateError } = await supabase.auth.updateUser({
-    password: generateStrongPassword(),
-  })
-  if (rotateError) {
-    // Si no se puede quemar el código, no se sigue: dejarlo activo sería dejar
-    // una credencial débil y permanente en el servidor.
-    await supabase.auth.signOut()
-    return { ok: false, error: 'No se pudo completar el alta. Inténtalo de nuevo.' }
-  }
+  let sesion: { access_token: string; refresh_token: string; user: { id: string } }
 
-  await supabase.rpc('consume_enrollment_code')
+  if (canje.estado === 'canjeado') {
+    const { data, error } = await supabase.auth.verifyOtp({
+      type: 'magiclink',
+      token_hash: canje.tokenHash,
+    })
+    if (error || !data.session) {
+      return { ok: false, error: 'No se pudo completar el alta. Inténtalo de nuevo.' }
+    }
+    sesion = data.session
+  } else {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password: code })
+    if (error || !data.session) {
+      return { ok: false, error: 'Email o código incorrectos, o el código ha caducado.' }
+    }
+
+    const { error: rotateError } = await supabase.auth.updateUser({
+      password: generateStrongPassword(),
+    })
+    if (rotateError) {
+      // Si no se puede quemar el código, no se sigue: dejarlo activo sería dejar
+      // una credencial débil y permanente en el servidor.
+      await supabase.auth.signOut()
+      return { ok: false, error: 'No se pudo completar el alta. Inténtalo de nuevo.' }
+    }
+
+    await supabase.rpc('consume_enrollment_code')
+    sesion = data.session
+  }
 
   const { data: profile } = await supabase
     .from('profiles')
     .select('full_name, email')
-    .eq('id', data.session.user.id)
+    .eq('id', sesion.user.id)
     .single()
 
-  const sealed = await sealSession(pin, data.session, {
+  const llaves = await crearLlaves(pin)
+  const tokens = { access_token: sesion.access_token, refresh_token: sesion.refresh_token }
+  const sealed = await sealSession(llaves, tokens, {
     email: profile?.email ?? email,
     fullName: profile?.full_name ?? email,
   })
 
   await db.meta.put({ key: SEALED_KEY, value: sealed })
   await db.meta.put({ key: ATTEMPTS_KEY, value: 0 })
-  // A partir de aquí, cada renovación del token se vuelve a sellar sola.
-  pinEnMemoria = pin
-  cacheForTab(data.session)
+  // A partir de aquí, cada renovación del token resella el sobre sola: la
+  // llave pública está dentro del propio sobre y no necesita el PIN.
+  cacheForTab(tokens)
   await touch()
-  await registerDevice(data.session.user.id)
+  await registerDevice(sesion.user.id)
 
   return { ok: true }
 }
 
+/**
+ * Apunta este navegador en `devices` — UNA fila por navegador, no una por
+ * alta. La fila propia se recuerda en Dexie y se reutiliza: sin esto, cada
+ * re-alta insertaba un dispositivo nuevo y el cupo de la cuenta se llenaba de
+ * fantasmas que nadie usaba pero que contaban igual.
+ */
 async function registerDevice(profileId: string): Promise<void> {
   const label = /iPad/.test(navigator.userAgent)
     ? 'iPad'
     : /iPhone/.test(navigator.userAgent)
       ? 'iPhone'
       : 'Navegador'
-  await supabase.from('devices').insert({
-    profile_id: profileId,
-    label,
-    user_agent: navigator.userAgent.slice(0, 300),
-  })
+  const userAgent = navigator.userAgent.slice(0, 300)
+
+  const propia = (await db.meta.get(DEVICE_KEY))?.value as string | undefined
+  if (propia) {
+    const { data } = await supabase
+      .from('devices')
+      .update({ label, user_agent: userAgent })
+      .eq('id', propia)
+      .select('id')
+    // Si la fila sigue existiendo (y es de esta cuenta: RLS media), ya está.
+    if (data && data.length > 0) return
+  }
+
+  const { data } = await supabase
+    .from('devices')
+    .insert({ profile_id: profileId, label, user_agent: userAgent })
+    .select('id')
+    .single()
+  if (data?.id) await db.meta.put({ key: DEVICE_KEY, value: data.id })
 }
 
 export async function getSealed(): Promise<SealedSession | null> {
@@ -261,6 +333,13 @@ export interface UnlockResult {
   attemptsLeft?: number
   wiped?: boolean
   error?: string
+  /**
+   * El PIN era correcto pero el servidor revocó la sesión guardada: la única
+   * salida es volver a dar de alta el dispositivo con un código nuevo. La
+   * pantalla lo usa para ofrecer ese camino ahí mismo, en vez de dejar al
+   * usuario encerrado leyendo un consejo que no puede seguir.
+   */
+  sesionRechazada?: boolean
 }
 
 /**
@@ -324,10 +403,10 @@ export async function unlockWithPin(pin: string): Promise<UnlockResult> {
    * respondía «el servidor ya no acepta esta sesión» y no dejaba pasar de ahí.
    */
   if (error && esFalloDeRed(error)) {
-    pinEnMemoria = pin
     // Los tokens siguen siendo los buenos; lo que falta es la red. Se guardan y
     // se reintenta en cuanto vuelva, para que la sesión quede viva sola.
     cacheForTab(session)
+    await migrarSobreSiHaceFalta(pin, sealed, session)
     reintentarAlVolverLaRed(session)
     await touch()
     return { ok: true }
@@ -336,23 +415,46 @@ export async function unlockWithPin(pin: string): Promise<UnlockResult> {
   if (error || !viva.session) {
     return {
       ok: false,
+      sesionRechazada: true,
       error:
         'Tu PIN es correcto, pero el servidor ya no acepta esta sesión. ' +
         'Pide un código de alta nuevo para volver a registrar el dispositivo.',
     }
   }
 
-  pinEnMemoria = pin
   // Lo que devuelve `setSession` NO es lo que le hemos mandado: al renovar, el
   // servidor emite un refresh token nuevo y anula el anterior. Guardar el que
   // teníamos era justo lo que dejaba el dispositivo con un token muerto.
-  await custodiar({
+  const fresca = {
     access_token: viva.session.access_token,
     refresh_token: viva.session.refresh_token,
-  })
+  }
+  if (sealed.llaves) {
+    await custodiar(fresca)
+  } else {
+    cacheForTab(fresca)
+    await migrarSobreSiHaceFalta(pin, sealed, fresca)
+  }
   await touch()
 
   return { ok: true }
+}
+
+/**
+ * Migra un sobre antiguo (cifrado directo con el PIN) al formato con llaves.
+ *
+ * Es el único momento en que se puede: el PIN acaba de teclearse. A partir de
+ * aquí el sobre se resella solo en cada renovación, sin PIN, que es lo que
+ * evita que se quede dentro un token que el servidor ya revocó.
+ */
+async function migrarSobreSiHaceFalta(
+  pin: string,
+  sealed: SealedSession,
+  session: TabSession,
+): Promise<void> {
+  if (sealed.llaves) return
+  const llaves = await crearLlaves(pin)
+  await db.meta.put({ key: SEALED_KEY, value: await sealSession(llaves, session, sealed.hint) })
 }
 
 /**
@@ -426,7 +528,6 @@ export async function shouldRelock(): Promise<boolean> {
  */
 export async function lock(): Promise<void> {
   clearTabCache()
-  pinEnMemoria = null
   await supabase.auth.signOut({ scope: 'local' })
   await db.meta.delete('last-active')
 }

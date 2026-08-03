@@ -253,7 +253,8 @@ function announce(email: string, code: string, role: Role, renovado = false): vo
 ${renovado ? '\n  Ya existía: este código sustituye al anterior, que queda anulado.\n' : ''}
   Caduca en ${CODE_TTL_HOURS} horas y solo sirve una vez.
   El técnico lo introduce junto a su email la primera vez que abre la
-  aplicación, y a continuación elige su PIN.
+  aplicación, y a continuación elige su PIN. La cuenta admite hasta 3
+  dispositivos conectados a la vez (por aparato, no por navegador).
 
   No vuelve a mostrarse. Si se pierde, genera otro con:
     ${CLI} codigo ${email}
@@ -265,20 +266,43 @@ ${renovado ? '\n  Ya existía: este código sustituye al anterior, que queda anu
  * casi siempre. Lo comparten `crear` y `codigo` para que el usuario que ya
  * existe acabe exactamente igual por los dos caminos.
  *
- * Reponer la contraseña temporal invalida el dispositivo anterior sólo si este
- * vuelve a necesitar autenticarse: los refresh tokens vivos siguen
- * funcionando, que es lo que queremos cuando alguien añade un segundo iPad.
+ * La contraseña solo se repone cuando la cuenta NO tiene ningún dispositivo
+ * conectado. Aquí decía antes que «los refresh tokens vivos siguen
+ * funcionando» al reponerla — y es exactamente al revés: el `updateUserById`
+ * de GoTrue revoca TODAS las sesiones del usuario al cambiar la contraseña
+ * (comprobado en su código, v2.177.0: `UpdatePassword(tx, nil)` → `Logout`).
+ * O sea que generar el código para el segundo iPad era lo que desconectaba al
+ * primero. Con dispositivos vivos, el código solo se apunta en
+ * `enrollment_codes` y se canjea en `/alta/canjear`, que no toca credenciales;
+ * sin ninguno, reponerla no cuesta nada y mantiene además el alta antigua para
+ * los despliegues que no tengan el worker.
  */
 async function nuevoCodigo(id: string, email: string, renovado: boolean): Promise<void> {
   const code = generateCode()
 
-  const { error } = await admin.auth.admin.updateUserById(id, { password: code })
-  if (error) {
-    console.error('No se pudo generar el código:', error.message)
-    process.exit(1)
+  const { count } = await admin
+    .from('devices')
+    .select('id', { count: 'exact', head: true })
+    .eq('profile_id', id)
+    .is('revoked_at', null)
+  const conectados = count ?? 0
+
+  if (conectados === 0) {
+    const { error } = await admin.auth.admin.updateUserById(id, { password: code })
+    if (error) {
+      console.error('No se pudo generar el código:', error.message)
+      process.exit(1)
+    }
   }
 
   await storeCode(id, code)
+
+  if (conectados > 0) {
+    console.log(
+      `\n  La cuenta tiene ${conectados} dispositivo(s) conectado(s): siguen conectados,\n` +
+        '  este código solo sirve para añadir o recuperar uno.',
+    )
+  }
 
   const { data: profile } = await admin.from('profiles').select('role').eq('id', id).single()
   announce(email, code, (profile?.role as Role) ?? 'tecnico', renovado)

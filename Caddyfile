@@ -38,6 +38,15 @@
 		reverse_proxy kong:8000
 	}
 
+	# ── Alta de dispositivos ───────────────────────────────────────────
+	# El canje del código va al worker, que es quien tiene la clave de
+	# servicio. Solo se expone `/alta/*`: `/generate` sigue siendo interno y
+	# con token. Si el worker está caído, el 502 hace que la aplicación caiga
+	# sola al flujo de alta antiguo.
+	handle /alta/* {
+		reverse_proxy reports-worker:8080
+	}
+
 	# ── PWA ────────────────────────────────────────────────────────────
 	handle {
 		root * /srv/dist
@@ -56,7 +65,10 @@
 		# una respuesta cacheada describiría al anterior. Aquí lleva solo la
 		# mitad de construcción —no hay arranque que lo reescriba—, pero
 		# rancia sigue siendo peor que ninguna.
-		@nocache path /index.html / /sw.js /manifest.webmanifest /salud.json
+		# `rescate-sw.js` va con el service worker: es un `importScripts` suyo,
+		# y esos el navegador SÍ los sirve de la caché HTTP por defecto. Cacheado,
+		# el rescate de dispositivos atascados llegaría rancio o no llegaría.
+		@nocache path /index.html / /sw.js /rescate-sw.js /manifest.webmanifest /salud.json
 		header @nocache Cache-Control "no-cache, must-revalidate"
 
 		header {

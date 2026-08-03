@@ -11,6 +11,12 @@ interface Props {
 /**
  * Pantalla de entrada. Dos modos según si el dispositivo ya está dado de alta:
  * teclear el PIN (funciona sin cobertura) o darse de alta con email y código.
+ *
+ * Del PIN se puede VOLVER al alta. No es un adorno: cuando el servidor revoca
+ * la sesión guardada, el mensaje decía «pide un código de alta nuevo»… en una
+ * pantalla sin ningún camino para meterlo — el modo alta solo existía cuando
+ * no había sobre guardado, y el sobre seguía ahí. El dispositivo quedaba
+ * encerrado leyendo un consejo imposible de seguir.
  */
 export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
   const [pin, setPin] = useState('')
@@ -18,8 +24,20 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  /** Alta pedida a mano desde el modo PIN: un código nuevo para este dispositivo. */
+  const [reAlta, setReAlta] = useState(false)
+  /** El servidor rechazó la sesión: el alta ya no es una opción sino LA salida. */
+  const [sesionRechazada, setSesionRechazada] = useState(false)
 
-  const enrolling = sealed === null
+  const enrolling = sealed === null || reAlta
+
+  function irAlAlta(): void {
+    setReAlta(true)
+    setError(null)
+    setPin('')
+    // La cuenta ya se conoce: se rellena para que solo falten código y PIN.
+    if (sealed) setEmail(sealed.hint.email)
+  }
 
   async function submit(): Promise<void> {
     setError(null)
@@ -41,6 +59,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
       } else {
         const result = await unlockWithPin(pin)
         if (!result.ok) {
+          if (result.sesionRechazada) setSesionRechazada(true)
           /*
            * «Te quedan undefined intentos.»
            *
@@ -170,6 +189,38 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
           </button>
         </form>
 
+        {/* La puerta de vuelta al alta. Discreta de normal; protagonista cuando
+            el servidor ha rechazado la sesión, porque entonces es el único
+            camino que queda y el error de arriba manda justo a él. */}
+        {!enrolling && (
+          <button
+            type="button"
+            onClick={irAlAlta}
+            className={
+              sesionRechazada
+                ? 'key key-accent mt-4 h-touch w-full'
+                : 'mt-6 w-full text-center text-sm text-muted underline underline-offset-4'
+            }
+          >
+            Dar de alta de nuevo con un código
+          </button>
+        )}
+
+        {/* Y la vuelta atrás desde un alta pedida a mano: quien entró aquí por
+            error no pierde el sobre ni el PIN que ya tenía. */}
+        {reAlta && !busy && (
+          <button
+            type="button"
+            onClick={() => {
+              setReAlta(false)
+              setError(null)
+              setPin('')
+            }}
+            className="mt-6 w-full text-center text-sm text-muted underline underline-offset-4"
+          >
+            Volver al PIN
+          </button>
+        )}
       </div>
     </div>
   )
