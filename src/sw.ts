@@ -82,6 +82,19 @@ const arrancadaEn = Date.now()
 const PLAZO_DE_RELEVO_MS = 8_000
 
 /**
+ * Qué versión de la política de activación ejecuta esta página.
+ *
+ * Es lo que se contesta al sondeo del rescate, y tiene que coincidir con
+ * `POLITICA_MINIMA` de `public/rescate-sw.js` — que es quien pregunta, y quien
+ * decide con la respuesta si este dispositivo sabe actualizarse solo o hay que
+ * rescatarlo a la fuerza. Allí está el porqué del número; aquí basta con saber
+ * que **los dos suben juntos**: contestar un número que el rescate ya no acepta
+ * es pedir el rescate, y contestar uno que no se cumple es lo que dejó iPads
+ * meses sin actualizar.
+ */
+const POLITICA_DE_ACTIVACION = 2
+
+/**
  * Cuánto tiene que durar una ausencia para que la vuelta cuente como un
  * arranque.
  *
@@ -162,7 +175,7 @@ function anunciar(): void {
  * panel de la lámpara lo diga, y se volverá a intentar al terminarla— y con una
  * foto en tránsito se apunta para el instante en que quede escrita.
  */
-function intentarInstalarSola(): void {
+function intentarInstalarSola(desatendida = false): void {
   if (!enEspera) return
   if (trabajoDelicado) {
     hayVersionNueva = true
@@ -174,7 +187,7 @@ function intentarInstalarSola(): void {
     return
   }
   aplicarAlSoltar = false
-  activar('automatica').catch(() => {
+  activar(desatendida ? 'desatendida' : 'automatica').catch(() => {
     // Si la activación falla, la barra de siempre sigue ahí detrás.
     hayVersionNueva = true
     anunciar()
@@ -300,17 +313,19 @@ export function registrarServiceWorker(): void {
 
   /*
    * La contraseña del rescate. El service worker recién instalado pregunta a
-   * las ventanas abiertas si entienden la política de momentos seguros
-   * (`public/rescate-sw.js`): las que contestan son páginas como esta, que
-   * activarán ellas mismas cuando toque; las que callan son código de antes
-   * de la política y se las rescata con una recarga forzada. Contestar es lo
-   * que protege a esta página de esa recarga, así que el oyente se registra
-   * ANTES que el service worker: no puede haber ventana en la que la pregunta
-   * llegue y el oyente todavía no esté.
+   * las ventanas abiertas qué política de activación ejecutan
+   * (`public/rescate-sw.js`): las que contestan un número suficiente son
+   * páginas como esta, que activarán ellas mismas cuando toque; las que callan
+   * —o contestan lo de antes— no saben activar y se las rescata con una recarga
+   * forzada. Contestar es lo que protege a esta página de esa recarga, así que
+   * el oyente se registra ANTES que el service worker: no puede haber ventana
+   * en la que la pregunta llegue y el oyente todavía no esté.
    */
   navigator.serviceWorker?.addEventListener('message', (evento: MessageEvent) => {
     const datos = evento.data as { tipo?: string } | null
-    if (datos?.tipo === 'sondeo-de-politica') evento.ports[0]?.postMessage('entendida')
+    if (datos?.tipo === 'sondeo-de-politica') {
+      evento.ports[0]?.postMessage({ politica: POLITICA_DE_ACTIVACION })
+    }
   })
 
   actualizar = registerSW({
@@ -348,7 +363,7 @@ export function registrarServiceWorker(): void {
         // esto, un dispositivo siempre visible —clavado en el PIN, o de
         // consulta— no atravesaba nunca ninguna de las otras puertas y se
         // quedaba con la versión vieja esperando un toque que no llega.
-        if (Date.now() - ultimaInteraccionEn >= OCIO_LARGO_MS) intentarInstalarSola()
+        if (Date.now() - ultimaInteraccionEn >= OCIO_LARGO_MS) intentarInstalarSola(true)
       }, 60 * 60_000)
     },
     onRegisterError(error) {
@@ -520,23 +535,40 @@ async function relevar(): Promise<'activada' | 'sin-worker' | 'sin-relevo'> {
 }
 
 /**
- * El camino común de la instalación, automática o pedida.
+ * El último recurso desde la página ya se ha gastado en esta carga.
  *
- * La diferencia entre las dos es qué se hace cuando el relevo NO ocurre, y es
- * una diferencia de fondo:
+ * Uno por carga y no más: es la diferencia entre rescatar un dispositivo
+ * atascado y montarle un carrusel de recargas.
+ */
+let ultimoRecursoGastado = false
+
+/**
+ * El camino común de la instalación. Lo que cambia entre las tres órdenes es
+ * qué se hace cuando el relevo NO ocurre, y es una diferencia de fondo:
  *
  *  - `manual` es una orden. Recargar por las bravas trae el código nuevo igual
- *    —el worker viejo sirve el precache viejo, pero un `reload` vuelve a pedir
- *    el service worker y el navegador reintenta el ciclo entero— y, sobre todo,
- *    hace que pulsar el botón SIEMPRE haga algo. Recargar de más es un segundo
- *    perdido; un botón que no responde cuesta semanas de versión vieja.
+ *    —un `reload` vuelve a pedir el service worker y el navegador reintenta el
+ *    ciclo entero— y, sobre todo, hace que pulsar el botón SIEMPRE haga algo.
+ *    Recargar de más es un segundo perdido; un botón que no responde cuesta
+ *    semanas de versión vieja.
  *  - `automatica` no fuerza nada, y no es simetría mal entendida: nadie ha
  *    pedido esto, y una recarga forzada aquí se repetiría en cada arranque
  *    mientras el relevo siguiera sin ocurrir — un bucle de recargas en la cara
  *    de alguien que solo quería abrir la aplicación. Se deja la barra puesta,
  *    que es lo que ya hacía.
+ *  - `desatendida` es el respaldo para lo que el rescate del worker no alcanza.
+ *    `public/rescate-sw.js` rescata al dispositivo cuya política es DEMASIADO
+ *    VIEJA para activar; no puede hacer nada con el que contesta el número
+ *    bueno y aun así falla —una activación que se atasca por lo que sea, y el
+ *    rescate ya se ha retirado creyéndole—. Ese es el hueco que tapa esto: la
+ *    puerta del ocio (diez minutos sin un toque, pantalla encendida) ya
+ *    garantiza que no hay a quién interrumpir, así que recargar ahí no cuesta
+ *    nada. Una vez por carga, para que un fallo persistente sea una recarga y
+ *    no un bucle: si tampoco así, la barra sigue puesta para una persona.
  */
-async function activar(orden: 'manual' | 'automatica'): Promise<ParteDeActivacion> {
+async function activar(
+  orden: 'manual' | 'automatica' | 'desatendida',
+): Promise<ParteDeActivacion> {
   const parte = await relevar()
 
   if (parte === 'activada') {
@@ -546,7 +578,8 @@ async function activar(orden: 'manual' | 'automatica'): Promise<ParteDeActivacio
     return 'activada'
   }
 
-  if (orden === 'manual') {
+  if (orden === 'manual' || (orden === 'desatendida' && !ultimoRecursoGastado)) {
+    if (orden === 'desatendida') ultimoRecursoGastado = true
     recargar()
     return 'recargada'
   }
