@@ -54,6 +54,10 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
         .from('buildings')
         .select('id, code, name, review_note')
         .eq('needs_review', true)
+        // Los archivados no: un edificio provisional que ya se dio de baja no
+        // es trabajo pendiente, y seguiría pidiendo aquí una decisión que
+        // alguien ya tomó al mandarlo a la papelera.
+        .eq('active', true)
         .order('code')
       return (data ?? []) as ProvisionalBuilding[]
     },
@@ -66,6 +70,11 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
         .from('buildings')
         .select('id, code, name')
         .eq('needs_review', false)
+        // Estos son los DESTINOS de una fusión, y ahí un edificio archivado es
+        // una trampa: `merge_building` movería las zonas y las salas del origen
+        // a un edificio invisible —y borraría el origen— así que desaparecerían
+        // las dos cosas a la vez, sin ningún mensaje de error.
+        .eq('active', true)
         .order('code')
       return (data ?? []) as Array<{ id: string; code: string; name: string }>
     },

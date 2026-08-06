@@ -1081,16 +1081,26 @@ begin;
     else 'FALLO: la zona se ha duplicado por la grafía'
   end as resultado;
 
-  do $$
-  declare v_ed uuid;
-  begin
-    select b.id into v_ed from buildings b where b.code = 'ZZ';
-    perform public.delete_building(v_ed);
-    raise exception 'FALLO: borró un edificio que todavía tenía salas';
-  exception when others then
-    if sqlerrm like 'FALLO%' then raise; end if;
-    raise notice 'OK: %', sqlerrm;
-  end $$;
+  -- Aquí se afirmaba que dar de baja un edificio con salas dentro reventaba.
+  -- Desde `20260806000100` no revienta: lo archiva. Es el mismo contrato que
+  -- `delete_room` ya tenía —el servidor decide entre borrar y archivar, y dice
+  -- cuál de las dos ha hecho— y lo que se comprueba es justo eso: que el
+  -- edificio sale de la lista de trabajo SIN que sus salas se enteren, porque
+  -- restaurarlo tiene que devolver exactamente lo que había.
+  --
+  -- En su propia sentencia, por lo mismo que en el bloque 40: dentro de un
+  -- único `select`, lo que escriba la función no lo ven las subconsultas de al
+  -- lado y la comprobación mediría el estado de antes.
+  select public.delete_building(:'ed') as baja \gset
+
+  select case
+    when :'baja' = 'archivado'
+     and (select count(*) from room_overview where building_id = :'ed') = 0
+     and (select count(*) from rooms r join zones z on z.id = r.zone_id
+           where z.building_id = :'ed' and r.active) = 2
+    then 'OK: el edificio sale de la lista de trabajo con sus salas intactas'
+    else 'FALLO: la baja del edificio no ha archivado'
+  end as resultado;
 rollback;
 
 \echo ''
@@ -2416,5 +2426,397 @@ begin;
              and extract(year from resolved_at) = 2026) = 2
     then 'OK: las dos incidencias del CRAI vuelven al 27 de marzo de 2026'
     else 'FALLO: las incidencias de la errata «27-03-296» siguen mal fechadas'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 67. Archivar un edificio limpia la vista y se deshace entero ==='
+begin;
+  select test_as('44444444-4444-4444-8444-444444444444', 'admin');
+
+  select public.create_building('ZY', 'Edificio de la papelera') as ed \gset
+  select public.create_room(:'ed', 'PLANTA BAJA', '0.1', 'Aula de prueba') as sala \gset
+  select public.create_room(:'ed', '1ª PLANTA',   '1.1', 'Otra aula')      as sala2 \gset
+
+  insert into inspections (id, room_id, by_user, occurred_at, status, overall)
+  values ('77777777-7777-4777-8777-777777777767', :'sala',
+          '44444444-4444-4444-8444-444444444444', now(), 'completa', 'ok');
+
+  select public.delete_building(:'ed') as baja \gset
+
+  -- Las tres cosas a la vez, porque las tres juntas son la promesa: desaparece
+  -- de la lista de trabajo (y por tanto de la descarga a los 23 iPads), aparece
+  -- en la papelera, y sus salas siguen ahí debajo con `active = true`.
+  select case
+    when :'baja' = 'archivado'
+     and (select count(*) from room_overview      where building_id = :'ed') = 0
+     and (select count(*) from archived_buildings where building_id = :'ed') = 1
+     and (select count(*) from archived_rooms
+           where building_id = :'ed' and motivo = 'edificio') = 2
+    then 'OK: fuera de la lista de trabajo y entero en la papelera'
+    else 'FALLO: archivar el edificio no ha limpiado la vista'
+  end as resultado;
+
+  -- Por id: lo que se afirma es que la baja no se llevó por delante el
+  -- histórico, que es la razón entera de archivar en vez de borrar.
+  select case
+    when exists (select 1 from inspections where id = '77777777-7777-4777-8777-777777777767')
+     and (select revisiones from archived_buildings where building_id = :'ed') = 1
+     and (select salas      from archived_buildings where building_id = :'ed') = 2
+    then 'OK: la papelera dice cuántas salas y cuántas revisiones se recuperan'
+    else 'FALLO: se ha perdido histórico al archivar, o el recuento miente'
+  end as resultado;
+
+  -- Y una sala de un edificio archivado no se reactiva sola: volvería a
+  -- `room_overview` por la puerta de `r.active` y la seguiría escondiendo el
+  -- `b.active`, o sea, no volvería a ninguna parte.
+  do $$
+  declare v_sala uuid;
+  begin
+    select r.id into v_sala from rooms r
+      join zones z on z.id = r.zone_id
+      join buildings b on b.id = z.building_id
+     where not b.active limit 1;
+    perform public.restore_room(v_sala);
+    raise exception 'FALLO: reactivó una sala de un edificio archivado';
+  exception when others then
+    if sqlerrm like 'FALLO%' then raise; end if;
+    raise notice 'OK: %', sqlerrm;
+  end $$;
+
+  select public.restore_building(:'ed');
+  select case
+    when (select count(*) from room_overview where building_id = :'ed') = 2
+     and (select count(*) from archived_rooms where building_id = :'ed') = 0
+    then 'OK: y se deshace entero, con sus dos salas'
+    else 'FALLO: restaurar el edificio no lo ha devuelto como estaba'
+  end as resultado;
+
+  -- El otro lado del trato: sin nada que conservar no hay papelera que valga.
+  -- Se borra de verdad y su código —`unique` global— vuelve a quedar libre.
+  select public.create_building('ZW', 'Edificio recién tecleado') as vacio \gset
+  select public.delete_building(:'vacio') as baja2 \gset
+  select case
+    when :'baja2' = 'borrado'
+     and not exists (select 1 from buildings where id = :'vacio')
+     and not exists (select 1 from archived_buildings where building_id = :'vacio')
+    then 'OK: la errata de hace un minuto se borra, no se guarda'
+    else 'FALLO: un edificio vacío ha acabado en la papelera'
+  end as resultado;
+
+  -- Y el código liberado se puede volver a usar, que es para lo que se libera.
+  select case
+    when public.create_building('ZW', 'Este sí') is not null
+    then 'OK: el código de un edificio borrado vuelve a estar libre'
+    else 'FALLO: el código no se liberó'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 68. Renombrar conserva la matrícula y deja rastro ==='
+begin;
+  select test_as('44444444-4444-4444-8444-444444444444', 'admin');
+
+  select public.create_building('ZX', 'Edificio de nomenclatura') as ed \gset
+  select public.create_room(:'ed', 'PLANTA BAJA', '0.1', 'Aula pequeña') as sala \gset
+  select public.create_room(:'ed', '1ª PLANTA',   '1.1', 'Aula grande')  as otra \gset
+  select short_ref as matricula from rooms where id = :'sala' \gset
+
+  select public.rename_room(:'sala', '0.9', 'Aula pequeña') as r1 \gset
+
+  -- La matrícula va grabada en la placa atornillada a la puerta y el QR
+  -- codifica el UUID, no el código: renombrar no puede invalidar una placa.
+  -- Y el código viejo se queda de alias con la forma cualificada «0.1 ZX», que
+  -- es la que produce `splitIncidentKey`; sin ella la siguiente importación de
+  -- Excel dejaría de resolver esta sala y caería en `import_quarantine`.
+  select case
+    when :'r1' = 'renombrada'
+     and (select short_ref from rooms where id = :'sala') = :'matricula'
+     and exists (select 1 from room_aliases
+                  where room_id = :'sala'
+                    and alias_norm = public.norm_text('0.1 ZX'))
+    then 'OK: la placa sigue valiendo y el código viejo queda de alias'
+    else 'FALLO: renombrar rompió la matrícula o no dejó rastro'
+  end as resultado;
+
+  -- Renombrar una sala a su propio código no es un duplicado de sí misma: es lo
+  -- que pasa cada vez que alguien abre el formulario solo para tocar el nombre.
+  select public.rename_room(:'sala', '0.9', 'Aula pequeña reformada') as r1b \gset
+  select case
+    when :'r1b' = 'renombrada'
+     and (select name from rooms where id = :'sala') = 'Aula pequeña reformada'
+    then 'OK: tocar solo el nombre no choca con el código de la propia sala'
+    else 'FALLO: la sala chocó consigo misma'
+  end as resultado;
+
+  -- Y el choque de verdad se mide normalizado, más estricto que el
+  -- `unique (zone_id, code)`, que distingue `1.1` de `1.1 ` pero también `a1`
+  -- de `A1` y dejaría entrar dos salas que en la lista se leen igual.
+  do $$
+  declare v_sala uuid;
+  begin
+    select r.id into v_sala from rooms r join zones z on z.id = r.zone_id
+      join buildings b on b.id = z.building_id
+     where b.code = 'ZX' and r.code = '0.9';
+    perform public.rename_room(v_sala, '1.1', 'Colisión', '1ª PLANTA');
+    raise exception 'FALLO: dos salas con el mismo código en la misma planta';
+  exception when others then
+    if sqlerrm like 'FALLO%' then raise; end if;
+    raise notice 'OK: %', sqlerrm;
+  end $$;
+
+  select public.rename_room(:'sala', '0.9', 'Aula pequeña reformada', '1ª PLANTA') as r2 \gset
+  select case
+    when :'r2' = 'movida'
+     and (select z.name from rooms r join zones z on z.id = r.zone_id
+           where r.id = :'sala') = '1ª PLANTA'
+     and not exists (select 1 from zones
+                      where building_id = :'ed' and name = 'PLANTA BAJA')
+    then 'OK: el aula cambia de planta y la que se queda vacía desaparece'
+    else 'FALLO: mover de planta no ha dejado las zonas como debía'
+  end as resultado;
+
+  -- Dos plantas que son la misma escritas de formas que `norm_text` no une.
+  -- Escribir en una el nombre de la otra las fusiona, y lo dice.
+  select public.create_room(:'ed', 'SOTANO',    '-1.1', 'Almacén')  as s1 \gset
+  select public.create_room(:'ed', 'PLANTA -1', '-1.2', 'Trastero') as s2 \gset
+  select id as zsotano from zones where building_id = :'ed' and name = 'SOTANO' \gset
+  select id as zmenos1 from zones where building_id = :'ed' and name = 'PLANTA -1' \gset
+
+  select public.rename_zone(:'zsotano', 'PLANTA -1') as r3 \gset
+  select case
+    when :'r3' = 'fusionada'
+     and (select zone_id from rooms where id = :'s1') = :'zmenos1'
+     and not exists (select 1 from zones where id = :'zsotano')
+    then 'OK: dos plantas que eran la misma se juntan sin violar el único de nombre'
+    else 'FALLO: la fusión de plantas no ha movido las aulas'
+  end as resultado;
+
+  -- Corregir la grafía no es fusionar aunque el nombre nuevo normalice igual
+  -- que el viejo: la planta de destino sería ella misma, y el `delete from
+  -- zones` de la fusión se llevaría por delante la planta que se quería
+  -- arreglar con todas sus aulas dentro.
+  select public.rename_zone(:'zmenos1', 'planta  -1') as r4 \gset
+  select case
+    when :'r4' = 'renombrada'
+     and (select name from zones where id = :'zmenos1') = 'planta  -1'
+     and (select count(*) from rooms where zone_id = :'zmenos1') = 2
+    then 'OK: arreglar la grafía deja la planta donde estaba, con sus aulas'
+    else 'FALLO: corregir la grafía se ha comido la planta'
+  end as resultado;
+
+  -- El signo menos de presentación (U+2212) no entra en la columna `code`: es
+  -- el que rompe `roomMatches`, `cleanRoomRef`, `splitIncidentKey` y el cruce
+  -- con `room_aliases`, y llega solo con que alguien pegue lo que ve en
+  -- pantalla dentro del campo editable.
+  select public.rename_room(:'s2', '−1.7', 'Trastero') as r5 \gset
+  select case
+    when (select code from rooms where id = :'s2') = '-1.7'
+    then 'OK: el signo menos de pantalla no llega a la base'
+    else 'FALLO: se ha guardado un U+2212 en el código'
+  end as resultado;
+
+  -- Y un renombrado con el código de otro edificio se rechaza con una frase, no
+  -- con la violación del único.
+  do $$
+  begin
+    perform public.rename_building((select id from buildings where code = 'ZX'), 'H', 'Robado');
+    raise exception 'FALLO: dos edificios con el código H';
+  exception when others then
+    if sqlerrm like 'FALLO%' then raise; end if;
+    raise notice 'OK: %', sqlerrm;
+  end $$;
+
+  -- Renombrar el edificio deja a TODAS sus salas la referencia vieja de alias.
+  select public.rename_building(:'ed', 'ZXB', 'Edificio de nomenclatura') as r6 \gset
+  select case
+    when (select code from buildings where id = :'ed') = 'ZXB'
+     and exists (select 1 from room_aliases
+                  where room_id = :'sala' and alias_norm = public.norm_text('0.9 ZX'))
+    then 'OK: al cambiar el código del edificio, el histórico sigue cruzando'
+    else 'FALLO: renombrar el edificio dejó las referencias viejas sin resolver'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 69. Solo el administrador toca la nomenclatura ==='
+begin;
+  -- Las cinco puertas nuevas, contra los dos roles que no son admin. El
+  -- `errcode` importa tanto como la denegación: el cliente distingue
+  -- `insufficient_privilege` de un error de validación para saber si enseñar
+  -- «no tienes permiso» o el mensaje del servidor tal cual.
+  do $$
+  declare
+    v_sala uuid;
+    v_zona uuid;
+    v_ed   uuid;
+    v_rol  text;
+    v_uid  text;
+  begin
+    select r.id, r.zone_id, z.building_id
+      into v_sala, v_zona, v_ed
+      from rooms r join zones z on z.id = r.zone_id
+     where r.active
+     order by r.created_at
+     limit 1;
+
+    foreach v_rol in array array['tecnico', 'supervisor'] loop
+      v_uid := case v_rol
+                 when 'tecnico' then '11111111-1111-4111-8111-111111111111'
+                 else                '22222222-2222-4222-8222-222222222222'
+               end;
+      perform set_config('request.jwt.claims',
+        json_build_object('sub', v_uid, 'app_role', v_rol)::text, true);
+
+      begin
+        perform public.rename_building(v_ed, 'XX', 'Robado');
+        raise exception 'FALLO: un % ha renombrado un edificio', v_rol;
+      exception when insufficient_privilege then
+        raise notice 'OK: un % no renombra edificios', v_rol;
+      end;
+
+      begin
+        perform public.rename_room(v_sala, 'X.1', 'Robada');
+        raise exception 'FALLO: un % ha renombrado una sala', v_rol;
+      exception when insufficient_privilege then
+        raise notice 'OK: un % no renombra salas', v_rol;
+      end;
+
+      begin
+        perform public.rename_zone(v_zona, 'PLANTA ROBADA');
+        raise exception 'FALLO: un % ha renombrado una planta', v_rol;
+      exception when insufficient_privilege then
+        raise notice 'OK: un % no renombra plantas', v_rol;
+      end;
+
+      begin
+        perform public.delete_building(v_ed);
+        raise exception 'FALLO: un % ha dado de baja un edificio', v_rol;
+      exception when insufficient_privilege then
+        raise notice 'OK: un % no da de baja edificios', v_rol;
+      end;
+
+      begin
+        perform public.restore_building(v_ed);
+        raise exception 'FALLO: un % ha restaurado un edificio', v_rol;
+      exception when insufficient_privilege then
+        raise notice 'OK: un % no restaura edificios', v_rol;
+      end;
+    end loop;
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 70. La papelera no promete una vuelta que no ocurre ==='
+begin;
+  select test_as('44444444-4444-4444-8444-444444444444', 'admin');
+
+  -- El caso mixto, que es el que la vista contaba mal: una sala archivada A
+  -- MANO dentro de un edificio que se archiva después. Salía marcada como
+  -- «edificio» —el mismo motivo que sus vecinas vivas— y el panel pinta para ese
+  -- valor «Se restaura con su edificio», que es falso: `restore_building` no
+  -- toca `rooms` a propósito, así que esa sala no vuelve. Reaparecía luego en la
+  -- misma lista como «sala», contradiciendo lo que acababa de decir.
+  select public.create_building('ZP', 'Edificio de papelera mixta') as ed \gset
+  select public.create_room(:'ed', 'PLANTA BAJA', '0.1', 'Aula que vuelve') as viva \gset
+  select public.create_room(:'ed', 'PLANTA BAJA', '0.2', 'Aula de baja')    as manual \gset
+
+  -- Con histórico, que es lo que hace que `delete_room` archive en vez de
+  -- borrar: sin él no habría sala archivada de la que hablar.
+  insert into inspections (id, room_id, by_user, occurred_at, status, overall)
+  values ('77777777-7777-4777-8777-777777777770', :'manual',
+          '44444444-4444-4444-8444-444444444444', now(), 'completa', 'ok');
+  select public.delete_room(:'manual') as baja \gset
+
+  select public.delete_building(:'ed') as baja_ed \gset
+
+  select case
+    when :'baja' = 'archivada'
+     and :'baja_ed' = 'archivado'
+     and (select motivo from archived_rooms where room_id = :'viva')   = 'edificio'
+     and (select motivo from archived_rooms where room_id = :'manual') = 'sala-y-edificio'
+     -- Y el recuento del edificio cuenta solo la que vuelve, que ahora concuerda
+     -- con lo que dice la lista en vez de contradecirla.
+     and (select salas from archived_buildings where building_id = :'ed') = 1
+    then 'OK: la papelera distingue la que vuelve de la que se queda'
+    else 'FALLO: la sala archivada a mano se hace pasar por sala de edificio archivado'
+  end as resultado;
+
+  -- Y cada etiqueta dice la verdad: restaurar devuelve una y deja la otra donde
+  -- estaba, ahora sí reactivable por su cuenta.
+  select public.restore_building(:'ed');
+  select case
+    when     exists (select 1 from room_overview where room_id = :'viva')
+     and not exists (select 1 from room_overview where room_id = :'manual')
+     and (select motivo from archived_rooms where room_id = :'manual') = 'sala'
+    then 'OK: vuelve la que decía que volvía, y la otra queda reactivable'
+    else 'FALLO: restaurar el edificio no ha hecho lo que decía la papelera'
+  end as resultado;
+rollback;
+
+\echo ''
+\echo '=== 71. Fusionar no puede llevar salas a la papelera ==='
+begin;
+  select test_as('44444444-4444-4444-8444-444444444444', 'admin');
+
+  select public.create_building('ZQ', 'Edificio provisional') as origen  \gset
+  select public.create_building('ZR', 'Edificio bueno')       as destino \gset
+  select public.create_room(:'origen',  '1ª PLANTA',   '1.1', 'Aula que viajaría') as sala  \gset
+  select public.create_room(:'destino', 'PLANTA BAJA', '0.1', 'Aula del bueno')    as ancla \gset
+
+  -- El escenario real: A tiene la lista de destinos cacheada en su iPad y B
+  -- archiva el edificio desde el suyo. El filtro del desplegable vive en el
+  -- cliente y esa caché no la invalida nadie desde otro dispositivo.
+  select public.delete_building(:'destino');
+
+  do $$
+  declare v_origen uuid; v_destino uuid;
+  begin
+    select id into v_origen  from buildings where code = 'ZQ';
+    select id into v_destino from buildings where code = 'ZR';
+    begin
+      perform public.merge_building(v_origen, v_destino);
+      raise exception 'FALLO: fusionó hacia un edificio de la papelera';
+    exception when others then
+      if sqlerrm like 'FALLO%' then raise; end if;
+      raise notice 'OK: %', sqlerrm;
+    end;
+  end $$;
+
+  -- Y el rechazo no deja nada a medias: la fusión borra el edificio de origen al
+  -- final, así que un error a mitad del bucle habría dejado unas zonas movidas y
+  -- otras no, sin nada que restaurar.
+  select case
+    when exists (select 1 from buildings where id = :'origen')
+     and (select count(*) from room_overview where building_id = :'origen') = 1
+    then 'OK: el origen sigue entero después del intento'
+    else 'FALLO: la fusión rechazada dejó algo movido'
+  end as resultado;
+
+  -- El otro lado, igual de desprotegido: sacar un edificio de la papelera por la
+  -- puerta de atrás, sin pasar por «Restaurar» y borrándolo por el camino.
+  select public.restore_building(:'destino');
+  select public.delete_building(:'origen');
+
+  do $$
+  declare v_origen uuid; v_destino uuid;
+  begin
+    select id into v_origen  from buildings where code = 'ZQ';
+    select id into v_destino from buildings where code = 'ZR';
+    begin
+      perform public.merge_building(v_origen, v_destino);
+      raise exception 'FALLO: fusionó desde un edificio de la papelera';
+    exception when others then
+      if sqlerrm like 'FALLO%' then raise; end if;
+      raise notice 'OK: %', sqlerrm;
+    end;
+  end $$;
+
+  select case
+    when exists (select 1 from archived_buildings where building_id = :'origen')
+     and (select count(*) from archived_rooms
+           where building_id = :'origen' and room_id = :'sala') = 1
+    then 'OK: el edificio archivado se queda en la papelera con lo suyo'
+    else 'FALLO: la fusión ha vaciado un edificio archivado'
   end as resultado;
 rollback;

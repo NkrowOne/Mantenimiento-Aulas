@@ -21,7 +21,18 @@ import {
 export interface Destinos {
   revisar: () => void
   incidencias: () => void
-  datos: () => void
+  /**
+   * A «Datos», que es de administrador. Ausente cuando quien mira no lo es, y
+   * entonces la tarjeta de datos por revisar no se pinta.
+   *
+   * El panel es de técnico y el contador de edificios sin identificar es real
+   * también para él —la política de lectura de `buildings` es `is_staff()`—, así
+   * que la tarjeta se le ofrecía y le abría el panel de administración entero.
+   * Se resuelve aquí, con la ausencia del destino, y no con un rol dentro de esta
+   * pantalla: lo que decide quién entra donde ya lo sabe `App`, y repetir esa
+   * regla en dos sitios es garantizar que un día discrepen.
+   */
+  datos?: () => void
 }
 
 export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
@@ -120,7 +131,7 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
         </div>
       </section>
 
-      {(s.needsReview > 0 || s.quarantine > 0) && (
+      {ir.datos && (s.needsReview > 0 || s.quarantine > 0) && (
         <button
           type="button"
           onClick={ir.datos}
