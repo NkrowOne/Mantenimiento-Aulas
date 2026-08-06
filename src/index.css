@@ -268,6 +268,27 @@
       grid-template-rows 200ms var(--ease-out),
       opacity 200ms var(--ease-out);
   }
+
+  /*
+   * La fila que se puede mantener pulsada.
+   *
+   * Mantener el dedo sobre texto dentro de un `<button>` levanta en iOS la lupa
+   * y el menú «Copiar / Buscar», justo encima de donde va a subir la hoja de
+   * acciones: el gesto acaba abriendo dos cosas a la vez y la del sistema tapa
+   * la nuestra. `-webkit-touch-callout` mata el menú y `user-select` la
+   * selección que lo arrastra.
+   *
+   * Se aplica SOLO a las filas de un administrador. Para un técnico no hay
+   * pulsación larga que proteger, y quitarle la selección de texto sin motivo
+   * es quitarle una función del sistema a cambio de nada. En todo el repo no
+   * había ni un `select-none` ni un `-webkit-touch-callout`: esta es la primera
+   * vez que hace falta, y por eso lleva su nombre y no una utilidad suelta.
+   */
+  .sin-lupa {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
 }
 
 /*

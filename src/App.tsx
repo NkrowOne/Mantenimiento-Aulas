@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { FilaConAcciones } from '@/components/FilaConAcciones'
 import { InsigniaAveria, detalleDeAverias } from '@/components/InsigniaAveria'
 import { SyncChip } from '@/components/SyncChip'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
@@ -8,6 +9,11 @@ import { Diagnostico } from '@/features/admin/Diagnostico'
 import { InspectionPage } from '@/features/inspection/InspectionPage'
 import type { Correccion } from '@/features/inspection/useInspection'
 import { RoomListPage } from '@/features/rooms/RoomListPage'
+/* La hoja de acciones del maestro no va en `lazy()`: pesa lo que pesa un
+   formulario, no arrastra ninguna dependencia gorda y se abre con el dedo ya
+   apoyado en la fila. Un `Suspense` ahí significaría medio segundo de nada justo
+   después de un gesto que acaba de vibrar para confirmar que se ha entendido. */
+import { HojaDeMaestro } from '@/features/rooms/HojaDeMaestro'
 import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
 import { averiasPorEdificio, averiasPorSala } from '@/features/rooms/averias'
 import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
@@ -128,6 +134,31 @@ const TABS: Array<{ id: Tab; label: string; minRole: Role }> = [
 const RANK: Record<Role, number> = { tecnico: 0, supervisor: 1, admin: 2 }
 
 /**
+ * ¿Puede este rol abrir esta pestaña?
+ *
+ * Existe porque el filtro de `TABS` alimentaba ÚNICAMENTE la barra de abajo, y
+ * una barra sin botón no es una puerta cerrada: a «Datos» se llegaba desde la
+ * tarjeta ámbar del Panel —que es de técnico— y la aplicación montaba el panel
+ * de administración entero para quien no puede tocar nada de lo que hay dentro.
+ * El técnico veía el alta de edificios, el `⋯` de cada edificio con «Dar de baja»
+ * y la papelera con sus nombres y sus recuentos —que `archived_buildings` le
+ * sirve de verdad, porque es `security_invoker` sobre unas tablas que su rol sí
+ * lee— y solo descubría el problema al pulsar, leyendo un `confirm()` que promete
+ * que el edificio desaparecerá de todos los iPads y recibiendo después «Solo un
+ * administrador puede tocar la nomenclatura». No hay escalada de privilegios
+ * —los RPC fallan cerrados con 42501— pero enseñar acciones que no existen para
+ * quien las mira es enseñarle a desconfiar de todos los botones.
+ *
+ * La misma función decide las tres cosas: qué pestañas se pintan, qué pestaña se
+ * puede abrir y qué se monta debajo. Tres reglas separadas volverían a
+ * discrepar.
+ */
+function puedeVer(tab: Tab, role: Role): boolean {
+  const t = TABS.find((x) => x.id === tab)
+  return t !== undefined && RANK[role] >= RANK[t.minRole]
+}
+
+/**
  * Por qué la lista está vacía.
  *
  * «Sin datos. Conéctate una vez para descargarlos.» era la respuesta a las tres
@@ -190,6 +221,18 @@ export function App(): React.ReactElement {
    * cuenta: no hay consola donde mirar.
    */
   const [rolError, setRolError] = useState<string | null>(null)
+  /*
+   * Si el rol de la línea de arriba ya es el de verdad o todavía es el de
+   * partida.
+   *
+   * `tecnico` es el valor inicial mientras el perfil viaja, y sin esta distinción
+   * la reconducción de pestañas de abajo echaría de «Datos» a un administrador
+   * que acaba de recargar allí —la última pestaña se restaura desde Dexie antes
+   * de que conteste `profiles`— y lo dejaría en «Revisar» sin explicación. Se
+   * marca también cuando el perfil falla: ahí el rol se queda en técnico de
+   * verdad, y reconducir es lo correcto.
+   */
+  const [rolResuelto, setRolResuelto] = useState(false)
   /** Se escaneó una placa cuya sala no está en este dispositivo. */
   const [escaneoFallido, setEscaneoFallido] = useState<string | null>(null)
   const [diagnostico, setDiagnostico] = useState<ResultadoPull | null>(null)
@@ -199,6 +242,24 @@ export function App(): React.ReactElement {
   const [roomOrder, setRoomOrder] = useState<RoomOrder>('antiguedad')
   const [escaneando, setEscaneando] = useState(false)
   const [avisoQR, setAvisoQR] = useState<string | null>(null)
+  /*
+   * El edificio cuyas acciones están abiertas.
+   *
+   * No entra en `RoomView`: la vista se guarda en `db.meta['ultima-vista']` para
+   * poder devolver al técnico donde estaba, y restaurar una hoja abierta al
+   * recargar la reabriría sobre un edificio que quizá acaba de archivarse. Lo que
+   * merece sobrevivir a una recarga es dónde estás, no qué menú tenías
+   * desplegado.
+   *
+   * La confirmación de lo que hizo el servidor ya no se guarda aquí: se lee
+   * dentro de la propia hoja, que es fija y está a la altura del pulgar, y no se
+   * va hasta que se pulsa «Entendido». Pintada arriba de esta lista se quedaba
+   * fuera de la pantalla —son veintitrés edificios y quien acaba de actuar sobre
+   * el número veinte está a ochocientos píxeles de la cabecera, que no es
+   * `sticky`— y de paso empujaba la lista ochenta y cinco píxeles hacia abajo
+   * bajo el dedo, porque WebKit no ancla el scroll.
+   */
+  const [hojaEdificio, setHojaEdificio] = useState<Building | null>(null)
   // Hasta que se intenta rehidratar no se pinta la lista de edificios: si no,
   // se vería un parpadeo desde la raíz hasta donde estabas.
   const [restaurado, setRestaurado] = useState(false)
@@ -283,6 +344,75 @@ export function App(): React.ReactElement {
       zones: new Map(zones.map((z) => [z.id, z])),
     }
   }, [buildingId])
+
+  /*
+   * Las plantas y las salas del edificio cuya hoja está abierta.
+   *
+   * Acotado por el edificio pulsado, así que no corre mientras no haya hoja: la
+   * lista de edificios se repinta con cada descarga, y leer las 276 salas para
+   * un menú que nadie ha abierto sería pagar el precio en la pantalla que más se
+   * mira. Lo necesita la hoja para dos cosas: contar lo que se lleva por delante
+   * una baja y detectar un choque de código sin ir al servidor.
+   */
+  const contextoDeHoja = useLiveQuery(async () => {
+    const id = hojaEdificio?.id
+    if (!id) return null
+    const zonas = await db.zones.where('building_id').equals(id).toArray()
+    const salas = await db.rooms
+      .where('zone_id')
+      .anyOf(zonas.map((z) => z.id))
+      .toArray()
+    return { zonas, salas }
+  }, [hojaEdificio?.id])
+
+  /*
+   * La pantalla fantasma.
+   *
+   * `view` guarda el objeto `Building` por valor y nadie revalidaba que siguiera
+   * existiendo. Cuando la poda de la descarga se llevaba el edificio con la
+   * lista de salas abierta —porque otro dispositivo acaba de archivarlo, o
+   * porque lo ha archivado este mismo— quedaba una cabecera con el nombre de un
+   * edificio que ya no está y, debajo, «Este edificio no tiene salas. Conéctate
+   * una vez para descargarlas»: el mensaje de un fallo de red para algo que no
+   * lo era, y que invita a esperar una descarga que no va a traer nada.
+   *
+   * Se vigila en vivo y se vuelve a la raíz, salvo durante una revisión. Ahí no
+   * se toca: es trabajo delicado —ni la instalación de una versión nueva se
+   * atreve a interrumpirlo— y sacar a alguien del formulario a media aula sería
+   * peor que la pantalla fantasma. No hay nada que perder por esperar: el
+   * borrador y sus comprobaciones ya están en Dexie y en la cola de salida, así
+   * que el parte sube igual aunque el edificio esté archivado. Al salir de la
+   * revisión la vista pasa a `salas` o `ficha`, este efecto se vuelve a evaluar y
+   * ahí sí devuelve a la lista. Por eso no hace falta ningún estado extra.
+   */
+  const edificioVive = useLiveQuery(
+    async () =>
+      view.name === 'edificios' ? true : (await db.buildings.get(view.building.id)) !== undefined,
+    [view],
+    true,
+  )
+  useEffect(() => {
+    if (edificioVive === false && view.name !== 'revision') setView({ name: 'edificios' })
+  }, [edificioVive, view.name])
+
+  /*
+   * La pestaña abierta también tiene que caber en el rol.
+   *
+   * Es la contrapartida de `puedeVer` en el sitio por el que se colaba: `tab` no
+   * se elige solo desde la barra de abajo. Se restaura desde Dexie al arrancar
+   * —un dispositivo que se quedó en «Datos» y luego se degradó a técnico abría
+   * directamente en el panel de administración— y lo cambian atajos de otras
+   * pantallas. Reconducir aquí cubre los tres caminos y los que vengan después,
+   * que es lo que no hacía una comprobación escrita en cada llamada.
+   *
+   * Espera a `rolResuelto` a propósito: hasta que contesta `profiles` todo el
+   * mundo es técnico, y actuar antes echaría de su pestaña a cada administrador
+   * que recarga. Mientras tanto no se enseña nada de más, porque el render de
+   * cada pantalla comprueba el rol por su cuenta.
+   */
+  useEffect(() => {
+    if (rolResuelto && !puedeVer(tab, role)) setTab('revisar')
+  }, [rolResuelto, role, tab])
 
   /*
    * La custodia se engancha ANTES de restaurar nada, y fuera del efecto que
@@ -464,6 +594,7 @@ export function App(): React.ReactElement {
       const { data } = await supabase.auth.getUser()
       if (!data.user) {
         setRolError('No se ha podido identificar la sesión.')
+        setRolResuelto(true)
         return
       }
       const { data: profile, error } = await supabase
@@ -477,6 +608,7 @@ export function App(): React.ReactElement {
 
       if (error) {
         setRolError(`No se ha podido leer tu perfil: ${error.message}`)
+        setRolResuelto(true)
         return
       }
       if (!profile) {
@@ -484,9 +616,11 @@ export function App(): React.ReactElement {
           'Tu cuenta no tiene perfil, así que la aplicación te trata como técnico. ' +
             'Que un administrador ejecute: alta crear <tu-email> "<tu nombre>" admin',
         )
+        setRolResuelto(true)
         return
       }
       setRole(profile.role as Role)
+      setRolResuelto(true)
     })()
 
     const stop = startSync()
@@ -546,7 +680,9 @@ export function App(): React.ReactElement {
     )
   }
 
-  const visibleTabs = TABS.filter((t) => RANK[role] >= RANK[t.minRole])
+  // Por `puedeVer` y no por `RANK` a mano: la barra, la reconducción y el render
+  // deciden con la misma línea, que es lo que impide que vuelvan a discrepar.
+  const visibleTabs = TABS.filter((t) => puedeVer(t.id, role))
   const inspecting = tab === 'revisar' && view.name === 'revision'
 
   return (
@@ -656,6 +792,7 @@ export function App(): React.ReactElement {
           <BuscadorGlobal
             onPick={(building, room) => setView({ name: 'revision', building, room })}
           />
+
         {/* Misma regla que la lista de salas: el contenido va sobre papel. */}
         <ul className="divide-y divide-line-soft border-b border-line bg-surface">
           {(buildings ?? []).map((b) => {
@@ -666,61 +803,76 @@ export function App(): React.ReactElement {
 
             return (
               <li key={b.id}>
-                <button
-                  type="button"
-                  onClick={() => setView({ name: 'salas', building: b })}
-                  className="flex w-full items-center gap-3.5 px-4 py-3.5 text-left transition-colors duration-100 active:bg-raised"
+                <FilaConAcciones
+                  esAdmin={role === 'admin'}
+                  etiqueta={`Acciones del edificio ${b.code}`}
+                  alAbrir={() => setHojaEdificio(b)}
                 >
-                  {/*
-                    El código, en una chapa.
-                    Suelto competía con el nombre a la misma altura y el ojo no
-                    sabía cuál de los dos era la entrada. Metido en su recuadro
-                    monoespaciado se lee como lo que es: una matrícula.
-                  */}
-                  <span className="w-12 shrink-0 rounded-tag bg-raised py-1 text-center font-mono text-xs font-semibold text-accent">
-                    {b.code}
-                  </span>
-
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{b.name}</span>
-                    {total > 0 && (
-                      <span className="mt-1 flex items-center gap-2">
-                        {/*
-                          El avance del edificio, recto y sin animar.
-                          Es una medida, no una barra de carga: animarla obligaría
-                          a esperar para poder leerla, y aquí se lee de pasada.
-                        */}
-                        <span
-                          aria-hidden
-                          className="h-1 w-16 shrink-0 overflow-hidden rounded-full bg-line"
-                        >
-                          <span
-                            className={`block h-full ${pendientes === 0 ? 'bg-ok' : 'bg-warn'}`}
-                            style={{ width: `${total ? (hechas / total) * 100 : 0}%` }}
-                          />
-                        </span>
-                        <span className="truncate text-xs text-muted">
-                          {pendientes === 0
-                            ? `${total} salas al día`
-                            : `${pendientes} de ${total} por revisar`}
-                        </span>
+                  {(manejadores) => (
+                    <button
+                      type="button"
+                      onClick={() => setView({ name: 'salas', building: b })}
+                      {...manejadores}
+                      /* `sin-lupa` solo para el administrador, que es el único con
+                         pulsación larga: mantener pulsado el nombre del edificio
+                         levantaba la lupa de iOS y su menú «Copiar» encima de la
+                         hoja recién abierta. Al técnico no se le quita nada. */
+                      className={`flex w-full flex-1 items-center gap-3.5 px-4 py-3.5 text-left transition-colors duration-100 active:bg-raised ${
+                        role === 'admin' ? 'sin-lupa' : ''
+                      }`}
+                    >
+                      {/*
+                        El código, en una chapa.
+                        Suelto competía con el nombre a la misma altura y el ojo no
+                        sabía cuál de los dos era la entrada. Metido en su recuadro
+                        monoespaciado se lee como lo que es: una matrícula.
+                      */}
+                      <span className="w-12 shrink-0 rounded-tag bg-raised py-1 text-center font-mono text-xs font-semibold text-accent">
+                        {b.code}
                       </span>
-                    )}
-                  </span>
 
-                  {/* El triángulo del edificio: cuántas averías vivas hay
-                      puertas adentro, sumando todas sus salas. */}
-                  <InsigniaAveria
-                    n={cuenta?.averias ?? 0}
-                    detalle={detalleDeAverias(cuenta?.averias ?? 0)}
-                  />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{b.name}</span>
+                        {total > 0 && (
+                          <span className="mt-1 flex items-center gap-2">
+                            {/*
+                              El avance del edificio, recto y sin animar.
+                              Es una medida, no una barra de carga: animarla obligaría
+                              a esperar para poder leerla, y aquí se lee de pasada.
+                            */}
+                            <span
+                              aria-hidden
+                              className="h-1 w-16 shrink-0 overflow-hidden rounded-full bg-line"
+                            >
+                              <span
+                                className={`block h-full ${pendientes === 0 ? 'bg-ok' : 'bg-warn'}`}
+                                style={{ width: `${total ? (hechas / total) * 100 : 0}%` }}
+                              />
+                            </span>
+                            <span className="truncate text-xs text-muted">
+                              {pendientes === 0
+                                ? `${total} salas al día`
+                                : `${pendientes} de ${total} por revisar`}
+                            </span>
+                          </span>
+                        )}
+                      </span>
 
-                  {b.needs_review && (
-                    <span className="shrink-0 rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
-                      Sin identificar
-                    </span>
+                      {/* El triángulo del edificio: cuántas averías vivas hay
+                          puertas adentro, sumando todas sus salas. */}
+                      <InsigniaAveria
+                        n={cuenta?.averias ?? 0}
+                        detalle={detalleDeAverias(cuenta?.averias ?? 0)}
+                      />
+
+                      {b.needs_review && (
+                        <span className="shrink-0 rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
+                          Sin identificar
+                        </span>
+                      )}
+                    </button>
                   )}
-                </button>
+                </FilaConAcciones>
               </li>
             )
           })}
@@ -733,12 +885,37 @@ export function App(): React.ReactElement {
             </li>
           )}
         </ul>
+
+        {/*
+          La hoja espera a que Dexie conteste con las plantas y las salas del
+          edificio —un viaje de milisegundos, y la vibración del gesto ya ha
+          confirmado que se ha entendido—. Sin esperar, el desplegable de plantas
+          del alta se pintaría vacío y «Añadir una sala» empezaría pidiendo
+          escribir una planta que ya existe.
+        */}
+        {hojaEdificio && contextoDeHoja && (
+          <HojaDeMaestro
+            objeto={{
+              tipo: 'edificio',
+              edificio: hojaEdificio,
+              salas: contextoDeHoja.salas.length,
+            }}
+            zonas={contextoDeHoja.zonas}
+            salasDelEdificio={contextoDeHoja.salas}
+            edificios={buildings ?? []}
+            onCerrar={() => setHojaEdificio(null)}
+            /* La frase ya se ha leído dentro de la hoja: aquí solo queda
+               cerrarla. */
+            onHecho={() => setHojaEdificio(null)}
+          />
+        )}
         </>
       )}
 
       {tab === 'revisar' && view.name === 'salas' && (
         <RoomListPage
           building={view.building}
+          role={role}
           order={roomOrder}
           onOrderChange={setRoomOrder}
           onBack={() => setView({ name: 'edificios' })}
@@ -866,7 +1043,13 @@ export function App(): React.ReactElement {
                   setView({ name: 'edificios' })
                 },
                 incidencias: () => setTab('incidencias'),
-                datos: () => setTab('datos'),
+                /* Solo si de verdad se puede entrar: la tarjeta ámbar «Datos
+                   por revisar» se pinta en cuanto hay un edificio sin
+                   identificar, y ese contador es real también para un técnico
+                   —la política de lectura de `buildings` es `is_staff()`—. Sin
+                   este condicional, el único atajo de la aplicación a «Datos»
+                   era el que se le ofrecía a quien no puede usarlo. */
+                datos: puedeVer('datos', role) ? () => setTab('datos') : undefined,
               }}
             />
           )}
@@ -876,8 +1059,12 @@ export function App(): React.ReactElement {
           {/* El rol llega porque la configuración de la IA —que guarda un
               secreto— es de administrador, mientras que pedir informes es de
               supervisor. La pestaña la ven los dos. */}
-          {tab === 'informes' && <ReportsPage role={role} />}
-          {tab === 'datos' && <CleanupPage yo={userId} />}
+          {/* El rol se comprueba TAMBIÉN aquí, y no solo en la barra de
+              abajo: es lo único que hay entre un atajo —el de la tarjeta ámbar,
+              o cualquiera que se añada mañana— y el panel de administración
+              montado entero para quien no puede tocar nada de lo que enseña. */}
+          {tab === 'informes' && puedeVer('informes', role) && <ReportsPage role={role} />}
+          {tab === 'datos' && puedeVer('datos', role) && <CleanupPage yo={userId} />}
         </Suspense>
       )}
 

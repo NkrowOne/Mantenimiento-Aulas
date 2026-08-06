@@ -256,7 +256,17 @@ export async function loadReportData(
 
   const [sit] = await sql<Array<Record<string, string>>>`
     select
-      (select count(*) from rooms where active)                                    as salas_total,
+      -- De room_overview y no de rooms, y es la misma cuenta que el numerador:
+      -- desde que un edificio se puede archivar, rooms.active ya no define el
+      -- campus vivo. Archivar el edificio H deja sus 39 salas con active = true
+      -- a propósito —restaurar tiene que devolver lo que había—, así que
+      -- «count(*) from rooms where active» seguía diciendo 276 mientras
+      -- sin_revisar y nunca_revisadas, que leen de aquí, bajaban a 237. Y
+      -- analisis.ts divide una cosa entre la otra: la cobertura del campus
+      -- quedaba infravalorada para siempre, con 39 aulas que ya nadie puede
+      -- revisar contando como capacidad pendiente y el 100% inalcanzable — y ese
+      -- porcentaje viaja al prompt de la IA y a la frase del informe firmado.
+      (select count(*) from room_overview)                                         as salas_total,
       -- Fuera los borradores, y no solo las resueltas: un borrador es una nota a
       -- medias, y contarlo aquí infla justo el número que más se mira.
       --
@@ -326,10 +336,16 @@ export async function loadReportData(
     Array<{ code: string; name: string; salas: string; revisadas: string; abiertas: string; pendientes: string }>
   >`
     with salas as (
+      -- b.active además de r.active, por lo mismo que arriba: sin él, un
+      -- edificio archivado seguía teniendo su fila en la tabla por edificio —con
+      -- sus 39 salas y 0 revisadas, o sea señalado como el peor del campus— y
+      -- nadie podía hacer nada al respecto, porque sus aulas ya no bajan a
+      -- ningún iPad.
       select b.id, b.code, b.name, count(r.id) as n
       from buildings b
       join zones z on z.building_id = b.id
       join rooms r on r.zone_id = z.id and r.active
+      where b.active
       group by b.id, b.code, b.name
     ),
     revisadas as (

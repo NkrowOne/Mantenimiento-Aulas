@@ -43,7 +43,18 @@ export function useSummary() {
         needsReview,
         quarantine,
       ] = await Promise.all([
-        supabase.from('rooms').select('*', head),
+        /*
+         * El total de salas sale de `room_overview`, que es la lista de trabajo.
+         *
+         * Contra `rooms` contaba dos cosas que no son campus: las salas dadas de
+         * baja a mano (`active = false`) y, desde que hay papelera de edificios,
+         * las de un edificio archivado —que conservan `rooms.active = true` a
+         * propósito, para que restaurar devuelva lo que había—. Este número es el
+         * denominador de «revisadas este mes» y el de la frase «N% de 276»: con
+         * un conjunto distinto al del numerador, el porcentaje del panel no puede
+         * llegar a 100 y no coincide con el del informe firmado.
+         */
+        supabase.from('room_overview').select('room_id', head),
         /*
          * Las revisiones del mes, contadas por VISITA.
          *
@@ -74,7 +85,12 @@ export function useSummary() {
         supabase.from('alerts_lamp_low').select('*', head),
         supabase.from('alerts_stale_incidents').select('*', head),
         supabase.from('alerts_overdue_rooms').select('*', head),
-        supabase.from('buildings').select('*', head).eq('needs_review', true),
+        /* Sin los archivados: el azulejo de «sin identificar» es una lista de
+           trabajo pendiente, y un edificio provisional que se mandó a la papelera
+           ya no lo es. Contándolo, el número se quedaría en 1 para siempre
+           señalando a una pantalla donde no aparece nada — y un indicador que no
+           se puede bajar a cero es un indicador que se aprende a ignorar. */
+        supabase.from('buildings').select('*', head).eq('needs_review', true).eq('active', true),
         supabase.from('import_quarantine').select('*', head).eq('resolved', false),
       ]).then((rs) => {
         // Si una sola consulta falla, el panel entero es mentira: enseñaría

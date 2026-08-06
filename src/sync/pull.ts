@@ -127,7 +127,11 @@ export async function pullMaster(): Promise<ResultadoPull> {
 
   const vacio: Respuesta<Record<string, unknown>> = { data: [], error: null, completa: false }
   const tablas: Array<[string, PorPagina]> = [
-    ['buildings', (d, h) => supabase.from('buildings').select('*').order('sort_order').order('id').range(d, h)],
+    // Solo los vivos. Un edificio en la papelera tiene que dejar de venir para
+    // que la poda se lo lleve del dispositivo: mientras siguiera bajando, «dar
+    // de baja» sería una decisión que no llega al aula, que es el único sitio
+    // donde estorba la fila de un edificio que ya no se revisa.
+    ['buildings', (d, h) => supabase.from('buildings').select('*').eq('active', true).order('sort_order').order('id').range(d, h)],
     ['zones', (d, h) => supabase.from('zones').select('*').order('id').range(d, h)],
     ['room_overview', (d, h) => supabase.from('room_overview').select('*').order('room_id').range(d, h)],
     ['stock_items', (d, h) => supabase.from('stock_items').select('*').eq('active', true).order('id').range(d, h)],
@@ -281,6 +285,48 @@ export async function pullMaster(): Promise<ResultadoPull> {
   await podar(de('buildings'), db.buildings, (b) => b['id'] as string)
   await podar(de('zones'), db.zones, (z) => z['id'] as string)
   await podar(rooms, db.rooms, (r) => r['room_id'] as string)
+
+  /*
+   * Y lo que colgaba de un edificio que ya no baja.
+   *
+   * `zones` no se puede filtrar en su consulta —no tiene columna `active`, y
+   * filtrarla por el edificio obligaría a un embebido de PostgREST que metería
+   * un objeto anidado dentro de cada fila del espejo—, así que se podan aquí
+   * contra los edificios que SÍ han llegado. Y solo cuando esa descarga vino
+   * entera: con media respuesta, esto vaciaría el dispositivo.
+   *
+   * Se mira contra `db.buildings` y no contra la respuesta, y el orden importa:
+   * esto corre DESPUÉS de `podar(de('buildings'))`, así que lo local ya es la
+   * lista buena. Deducirlo de la respuesta sería más directo y es justo lo que
+   * no se puede hacer: cero filas es indistinguible de RLS bloqueando, y ahí se
+   * vaciaría el dispositivo entero por un token mal emitido.
+   *
+   * Con las salas pasa lo mismo y además tapa el agujero de `podar`, que se
+   * planta ante una respuesta vacía. Si el edificio que se archiva era el único
+   * con salas, `room_overview` devuelve cero filas y la poda de salas no actúa;
+   * pero `buildings` sí trae a los demás, el archivado desaparece del espejo por
+   * la poda de arriba y sus plantas quedan huérfanas — que es lo que esta pasada
+   * usa para llevarse también sus salas. Sin ella se quedarían en el iPad para
+   * siempre, colgando de una planta de un edificio que ya no existe.
+   *
+   * El caso extremo —archivar el ÚLTIMO edificio del campus— queda fuera a
+   * propósito y conviene saberlo: ahí `buildings` también llega vacío, la poda
+   * de arriba no actúa y en los demás iPads se quedaría el maestro entero de
+   * antes. Es el precio de no poder distinguir «no queda ninguno» de «RLS te ha
+   * cerrado la puerta», y se paga sabiendo que son 23 edificios y que dejar el
+   * campus a cero no es un estado al que se llegue sin querer. En el dispositivo
+   * que da la baja no se nota: eso lo limpia `aplicarOperacion`.
+   */
+  const edificios = de('buildings')
+  if (!edificios.error && edificios.completa) {
+    const vivos = new Set((await db.buildings.toCollection().primaryKeys()) as string[])
+    const huerfanas = (await db.zones.toArray()).filter((z) => !vivos.has(z.building_id))
+    if (huerfanas.length > 0) {
+      const ids = huerfanas.map((z) => z.id)
+      await db.rooms.where('zone_id').anyOf(ids).delete()
+      await db.zones.bulkDelete(ids)
+    }
+  }
 
   /*
    * Y los equipos, que es lo que hace que retirar signifique algo.

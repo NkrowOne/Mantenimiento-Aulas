@@ -378,31 +378,116 @@ arrancar, pero eso lo concede iOS por heurística y no es una garantía.
 
 ## 3. Editar edificios, salas y equipamiento
 
-Las altas y las bajas se hacen **desde la aplicación**, en `Datos → Salas y
-edificios`, y solo las ve un `admin`. Es a propósito: el maestro sostiene el
-histórico, los informes y las placas de la puerta, y una sala creada desde el
-aula con el código mal escrito se convierte en una sala duplicada de la que
-nadie sabe cuál es la buena.
+Las altas, las bajas y los nombres se tocan **desde la aplicación**, y solo los
+ve un `admin`. Hay dos sitios y no es una duplicación:
+
+- **`Datos → Salas y edificios`** — el panel: la lista completa, el alta de
+  edificios y la **papelera**. Cada fila —edificio, planta y sala— tiene su botón
+  de acciones `⋯`.
+- **La lista de «Revisar»** — manteniendo pulsada la fila del edificio, la de la
+  sala o la cabecera de la planta, o pulsando su `⋯`. Ahí está lo mismo menos el
+  alta de edificios y la papelera.
+
+En los dos sitios se abre **la misma hoja**, con los mismos verbos y las mismas
+frases: lo que se lee antes de dar de baja un edificio en el panel es palabra por
+palabra lo que se lee en el pasillo.
+
+Que se pueda desde la lista de trabajo es lo que evita que el maestro envejezca:
+un nombre mal escrito se descubre delante de la puerta, con el iPad en la mano, y
+obligar a apuntarlo en un papel para corregirlo por la tarde en otra pantalla es
+exactamente cómo se llega a una lista de la que nadie se fía. Sigue siendo solo
+de administrador — un técnico no ve ninguna de estas acciones, ni el gesto le
+hace nada —, y de eso se encarga el servidor y no la pantalla.
+
+**Todo esto necesita conexión**, y es la única parte de la aplicación que la
+necesita. Sin cobertura las acciones se ven, pero deshabilitadas y con el motivo
+escrito debajo. La asimetría es a propósito: lo que produce el técnico —una
+revisión, una incidencia, una foto— nace en el aula y no se puede repetir, así
+que se guarda sin red; el maestro es la lista sobre la que trabajan 23
+dispositivos a la vez, y la misma sala renombrada en dos iPads sin cobertura son
+dos verdades sin forma de reconciliar. Renombrar no es urgente delante de la
+puerta; revisar sí, y revisar sigue funcionando sin red.
+
+### Altas
 
 **Una sala nueva nace completa**: con su matrícula `SALA-000xxx`, su QR y el
 equipamiento por defecto de su edificio. La planta se escribe tal cual —`1ª
-PLANTA`— y si ya existe se reutiliza: «1ª Planta» y «1ª PLANTA» no crean dos.
+PLANTA`— y si ya existe se reutiliza: «1ª Planta» y «1ª PLANTA» no crean dos. Se
+añade desde las acciones del **edificio**: el `⋯` de su fila en el panel, o el
+botón `+ Sala` de la cabecera de su lista en «Revisar». Ahí no vale mantener
+pulsada una fila, porque la sala que se va a crear todavía no tiene ninguna.
 
-**Dar de baja no siempre es borrar**, y la diferencia la decide el servidor:
+Los edificios se dan de alta solo desde el panel. El código es el sufijo con el
+que las incidencias nombran sus salas —«1.7 H»— y la aplicación avisa si no es
+una a cuatro letras: no lo prohíbe, porque el servidor tampoco, pero con un
+código raro las importaciones de ese edificio acabarán en cuarentena.
 
-| La sala tiene… | Qué pasa |
+### Renombrar: edificio, sala y planta
+
+| Qué | Dónde | Qué cambia de verdad |
+|---|---|---|
+| **Edificio** | Código y nombre | El código anterior queda de **alias** en todas sus salas, así que las incidencias antiguas —«1.7 H»— se siguen resolviendo, y la próxima importación del Excel también |
+| **Sala** | Código, nombre y planta | Igual: el código viejo queda de alias. Cambiar la planta **mueve esa aula**; si la planta de origen se queda sin ninguna, desaparece sola |
+| **Planta** | El nombre, para todas sus aulas | Si el nombre nuevo es el de otra planta del mismo edificio, las dos se **fusionan** y sus aulas acaban juntas. La aplicación lo avisa antes, con el número de aulas delante, y el botón pasa a llamarse «Fusionar las plantas» |
+
+Dos verbos distintos a propósito: la hoja de una **sala** se titula «Renombrar la
+sala» y cambia la planta de esa aula sola; la de una **planta** se titula
+«Renombrar la planta» y cambia el nombre para todas las suyas. Llamarlas igual
+haría que alguien renombrara una planta entera creyendo que movía un aula.
+
+Un edificio y una sala abren primero un menú —renombrar, añadir, dar de baja—;
+una planta va directa a su formulario, porque renombrarla es lo único que se le
+puede hacer: una planta se vacía moviendo sus aulas, y entonces desaparece sola.
+
+**La matrícula no cambia nunca al renombrar.** `SALA-000xxx` va grabada en la
+placa atornillada a la puerta y el QR codifica el identificador, no el código:
+renombrar no invalida ni una de las 276 placas. Si lo que quieres es que la placa
+diga el nombre nuevo, reimprímela desde `Placas de puerta`.
+
+Los choques se avisan mientras escribes —«ya hay una sala 1.7 en esa planta»—,
+pero quien decide es el servidor, que es el único que ve las 276 salas a la vez.
+Si lo rechaza, el mensaje que sale es el suyo, tal cual.
+
+### Bajas y papelera
+
+**Dar de baja no siempre es borrar**, y la diferencia la decide el servidor —que
+es el único que ve el histórico— y la dice en el mensaje:
+
+| Lo que se da de baja | Qué pasa |
 |---|---|
-| Nada | Se borra de verdad, con el equipamiento que le puso el defecto |
-| Revisiones, incidencias, inventarios o consumos | Se **archiva**: sale de la lista de trabajo, del buscador y de los dispositivos, y todo lo que se hizo allí se conserva entero |
+| Sala sin nada | Se borra de verdad, con el equipamiento que le puso el defecto |
+| Sala con revisiones, incidencias, inventarios o consumos | Se **archiva**: sale de la lista de trabajo, del buscador y de los dispositivos, y todo lo que se hizo allí se conserva entero |
+| Edificio vacío | Se borra de verdad y su código **queda libre** |
+| Edificio con salas | Se **archiva** entero: desaparece de la lista de trabajo y de los iPads, con sus salas, sus revisiones y su histórico intactos |
 
-Las archivadas salen plegadas al final de la sección, con un botón de
-**Reactivar**. Borrarlas de verdad sería tirar el histórico de un año para
-limpiar una lista.
+Un edificio archivado **se restaura siempre** desde `Datos → Salas y edificios`,
+al final de la sección. Cada uno sale con lo que recupera al lado —«39 salas ·
+412 revisiones»— para que «Restaurar» sea una decisión y no una apuesta. Su
+código sigue ocupado mientras está ahí: es el que llevan las placas y el
+histórico, y reciclarlo mientras el original se puede restaurar sería fabricar
+dos edificios «H».
 
-Un edificio se borra solo cuando está vacío. Si todavía tiene salas, el
-servidor lo rechaza y dice cuántas: para el caso frecuente —el duplicado— lo que
-toca es **Fusionar**, que está en `Edificios sin identificar` y se lleva consigo
-zonas, salas e incidencias.
+**Archivar un edificio no toca sus salas.** Siguen activas debajo de él, y por
+eso salen en `Salas archivadas` marcadas con «Se restaura con su edificio» en
+lugar del botón de **Reactivar**: reactivar una sola no la devolvería a ninguna
+parte, y el servidor lo rechaza. Restaurar el edificio devuelve exactamente lo
+que había, incluidas las aulas que alguien había archivado a mano meses antes —
+que siguen archivadas, que es lo correcto. Esas son las que salen con la tercera
+frase, «Archivada aparte: se reactiva cuando vuelva su edificio»: ni vuelven con
+el edificio ni se pueden reactivar todavía, y decirlo es lo que evita restaurar
+un edificio esperando un aula que no va a aparecer.
+
+Fusionar sigue existiendo y es otra cosa: está en `Edificios sin identificar`,
+se lleva consigo zonas, salas e incidencias, y es lo que toca cuando el problema
+es un **duplicado** —el mismo edificio dos veces con códigos distintos— y no un
+edificio que sobra. Un edificio archivado no aparece como destino de una fusión,
+y si aun así se pide —la lista puede llevar un minuto de retraso respecto a lo
+que otro administrador acaba de archivar— el servidor la rechaza: lo que se
+moviera allí desaparecería con él.
+
+En los demás dispositivos esto tarda **hasta dos minutos** en verse, o lo que
+tarde el iPad en volver a primer plano o a tener red. No hay que pedirle nada a
+nadie.
 
 ### El equipamiento por defecto
 
@@ -430,15 +515,13 @@ en esta misma pantalla.
 
 ### Cambios en lote
 
-Para lo que no cabe en la pantalla, SQL directo:
+Para lo que no cabe en la pantalla, SQL directo. **Renombrar ya no está aquí**:
+hacerlo con un `update` a mano se salta lo que hace la aplicación —dejar el
+código viejo de alias— y a partir de ahí las incidencias importadas de esa sala
+caen en cuarentena sin que nadie relacione una cosa con la otra. Usa la hoja de
+la sala, en el panel o en «Revisar».
 
 ```sql
--- Renombrar una sala
-update rooms set name = 'Aula Magna' where code = '1.7'
-  and zone_id in (select z.id from zones z
-                  join buildings b on b.id = z.building_id
-                  where b.code = 'H');
-
 -- Corregir el equipamiento: es lo que decide qué comprobaciones aparecen
 update rooms
 set capabilities = capabilities || '{"microfono": true, "camara": true}'::jsonb
