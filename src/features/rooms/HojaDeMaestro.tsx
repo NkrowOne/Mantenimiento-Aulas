@@ -43,14 +43,22 @@
  *  - **Sin cobertura la hoja se abre igual**, con las acciones deshabilitadas y
  *    el motivo escrito debajo. Esconderlas convertiría «no está el botón» en un
  *    misterio, y el motivo explica la asimetría en vez de dejarla como capricho.
- *  - **La confirmación de lo hecho se queda DENTRO de la hoja**, hasta que se
- *    pulse «Entendido». Se pintaba arriba de la lista, en una cabecera que no es
- *    `sticky` dentro de un documento que scrollea entero: quien acababa de dar de
- *    baja el edificio veinte de veintitrés la tenía a ochocientos píxeles por
- *    encima del borde de la pantalla y no la leía nunca. Y esa frase es
- *    exactamente la que distingue «archivado» de «borrado» —lo recuperable de lo
- *    que ya no está—, una decisión que toma el servidor y que ni el `confirm()`
- *    previo puede adelantar: cuenta las salas archivadas, que el iPad no tiene.
+ *  - **La confirmación de lo hecho solo existe donde dice algo que no se sabía.**
+ *    Y son las dos bajas: ahí el servidor decide entre «archivado» y «borrado»
+ *    —lo recuperable y lo que ya no está— contando salas y histórico que el iPad
+ *    no tiene, así que ni el `confirm()` previo puede adelantarlo. Esa frase se
+ *    queda dentro de la hoja hasta que se pulse «Entendido», porque pintada
+ *    arriba de la lista —una cabecera que no es `sticky` en un documento que
+ *    scrollea entero— quien acababa de actuar sobre el edificio veinte de
+ *    veintitrés la tenía a ochocientos píxeles fuera de la pantalla.
+ *
+ *    Renombrar una sala, crear una y renombrar una planta o un edificio NO la
+ *    tienen: la hoja se cierra sola al guardar. Ahí la frase no contaba nada que
+ *    no estuviera ya en la pantalla de detrás —`aplicarOperacion` actualiza el
+ *    espejo y refresca ANTES de volver, así que la sala renombrada se ve
+ *    renombrada en la lista— y cobrar un toque por leer lo que ya se está viendo
+ *    es una traba en mitad del flujo, no una confirmación. Quien corrige la
+ *    nomenclatura de un edificio hace esto veinte veces seguidas.
  *
  * Nota de forma: aquí no se declara ni un componente interno. Un componente
  * definido dentro del cuerpo de otro es un tipo nuevo en cada render, así que
@@ -122,6 +130,29 @@ type Paso = 'menu' | 'renombrar' | 'nueva-sala'
  * zona: los identificadores de este esquema no llevan blancos.
  */
 const PLANTA_NUEVA = ' nueva'
+
+/**
+ * Las operaciones que se paran a decir lo que han hecho, y las únicas.
+ *
+ * El criterio no es la gravedad: es si el servidor ha podido decidir algo que
+ * quien pulsó no podía saber. `delete_building` y `delete_room` cuentan salas
+ * archivadas e histórico que el dispositivo no tiene, así que eligen entre
+ * archivar y borrar después de que el `confirm()` haya prometido una de las dos
+ * — y perder esa frase es quedarse creyendo lo contrario de lo que pasó.
+ *
+ * Todo lo demás se cierra solo. Un renombrado no tiene sorpresa que contar: el
+ * resultado está en la lista de detrás en cuanto la hoja se quita de en medio,
+ * y una confirmación de lo evidente es un toque cobrado a quien está corrigiendo
+ * la nomenclatura de un edificio entero, aula por aula.
+ *
+ * Que se cierre no pierde el mensaje donde sí se lee: `onHecho` lo recibe igual,
+ * y el panel de «Datos» —que sí tiene sitio fijo para enseñarlo— lo sigue
+ * pintando. En el aula, donde no hay sitio, simplemente ya no estorba.
+ */
+const CONFIRMACION_OBLIGADA: ReadonlyArray<OperacionDeMaestro['kind']> = [
+  'baja-edificio',
+  'baja-sala',
+]
 
 const TIPOS: Array<{ value: RoomKind; label: string }> = [
   { value: 'aula', label: 'Aula' },
@@ -255,7 +286,13 @@ export function HojaDeMaestro({
     setFallo(null)
     setEnviando(true)
     void aplicarOperacion(op, qc)
-      .then(setHecho)
+      .then((mensaje) => {
+        if (CONFIRMACION_OBLIGADA.includes(op.kind)) setHecho(mensaje)
+        // Se cierra sin escalón. El foco no se cae al `<body>`: `HojaDeAcciones`
+        // lo devuelve a la fila que abrió la hoja al desmontarse, que es donde
+        // estaba la mano y donde acaba de cambiar lo que se ha guardado.
+        else onHecho(mensaje)
+      })
       .catch((e: unknown) => {
         /*
          * El texto del servidor, tal cual. `maestro.ts` ya lo ha convertido en
@@ -370,19 +407,22 @@ export function HojaDeMaestro({
   )
 
   // ---------------------------------------------------------------------------
-  // Ya está hecho: la frase del servidor, aquí y no en la lista de detrás
+  // Una baja aplicada: qué de las dos cosas hizo el servidor
   // ---------------------------------------------------------------------------
 
   /*
    * Va la primera de todas las ramas, y sin salida por el velo.
    *
-   * Es la única confirmación que existe de que la operación se ha aplicado, y en
-   * las bajas es además la única que dice cuál de las dos cosas hizo el servidor:
-   * `delete_building` cuenta TODAS las salas —archivadas incluidas— y el iPad
-   * solo tiene las vivas, así que un edificio cuyas aulas se archivaron a mano da
-   * `salas === 0` en el `confirm()` previo, que promete «se borra de verdad y su
-   * código queda libre», y el servidor contesta «archivado». Perder esa frase es
-   * quedarse creyendo lo contrario de lo que ha pasado.
+   * Solo llega aquí lo que está en `CONFIRMACION_OBLIGADA`, y es donde esta
+   * pantalla se gana el toque que cuesta: dice cuál de las dos cosas hizo el
+   * servidor. `delete_building` cuenta TODAS las salas —archivadas incluidas— y
+   * el iPad solo tiene las vivas, así que un edificio cuyas aulas se archivaron
+   * a mano da `salas === 0` en el `confirm()` previo, que promete «se borra de
+   * verdad y su código queda libre», y el servidor contesta «archivado». Perder
+   * esa frase es quedarse creyendo lo contrario de lo que ha pasado.
+   *
+   * Lo que se cierra solo —renombrar, crear— no pasa por aquí: allí no hay dos
+   * respuestas posibles que distinguir, y el escalón era trabajo sin nada dentro.
    *
    * Por eso se lee aquí, en la capa fija, encima de la lista y a la altura del
    * pulgar, y no se va hasta que se pulsa «Entendido». Pintada arriba de una

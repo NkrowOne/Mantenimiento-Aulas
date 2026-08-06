@@ -42,7 +42,17 @@ export function UpdatePrompt(): React.ReactElement | null {
       /* Entra deslizándose desde el borde por el que vive, no aparece de la
          nada. `translateY(100%)` en porcentaje: se mueve su propio alto, sea
          cual sea, sin píxeles cableados que se rompan al cambiar el texto. */
-      className="update-bar fixed inset-x-0 bottom-0 z-30 border-t border-accent/30 bg-accent-tint backdrop-blur"
+      /* `solo-pantalla`, como la cabecera y la barra de pestañas: esta barra se
+         monta al lado de las dos hojas que se imprimen —el inventario y las
+         placas— y es el tercer hermano fijo, el único que se había quedado sin
+         la clase. Sin ella, Chrome repite los elementos fijos en CADA página, y
+         un papel que se firma y se archiva salía con «Hay una versión nueva. /
+         Ahora no / Actualizar» al pie de todas ellas, sin el fondo teñido —los
+         navegadores lo quitan— o sea encima de las últimas filas del inventario.
+         Y el escenario es el corriente: la versión aparece a media jornada, la
+         barra sale porque no era momento seguro, y quien imprime no la cierra
+         porque no le impide nada. */
+      className="update-bar solo-pantalla fixed inset-x-0 bottom-0 z-30 border-t border-accent/30 bg-accent-tint backdrop-blur"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">

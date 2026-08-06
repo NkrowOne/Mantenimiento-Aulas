@@ -239,18 +239,23 @@ async function main(): Promise<void> {
   await page.waitForTimeout(500)
   await shot('salas')
 
-  // El orden por planta, con sus cabeceras: es lo que convierte la lista en un
-  // recorrido en vez de en una cola temporal.
-  await page.getByRole('button', { name: 'Por planta' }).click()
+  /*
+   * El otro orden, el de la cola de trabajo.
+   *
+   * La captura `salas` de arriba ya sale por planta —es el orden con el que se
+   * abre un edificio—, así que volver a pulsar «Por planta» aquí fotografiaba
+   * dos veces la misma pantalla. Lo que falta ver es el cambio: sin cabeceras de
+   * planta y con lo más atrasado arriba.
+   */
+  await page.getByRole('button', { name: 'Más antiguas' }).click()
   await page.waitForTimeout(400)
-  await shot('salas-por-planta')
+  await shot('salas-mas-antiguas')
 
   // Y el buscador filtrando.
   await page.getByPlaceholder('Buscar sala').fill('crimin')
   await page.waitForTimeout(400)
   await shot('salas-buscando')
   await page.getByPlaceholder('Buscar sala').fill('')
-  await page.getByRole('button', { name: 'Más antiguas' }).click()
   await page.waitForTimeout(300)
 
   // La fila de la sala, no el título de la placa: ahora hay buscador y cabecera

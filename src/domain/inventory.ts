@@ -178,7 +178,7 @@ export interface Sugerencia {
 }
 
 /** Qué campo del equipo se está autocompletando. */
-export type CampoDeEquipo = 'model' | 'label'
+export type CampoDeEquipo = 'model' | 'label' | 'brand'
 
 /**
  * Lo que ya se ha escrito para este tipo de equipo, en todo el parque.
@@ -198,6 +198,15 @@ export type CampoDeEquipo = 'model' | 'label'
  * `label` mira también fuera de la sala, y ahí está su valor: «Pantalla del
  * atril» se inventa en un aula y a partir de ese momento se ofrece en las demás,
  * que es como una plantilla que nadie ha tenido que mantener.
+ *
+ * `brand` es donde más rinde de los tres, y no por casualidad: en todo el parque
+ * hay ocho marcas. Con tan pocas, la lista que sale al enfocar el campo vacío es
+ * prácticamente el catálogo entero, así que la marca se elige de un toque y
+ * nunca llega a teclearse — y `EPSON`, `epson` y `Epsom` no llegan a existir.
+ *
+ * Los tres campos se leen igual, con `asset[campo]`, porque los tres son
+ * `string | null` en el equipo: añadir uno nuevo no pide tocar nada de aquí
+ * abajo.
  */
 export function vocabularioDeTipo(
   assets: Asset[],

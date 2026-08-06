@@ -138,6 +138,15 @@ interface Props {
   onCorregir: (correccion: Correccion) => void
   /** Ir a la hoja de placas del edificio, lista para imprimir. */
   onImprimir: () => void
+  /**
+   * Ir a la hoja de inventario de ESTA sala, lista para guardar como PDF.
+   *
+   * Opcional, y sin manejador no se pinta el botón: es una acción de oficina que
+   * la ficha no necesita para hacer su trabajo —llegar al aula y ver qué hay—, y
+   * un botón montado siempre que a veces no lleva a ninguna parte enseña a
+   * desconfiar de todos los botones de la pantalla.
+   */
+  onInventario?: () => void
 }
 
 export function RoomSheet({
@@ -149,6 +158,7 @@ export function RoomSheet({
   onRevisar,
   onCorregir,
   onImprimir,
+  onInventario,
 }: Props): React.ReactElement {
   const qc = useQueryClient()
   const [abierto, setAbierto] = useState(false)
@@ -304,17 +314,43 @@ export function RoomSheet({
               ref={room.short_ref}
               id={room.id}
             />
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={onImprimir}
-                className="key key-quiet min-h-11 px-3 text-sm"
-              >
-                Imprimir las placas del edificio
-              </button>
-            </div>
           </section>
         )}
+
+        {/*
+          Las dos hojas que se imprimen desde aquí, en una fila discreta y fuera
+          del bloque de la placa.
+
+          Estaban dentro, y con `room.short_ref` nulo —una sala que todavía no ha
+          recibido matrícula, o que este dispositivo aún no ha descargado— la
+          sección entera no se pinta: el único acceso a las placas del edificio
+          desaparecía justo en la sala que hace falta etiquetar, y meter ahí el
+          inventario habría atado una hoja que no tiene nada que ver con las
+          placas a que ESTA sala tenga una.
+
+          En `key-quiet` y con la letra pequeña a propósito: son papeleo de
+          oficina, y la ficha se abre para revisar. Compitiendo con «Revisar
+          esta sala» —que está debajo, en acento y a ancho completo— convertirían
+          la pantalla de trabajo en un menú de descargas.
+        */}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onImprimir}
+            className="key key-quiet min-h-11 px-3 text-sm"
+          >
+            Imprimir las placas del edificio
+          </button>
+          {onInventario && (
+            <button
+              type="button"
+              onClick={onInventario}
+              className="key key-quiet min-h-11 px-3 text-sm"
+            >
+              Inventario en PDF
+            </button>
+          )}
+        </div>
 
         {/*
           El índice, y de qué está hecho.

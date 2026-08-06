@@ -131,6 +131,11 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
         room_id: roomId,
         label,
         serial: null,
+        // La marca y el modelo nacen vacíos y se rellenan corrigiendo, con el
+        // aparato delante. Un alta es «aquí hay un proyector»; leerle el rótulo
+        // es otro gesto y otro momento, y pedirlo para poder guardar es como se
+        // consigue que el equipo no se apunte.
+        brand: null,
         model: null,
         status: 'instalado',
         created_at: new Date().toISOString(),
@@ -225,6 +230,12 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
    * «Averiado» seguido para que la segunda escritura, con el elemento de antes
    * en la mano, mandara `model: null` y borrara lo recién escrito. El técnico lo
    * veía en pantalla —el campo conservaba el texto— y el dato ya no estaba.
+   *
+   * Y lo que no va en el payload no sube, aunque se haya guardado en el espejo.
+   * Es el mismo fallo por el otro lado: el campo se escribe, se ve en la lista
+   * de la sala y se queda en ese iPad para siempre — la hoja de inventario que
+   * lo pide sale en blanco y nadie entiende por qué, porque en el aula el dato
+   * está. Por eso `brand` entra aquí a la vez que en el formulario.
    */
   const patchAsset = useCallback(async (asset: Asset, patch: Partial<Asset>): Promise<void> => {
     const actual = (await db.assets.get(asset.id)) ?? asset
@@ -236,6 +247,7 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
       room_id: next.room_id,
       label: next.label,
       serial: next.serial,
+      brand: next.brand,
       model: next.model,
       status: next.status,
     })
@@ -364,9 +376,9 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
  * Mover un equipo de una sala a otra.
  *
  * No es un alta seguida de una baja: es la MISMA fila que cambia de sitio, y
- * eso importa porque el número de serie, el modelo y su histórico de averías
- * viajan con el aparato. Dar de baja y volver a crear rompería justo eso, que
- * es lo único que un inventario aporta sobre una lista.
+ * eso importa porque el número de serie, la marca, el modelo y su histórico de
+ * averías viajan con el aparato. Dar de baja y volver a crear rompería justo
+ * eso, que es lo único que un inventario aporta sobre una lista.
  *
  * La etiqueta se recalcula en el destino: llegar como «Pantalla 2» a una sala
  * donde ya hay una «Pantalla 2» chocaría contra el índice único de la base, y
@@ -390,12 +402,18 @@ async function trasladarAsset(
 
   const movido: Asset = { ...asset, room_id: destinoRoomId, label }
   await db.assets.put(movido)
+  // El payload lleva el equipo ENTERO y no solo la sala y la etiqueta, y por eso
+  // la marca tiene que estar aquí también: `enqueue` guarda por id, así que si el
+  // equipo todavía tenía en la cola la corrección de hace un minuto —sin
+  // cobertura es lo normal—, este envío la sustituye. Lo que falte en esta lista
+  // no es que llegue más tarde: es que no llega nunca.
   await enqueue('asset', movido.id, {
     id: movido.id,
     asset_type_id: movido.asset_type_id,
     room_id: movido.room_id,
     label: movido.label,
     serial: movido.serial,
+    brand: movido.brand,
     model: movido.model,
     status: movido.status,
   })

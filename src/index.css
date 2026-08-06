@@ -32,12 +32,26 @@
     padding-top: env(safe-area-inset-top);
 
     /*
-     * `pan-y` deja el desplazamiento vertical y quita todo lo demás: pellizco
-     * para ampliar, arrastre lateral y el zoom por doble toque. Es lo que
-     * bloquea el pellizco en Android y en Chrome; el WebKit de iOS necesita
-     * además los manejadores de `main.tsx`.
+     * Quita el pellizco para ampliar y el zoom por doble toque, y deja pasar el
+     * desplazamiento. Es lo que bloquea el pellizco en Android y en Chrome; el
+     * WebKit de iOS necesita además los manejadores de `main.tsx`.
+     *
+     * `pan-x pan-y` y no `pan-y`, que es lo que había: el valor efectivo de
+     * `touch-action` no se hereda, se INTERSECA con el de todos los ancestros,
+     * así que un `pan-y` aquí borraba el arrastre horizontal de toda la
+     * aplicación —incluidos los carriles `.scroll-x`, que existen justo para
+     * eso— y ningún `touch-action` en el carril podía devolvérselo. Con la hoja
+     * de inventario se vio: ocho columnas no caben en un teléfono, y «Último
+     * cambio» y «Baja» quedaban donde no llegaba ningún dedo.
+     *
+     * Lo que `pan-y` protegía de paso —que un tirón lateral accidental sacara
+     * la pantalla de sitio— lo protege ahora lo que debía protegerlo desde el
+     * principio: que ninguna pantalla se desborde a lo ancho por su cuenta. Lo
+     * que no cabe va dentro de un `.scroll-x`, y ahí moverlo es lo que se
+     * pretende. `pinch-zoom` sigue sin aparecer en la lista, que es lo que de
+     * verdad había que cerrar.
      */
-    touch-action: pan-y;
+    touch-action: pan-x pan-y;
     overscroll-behavior: none;
   }
 
@@ -326,12 +340,15 @@
 /*
  * Impresión.
  *
- * La única cosa de esta aplicación que se imprime son las placas de puerta, y se
- * imprimen una vez por sala y para siempre. Así que la hoja no puede llevar
- * navegación, ni cabecera, ni el resto de la interfaz: todo eso se va, y queda
- * la rejilla de placas sobre papel.
+ * De esta aplicación se imprimen dos papeles: las placas de puerta —una vez por
+ * sala y para siempre— y la hoja de inventario, que se lleva al aula, se
+ * contrasta contra los aparatos que hay y se archiva firmada. Ninguno de los dos
+ * puede llevar navegación, ni cabecera, ni el resto de la interfaz: todo eso se
+ * va, y queda el documento sobre papel.
  *
- * `.solo-pantalla` marca lo que desaparece; `.hoja-placas` es lo que queda.
+ * `.solo-pantalla` marca lo que desaparece —y lo llevan también la cabecera y la
+ * barra de pestañas de la aplicación, porque las dos hojas se pintan dentro de
+ * ellas—; `.hoja-placas` y `.hoja-inventario` son lo que queda.
  */
 @media print {
   .solo-pantalla {
@@ -382,6 +399,111 @@
   .hoja-placas > * {
     break-inside: avoid;
     page-break-inside: avoid;
+  }
+
+  /*
+   * La hoja de inventario.
+   *
+   * No se parece a la de placas: aquí no hay una rejilla de tarjetas sueltas
+   * sino una TABLA larga —un edificio son cientos de filas y varias páginas—, y
+   * todo lo de abajo existe porque una tabla que se parte mal deja de ser un
+   * documento. Se comparte con las placas lo de arriba: `.solo-pantalla`, el
+   * papel blanco forzado y el `@page`.
+   */
+
+  /*
+   * La cabecera de la tabla se repite en cada página.
+   *
+   * Es la regla que más se nota: sin ella, la segunda página de un edificio son
+   * filas sin cabecera, y ocho columnas de texto corto —marca, modelo, serie,
+   * tres fechas— sin cabecera no se pueden leer. Nadie sabe si `12 mar 2026` es
+   * el alta, el último cambio o la baja, que es justo lo que se va a mirar.
+   *
+   * `break-after` es la otra mitad: la cabecera tampoco se queda sola al pie de
+   * una página con sus filas en la siguiente.
+   */
+  .hoja-inventario thead {
+    display: table-header-group;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /*
+   * El encabezado de cada sala, pegado a su primera fila.
+   *
+   * Va en el `caption` de la tabla, así que es esto lo que impide el corte más
+   * absurdo posible: «Planta 2 · 2.14» al pie de una página y sus equipos al
+   * principio de la siguiente, donde se leen como si fueran de la sala anterior.
+   */
+  .hoja-inventario caption {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /*
+   * Ninguna fila se parte entre dos páginas. Una fila lleva dos líneas —la
+   * etiqueta con su tipo debajo, la fecha con lo que pasó debajo— y partirla
+   * deja el tipo de un equipo colgando bajo la cabecera de la página siguiente,
+   * pegado a la etiqueta que no le corresponde.
+   */
+  .hoja-inventario tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* La tabla, al ancho del papel: con `auto` el navegador la encoge a lo que
+     ocupa el texto y deja media hoja en blanco a la derecha, que es espacio que
+     hace falta para escribir a mano los números de serie que faltan. */
+  .hoja-inventario table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  /* El carril horizontal es cosa del teléfono: en A4 la tabla cabe entera al
+     ancho de la página. Se abre aquí porque un contenedor con `overflow` recorta
+     al imprimir lo que se salga de él —y lo que se recorta en un papel no se ve
+     que falta—, y porque un carril de pantalla dentro de un documento tampoco
+     tiene ningún sentido. */
+  .hoja-inventario .scroll-x {
+    overflow: visible;
+  }
+
+  /*
+   * Un solo tamaño de letra, y en puntos.
+   *
+   * Las utilidades de Tailwind ponen el tamaño en cada elemento, así que un
+   * `font-size` en el contenedor no llegaría a ninguna celda: hay que nombrar
+   * los elementos que de verdad llevan texto. Y los tamaños de pantalla no
+   * sirven tal cual en papel: `text-xs` son 12px, que el navegador imprime como
+   * 9pt, y con eso las segundas líneas de cada celda —el tipo bajo la etiqueta,
+   * las marcas de «sin validar»— quedan al filo de lo que se lee de pie en un
+   * aula, y por debajo de eso en cuanto la hoja pasa por una fotocopiadora.
+   *
+   * Se unifica en 9.5pt en vez de escalar: una jerarquía de tres tamaños dentro
+   * de una tabla de ocho columnas no ordena nada, solo pica el bloque. Lo que
+   * separa las cosas aquí son las columnas y los filetes.
+   */
+  .hoja-inventario caption,
+  .hoja-inventario th,
+  .hoja-inventario td,
+  .hoja-inventario span,
+  .hoja-inventario p,
+  .hoja-inventario dt,
+  .hoja-inventario dd {
+    font-size: 9.5pt;
+    line-height: 1.3;
+  }
+
+  /* Aire dentro de la celda y el filete que separa las filas. El color sale del
+     bloque de arriba, que ya deja `--line` en un gris que se ve impreso. */
+  .hoja-inventario th,
+  .hoja-inventario td {
+    padding: 1mm 2mm 1mm 0;
+    border-bottom: 0.2mm solid rgb(var(--line-soft));
+  }
+
+  .hoja-inventario thead th {
+    border-bottom: 0.3mm solid rgb(var(--line));
   }
 
   @page {

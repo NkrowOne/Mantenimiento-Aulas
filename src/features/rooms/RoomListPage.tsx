@@ -21,6 +21,8 @@ interface Props {
   onBack: () => void
   /** Abrir la hoja de placas imprimibles de este edificio. */
   onPlacas: () => void
+  /** Abrir la hoja de inventario de este edificio, lista para guardar como PDF. */
+  onInventario: () => void
   order: RoomOrder
   onOrderChange: (order: RoomOrder) => void
   /**
@@ -51,6 +53,7 @@ export function RoomListPage({
   onPick,
   onBack,
   onPlacas,
+  onInventario,
   order,
   onOrderChange,
   role,
@@ -124,7 +127,12 @@ export function RoomListPage({
         </button>
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <h1 className="text-xl font-semibold tracking-tight">{building.name}</h1>
-          <div className="flex shrink-0 items-center">
+          {/* Se envuelve. Con el tercer botón la fila ya no cabe en un iPhone
+              —«+ Sala», «Placas de puerta» e «Inventario del edificio» miden más
+              que el ancho de la pantalla siendo administrador— y sin `flex-wrap`
+              el último se salía por la derecha, fuera de alcance y sin scroll
+              horizontal que lo rescatara. */}
+          <div className="flex flex-wrap items-center justify-end">
             {/*
               Añadir una sala tiene botón propio, y no solo la pulsación larga.
               Un aula nueva no está en la lista —esa es toda la cuestión—, así que
@@ -147,9 +155,21 @@ export function RoomListPage({
             <button
               type="button"
               onClick={onPlacas}
-              className="-mr-2 min-h-11 px-2 text-sm text-accent"
+              className="min-h-11 px-2 text-sm text-accent"
             >
               Placas de puerta
+            </button>
+            {/* Y el inventario del edificio, al lado: las dos son hojas que se
+                imprimen del edificio que se está recorriendo, y quien tiene que
+                entregar el inventario de un aulario lo pide estando en él. El
+                `-mr-2` viaja al último de la fila, que es el que tiene que
+                alinear su texto con el borde. */}
+            <button
+              type="button"
+              onClick={onInventario}
+              className="-mr-2 min-h-11 px-2 text-sm text-accent"
+            >
+              Inventario del edificio
             </button>
           </div>
         </div>

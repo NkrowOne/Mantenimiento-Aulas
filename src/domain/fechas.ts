@@ -90,3 +90,25 @@ export function fechaCorta(iso: string): string {
     year: 'numeric',
   }).format(t)
 }
+
+/**
+ * La hora suelta de un instante, para leer: `10:42`.
+ *
+ * Es para sellar lo que acaba de pasar en la pantalla —«último intento a las
+ * 10:42»—, que es la única forma de distinguir dos intentos seguidos cuando los
+ * dos acaban igual. En la zona del campus por lo mismo que la fecha: quien lo
+ * lee lo compara con el reloj de la pared del aula, no con el del iPad.
+ *
+ * Acepta el número de milisegundos además del ISO porque así es como lo dan los
+ * relojes de react-query (`dataUpdatedAt`), y convertirlo en el sitio de la
+ * llamada solo añadía un `new Date(...).toISOString()` de ida y vuelta.
+ */
+export function horaCorta(instante: string | number): string {
+  const t = new Date(instante)
+  if (Number.isNaN(t.getTime())) return ''
+  return new Intl.DateTimeFormat('es-ES', {
+    timeZone: ZONA,
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(t)
+}

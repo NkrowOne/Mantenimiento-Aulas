@@ -323,6 +323,7 @@ npm run informe:ia
 | Incidencias, almacén y depuración de datos | ✅ la pestaña es la lista de trabajo; lo que se apuntó en cada revisión se lee en la ficha del aula |
 | Panel de administración: validar equipos, agrupar el catálogo, equipamiento por defecto y alta/baja de salas y edificios | ✅ |
 | Retirada de equipo con autorización: baja o vuelta al almacén | ✅ |
+| Inventario de una sala o de un edificio en PDF | ✅ marca, modelo, serie y las fechas de alta, cambio y baja; se imprime desde el navegador y avisa —en el papel— cuando la hoja se ha hecho sin servidor |
 | Worker de informes PDF | ✅ PDF real generado y revisado |
 | Análisis con IA (Gemini, con razonamiento) | ✅ probado contra un servidor de mentira; degrada a análisis calculado |
 | Buckets de Storage y sus políticas | ✅ 3 pruebas de RLS propias |
@@ -410,6 +411,56 @@ confianza —208 filas— está en `import_quarantine` en vez de inventado.
 **El histórico entra sin autor.** `by_user = NULL` y `source = 'import'`: el
 Excel no dice quién hizo cada cosa, y atribuirlo falsearía justo la trazabilidad
 que la app existe para dar.
+
+**El inventario en papel lo imprime el navegador, no el worker de informes.** La
+hoja de inventario —una sala o un edificio entero, con marca, modelo, número de
+serie y las fechas de alta, último cambio y baja de cada equipo— se pide de pie
+en un pasillo y se lleva al aula para contrastarla contra los aparatos que se
+ven. Sale de `window.print()` y `@media print`, igual que la hoja de placas: en
+iPad y en escritorio «Imprimir → Guardar como PDF» ya da un PDF de verdad, así
+que no entra jsPDF, ni pdfmake, ni ninguna otra dependencia para hacer lo que el
+navegador ya hace. El worker **no** se usa aquí, y no por ahorrarse el rodeo: es
+una tubería de servidor —`pg_cron` despierta a `pg_net`, WeasyPrint compone, el
+PDF se archiva en Storage y se versiona— pensada para un documento que se firma
+una vez y no se regenera nunca. El inventario es lo contrario: se reimprime en
+cuanto alguien apunta un número de serie, y hace falta precisamente donde el
+worker no llega, que es el sótano sin cobertura donde se está haciendo el
+recuento.
+
+**La hoja la arma el servidor, porque el dispositivo no puede.** Las filas salen
+de la vista `inventory_sheet`, que resuelve de una vez el nombre del tipo
+siguiendo las fusiones, la fecha y el destino de la baja, y —lo que ninguna
+pantalla podía sortear sola— la sala de un equipo que se aprobó devolver al
+almacén: `decide_asset_removal` le deja `room_id` a NULL y la sala queda solo
+dentro de su `asset_events`, así que un `join rooms on rooms.id = a.room_id` no
+falla, no avisa y pierde en silencio exactamente los equipos por los que alguien
+imprime la hoja de bajas. La vista los conserva con `coalesce(a.room_id,
+ev.room_id)`. Cuando esa consulta no se puede hacer, la pantalla cae al espejo
+local y **lo confiesa en el papel, no solo en la pantalla** —la pantalla no se
+imprime—: sin servidor salen los equipos instalados que tenga guardados el
+dispositivo, sin las bajas y sin la columna de último cambio. Una hoja incompleta
+que no se presenta como incompleta es peor que no imprimir nada, porque se acaba
+archivando un inventario que afirma que un equipo sigue en la sala.
+
+**Dos columnas nuevas en `assets`, y la fecha la pone la base.** `brand` no
+existía —el importador dejó marca y modelo pegados dentro de `model`, que es como
+venían en el Excel— y nace vacía a propósito: partir «EPSON EB-2250U» por el
+primer espacio acierta casi siempre y falla en silencio con las marcas de dos
+palabras y con los modelos que empiezan por número, y eso deja un par de cientos
+de equipos con la marca equivocada **y sin manera de saber cuáles**, que es peor
+que la casilla en blanco. Se rellena desde el aula, en «Corregir» del equipo, que
+es el único momento en que hay alguien delante leyendo el rótulo. Y `updated_at`
+la escribe el disparador `assets_updated_at` con **el reloj del servidor**, nunca
+el cliente: un iPad con la hora mal dejaría en el inventario una fecha de cambio
+anterior al alta, y la hoja impresa la repetiría sin pestañear —es la misma
+separación que ya hacen `inspections.occurred_at` y `recorded_at`—. Ese
+disparador tampoco mueve la fecha cuando el UPDATE deja la fila igual que estaba,
+que es el caso mayoritario: cada sincronización reenvía lo que el dispositivo ya
+tenía, y sin esa comprobación el inventario entero diría que se tocó hoy. Y como
+la columna no admite huecos y nace con la fecha del alta, la hoja la imprime
+**solo cuando va por delante del alta**: mientras las dos coincidan lo que hay
+que poner es el guion, porque «Modificado» sobre un aparato que nadie ha tocado
+es una afirmación falsa en un papel que se firma.
 
 ## Pendiente de decisión
 

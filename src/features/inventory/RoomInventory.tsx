@@ -250,7 +250,11 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
               {live.map((asset) => {
                 const type = resolveType(typesById, asset.asset_type_id)
                 const pending = type ? !type.confirmed : false
-                const detail = [asset.model, asset.serial].filter(Boolean).join(' · ')
+                /* Marca · modelo · serie, y lo que falte no deja hueco ni
+                   separador suelto: en un parque donde la marca acaba de nacer
+                   vacía en 1.094 equipos, un « · Epson EB-1485Fi» de entrada se
+                   leería como un dato roto en casi todas las filas. */
+                const detail = [asset.brand, asset.model, asset.serial].filter(Boolean).join(' · ')
 
                 return (
                   <li key={asset.id} className="py-2">
@@ -260,7 +264,7 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
                           {asset.label ?? type?.name ?? 'Equipo'}
                         </span>
                         <span className="block truncate text-xs text-muted">
-                          {detail || 'Sin modelo ni serie'}
+                          {detail || 'Sin marca, modelo ni serie'}
                         </span>
                       </span>
 
@@ -350,12 +354,12 @@ export function RoomInventory({ roomId, userId, assets, types, typesById }: Prop
  * es: el técnico que está delante sabe que una es la del atril, y esa palabra
  * vale más que el número.
  *
- * Y el nombre y el modelo se autocompletan con lo que ya está escrito en el
- * parque. Al alta se buscaba en el catálogo antes de crear —es lo que impide que
- * se llene de sinónimos— y al corregir no se buscaba nada: los dos campos que más
- * se teclean estaban en blanco, a mano, de pie y con una mano. Así es como
- * `Epson EB-1485Fi` se convierte en cuatro modelos distintos que ningún informe
- * vuelve a agrupar.
+ * Y el nombre, la marca y el modelo se autocompletan con lo que ya está escrito
+ * en el parque. Al alta se buscaba en el catálogo antes de crear —es lo que
+ * impide que se llene de sinónimos— y al corregir no se buscaba nada: los campos
+ * que más se teclean estaban en blanco, a mano, de pie y con una mano. Así es
+ * como `Epson EB-1485Fi` se convierte en cuatro modelos distintos que ningún
+ * informe vuelve a agrupar.
  */
 function AssetFixer({
   asset,
@@ -379,6 +383,7 @@ function AssetFixer({
   onCancelar: (solicitudId: string) => void
 }): React.ReactElement {
   const [label, setLabel] = useState(asset.label ?? '')
+  const [brand, setBrand] = useState(asset.brand ?? '')
   const [model, setModel] = useState(asset.model ?? '')
   const [serial, setSerial] = useState(asset.serial ?? '')
   const [pidiendo, setPidiendo] = useState(false)
@@ -405,6 +410,14 @@ function AssetFixer({
 
   const vocModelo = useMemo(
     () => vocabularioDeTipo(delTipo, asset.asset_type_id, 'model'),
+    [delTipo, asset.asset_type_id],
+  )
+
+  /* El vocabulario de marcas del mismo tipo. Es el más corto de los tres —en
+     todo el parque hay ocho marcas— y por eso el que casi nunca obliga a
+     teclear: al enfocar el campo vacío ya sale la que toca. */
+  const vocMarca = useMemo(
+    () => vocabularioDeTipo(delTipo, asset.asset_type_id, 'brand'),
     [delTipo, asset.asset_type_id],
   )
 
@@ -446,6 +459,11 @@ function AssetFixer({
     [vocModelo, model],
   )
 
+  const sugMarca = useMemo(
+    () => sugerenciasDe(vocMarca, brand, { excluir: [brand] }),
+    [vocMarca, brand],
+  )
+
   return (
     <div className="mt-2 rounded-ctl border border-line bg-sunken p-3">
       <div className="grid gap-2">
@@ -471,19 +489,47 @@ function AssetFixer({
           </p>
         )}
 
-        {/* El modelo va a lo ancho y ya no compartiendo fila con la serie: su
-            lista de sugerencias tiene que caber, y `Epson EB-1485Fi` en media
-            pantalla de móvil sale recortado justo por donde se distinguen dos
-            modelos. La serie no la acompaña porque no se sugiere. */}
-        <CampoSugerido
-          etiqueta="Modelo"
-          valor={model}
-          onValor={setModel}
-          onCommit={(v) => v.trim() !== (asset.model ?? '') && onPatch({ model: v.trim() || null })}
-          sugerencias={sugModelo}
-          inputClassName="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
-          inputProps={{ autoCapitalize: 'off', autoCorrect: 'off', enterKeyHint: 'done' }}
-        />
+        {/*
+          Marca y modelo, juntos y en este orden: es UN dato en dos partes, que
+          es como se lee el rótulo del aparato y como lo pide la hoja de
+          inventario. Puestos separados —la marca arriba del todo, o detrás de la
+          serie— el formulario pasa a tener cuatro preguntas sueltas que rellenar
+          de pie y con una mano, que es exactamente lo que no puede abrumar.
+
+          En la misma fila **solo cuando cabe**, y ahí no cede la decisión de
+          arriba: en móvil el modelo sigue ocupando el ancho entero porque su
+          lista de sugerencias tiene que caber, y `Epson EB-1485Fi` en media
+          pantalla sale recortado justo por donde se distinguen dos modelos. En
+          el iPad —el dispositivo del carro, y donde se corrige de verdad— caben
+          los dos y se leen de un vistazo. La marca se lleva la columna estrecha
+          porque son ocho palabras cortas; el modelo, el resto.
+
+          La serie no entra en la fila: no se sugiere y no forma parte del mismo
+          dato.
+        */}
+        <div className="grid gap-2 sm:grid-cols-[8rem_1fr]">
+          <CampoSugerido
+            etiqueta="Marca"
+            valor={brand}
+            onValor={setBrand}
+            onCommit={(v) => v.trim() !== (asset.brand ?? '') && onPatch({ brand: v.trim() || null })}
+            sugerencias={sugMarca}
+            inputClassName="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+            /* La marca es un nombre propio, no una frase: el corrector de iOS
+               convierte «NEC» en «NEC.» y «Epson» en «Época» sin avisar. */
+            inputProps={{ autoCapitalize: 'words', autoCorrect: 'off', enterKeyHint: 'next' }}
+          />
+
+          <CampoSugerido
+            etiqueta="Modelo"
+            valor={model}
+            onValor={setModel}
+            onCommit={(v) => v.trim() !== (asset.model ?? '') && onPatch({ model: v.trim() || null })}
+            sugerencias={sugModelo}
+            inputClassName="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+            inputProps={{ autoCapitalize: 'off', autoCorrect: 'off', enterKeyHint: 'done' }}
+          />
+        </div>
 
         <label className="text-xs text-muted">
           Nº de serie
