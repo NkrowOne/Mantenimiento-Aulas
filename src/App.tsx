@@ -16,7 +16,7 @@ import { RoomListPage } from '@/features/rooms/RoomListPage'
 import { HojaDeMaestro } from '@/features/rooms/HojaDeMaestro'
 import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
 import { averiasPorEdificio, averiasPorSala } from '@/features/rooms/averias'
-import { nextRoom, type RoomOrder } from '@/features/rooms/orden'
+import { nextRoom, ROOM_ORDER_POR_DEFECTO, type RoomOrder } from '@/features/rooms/orden'
 
 import { getSealed, lock, resumeSession, touch, watchSession } from '@/auth/session'
 import { marcarTrabajoDelicado } from '@/sw'
@@ -58,6 +58,14 @@ const RoomSheet = lazy(() =>
    en el arranque, que ocurre justo con la peor cobertura. */
 const PlateSheet = lazy(() =>
   import('@/features/rooms/PlateSheet').then((m) => ({ default: m.PlateSheet })),
+)
+/* La hoja de inventario se abre para descargar un PDF: una vez al trimestre y
+   desde una mesa. Arrastra la tabla del parque entero de un edificio —hasta 39
+   salas con sus equipos— y no la ve nadie mientras se recorre un pasillo, así
+   que sigue el mismo criterio que las placas: no viaja en el arranque, que es
+   cuando peor cobertura hay. */
+const HojaDeInventario = lazy(() =>
+  import('@/features/inventory/HojaDeInventario').then((m) => ({ default: m.HojaDeInventario })),
 )
 const HistorialPage = lazy(() =>
   import('@/features/history/HistorialPage').then((m) => ({ default: m.HistorialPage })),
@@ -120,6 +128,20 @@ type RoomView =
      desde donde se está trabajando: se decide etiquetar un edificio cuando se
      está recorriendo ese edificio. */
   | { name: 'placas'; building: Building }
+  /*
+   * La hoja de inventario, de una sala o del edificio entero.
+   *
+   * Hermana de la de placas: se imprime desde donde se está trabajando, porque
+   * quien tiene que entregar el inventario de un edificio lo pide estando en ese
+   * edificio, y esconderla en «Datos» la dejaría fuera del alcance del técnico,
+   * que es quien conoce lo que hay dentro de las aulas.
+   *
+   * `room` opcional es lo que distingue las dos hojas —una sala o el edificio— y
+   * `volverA` existe por el mismo motivo que en la ficha: se llega desde la lista
+   * de salas y desde la ficha, y «Volver» tiene que devolver al sitio del que se
+   * salió, no a uno que no se ha visto.
+   */
+  | { name: 'inventario'; building: Building; room?: Room; volverA: 'salas' | 'ficha' }
 
 const TABS: Array<{ id: Tab; label: string; minRole: Role }> = [
   { id: 'revisar', label: 'Revisar', minRole: 'tecnico' },
@@ -239,7 +261,10 @@ export function App(): React.ReactElement {
 
   const [tab, setTab] = useState<Tab>('revisar')
   const [view, setView] = useState<RoomView>({ name: 'edificios' })
-  const [roomOrder, setRoomOrder] = useState<RoomOrder>('antiguedad')
+  /* Se abre por planta: quien entra en un edificio viene a recorrerlo, y la
+     lista tiene que parecerse al camino que van a hacer sus pies. El orden por
+     antigüedad sigue a un toque, para el día que se persigue el retraso. */
+  const [roomOrder, setRoomOrder] = useState<RoomOrder>(ROOM_ORDER_POR_DEFECTO)
   const [escaneando, setEscaneando] = useState(false)
   const [avisoQR, setAvisoQR] = useState<string | null>(null)
   /*
@@ -316,15 +341,27 @@ export function App(): React.ReactElement {
     return acc
   }, [])
 
-  // La planta de la sala en revisión. Va en la cabecera porque un código como
-  // `-2.1` leído sin ella parece un sótano cualquiera.
+  /*
+   * La sala que hay delante, si la hay.
+   *
+   * Sale de la consulta de la planta y se nombra aparte porque ya son tres las
+   * vistas que enseñan una sala en su cabecera. Con la condición escrita dentro
+   * de la consulta, añadir la hoja de inventario significaba dejarla fuera sin
+   * que nada lo señalara: la hoja se abriría con el edificio y sin la planta.
+   */
+  const salaDelante: Room | undefined =
+    view.name === 'revision' || view.name === 'ficha'
+      ? view.room
+      : view.name === 'inventario'
+        ? view.room
+        : undefined
+
+  // La planta de esa sala. Va en la cabecera porque un código como `-2.1` leído
+  // sin ella parece un sótano cualquiera.
   const zoneName =
     useLiveQuery(
-      async () =>
-        view.name === 'revision' || view.name === 'ficha'
-          ? (await db.zones.get(view.room.zone_id))?.name
-          : undefined,
-      [view],
+      async () => (salaDelante ? (await db.zones.get(salaDelante.zone_id))?.name : undefined),
+      [salaDelante?.zone_id],
     ) ?? ''
 
   /*
@@ -561,23 +598,49 @@ export function App(): React.ReactElement {
 
   useEffect(() => {
     if (!unlocked || !restaurado) return
+
+    /*
+     * Lo que se guarda no es siempre la pantalla que hay delante.
+     *
+     * El efecto que restaura entiende dos nombres —'ficha' y 'revision'— y con
+     * cualquier otro cae a la lista de salas. Guardar aquí un nombre nuevo tal
+     * cual es, según la fila, una pantalla rota o una pantalla que aparece sin
+     * que nadie sepa por qué; así que cada vista dice explícitamente a dónde
+     * quiere volver tras una recarga.
+     *
+     * Una corrección se guarda como si se estuviera en la ficha: lo que se
+     * corrige viaja en memoria —qué revisión y lo que contestó—, así que
+     * restaurar «revisión» abriría el formulario sin nada de eso, una revisión
+     * nueva y vacía donde había una corrección a medias. La ficha, en cambio,
+     * encuentra el borrador y ofrece «Continuar la corrección».
+     *
+     * La hoja de inventario se guarda como el sitio del que se salió, por lo
+     * mismo: lo que la hoja tiene dentro son filas recién pedidas al servidor y
+     * un diálogo de impresión, nada de lo cual sobrevive a una recarga. Devolver
+     * a una hoja vacía —o peor, restaurarla con `roomId` y sin entenderla, que es
+     * lo que haría abrir una revisión en blanco de esa sala— sería inventar
+     * trabajo. Se vuelve a la lista o a la ficha, con la hoja a un toque.
+     */
+    const restauracion: { vista: RoomView['name']; roomId: string | null } =
+      view.name === 'revision' && view.correccion
+        ? { vista: 'ficha', roomId: view.room.id }
+        : view.name === 'inventario'
+          ? {
+              vista: view.volverA,
+              roomId: view.volverA === 'ficha' ? (view.room?.id ?? null) : null,
+            }
+          : {
+              vista: view.name,
+              roomId: view.name === 'revision' || view.name === 'ficha' ? view.room.id : null,
+            }
+
     void db.meta.put({
       key: 'ultima-vista',
       value: {
         tab,
-        /*
-         * Una corrección se guarda como si se estuviera en la ficha, y es a
-         * propósito.
-         *
-         * Lo que se corrige viaja en memoria —qué revisión y lo que contestó—, así
-         * que restaurar «revisión» tras recargar abriría el formulario sin nada de
-         * eso: una revisión nueva y vacía donde había una corrección a medias. La
-         * ficha, en cambio, encuentra el borrador y ofrece «Continuar la
-         * corrección», que es exactamente lo que hace falta.
-         */
-        vista: view.name === 'revision' && view.correccion ? 'ficha' : view.name,
+        vista: restauracion.vista,
         buildingId: view.name === 'edificios' ? null : view.building.id,
-        roomId: view.name === 'revision' || view.name === 'ficha' ? view.room.id : null,
+        roomId: restauracion.roomId,
       },
     })
   }, [unlocked, restaurado, tab, view])
@@ -691,7 +754,11 @@ export function App(): React.ReactElement {
           en cada frame de desplazamiento —de lo más caro que se puede poner en un
           `sticky` de un iPad— y aquí ni se veía: `--ground` es un color sólido y
           el 95% dejaba pasar un 5% de nada. */}
-      <header className="sticky top-0 z-10 border-b border-line bg-ground">
+      {/* `solo-pantalla`: dentro de esta cabecera se imprimen dos hojas —las
+          placas y el inventario—, y sin esto el PDF que se firma y se archiva
+          salía encabezado por «Aulas · admin» y un botón de «Cerrar sesión».
+          Chrome además repite los elementos fijos en cada página. */}
+      <header className="solo-pantalla sticky top-0 z-10 border-b border-line bg-ground">
         <div className="flex items-center justify-between gap-2 px-4 py-2">
           {/* El rol, a la vista. Es lo que decide qué pestañas hay, así que
               esconderlo convierte «no tengo el botón» en un misterio: quien es
@@ -733,7 +800,7 @@ export function App(): React.ReactElement {
       </header>
 
       {escaneoFallido && (
-        <div className="border-b border-line bg-warn-tint px-4 py-3">
+        <div className="solo-pantalla border-b border-line bg-warn-tint px-4 py-3">
           <p className="text-sm text-warn">
             Has escaneado una placa, pero esa sala no está descargada en este dispositivo todavía.
             Sincroniza y vuelve a escanear.
@@ -748,8 +815,11 @@ export function App(): React.ReactElement {
         </div>
       )}
 
+      {/* `solo-pantalla`, como la barra de versión nueva: son diagnósticos de la
+          aplicación, y la hoja de inventario los sacaba impresos en la cabecera
+          de la primera página de un papel que se archiva. */}
       {rolError && (
-        <div className="border-b border-line px-4 py-3">
+        <div className="solo-pantalla border-b border-line px-4 py-3">
           <p className="text-sm text-crit">{rolError}</p>
           <Diagnostico />
         </div>
@@ -920,6 +990,11 @@ export function App(): React.ReactElement {
           onOrderChange={setRoomOrder}
           onBack={() => setView({ name: 'edificios' })}
           onPlacas={() => setView({ name: 'placas', building: view.building })}
+          /* Sin sala: la hoja del edificio entero, que es lo que se pide desde
+             aquí —estando en la lista se está mirando el edificio, no un aula—. */
+          onInventario={() =>
+            setView({ name: 'inventario', building: view.building, volverA: 'salas' })
+          }
           onPick={(room) =>
             setView({ name: 'ficha', building: view.building, room, volverA: 'salas' })
           }
@@ -1020,6 +1095,14 @@ export function App(): React.ReactElement {
               })
             }
             onImprimir={() => setView({ name: 'placas', building: view.building })}
+            onInventario={() =>
+              setView({
+                name: 'inventario',
+                building: view.building,
+                room: view.room,
+                volverA: 'ficha',
+              })
+            }
           />
         </Suspense>
       )}
@@ -1029,6 +1112,43 @@ export function App(): React.ReactElement {
           <PlateSheet
             building={view.building}
             onBack={() => setView({ name: 'salas', building: view.building })}
+          />
+        </Suspense>
+      )}
+
+      {tab === 'revisar' && view.name === 'inventario' && (
+        <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
+          <HojaDeInventario
+            /* La planta viaja con la sala: la calcula App —es quien tiene el
+               `zone_id` resuelto contra el espejo— y sin ella la cabecera de la
+               hoja saldría con el aula y sin decir en qué piso está, que es lo
+               primero que se busca al recibir el papel. */
+            alcance={
+              view.room
+                ? {
+                    tipo: 'sala',
+                    room: view.room,
+                    building: view.building,
+                    zoneName,
+                  }
+                : { tipo: 'edificio', building: view.building }
+            }
+            /* De la hoja de una sala se vuelve a su ficha, y de la del edificio a
+               la lista. Si por el camino había una revisión a medias no se pierde
+               —el borrador está en Dexie y la lista lo marca «A medias»—, igual
+               que ya ocurre al salir por la hoja de placas. */
+            onBack={() =>
+              setView(
+                view.name === 'inventario' && view.volverA === 'ficha' && view.room
+                  ? {
+                      name: 'ficha',
+                      building: view.building,
+                      room: view.room,
+                      volverA: 'salas',
+                    }
+                  : { name: 'salas', building: view.building },
+              )
+            }
           />
         </Suspense>
       )}
@@ -1075,7 +1195,10 @@ export function App(): React.ReactElement {
           debajo y no se podían pulsar. */}
       {!inspecting && (
       <nav
-        className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-surface"
+        /* Y la barra tampoco va al papel: es navegación, y en una hoja impresa
+           es una fila de palabras que no se pueden pulsar cruzada por encima del
+           inventario. */
+        className="solo-pantalla fixed inset-x-0 bottom-0 z-10 border-t border-line bg-surface"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         <ul className="scroll-x flex">

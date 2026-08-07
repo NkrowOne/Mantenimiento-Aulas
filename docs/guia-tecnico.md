@@ -122,10 +122,17 @@ corrección»** la tira y no cambia nada.
 ## Revisar un aula
 
 1. **Elige el edificio.**
-2. **Elige la sala.** La lista viene ordenada con las que llevan más tiempo sin
-   revisar arriba del todo, así que basta con ir bajando.
+2. **Elige la sala.** La lista viene **agrupada por plantas**, en el orden en que
+   se recorre el edificio de verdad: bajas por la lista y vas subiendo pisos, sin
+   ir y volver por las escaleras. Al terminar una revisión, **«Guardar y
+   siguiente sala»** te lleva a la de al lado en ese mismo recorrido.
+   - Con el botón **«Más antiguas»** la lista cambia a cola de trabajo: arriba
+     las que llevan más tiempo sin revisar, sin agrupar por planta. Es el orden
+     del día que persigues el retraso en vez de vaciar un edificio.
    - La franja **naranja** a la izquierda marca las que tocan.
-   - La etiqueta **«A medias»** significa que dejaste una revisión sin terminar.
+   - La etiqueta **«A medias»** significa que dejaste una revisión sin terminar
+     **y dijiste que querías guardarla**. Ya no aparece por haberte asomado a un
+     aula: si sales sin contestar nada, no queda rastro.
    - El **triángulo rojo** junto al código dice que esa sala tiene incidencias
      abiertas — con el número al lado si hay más de una. El mismo triángulo
      aparece en la lista de edificios sumando las de todas sus salas, así que
@@ -200,12 +207,20 @@ aquí**, sin salir de la revisión.
 - **El número.** Si ya había una pantalla, la nueva se llama «Pantalla 2» sola.
   No teclees el número.
 - **Corregir.** Cada equipo tiene su botón: cambiar el nombre —«Pantalla 2» se
-  puede reescribir a «Pantalla del atril», que dice mucho más—, apuntar modelo y
-  número de serie, o marcarlo **averiado**.
+  puede reescribir a «Pantalla del atril», que dice mucho más—, apuntar **marca**,
+  modelo y número de serie, o marcarlo **averiado**.
 
-  **El nombre y el modelo se autocompletan.** Toca el campo y salen los que ya
-  están escritos en el resto del campus para ese tipo de aparato, el más repetido
-  primero y con en cuántos equipos está. Tócalo o dale a la tecla de retorno y se
+  La **marca** va justo delante del modelo, que es como se lee el rótulo del
+  aparato. Está en blanco en casi todo lo que venía del Excel —allí venía pegada
+  al modelo, `EPSON EB-2250U` entero en la casilla del modelo— y separarla a
+  posteriori habría acertado en la mayoría y se habría equivocado en silencio en
+  el resto. Rellénala cuando tengas el aparato delante: es el único momento en
+  que alguien puede leer el rótulo, y es lo que decide si «cuántos Epson
+  tenemos» llega a tener respuesta.
+
+  **El nombre, la marca y el modelo se autocompletan.** Toca el campo y salen los
+  que ya están escritos en el resto del campus para ese tipo de aparato, el más
+  repetido primero y con en cuántos equipos está. Tócalo o dale a la tecla de retorno y se
   guarda. No hace falta escribir nada para que salgan: el caso normal es
   precisamente que el modelo esté en blanco.
 
@@ -274,6 +289,94 @@ dispositivo, y **además se sube al servidor en cuanto hay red**.
 
 Si te quedas sin batería, se te cae el móvil o cierras sin querer, la revisión
 sigue ahí. Aparecerá como «A medias» en la lista.
+
+### Al salir, tú decides qué pasa con lo empezado
+
+Si sales de una revisión con **algo contestado**, la aplicación pregunta antes de
+dejarte marchar:
+
+- **Guardar para la próxima vez** — la sala queda «A medias» y al volver a entrar
+  sigue donde lo dejaste. Es lo de siempre.
+- **Descartar lo revisado** — se tira lo contestado en esa sala y deja de
+  aparecer a medias. Para el aula que estaba ocupada, o para cuando te has metido
+  en la que no era. Lo que hayas cambiado en el **inventario** se queda: eso no es
+  parte de la revisión.
+
+Y si sales **sin haber contestado nada**, no pregunta ni deja nada: asomarse a un
+aula ya no la marca como trabajo pendiente.
+
+## Sacar el inventario en papel
+
+Llega el día en que alguien pide «lo que hay en el aulario», o en que hay que
+recorrer una sala con la lista en la mano tachando aparatos. Para eso está la
+hoja de inventario, y se saca desde dos sitios según lo que te hayan pedido:
+
+- **Una sala** — en su ficha, el botón **«Inventario en PDF»**, al lado del de
+  las placas.
+- **Un edificio entero** — arriba de la lista de salas de ese edificio,
+  **«Inventario del edificio»**. Sale por plantas y salas en el mismo orden en
+  que se recorre el edificio, así que se baja por la hoja igual que se baja por
+  el pasillo.
+
+Cada aparato ocupa una línea con su marca, su modelo, su número de serie, cómo
+está y tres fechas: cuándo se dio de alta, cuándo se tocó por última vez y
+cuándo se dio de baja. Lo que no consta sale con un guion, y el guion está
+puesto a propósito: es el hueco donde apuntar a boli el número de serie que
+nadie había registrado, para pasarlo luego desde «Equipos de la sala».
+
+El estado va con un símbolo y su palabra —«! Averiado», «× Retirado», «? Sin
+validar»—, y no con un color: en la impresora del departamento todos los colores
+son el mismo gris.
+
+### Imprimir → Guardar como PDF
+
+El botón se llama **«Descargar PDF»** y lo que hace es abrir **el diálogo de
+imprimir del navegador**. No te has equivocado de botón: el PDF sale justo de
+ahí.
+
+- **En el iPad** — pulsa «Imprimir» y después **Compartir → Guardar en
+  Archivos**.
+- **En el ordenador** — en el destino, elige **«Guardar como PDF»** en lugar de
+  una impresora.
+
+Y si lo que quieres es papel, es el mismo camino con la impresora al final.
+
+### Las bajas no salen, salvo que las pidas
+
+Por defecto la hoja trae **lo que hay**, que es lo que sirve para recorrer el
+aula: cada línea de un proyector dado de baja hace tres años es una vuelta más
+buscando algo que no está. Si lo que necesitas es el otro documento —dónde acabó
+un equipo, con su fecha y su destino— marca **«Incluir equipos dados de baja»**
+antes de imprimir.
+
+Un equipo con la retirada **pedida** y sin autorizar todavía sale siempre, y
+marcado: sigue en la sala hasta que un coordinador lo decida, y ahí sigue
+estando cuando pases con la hoja.
+
+### Sin cobertura sale, y lo dice
+
+La hoja se intenta pedir al servidor. Si no hay red —o el servidor no
+contesta—, se hace con la copia que este dispositivo tiene guardada, y entonces
+verás un aviso en pantalla **y un recuadro «Atención: hoja incompleta» impreso
+en la propia hoja**. El aviso va también en el papel porque la pantalla no se
+imprime, y una hoja archivada sin ese recuadro parecería el inventario completo.
+
+Qué se ve y qué no cuando esa hoja se hace sin servidor:
+
+- **Sí sale** — los equipos **instalados** que tenga guardados el dispositivo, con
+  su marca, su modelo, su número de serie y su fecha de alta, y las retiradas
+  pedidas.
+- **No sale** — los equipos **dados de baja**, que el dispositivo ni siquiera se
+  descarga, y la columna de **último cambio**, que solo la sabe el servidor.
+
+Es decir: sirve perfectamente para recorrer un aula y contrastar lo que hay.
+**No sirve para entregarla ni para firmarla.** Sal a una zona con cobertura,
+pulsa **«Reintentar con el servidor»** y vuelve a imprimirla; sin el recuadro,
+la hoja está entera.
+
+> Si la hoja sale vacía estando sin cobertura, la aplicación no da por hecho que
+> el aula esté vacía: te dice que no puede saber si no hay nada o si esa parte
+> del inventario nunca llegó a este dispositivo. Con cobertura sí lo afirma.
 
 ## El indicador de arriba
 

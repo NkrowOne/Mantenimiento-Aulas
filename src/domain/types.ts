@@ -224,6 +224,27 @@ export interface Asset {
   /** Cómo se llama en ESTA sala: «Pantalla 2», o «Pantalla atril» si se corrige. */
   label: string | null
   serial: string | null
+  /**
+   * La marca, **aparte del modelo**: «Epson», «NEC», «Logitech».
+   *
+   * Va en su propia columna porque la hoja de inventario la pide en la suya, y
+   * porque son dos datos con vidas distintas: hay ocho marcas en todo el parque
+   * —se repiten hasta el agotamiento y se pueden ofrecer— y decenas de modelos.
+   * Metidas en la misma cadena, agrupar por marca obliga a adivinar dónde acaba
+   * la primera palabra, que es justo lo que no se puede hacer.
+   *
+   * Los 1.094 equipos importados la tienen a `null` y **no se reparte a
+   * posteriori**. En ellos la marca vino pegada dentro de `model` («Epson
+   * EB-1485Fi»), y partir esa cadena por la primera palabra falla con las marcas
+   * de dos palabras, con los modelos que empiezan por número y con las filas
+   * donde lo que hay escrito no es un modelo sino una descripción. Una regla que
+   * acierta en la mayoría deja un par de cientos de equipos con la marca
+   * equivocada y sin manera de saber cuáles, que es peor que la casilla vacía:
+   * la vacía se ve, se pregunta y se rellena. Se rellena al corregir el equipo
+   * desde el aula, que es el único momento en que alguien tiene el aparato
+   * delante y puede leerle el rótulo.
+   */
+  brand: string | null
   model: string | null
   status: AssetStatus
   created_at: string | null

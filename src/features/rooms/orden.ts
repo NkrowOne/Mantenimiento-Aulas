@@ -15,22 +15,32 @@ import type { Room, Zone } from '@/domain/types'
 /**
  * Los dos órdenes que pide el trabajo real, y por qué hacen falta los dos.
  *
- * - `antiguedad` — la que lleva más tiempo sin revisar arriba. Convierte la
- *   lista en una cola de trabajo: bajas y vas haciendo, sin decidir nada.
  * - `planta` — agrupada por planta y por código. Es como se recorre un edificio
- *   de verdad. Con el orden por antigüedad puro, dos salas consecutivas pueden
- *   estar en la planta −2 y en la 2ª, y la ronda se convierte en subir y bajar
- *   escaleras.
+ *   de verdad, y es **el orden de partida**: quien abre un edificio va a
+ *   recorrerlo, y la lista tiene que parecerse al camino que van a hacer sus
+ *   pies. Con el orden por antigüedad de partida, dos salas consecutivas podían
+ *   estar en la planta −2 y en la 2ª, y la ronda empezaba subiendo y bajando
+ *   escaleras sin que nadie hubiera pedido nada raro.
+ * - `antiguedad` — la que lleva más tiempo sin revisar arriba. Convierte la
+ *   lista en una cola de trabajo: bajas y vas haciendo, sin decidir nada. Es lo
+ *   que hace falta el día que se persigue el retraso y no el edificio.
  *
- * Ninguno es «el correcto»: el primero sirve para la ronda periódica y el
- * segundo para vaciar un edificio. Por eso se elige, y se ve cuál está activo.
+ * Ninguno es «el correcto»: el primero sirve para vaciar un edificio y el
+ * segundo para la ronda periódica. Por eso se elige, y se ve cuál está activo.
+ *
+ * El orden de las claves de aquí abajo NO es cosmético: es el que pinta el grupo
+ * de botones de la lista (recorre `Object.keys`). El que manda por defecto tiene
+ * que ser también el primero que se lee, o la pantalla contradice a la pantalla.
  */
-export type RoomOrder = 'antiguedad' | 'planta'
+export type RoomOrder = 'planta' | 'antiguedad'
 
 export const ROOM_ORDER_LABELS: Record<RoomOrder, string> = {
-  antiguedad: 'Más antiguas',
   planta: 'Por planta',
+  antiguedad: 'Más antiguas',
 }
+
+/** El orden con el que se abre un edificio mientras nadie diga lo contrario. */
+export const ROOM_ORDER_POR_DEFECTO: RoomOrder = 'planta'
 
 /** Días desde la última revisión. `null` si no consta ninguna. */
 export function daysSince(iso: string | null): number | null {
@@ -91,10 +101,22 @@ export function roomMatches(room: Room, query: string, zoneName?: string): boole
 /**
  * La sala que toca después de terminar una.
  *
- * Se calcula con el mismo orden que ve el técnico en la lista, y se excluye la
- * que acaba de cerrar. Esto **depende** de que `complete()` haya escrito ya
- * `last_inspection_at` en local: sin eso la recién terminada seguiría siendo la
- * primera y «siguiente sala» devolvería a la misma aula.
+ * Se calcula con el mismo orden que ve el técnico en la lista, pero **la
+ * pregunta no se contesta igual en los dos**, y eso no es un detalle: es lo que
+ * hace que «Guardar y siguiente sala» encadene o dé vueltas.
+ *
+ * - `antiguedad` es una cola que se reordena sola. `complete()` escribe
+ *   `last_inspection_at` en local antes de llegar aquí, así que la recién
+ *   cerrada cae al final y la primera del resto es la que toca. Depender de eso
+ *   es lo que ya estaba escrito y sigue siendo cierto.
+ * - `planta` es una ruta física y no se mueve al revisar. Ahí «la primera que no
+ *   sea esta» devuelve siempre al aula de la esquina de la planta: terminar la
+ *   primera llevaba a la segunda, terminar la segunda volvía a la primera, y
+ *   encadenar era un bucle entre dos aulas. La siguiente de una ruta es la de al
+ *   lado, no la de la cabeza.
+ *
+ * Se hizo visible al pasar `planta` a ser el orden de partida, pero el fallo ya
+ * estaba: bastaba con elegir «Por planta» a mano.
  */
 export function nextRoom(
   rooms: Room[],
@@ -102,5 +124,20 @@ export function nextRoom(
   order: RoomOrder,
   currentId: string,
 ): Room | null {
-  return sortRooms(rooms, zones, order).find((r) => r.id !== currentId) ?? null
+  const ordenadas = sortRooms(rooms, zones, order)
+
+  if (order === 'planta') {
+    const i = ordenadas.findIndex((r) => r.id === currentId)
+    // Si la sala que se acaba de cerrar ya no está en la lista —la ha archivado
+    // otro dispositivo mientras se revisaba— no hay posición desde la que
+    // seguir, y se cae al comportamiento de la cola: mejor una sala razonable
+    // que ninguna.
+    if (i === -1) return ordenadas.find((r) => r.id !== currentId) ?? null
+    // Y al llegar al final del edificio se acaba. Volver a empezar por arriba
+    // haría revisar dos veces las mismas aulas sin que nada lo dijera; `null`
+    // devuelve a la lista, que es donde se ve que el edificio está hecho.
+    return ordenadas[i + 1] ?? null
+  }
+
+  return ordenadas.find((r) => r.id !== currentId) ?? null
 }

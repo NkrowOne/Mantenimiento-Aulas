@@ -24,6 +24,15 @@ interface Props {
   ref: string
   /** El UUID de la sala: lo que codifica el QR. */
   id: string
+  /**
+   * El código de sala —`−2.1`—, cuando hace falta enseñarlo.
+   *
+   * No lo lleva la placa que se atornilla: allí el nombre y la matrícula bastan,
+   * y el código es una etiqueta que puede cambiar. Pero en pantalla sí importa,
+   * porque es el que aparece en las incidencias, en el Excel y en ServiceNow: es
+   * la palabra con la que esta sala se nombra fuera de esta aplicación.
+   */
+  code?: string
   /** Más pequeña, para la hoja de impresión. */
   compacta?: boolean
 }
@@ -34,6 +43,7 @@ export function DoorPlate({
   title,
   ref: matricula,
   id,
+  code,
   compacta = false,
 }: Props): React.ReactElement {
   return (
@@ -60,8 +70,12 @@ export function DoorPlate({
             No está para leerlo entero —para eso no sirve un UUID— sino para
             poder cotejar dos placas a ojo si alguna vez se duplica una etiqueta.
             Entero ocupaba más que el propio nombre de la sala y competía con él;
-            las dos puntas bastan para distinguirlos y no roban jerarquía. */}
+            las dos puntas bastan para distinguirlos y no roban jerarquía.
+
+            Con código delante van los dos: el código es lo que se teclea y se
+            dicta, y el UUID sigue siendo lo que desempata dos placas iguales. */}
         <p className="mt-0.5 truncate font-mono text-[0.625rem] text-muted">
+          {code ? `${code} · ` : ''}
           {id.slice(0, 8)}…{id.slice(-4)}
         </p>
       </div>

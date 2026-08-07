@@ -33,6 +33,7 @@ function asset(label: string, extra: Partial<Asset> = {}): Asset {
     room_id: 'r1',
     label,
     serial: null,
+    brand: null,
     model: null,
     status: 'instalado',
     created_at: null,
@@ -216,6 +217,21 @@ describe('vocabularioDeTipo', () => {
     expect(vocabularioDeTipo(parque, PROY, 'label')).toEqual([
       { valor: 'Proyector', veces: 2 },
       { valor: 'Proyector del atril', veces: 1 },
+    ])
+  })
+
+  it('sirve también para la marca, que es el campo con menos valores distintos', () => {
+    // Y por eso es donde más rinde: con dos marcas en cuatro proyectores, la
+    // lista que sale al enfocar el campo vacío ya trae la que toca.
+    const conMarca = [
+      asset('Proyector', { id: 'm1', asset_type_id: PROY, brand: 'NEC' }),
+      asset('Proyector 2', { id: 'm2', asset_type_id: PROY, brand: 'nec' }),
+      asset('Proyector 3', { id: 'm3', asset_type_id: PROY, brand: 'Epson' }),
+      asset('Pantalla', { id: 'm4', brand: 'Samsung' }),
+    ]
+    expect(vocabularioDeTipo(conMarca, PROY, 'brand')).toEqual([
+      { valor: 'NEC', veces: 2 },
+      { valor: 'Epson', veces: 1 },
     ])
   })
 

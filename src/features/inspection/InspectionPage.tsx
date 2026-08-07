@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { HojaDeAcciones } from '@/components/HojaDeAcciones'
 import { RoomPlate } from '@/components/RoomPlate'
 import { TriState } from '@/components/TriState'
 import { RoomInventory } from '@/features/inventory/RoomInventory'
 import { HistorialSala } from '@/features/history/HistorialSala'
 import { PHOTO_ACCEPT, capturePhoto } from '@/lib/photos'
 import { db } from '@/db/dexie'
+import { cuantos } from '@/lib/plural'
 import { type CheckKey, type Room, type Severity } from '@/domain/types'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaLegible } from '@/domain/historial'
@@ -62,6 +64,8 @@ export function InspectionPage({
   } = useInspection(room, userId, correccion)
   const [photoError, setPhotoError] = useState<string | null>(null)
   const [subiendoFoto, setSubiendoFoto] = useState(false)
+  /* La pregunta de la salida, cuando hay algo que decidir. Ver `salir()`. */
+  const [saliendo, setSaliendo] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const filas = useRef<HTMLDivElement>(null)
 
@@ -101,6 +105,43 @@ export function InspectionPage({
   const fotosDeAntes = corrigiendo ? (correccion?.fotos ?? 0) : 0
   const needsPhoto = incidents.length > 0 && photoCount === 0 && fotosDeAntes === 0
 
+  /*
+   * ¿Hay algo en este borrador, o está igual que cuando se abrió?
+   *
+   * Se mira lo que hay guardado y no si el técnico ha tocado la pantalla en esta
+   * sesión, y la diferencia importa: entrar en una revisión empezada ayer, mirar
+   * y volver a salir sin tocar nada no puede contar como «no hay nada aquí».
+   */
+  const vacia =
+    draft.checks.size === 0 && !(draft.inspection.notes ?? '').trim() && photoCount === 0
+
+  /**
+   * Salir de la revisión.
+   *
+   * Antes esto era `onBack` a secas, y por eso toda sala en la que alguien
+   * entraba se quedaba «A medias»: el borrador nace al abrir la pantalla, así
+   * que abrir un aula para mirar algo y salir la dejaba marcada como trabajo
+   * pendiente. Con 276 salas por ronda, esa lista deja de significar nada.
+   *
+   * Dos comportamientos, y la frontera es si hay algo que perder:
+   *
+   *  - **Nada contestado, ni observación, ni fotos.** El borrador se tira sin
+   *    preguntar. No es una decisión: no hay nada que guardar, y hacer que
+   *    alguien lea un menú para confirmar que no hizo nada es cobrarle un toque
+   *    por haberse asomado.
+   *  - **Algo contestado.** Se pregunta, porque las dos respuestas son legítimas
+   *    y solo las sabe quien está delante: la revisión a medias que se termina
+   *    después de comer, y la que se abandonó porque el aula estaba ocupada y no
+   *    va a volver a tocarse.
+   */
+  function salir(): void {
+    if (vacia) {
+      void descartarBorrador().then(onBack)
+      return
+    }
+    setSaliendo(true)
+  }
+
   async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = e.target.files?.[0]
     if (!file || !draft) return
@@ -123,9 +164,45 @@ export function InspectionPage({
         zone={zoneName}
         title={room.name === room.code ? `Sala ${displayRoomCode(room.code)}` : room.name}
         code={displayRoomCode(room.code)}
-        onBack={onBack}
+        onBack={salir}
         onFicha={onFicha}
       />
+
+      {/*
+        La pregunta de la salida.
+
+        `onFicha` NO pasa por aquí a propósito: ir a la ficha y volver es un
+        paréntesis dentro de la misma revisión —App lo trata como parte del mismo
+        trabajo delicado—, y preguntar ahí sería preguntar por algo que no está
+        pasando.
+      */}
+      {saliendo && (
+        <HojaDeAcciones
+          titulo={corrigiendo ? '¿Qué hacemos con la corrección?' : '¿Qué hacemos con lo revisado?'}
+          subtitulo={`${displayRoomCode(room.code)} · ${zoneName}`}
+          etiquetaDeCierre="Seguir revisando"
+          onCerrar={() => setSaliendo(false)}
+          acciones={[
+            {
+              id: 'guardar',
+              etiqueta: 'Guardar para la próxima vez',
+              descripcion: corrigiendo
+                ? 'La corrección se queda empezada y la ficha ofrece continuarla al volver.'
+                : 'La sala queda «A medias» en la lista y al volver a entrar sigue donde lo dejaste.',
+              alElegir: onBack,
+            },
+            {
+              id: 'descartar',
+              etiqueta: corrigiendo ? 'Descartar la corrección' : 'Descartar lo revisado',
+              descripcion: corrigiendo
+                ? 'Se tira lo corregido. La revisión original no se toca: sigue siendo la que cuenta.'
+                : `Se tira lo contestado en esta sala (${cuantos(draft.checks.size, 'respuesta', 'respuestas')}) y la sala deja de aparecer a medias. Lo que hayas cambiado en el inventario se queda: eso no es parte de la revisión.`,
+              tono: 'critico',
+              alElegir: () => void descartarBorrador().then(onBack),
+            },
+          ]}
+        />
+      )}
 
       {/*
         Qué es esta pantalla cuando no es una revisión nueva.

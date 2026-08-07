@@ -110,4 +110,38 @@ describe('nextRoom', () => {
     const rooms = [sala('0.3', 'z-baja', null)]
     expect(nextRoom(rooms, ZONAS, 'antiguedad', 'z-baja-0.3')).toBeNull()
   })
+
+  it('por planta sigue la ruta, no vuelve a la cabeza de la lista', () => {
+    /*
+     * El bucle que se comía la ronda. Por planta el orden no se mueve al
+     * revisar, así que «la primera que no sea esta» daba la primera del
+     * edificio: terminar la 0.1 llevaba a la 0.2 y terminar la 0.2 devolvía a
+     * la 0.1, indefinidamente. Se veía solo después de encadenar dos aulas.
+     */
+    const rooms = [
+      sala('0.1', 'z-baja', null),
+      sala('0.2', 'z-baja', null),
+      sala('0.3', 'z-baja', null),
+    ]
+    expect(nextRoom(rooms, ZONAS, 'planta', 'z-baja-0.2')?.code).toBe('0.3')
+  })
+
+  it('por planta cruza a la planta siguiente cuando se acaba la actual', () => {
+    const rooms = [sala('0.9', 'z-baja', null), sala('1.1', 'z-primera', null)]
+    expect(nextRoom(rooms, ZONAS, 'planta', 'z-baja-0.9')?.code).toBe('1.1')
+  })
+
+  it('por planta se acaba en la última del edificio, sin volver a empezar', () => {
+    // Encadenar en círculo haría revisar dos veces las mismas aulas sin que
+    // nada lo dijera. `null` devuelve a la lista, que es donde se ve el final.
+    const rooms = [sala('0.1', 'z-baja', null), sala('1.1', 'z-primera', null)]
+    expect(nextRoom(rooms, ZONAS, 'planta', 'z-primera-1.1')).toBeNull()
+  })
+
+  it('por planta sigue contestando si la sala cerrada ya no está en la lista', () => {
+    // La ha archivado otro dispositivo mientras se revisaba: no hay posición
+    // desde la que seguir, pero sí una sala razonable que ofrecer.
+    const rooms = [sala('0.1', 'z-baja', null), sala('0.2', 'z-baja', null)]
+    expect(nextRoom(rooms, ZONAS, 'planta', 'z-baja-9.9')?.code).toBe('0.1')
+  })
 })

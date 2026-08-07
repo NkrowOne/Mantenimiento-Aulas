@@ -883,6 +883,102 @@ Si el curso que viene quieres forzar un recuento general, **no hace falta borrar
 nada**: las salas siguen apareciendo con su última fecha, y basta con pedir que
 se vuelvan a confirmar.
 
+### La hoja de inventario, y para qué sirve la del edificio
+
+Se imprime desde la ficha de una sala —**«Inventario en PDF»**— y desde la lista
+de salas de un edificio —**«Inventario del edificio»**—, y las dos salen del
+navegador con «Imprimir → Guardar como PDF», igual que las placas. No pasan por
+el worker de informes: eso es una tubería de servidor para un documento que se
+firma una vez y se archiva, y un inventario se reimprime cada vez que alguien
+apunta un número de serie.
+
+La de una sala es la lista que el técnico se lleva al aula. **La del edificio es
+la que contesta a lo que se pregunta desde un despacho** y hasta ahora había que
+componer a mano: qué hay en un aulario entero, agrupado por planta y sala en el
+orden en que se recorre, con la cabecera diciendo cuántos equipos son y cómo se
+reparten —instalados, averiados, de baja, **sin número de serie** y **sin
+validar**— y con el desglose por tipo. Los dos recuentos del final son los que
+suelen justificar la ronda: sin número de serie no se cursa un parte de
+garantía, y sin validar significa que alguien apuntó ese aparato desde un aula y
+nadie lo ha confirmado.
+
+Y cada sala lleva impresa **su última fecha de levantamiento**, o «sin levantar»,
+que es esta misma sección vista desde el papel: la hoja de un edificio dice de un
+vistazo qué aulas no ha confirmado nunca nadie.
+
+Sale de la vista `inventory_sheet`, que —como `room_timeline`— **no guarda nada
+nuevo**: lee las tablas que ya existen. Conserva a propósito los equipos de salas
+archivadas: archivar limpia la lista de trabajo, no el inventario de lo que hubo
+allí.
+
+### Qué significa cada fecha, y de dónde sale
+
+Las tres columnas de la derecha se leen a menudo como si fueran la misma cosa, y
+no lo son:
+
+| Columna | De dónde sale | Qué se puede afirmar con ella |
+|---|---|---|
+| **Alta** | `assets.created_at` | Cuándo apareció esa fila. Puede estar vacía: los equipos que trajo el importador y los que materializó `backfill_room_assets` pueden no traerla, y en la hoja salen con un guion en vez de con una fecha inventada |
+| **Último cambio** | `assets.updated_at`, que **escribe el servidor** | Cuándo se modificó por última vez lo que la aplicación sabe del aparato: su marca, su modelo, su número de serie, su etiqueta o su estado. **No** es una visita al aula, y **sale con un guion** mientras nadie haya tocado la ficha |
+| **Baja** | El último `asset_events` de tipo `baja` | Cuándo salió de la sala, con el motivo que escribió quien pidió la retirada debajo de la fecha. **A dónde fue** se lee en «último cambio», que dice «Baja» o «Devuelto al almacén»: son dos cosas distintas —el segundo suma una unidad al almacén— y es lo que hace que la hoja con bajas sirva para justificar dónde acabó un equipo |
+
+**«Último cambio» es reloj de servidor, y de ahí viene todo su valor.** La pone el
+disparador `assets_updated_at`, nunca el dispositivo. Si la escribiera el
+cliente, un iPad con la hora mal —o recién vuelto de otra zona horaria— dejaría
+en el inventario equipos modificados antes de darse de alta o el año que viene, y
+el papel lo repetiría sin pestañear delante de quien firma. Es la misma
+separación que ya hacen `inspections.occurred_at` y `recorded_at`: lo que pasó en
+el aula lo fecha quien estaba allí, y lo que le pasa a una fila lo fecha la base.
+
+Tres consecuencias prácticas:
+
+- **La casilla está vacía hasta que alguien toca la ficha.** La columna de la
+  base no admite huecos y nace con la fecha del alta, así que la hoja publica esa
+  fecha **solo cuando va por delante del alta**: mientras las dos digan lo mismo,
+  lo que se imprime es el guion. Es lo correcto y no un fallo — «Modificado», con
+  la fecha del alta, sobre un equipo que nadie ha tocado nunca es una afirmación
+  falsa, y en el parque importado lo serían las 1.094 líneas.
+- **Un UPDATE que no cambia nada no mueve la fecha.** Cada sincronización reenvía
+  filas que el dispositivo ya tenía; sin esa comprobación, el inventario entero
+  diría que se tocó hoy y la columna no valdría para nada. Así que «último
+  cambio» se puede leer como lo que parece: desde cuándo nadie corrige ese
+  aparato.
+- **Y como es del servidor, una hoja hecha sin cobertura no la trae.** El espejo
+  del dispositivo no guarda `updated_at`, ni `asset_events`, ni los equipos
+  retirados. Esa hoja sale con un recuadro **«Atención: hoja incompleta»**
+  impreso: si te llega una así, **no la archives** — le faltan todas las bajas y
+  la columna de último cambio. Se vuelve a imprimir con conexión y ya está
+  entera.
+
+Un caso que conviene conocer antes de que alguien pregunte: hay bajas **sin
+evento**. Cuando se descarta un equipo con «No está» desde `Equipos sin validar`
+y de él ya colgaba algo firmado, el servidor lo retira en vez de borrarlo, y esa
+retirada no deja `asset_events` — era una propuesta rechazada, no un aparato que
+se muriera. Para esos la hoja aproxima la fecha de baja con `updated_at`, y en
+los que ya estaban retirados antes de que esa columna existiera, eso es la fecha
+del alta. Es lo único que la base sabe de ellos y se dice tal cual, en lugar de
+fabricar una fecha plausible que es justo el dato que se está pidiendo.
+
+```sql
+-- Qué equipos siguen sin marca. La columna nació vacía a propósito: el Excel
+-- traía marca y modelo pegados dentro de `model` y separarlos por el primer
+-- espacio habría fallado en silencio en unos cientos de filas. Se rellena desde
+-- el aula, en «Corregir» del equipo.
+select building_code,
+       count(*) as equipos,
+       count(*) filter (where coalesce(brand, '') = '') as sin_marca
+from inventory_sheet
+where baja_at is null
+group by building_code
+order by 3 desc;
+
+-- Dónde acabó cada equipo que salió de un edificio, con su destino y su motivo
+select room_code, label, model, serial, baja_at, baja_destino, baja_motivo
+from inventory_sheet
+where building_code = 'H' and baja_at is not null
+order by baja_at desc;
+```
+
 ## 7. Historial
 
 La pestaña **Historial** cruza lo que hasta ahora había que mirar en tres

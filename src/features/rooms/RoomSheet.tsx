@@ -49,7 +49,6 @@ import { v7 as uuidv7 } from 'uuid'
 import { db, enqueue } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { flush } from '@/sync/outbox'
-import { RoomPlate } from '@/components/RoomPlate'
 import { DoorPlate } from '@/components/DoorPlate'
 import { RevisionesAnteriores } from '@/features/inspection/RevisionesAnteriores'
 import type { Correccion } from '@/features/inspection/useInspection'
@@ -138,6 +137,15 @@ interface Props {
   onCorregir: (correccion: Correccion) => void
   /** Ir a la hoja de placas del edificio, lista para imprimir. */
   onImprimir: () => void
+  /**
+   * Ir a la hoja de inventario de ESTA sala, lista para guardar como PDF.
+   *
+   * Opcional, y sin manejador no se pinta el botón: es una acción de oficina que
+   * la ficha no necesita para hacer su trabajo —llegar al aula y ver qué hay—, y
+   * un botón montado siempre que a veces no lleva a ninguna parte enseña a
+   * desconfiar de todos los botones de la pantalla.
+   */
+  onInventario?: () => void
 }
 
 export function RoomSheet({
@@ -149,6 +157,7 @@ export function RoomSheet({
   onRevisar,
   onCorregir,
   onImprimir,
+  onInventario,
 }: Props): React.ReactElement {
   const qc = useQueryClient()
   const [abierto, setAbierto] = useState(false)
@@ -276,45 +285,94 @@ export function RoomSheet({
 
   return (
     <div className="pb-4">
-      <RoomPlate
-        building={buildingName}
-        zone={zoneName}
-        title={room.name || displayRoomCode(room.code)}
-        code={displayRoomCode(room.code)}
-        onBack={onBack}
-      />
-
       <div className="mx-auto max-w-2xl px-4 pb-10">
         {/*
-          La placa, con su código escaneable.
-          Va arriba del todo porque es lo que identifica la sala, y porque es lo
-          que alguien viene a buscar cuando entra aquí desde el listado: «¿es
-          esta?». El QR codifica el identificador interno, no el nombre, así que
+          Una sola placa, la que lleva el QR.
+
+          Había dos, una encima de la otra: la cabecera de la revisión —edificio,
+          planta, nombre grande y código— y debajo, a doscientos píxeles, la placa
+          de puerta con EXACTAMENTE lo mismo más el QR y la matrícula. Quien abría
+          la ficha leía el nombre del aula dos veces antes de llegar a nada que no
+          supiera ya, y en una pantalla de móvil eso es media pantalla gastada en
+          repetirse.
+
+          Se queda la del QR porque es la que dice más con el mismo sitio: lleva
+          dentro todo lo que llevaba la otra —ubicación, nombre, código— y además
+          el código escaneable y la matrícula, que es lo que se dicta por
+          teléfono. El QR codifica el identificador interno, no el nombre, así que
           renombrar la sala no invalida las etiquetas ya atornilladas.
         */}
-        {room.short_ref && (
-          <section aria-labelledby="sec-placa" className="mt-6">
-            <div className="section-head">
-              <h2 id="sec-placa" className="eyebrow">Placa de puerta</h2>
-            </div>
-            <DoorPlate
-              building={buildingName}
-              zone={zoneName}
-              title={room.name || displayRoomCode(room.code)}
-              ref={room.short_ref}
-              id={room.id}
-            />
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={onImprimir}
-                className="key key-quiet min-h-11 px-3 text-sm"
-              >
-                Imprimir las placas del edificio
-              </button>
-            </div>
-          </section>
+        <button
+          type="button"
+          onClick={onBack}
+          className="-ml-2 mb-2 mt-2 inline-flex min-h-11 items-center px-2 font-mono text-[0.6875rem] uppercase tracking-[0.14em] text-accent"
+        >
+          ← Volver
+        </button>
+
+        {room.short_ref ? (
+          <DoorPlate
+            building={buildingName}
+            zone={zoneName}
+            title={room.name || displayRoomCode(room.code)}
+            ref={room.short_ref}
+            id={room.id}
+            code={displayRoomCode(room.code)}
+          />
+        ) : (
+          /*
+            Sin matrícula no hay placa que enseñar —ni QR que generar—, pero la
+            sala sigue teniendo que identificarse: quitar la cabecera sin esto
+            dejaba la ficha de un aula recién creada, o de una que este
+            dispositivo aún no ha descargado entera, sin decir de qué aula habla.
+          */
+          <div className="card p-4">
+            <p className="font-mono text-[0.625rem] font-bold uppercase tracking-[0.17em] text-muted">
+              {buildingName} · {zoneName}
+            </p>
+            <h1 className="mt-1 truncate text-[1.6rem] font-bold leading-[1.2] tracking-tight">
+              {room.name || displayRoomCode(room.code)}
+            </h1>
+            <p className="mt-1 font-mono text-[0.625rem] text-muted">
+              {displayRoomCode(room.code)} · sin matrícula todavía
+            </p>
+          </div>
         )}
+
+        {/*
+          Las dos hojas que se imprimen desde aquí, en una fila discreta y fuera
+          del bloque de la placa.
+
+          Estaban dentro, y con `room.short_ref` nulo —una sala que todavía no ha
+          recibido matrícula, o que este dispositivo aún no ha descargado— la
+          sección entera no se pinta: el único acceso a las placas del edificio
+          desaparecía justo en la sala que hace falta etiquetar, y meter ahí el
+          inventario habría atado una hoja que no tiene nada que ver con las
+          placas a que ESTA sala tenga una.
+
+          En `key-quiet` y con la letra pequeña a propósito: son papeleo de
+          oficina, y la ficha se abre para revisar. Compitiendo con «Revisar
+          esta sala» —que está debajo, en acento y a ancho completo— convertirían
+          la pantalla de trabajo en un menú de descargas.
+        */}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onImprimir}
+            className="key key-quiet min-h-11 px-3 text-sm"
+          >
+            Imprimir las placas del edificio
+          </button>
+          {onInventario && (
+            <button
+              type="button"
+              onClick={onInventario}
+              className="key key-quiet min-h-11 px-3 text-sm"
+            >
+              Inventario en PDF
+            </button>
+          )}
+        </div>
 
         {/*
           El índice, y de qué está hecho.
