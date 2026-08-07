@@ -49,7 +49,6 @@ import { v7 as uuidv7 } from 'uuid'
 import { db, enqueue } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { flush } from '@/sync/outbox'
-import { RoomPlate } from '@/components/RoomPlate'
 import { DoorPlate } from '@/components/DoorPlate'
 import { RevisionesAnteriores } from '@/features/inspection/RevisionesAnteriores'
 import type { Correccion } from '@/features/inspection/useInspection'
@@ -286,35 +285,58 @@ export function RoomSheet({
 
   return (
     <div className="pb-4">
-      <RoomPlate
-        building={buildingName}
-        zone={zoneName}
-        title={room.name || displayRoomCode(room.code)}
-        code={displayRoomCode(room.code)}
-        onBack={onBack}
-      />
-
       <div className="mx-auto max-w-2xl px-4 pb-10">
         {/*
-          La placa, con su código escaneable.
-          Va arriba del todo porque es lo que identifica la sala, y porque es lo
-          que alguien viene a buscar cuando entra aquí desde el listado: «¿es
-          esta?». El QR codifica el identificador interno, no el nombre, así que
+          Una sola placa, la que lleva el QR.
+
+          Había dos, una encima de la otra: la cabecera de la revisión —edificio,
+          planta, nombre grande y código— y debajo, a doscientos píxeles, la placa
+          de puerta con EXACTAMENTE lo mismo más el QR y la matrícula. Quien abría
+          la ficha leía el nombre del aula dos veces antes de llegar a nada que no
+          supiera ya, y en una pantalla de móvil eso es media pantalla gastada en
+          repetirse.
+
+          Se queda la del QR porque es la que dice más con el mismo sitio: lleva
+          dentro todo lo que llevaba la otra —ubicación, nombre, código— y además
+          el código escaneable y la matrícula, que es lo que se dicta por
+          teléfono. El QR codifica el identificador interno, no el nombre, así que
           renombrar la sala no invalida las etiquetas ya atornilladas.
         */}
-        {room.short_ref && (
-          <section aria-labelledby="sec-placa" className="mt-6">
-            <div className="section-head">
-              <h2 id="sec-placa" className="eyebrow">Placa de puerta</h2>
-            </div>
-            <DoorPlate
-              building={buildingName}
-              zone={zoneName}
-              title={room.name || displayRoomCode(room.code)}
-              ref={room.short_ref}
-              id={room.id}
-            />
-          </section>
+        <button
+          type="button"
+          onClick={onBack}
+          className="-ml-2 mb-2 mt-2 inline-flex min-h-11 items-center px-2 font-mono text-[0.6875rem] uppercase tracking-[0.14em] text-accent"
+        >
+          ← Volver
+        </button>
+
+        {room.short_ref ? (
+          <DoorPlate
+            building={buildingName}
+            zone={zoneName}
+            title={room.name || displayRoomCode(room.code)}
+            ref={room.short_ref}
+            id={room.id}
+            code={displayRoomCode(room.code)}
+          />
+        ) : (
+          /*
+            Sin matrícula no hay placa que enseñar —ni QR que generar—, pero la
+            sala sigue teniendo que identificarse: quitar la cabecera sin esto
+            dejaba la ficha de un aula recién creada, o de una que este
+            dispositivo aún no ha descargado entera, sin decir de qué aula habla.
+          */
+          <div className="card p-4">
+            <p className="font-mono text-[0.625rem] font-bold uppercase tracking-[0.17em] text-muted">
+              {buildingName} · {zoneName}
+            </p>
+            <h1 className="mt-1 truncate text-[1.6rem] font-bold leading-[1.2] tracking-tight">
+              {room.name || displayRoomCode(room.code)}
+            </h1>
+            <p className="mt-1 font-mono text-[0.625rem] text-muted">
+              {displayRoomCode(room.code)} · sin matrícula todavía
+            </p>
+          </div>
         )}
 
         {/*

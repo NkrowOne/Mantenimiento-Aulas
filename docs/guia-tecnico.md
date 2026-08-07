@@ -130,7 +130,9 @@ corrección»** la tira y no cambia nada.
      las que llevan más tiempo sin revisar, sin agrupar por planta. Es el orden
      del día que persigues el retraso en vez de vaciar un edificio.
    - La franja **naranja** a la izquierda marca las que tocan.
-   - La etiqueta **«A medias»** significa que dejaste una revisión sin terminar.
+   - La etiqueta **«A medias»** significa que dejaste una revisión sin terminar
+     **y dijiste que querías guardarla**. Ya no aparece por haberte asomado a un
+     aula: si sales sin contestar nada, no queda rastro.
    - El **triángulo rojo** junto al código dice que esa sala tiene incidencias
      abiertas — con el número al lado si hay más de una. El mismo triángulo
      aparece en la lista de edificios sumando las de todas sus salas, así que
@@ -287,6 +289,21 @@ dispositivo, y **además se sube al servidor en cuanto hay red**.
 
 Si te quedas sin batería, se te cae el móvil o cierras sin querer, la revisión
 sigue ahí. Aparecerá como «A medias» en la lista.
+
+### Al salir, tú decides qué pasa con lo empezado
+
+Si sales de una revisión con **algo contestado**, la aplicación pregunta antes de
+dejarte marchar:
+
+- **Guardar para la próxima vez** — la sala queda «A medias» y al volver a entrar
+  sigue donde lo dejaste. Es lo de siempre.
+- **Descartar lo revisado** — se tira lo contestado en esa sala y deja de
+  aparecer a medias. Para el aula que estaba ocupada, o para cuando te has metido
+  en la que no era. Lo que hayas cambiado en el **inventario** se queda: eso no es
+  parte de la revisión.
+
+Y si sales **sin haber contestado nada**, no pregunta ni deja nada: asomarse a un
+aula ya no la marca como trabajo pendiente.
 
 ## Sacar el inventario en papel
 

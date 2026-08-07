@@ -34,6 +34,7 @@ import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { descargaEntera } from '@/sync/paginada'
 import { horaCorta } from '@/domain/fechas'
+import { cuantos } from '@/lib/plural'
 import { displayRoomCode } from '@/domain/normalize'
 import { ASSET_STATUS_LABELS } from '@/domain/types'
 import type { Building, Room } from '@/domain/types'
@@ -58,19 +59,6 @@ import {
  * boli el número de serie que falta.
  */
 const HUECO = '—'
-
-/**
- * Un recuento con su palabra concordada: «1 equipo», «4 equipos», «1 averiado».
- *
- * Está aquí y no repetido en cada línea porque el mismo ternario estaba escrito
- * cuatro veces —el recuento de arriba, el pie de cada sala y el total— y la
- * línea de estados no lo estaba: imprimía «1 averiados» en un papel que se
- * firma y se archiva. Con una sola pieza no puede volver a haber una línea del
- * documento que concuerde y otra que no.
- */
-function cuantos(n: number, singular: string, plural: string): string {
-  return `${n} ${n === 1 ? singular : plural}`
-}
 
 /**
  * De qué se imprime la hoja.
