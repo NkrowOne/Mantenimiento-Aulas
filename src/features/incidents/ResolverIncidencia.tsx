@@ -8,7 +8,11 @@
  *  - **La sala no se entera de nada.** La línea de tiempo dice «Resuelta:
  *    Proyector: no da imagen» y ni una palabra sobre qué se hizo. Cuando ese
  *    mismo proyector vuelva a fallar en abril, saber que en marzo se le cambió
- *    la lámpara es la diferencia entre una avería nueva y una reincidencia.
+ *    la lámpara es la diferencia entre una avería nueva y una reincidencia. El
+ *    Excel del que se viene sí lo apuntaba —276 de las 281 cerradas del
+ *    histórico traen su frase—, así que no pedirla era perder por el camino
+ *    algo que ya se hacía. Y el informe la pinta: cada cierre sale en el
+ *    registro del periodo con su resolución debajo.
  *  - **Se cerraba lejos del aula.** El botón vivía en una lista de 283 filas,
  *    o sea en un escritorio; quien lo arregló estaba en el aula y muchas veces
  *    sin cobertura. Este formulario se abre también desde la ficha de la sala,

@@ -30,13 +30,17 @@
  * **Tres — cerrar lo que se acaba de arreglar, aquí mismo.** Resolver una
  * avería vivía en la pestaña de Incidencias: una lista de 283 filas, o sea un
  * escritorio. Quien la arregla está en el aula, con el aparato delante y a
- * menudo sin cobertura, y lo que no se cierra en el sitio no se cierra — de las
- * 283 importadas, 281 llegaron con fecha de resolución y la explicación vacía.
- * Las averías vivas de la sala se listan aquí, se elige cuál de ellas se ha
- * resuelto —el proyector, la pantalla 2— y se cierra **contando qué se hizo**,
- * con una foto si hay algo que enseñar. La explicación es obligatoria: es lo que
- * convierte el cierre en algo que se puede leer en abril, cuando ese mismo
- * proyector vuelva a fallar y haya que decidir si es la misma avería o es otra.
+ * menudo sin cobertura. Las averías vivas de la sala se listan aquí, se elige
+ * cuál de ellas se ha resuelto —el proyector, la pantalla 2— y se cierra
+ * **contando qué se hizo**, con una foto si hay algo que enseñar.
+ *
+ * La explicación es obligatoria, y no es una exigencia nueva: el Excel del que
+ * se viene la tenía, y 276 de las 281 incidencias cerradas del histórico traen
+ * su frase escrita. Lo que faltaba era pedirla aquí. Es lo que convierte el
+ * cierre en algo que se puede leer en abril, cuando ese mismo proyector vuelva a
+ * fallar y haya que decidir si es la misma avería o es otra — y es lo que sale
+ * en el registro del periodo del informe, que ya pinta la resolución de cada
+ * cierre.
  *
  * **Cuatro — corregir una revisión sin fabricar otra.** Una revisión cerrada es
  * inmutable, y con razón. Pero hasta ahora eso significaba que un error solo se

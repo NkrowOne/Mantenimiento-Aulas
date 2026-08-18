@@ -139,11 +139,11 @@ la pestaña de Incidencias, y solo de una forma: **escribiendo qué se hizo**. S
 esa frase el botón no cierra nada.
 
 Antes cerrar era cosa de supervisores, y la razón era buena: era un toque sin
-coste, un botón que borraba trabajo de la lista sin dejar constancia de nada
-—las 281 incidencias cerradas del histórico importado tienen la explicación
-vacía—. Con la explicación obligatoria deja de ser un toque: cerrar es contar
-qué se hizo, firmado y con la hora, y quien puede contarlo es quien tuvo el
-aparato delante.
+coste, un botón que borraba trabajo de la lista sin dejar constancia de nada. Y
+eso era además un retroceso respecto al Excel, que sí apuntaba qué se hizo: 276
+de las 281 incidencias cerradas del histórico importado traen su frase. Con la
+explicación obligatoria, cerrar vuelve a ser contar qué se hizo —firmado y con
+la hora—, y quien puede contarlo es quien tuvo el aparato delante.
 
 Lo que queda escrito:
 

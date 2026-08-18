@@ -9,13 +9,17 @@
 --     aula, con la ficha abierta y —muchas veces— sin cobertura. Cerrar exigía
 --     salir del edificio, encontrar la incidencia en una lista de 283 y
 --     acordarse de cuál de las tres pantallas era. Lo que no se cierra en el
---     sitio no se cierra: por eso 281 de las 283 importadas llegaron con fecha
---     de resolución y la columna `resolution` vacía.
---  2. **Se cerraba sin decir nada.** `resolution` existía desde el primer
---     esquema y el botón no la pedía, así que la línea de tiempo de la sala
---     enseña «Resuelta: Proyector: no da imagen» sin una palabra sobre qué se
---     hizo. Y eso es justo lo que hace falta la próxima vez que ese proyector
---     falle: si se cambió la lámpara en marzo, la avería de abril es otra cosa.
+--     sitio se cierra tarde, mal o no se cierra.
+--  2. **Se cerraba sin decir nada, y eso era un retroceso.** El Excel del que
+--     se viene SÍ apuntaba qué se hizo: 276 de las 281 incidencias cerradas del
+--     histórico importado traen su frase —«Se acude al aula, se revisa. Se
+--     sustituye el cable Hdmi existente por uno nuevo»—. La columna
+--     `resolution` está en el esquema desde el primer día justamente por eso, y
+--     el botón de la aplicación no la pedía: cada avería cerrada desde la app
+--     era una línea menos de ese registro, y la línea de tiempo de la sala
+--     enseñaba «Resuelta: Proyector: no da imagen» sin una palabra más. Que es
+--     justo lo que hace falta la próxima vez que ese proyector falle: si se le
+--     cambió la lámpara en marzo, la avería de abril es otra cosa.
 --
 -- Esta migración abre la puerta que faltaba y le pone la condición que la hace
 -- valer la pena: **se cierra explicando**.
