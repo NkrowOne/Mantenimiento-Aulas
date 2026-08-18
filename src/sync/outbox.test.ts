@@ -504,6 +504,49 @@ describe('flush', () => {
     expect(await db.outbox.count()).toBe(0)
   })
 
+  /*
+   * El cierre de una avería, que es lo que se firma en el aula al arreglarla.
+   *
+   * Dos garantías, y las dos son la diferencia entre «resuelta» y «resuelta en
+   * el iPad»: sube DESPUÉS de la incidencia que cierra —una avería vista y
+   * arreglada en la misma visita viaja entera en la misma pasada, y al revés
+   * chocaría contra la clave ajena—, y se reenvía sin pisar, porque
+   * `incident_resolutions` solo acepta altas.
+   */
+  it('el cierre de una avería sube detrás de la incidencia que cierra', async () => {
+    const vistos: string[] = []
+    upsert.mockImplementation((payload: { id: string }) => {
+      vistos.push(payload.id)
+      return Promise.resolve({ error: null, status: 201 })
+    })
+
+    await db.outbox.bulkAdd([
+      entrada({
+        entity: 'incident_resolution',
+        payload: { id: 'cierre', incident_id: 'averia' },
+        createdAt: 1,
+      }),
+      entrada({ entity: 'incident', payload: { id: 'averia' }, createdAt: 2 }),
+    ])
+
+    await flush()
+
+    expect(vistos).toEqual(['averia', 'cierre'])
+  })
+
+  it('un cierre reenviado no pisa el que ya está arriba', async () => {
+    await db.outbox.add(
+      entrada({ entity: 'incident_resolution', payload: { id: 'cierre', incident_id: 'averia' } }),
+    )
+
+    await flush()
+
+    expect(upsert).toHaveBeenCalledWith(expect.anything(), {
+      onConflict: 'id',
+      ignoreDuplicates: true,
+    })
+  })
+
   it('sube los tipos antes que los equipos que los usan', async () => {
     const vistos: string[] = []
     upsert.mockImplementation((payload: { id: string }) => {

@@ -34,6 +34,17 @@ export interface OutboxEntry {
     | 'inspection'
     | 'inspection_check'
     | 'incident'
+    /*
+     * El cierre de una incidencia, con su explicación dentro.
+     *
+     * Entidad propia y no un reenvío de `incident` porque `incident` viaja con
+     * «no pises lo que ya esté» —es lo que hace inofensivo el reintento de una
+     * incidencia recién abierta—, y con esa marca un cierre no cambiaría nada
+     * arriba: subiría, se daría por bueno y la incidencia seguiría abierta en el
+     * servidor. Es una fila nueva, en su propia tabla, y por eso puede
+     * reenviarse igual de tranquila.
+     */
+    | 'incident_resolution'
     | 'stock_movement'
     | 'attachment'
     | 'asset_event'

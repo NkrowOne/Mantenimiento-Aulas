@@ -125,12 +125,46 @@ mismo con `npm run admin -- …`.
 
 | Rol | Puede |
 |---|---|
-| `tecnico` | Revisar salas, abrir incidencias, consumir material del almacén |
-| `supervisor` | Además: cerrar incidencias, registrar compras y generar informes |
+| `tecnico` | Revisar salas, abrir incidencias, **cerrarlas explicando qué hizo**, consumir material del almacén |
+| `supervisor` | Además: marcar incidencias «en curso», registrar compras, generar informes y corregir a mano una incidencia cerrada |
 | `admin` | Además: editar edificios y salas, gestionar usuarios, pestaña Datos y configurar la clave de la IA de los informes |
 
 Un cambio de rol tarda hasta una hora en aplicarse, o es inmediato si la persona
 cierra y vuelve a entrar con su PIN. El rol viaja dentro del token.
+
+### Quién cierra una incidencia, y qué queda escrito
+
+Cerrarla puede hacerlo **cualquiera del equipo**, desde la ficha del aula o desde
+la pestaña de Incidencias, y solo de una forma: **escribiendo qué se hizo**. Sin
+esa frase el botón no cierra nada.
+
+Antes cerrar era cosa de supervisores, y la razón era buena: era un toque sin
+coste, un botón que borraba trabajo de la lista sin dejar constancia de nada
+—las 281 incidencias cerradas del histórico importado tienen la explicación
+vacía—. Con la explicación obligatoria deja de ser un toque: cerrar es contar
+qué se hizo, firmado y con la hora, y quien puede contarlo es quien tuvo el
+aparato delante.
+
+Lo que queda escrito:
+
+- Una fila en `incident_resolutions` —id, explicación, quién y cuándo— que **no
+  se reescribe ni se borra**, como un movimiento de almacén o una foto. Si se
+  cierra dos veces, quedan las dos y la incidencia conserva el primer cierre.
+- La incidencia, cerrada con esa misma explicación en `incidents.resolution`, y
+  saliendo en la línea de tiempo de la sala el día que se resolvió.
+- La foto, si la hubo, en `attachments` con `entity_type = 'incident'`.
+
+El `UPDATE` directo sobre `incidents` **sigue siendo solo de supervisor**: es lo
+que hace falta para reabrir una que se cerró por error o corregir un cierre.
+
+```sql
+-- Quién cierra y con cuánto detalle, por si hace falta mirarlo
+select p.full_name, count(*) as cierres,
+       round(avg(length(r.resolution))) as caracteres_de_media
+from incident_resolutions r
+left join profiles p on p.id = r.resolved_by
+group by 1 order by 2 desc;
+```
 
 ### Qué entra en la pestaña de Incidencias, y qué no
 
@@ -181,8 +215,8 @@ Lo que hay que saber para no interpretar mal una cifra:
   informes. Si escribes una consulta nueva sobre `inspections`, usa esa vista o
   contarás la misma visita dos veces.
 - **Las incidencias que abrió la original no se cierran** porque la corrección
-  diga que el equipo estaba bien. Siguen en la cola del supervisor, con su
-  resolución, que es donde se decide eso.
+  diga que el equipo estaba bien. Siguen abiertas hasta que alguien las cierre
+  desde la ficha del aula, explicando qué pasó, que es donde se decide eso.
 
 ```sql
 -- Qué se ha corregido y quién, para mirarlo de cuando en cuando

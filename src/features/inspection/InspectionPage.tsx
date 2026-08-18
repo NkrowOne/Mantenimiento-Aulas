@@ -11,7 +11,7 @@ import { cuantos } from '@/lib/plural'
 import { type CheckKey, type Room, type Severity } from '@/domain/types'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaLegible } from '@/domain/historial'
-import { FotosDeRevision } from './FotosDeRevision'
+import { TiraDeFotos } from '@/components/Fotos'
 import { useInspection, type Correccion } from './useInspection'
 
 interface Props {
@@ -254,7 +254,7 @@ export function InspectionPage({
           {fotosDeAntes > 0 && (
             <div className="mt-3">
               <p className="eyebrow mb-1">Fotos de aquel día</p>
-              <FotosDeRevision ids={[correccion!.baseId]} />
+              <TiraDeFotos entityType="inspection" ids={[correccion!.baseId]} />
             </div>
           )}
 

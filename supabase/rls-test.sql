@@ -2820,3 +2820,123 @@ begin;
     else 'FALLO: la fusión ha vaciado un edificio archivado'
   end as resultado;
 rollback;
+
+\echo ''
+\echo '=== 72. Cerrar una avería desde el aula: explicando, firmado y sin puerta trasera ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select id as sala from rooms where active order by created_at limit 1 \gset
+
+  insert into incidents (id, room_id, title, description, severity, state, kind,
+                         opened_at, opened_by)
+  values ('77777777-7777-4777-8777-777777777791', :'sala',
+          'Proyector: no da imagen', 'No da imagen', 'alta', 'abierta', 'incidencia',
+          now() - interval '3 days', '11111111-1111-4111-8111-111111111111');
+
+  -- 1 — El cierre normal: lo firma quien lo arregló y cierra la incidencia con
+  -- su explicación dentro. Esta es la puerta que antes no existía; sin ella, la
+  -- avería la cerraba un supervisor desde un escritorio, sin decir qué se hizo.
+  insert into incident_resolutions (id, incident_id, resolution, resolved_at, resolved_by)
+  values (gen_random_uuid(), '77777777-7777-4777-8777-777777777791',
+          'Cambiado el cable HDMI de la mesa; ya da imagen.', now(),
+          '11111111-1111-4111-8111-111111111111');
+
+  select case
+    when (select count(*) from incidents
+           where id = '77777777-7777-4777-8777-777777777791'
+             and state = 'resuelta'
+             and resolution = 'Cambiado el cable HDMI de la mesa; ya da imagen.'
+             and resolved_by = '11111111-1111-4111-8111-111111111111'
+             and resolved_at is not null) = 1
+    then 'OK: la avería queda cerrada, explicada y firmada por el técnico'
+    else 'FALLO: el cierre desde el aula no ha cerrado la incidencia'
+  end as resultado;
+
+  -- 2 — Un cierre mudo no entra. Es toda la razón de ser de esta tabla: cerrar
+  -- sin decir qué se hizo deja el histórico de la sala igual de ciego que antes.
+  savepoint s1;
+  do $$
+  begin
+    insert into incident_resolutions (id, incident_id, resolution, resolved_at, resolved_by)
+    values (gen_random_uuid(), '77777777-7777-4777-8777-777777777791', '   ', now(),
+            '11111111-1111-4111-8111-111111111111');
+    raise exception 'FALLO: se aceptó un cierre sin explicación';
+  exception when check_violation then
+    raise notice 'OK: un cierre sin explicación no entra';
+  end $$;
+  rollback to savepoint s1;
+
+  -- 3 — Ni un cierre firmado en nombre de otro. Sin esto, «quién lo resolvió»
+  -- sería un campo del formulario en vez de un dato.
+  savepoint s2;
+  do $$
+  begin
+    insert into incident_resolutions (id, incident_id, resolution, resolved_at, resolved_by)
+    values (gen_random_uuid(), '77777777-7777-4777-8777-777777777791',
+            'Lo arregló otro, dice este', now(),
+            '22222222-2222-4222-8222-222222222222');
+    raise exception 'FALLO: se firmó un cierre en nombre de otro';
+  exception when insufficient_privilege then
+    raise notice 'OK: RLS bloqueó la suplantación en el cierre';
+  end $$;
+  rollback to savepoint s2;
+
+  -- 4 — El segundo cierre no reescribe el primero. Pasa de verdad: dos técnicos
+  -- sin cobertura, o el mismo reintentando. La fila nueva se guarda —es lo que
+  -- alguien escribió— y la incidencia conserva el cierre que ya tenía.
+  insert into incident_resolutions (id, incident_id, resolution, resolved_at, resolved_by)
+  values (gen_random_uuid(), '77777777-7777-4777-8777-777777777791',
+          'Esto llega tarde y no debe pisar nada', now(),
+          '11111111-1111-4111-8111-111111111111');
+
+  select case
+    when (select resolution from incidents where id = '77777777-7777-4777-8777-777777777791')
+         = 'Cambiado el cable HDMI de la mesa; ya da imagen.'
+     and (select count(*) from incident_resolutions
+           where incident_id = '77777777-7777-4777-8777-777777777791') = 2
+    then 'OK: el cierre repetido se guarda y no reescribe el que ya estaba'
+    else 'FALLO: un cierre posterior ha pisado la resolución original'
+  end as resultado;
+
+  -- 5 — Y un cierre escrito no se reescribe ni se borra: es un asiento, como un
+  -- movimiento de almacén o una foto.
+  savepoint s3;
+  do $$
+  declare n int;
+  begin
+    update incident_resolutions set resolution = 'otra cosa'
+     where incident_id = '77777777-7777-4777-8777-777777777791';
+    get diagnostics n = row_count;
+    if n > 0 then
+      raise exception 'FALLO: se reescribieron % cierres', n;
+    end if;
+    delete from incident_resolutions
+     where incident_id = '77777777-7777-4777-8777-777777777791';
+    get diagnostics n = row_count;
+    if n > 0 then
+      raise exception 'FALLO: se borraron % cierres', n;
+    end if;
+    raise notice 'OK: los cierres no se reescriben ni se borran';
+  exception when insufficient_privilege then
+    raise notice 'OK: RLS bloqueó reescribir o borrar un cierre';
+  end $$;
+  rollback to savepoint s3;
+
+  -- 6 — Y la puerta de siempre sigue cerrada: el UPDATE directo sobre
+  -- `incidents` no se le abre a nadie por haber añadido esta tabla (prueba 4).
+  savepoint s4;
+  do $$
+  declare n int;
+  begin
+    update incidents set state = 'abierta', resolution = null
+     where id = '77777777-7777-4777-8777-777777777791';
+    get diagnostics n = row_count;
+    if n > 0 then
+      raise exception 'FALLO: un técnico reabrió % incidencias a mano', n;
+    end if;
+    raise notice 'OK: reabrir a mano sigue siendo cosa de un supervisor';
+  exception when insufficient_privilege then
+    raise notice 'OK: RLS bloqueó el UPDATE directo';
+  end $$;
+  rollback to savepoint s4;
+rollback;

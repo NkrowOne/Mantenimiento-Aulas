@@ -390,6 +390,30 @@ export interface Incident {
   source: 'app' | 'import' | 'system'
 }
 
+/**
+ * El cierre de una incidencia: qué se hizo, quién y cuándo.
+ *
+ * Una fila y no tres columnas de `incidents` porque cerrar se firma en el aula,
+ * muchas veces sin cobertura, y la cola de salida solo sabe hacer bien una cosa:
+ * insertar algo que ya nació con su identidad. Un UPDATE reintentado obliga a
+ * preguntarse si el primero llegó; una fila con id de cliente se reenvía las
+ * veces que haga falta y la segunda no hace nada.
+ *
+ * La incidencia sí termina resuelta: de eso se encarga un disparador del
+ * servidor, que copia la explicación a `incidents.resolution` y la cierra. Aquí
+ * queda el asiento, que es lo que se puede leer después aunque la incidencia se
+ * vuelva a abrir.
+ */
+export interface IncidentResolution {
+  id: string
+  incident_id: string
+  /** Qué se hizo. Obligatoria: es la razón de ser de esta fila. */
+  resolution: string
+  /** Reloj del dispositivo: cuándo se arregló, aunque suba el lunes. */
+  resolved_at: string
+  resolved_by: string | null
+}
+
 export interface StockItem {
   id: string
   name: string

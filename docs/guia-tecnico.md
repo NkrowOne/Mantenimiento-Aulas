@@ -104,8 +104,8 @@ Lo que pasa al guardar:
 - **La original no se borra.** Se sigue leyendo: en la ficha de la revisión
   aparece «Original / Corrección 1» para ver qué decía antes.
 - **Las incidencias que abrió no se cierran solas.** Si marcas que el proyector
-  estaba bien, el parte que se abrió sigue abierto: eso lo cierra un supervisor,
-  con su resolución. La aplicación te lo dice mientras corriges.
+  estaba bien, el parte que se abrió sigue abierto: se cierra desde la ficha del
+  aula, con su explicación. La aplicación te lo dice mientras corriges.
 
 Puedes corregir la revisión de un compañero, y él la tuya: queda firmado quién
 corrigió y cuándo. Si empiezas una corrección y la dejas a medias, la ficha te
@@ -263,6 +263,30 @@ se queda como está.
 
 > Si el año que viene toca recuento, se vuelve a confirmar y quedan las dos
 > fechas. No se pisa la anterior.
+
+### Cuando arreglas algo: ciérralo ahí mismo
+
+En la ficha del aula, encima del inventario, está **«Averías abiertas»**: lo que
+esa sala tiene roto ahora mismo. Cada línea empieza por el aparato —Proyector,
+Pantalla 2, Red— para que en una sala con tres averías se vea de un vistazo cuál
+es cuál.
+
+Pulsa **«Resolver»** en la que acabas de arreglar y la aplicación te pide una
+sola cosa, obligatoria: **qué has hecho**. Una frase basta — «cambiado el cable
+HDMI de la mesa, ya da imagen»—, y **puedes añadir una foto** si hay algo que
+enseñar. La foto es opcional a propósito: una regleta nueva se ve, un ajuste de
+la matriz de vídeo no.
+
+Es obligatorio porque esa frase es lo que lee quien atienda la próxima avería de
+esa aula. Con ella, «el proyector no da imagen» en abril se lee sabiendo que en
+marzo se le cambió la lámpara — y eso cambia lo que hay que hacer.
+
+Funciona **sin cobertura**, como todo lo demás: la avería sale de la lista al
+instante y el cierre sube en cuanto haya red. Mientras espera, la ficha lo dice
+(«1 avería resuelta esperando cobertura para subir»).
+
+> La misma pantalla está en la pestaña **Incidencias**, con el mismo botón y la
+> misma pregunta, para cerrar desde el escritorio.
 
 ### Qué le ha pasado antes a esta aula
 
@@ -435,8 +459,11 @@ esta revisión»**. Se guarda como una versión nueva de esa visita, con la fech
 de aquel día, y la anterior se queda guardada y legible. Lo que no se puede es
 **reescribirla**: eso es lo que hace que el histórico valga como registro.
 
-**¿Por qué no puedo cerrar una incidencia?**
-Los técnicos las abren; cerrarlas es cosa de supervisores.
+**¿Cómo cierro una incidencia?**
+Desde la ficha del aula, en «Averías abiertas» —o desde la pestaña
+Incidencias—, pulsando **«Resolver»** en la que has arreglado. Hay que escribir
+qué has hecho; la foto es opcional. Lo que no se puede es cerrarla sin decir
+nada: sin esa frase, la próxima avería de esa aula empieza a ciegas.
 
 **¿Puedo usar mi móvil y el iPad a la vez?**
 Sí, pero cada dispositivo necesita su propia alta con su código.

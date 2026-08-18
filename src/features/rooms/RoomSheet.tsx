@@ -1,7 +1,7 @@
 /**
  * Ficha de sala.
  *
- * La pantalla del prototipo que nunca llegó a construirse, y la que sostiene dos
+ * La pantalla del prototipo que nunca llegó a construirse, y la que sostiene las
  * piezas que faltaban.
  *
  * **Una — registrar sin que nada haya fallado.** Toda la aplicación asumía que un
@@ -27,7 +27,18 @@
  * y leerla al lado de lo que se comprobó dice bastante más que leerla suelta. Una
  * sola puerta, además, en vez de dos listas que hablan de lo mismo.
  *
- * **Tres — corregir una revisión sin fabricar otra.** Una revisión cerrada es
+ * **Tres — cerrar lo que se acaba de arreglar, aquí mismo.** Resolver una
+ * avería vivía en la pestaña de Incidencias: una lista de 283 filas, o sea un
+ * escritorio. Quien la arregla está en el aula, con el aparato delante y a
+ * menudo sin cobertura, y lo que no se cierra en el sitio no se cierra — de las
+ * 283 importadas, 281 llegaron con fecha de resolución y la explicación vacía.
+ * Las averías vivas de la sala se listan aquí, se elige cuál de ellas se ha
+ * resuelto —el proyector, la pantalla 2— y se cierra **contando qué se hizo**,
+ * con una foto si hay algo que enseñar. La explicación es obligatoria: es lo que
+ * convierte el cierre en algo que se puede leer en abril, cuando ese mismo
+ * proyector vuelva a fallar y haya que decidir si es la misma avería o es otra.
+ *
+ * **Cuatro — corregir una revisión sin fabricar otra.** Una revisión cerrada es
  * inmutable, y con razón. Pero hasta ahora eso significaba que un error solo se
  * podía arreglar revisando otra vez: veinte revisiones nuevas que no son visitas
  * nuevas, cada una moviendo la fecha de «última revisión» y contando en el
@@ -51,10 +62,19 @@ import { supabase } from '@/lib/supabase'
 import { flush } from '@/sync/outbox'
 import { DoorPlate } from '@/components/DoorPlate'
 import { RevisionesAnteriores } from '@/features/inspection/RevisionesAnteriores'
+import { ResolverIncidencia } from '@/features/incidents/ResolverIncidencia'
+import { equipoDeIncidencia, sePuedeResolver } from '@/domain/resolucion'
 import type { Correccion } from '@/features/inspection/useInspection'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaCorta } from '@/domain/fechas'
-import { INCIDENT_KIND_LABELS, type Incident, type IncidentKind, type Room } from '@/domain/types'
+import { cuantos } from '@/lib/plural'
+import {
+  INCIDENT_KIND_LABELS,
+  STALE_INCIDENT_DAYS,
+  type Incident,
+  type IncidentKind,
+  type Room,
+} from '@/domain/types'
 
 interface TimelineRow {
   at: string
@@ -165,6 +185,13 @@ export function RoomSheet({
   const [texto, setTexto] = useState('')
   const [codigo, setCodigo] = useState('')
   const [guardado, setGuardado] = useState<string | null>(null)
+  /* Qué avería tiene abierto el formulario de cierre. Solo una: se cierra lo que
+     se acaba de arreglar, no se despacha una lista. */
+  const [resolviendo, setResolviendo] = useState<string | null>(null)
+  /* El acuse del cierre, y por qué no comparte el de registrar: la avería
+     desaparece de la lista en el acto, y sin una frase que lo diga el gesto se
+     lee como si la ficha hubiera perdido la fila. */
+  const [resuelto, setResuelto] = useState<string | null>(null)
 
   // El inventario sale del espejo local: la ficha tiene que abrirse en un
   // sótano sin cobertura igual que la revisión.
@@ -175,6 +202,50 @@ export function RoomSheet({
       .map((a) => ({ ...a, tipo: tipos.get(a.asset_type_id)?.name ?? 'Sin tipo' }))
       .sort((x, y) => x.tipo.localeCompare(y.tipo, 'es'))
   }, [room.id])
+
+  /*
+   * Las averías vivas de esta sala, del espejo local.
+   *
+   * Del espejo y no del servidor por lo mismo que el inventario: la ficha tiene
+   * que abrirse en un sótano. El espejo solo guarda las que no están resueltas,
+   * y aun así se filtra por estado — un borrador no se cierra y una observación
+   * no se «resuelve», y esa regla vive en `domain` para que esta pantalla y la
+   * pestaña de Incidencias no puedan discrepar.
+   *
+   * En orden de antigüedad: la que lleva más tiempo abierta va primero, que es
+   * la que más se parece a lo que hay que atender.
+   *
+   * Y se descuentan las que ya se han cerrado aquí y siguen esperando cobertura.
+   * De que el espejo no las reabra se encarga la descarga (`sync/pull.ts`); esto
+   * es la misma verdad dicha donde se pinta, para que ni la ventana estrecha
+   * entre una descarga en vuelo y su escritura ofrezca cerrar dos veces lo
+   * mismo. Lo cerrado y sin subir no desaparece: se cuenta abajo.
+   */
+  const averias = useLiveQuery(
+    async () => {
+      const [filas, cola] = await Promise.all([
+        db.incidents.where('room_id').equals(room.id).toArray(),
+        db.outbox.where('entity').equals('incident_resolution').toArray(),
+      ])
+      const cerradasEnCola = new Set(cola.map((e) => String(e.payload['incident_id'] ?? '')))
+
+      return {
+        abiertas: filas
+          .filter((i) => sePuedeResolver(i) && !cerradasEnCola.has(i.id))
+          .sort((a, b) => a.opened_at.localeCompare(b.opened_at)),
+        esperandoSubir: filas.filter((i) => cerradasEnCola.has(i.id)).length,
+      }
+    },
+    [room.id],
+    { abiertas: [] as Incident[], esperandoSubir: 0 },
+  )
+
+  /** Cómo se llama un equipo de esta sala. Es lo que nombra la avería. */
+  const nombreDeEquipo = (assetId: string): string | null => {
+    const equipo = (equipos ?? []).find((e) => e.id === assetId)
+    if (!equipo) return null
+    return equipo.label || equipo.tipo
+  }
 
   const { data: fiabilidad } = useQuery({
     queryKey: ['room-reliability', room.id],
@@ -531,6 +602,115 @@ export function RoomSheet({
             </button>
           </form>
         )}
+
+        {/*
+          Lo que está roto en esta sala, y el sitio donde se da por arreglado.
+
+          Va antes del inventario y de todo lo demás porque es lo único de esta
+          pantalla que le pide algo a quien la abre. Y las averías se listan
+          aunque no haya ninguna abierta —con una línea que lo dice— porque «no
+          hay nada roto» es una respuesta, y una sección que desaparece obliga a
+          preguntarse si es que la ficha no lo sabe.
+        */}
+        <section aria-labelledby="sec-averias" className="mt-8">
+          <div className="section-head">
+            <h2 id="sec-averias" className="eyebrow">Averías abiertas</h2>
+            {averias.abiertas.length > 0 && (
+              <span className="font-mono text-xs text-crit">{averias.abiertas.length}</span>
+            )}
+          </div>
+
+          {resuelto && (
+            <p aria-live="polite" className="mb-2 text-sm text-ok">
+              {resuelto}
+            </p>
+          )}
+
+          <ul className="divide-y divide-line">
+            {averias.abiertas.map((i) => {
+              const equipo = equipoDeIncidencia(i, nombreDeEquipo)
+              const dias = Math.floor(
+                (Date.now() - new Date(i.opened_at).getTime()) / 86_400_000,
+              )
+
+              return (
+                <li key={i.id} className="py-3">
+                  <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+                    <div className="min-w-0 flex-1 basis-48 text-sm">
+                      <p className="font-medium">
+                        {/* El aparato delante y en acento: es la respuesta a
+                            «¿cuál de las tres?» sin leer la frase entera. */}
+                        {equipo && <span className="text-accent">{equipo} · </span>}
+                        {i.title ?? '(sin describir)'}
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted">
+                        {i.kind !== 'incidencia' && <>{INCIDENT_KIND_LABELS[i.kind]} · </>}
+                        {i.external_ref && <span className="font-mono">{i.external_ref} · </span>}
+                        abierta hace{' '}
+                        {/* El mismo umbral que usa la pestaña de Incidencias y
+                            el panel: una avería estancada se ve igual en las
+                            tres pantallas o no significa nada. */}
+                        <span
+                          className={dias > STALE_INCIDENT_DAYS ? 'font-semibold text-crit' : ''}
+                        >
+                          {cuantos(dias, 'día', 'días')}
+                        </span>
+                      </p>
+                      {i.description && (
+                        <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-muted">
+                          {i.description}
+                        </p>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      aria-expanded={resolviendo === i.id}
+                      onClick={() => setResolviendo((a) => (a === i.id ? null : i.id))}
+                      className="key key-accent ml-auto min-h-11 shrink-0 px-3 text-xs"
+                    >
+                      {resolviendo === i.id ? 'Cancelar' : 'Resolver'}
+                    </button>
+                  </div>
+
+                  {resolviendo === i.id && (
+                    <ResolverIncidencia
+                      incidencia={i}
+                      equipo={equipo}
+                      onCerrada={() => {
+                        setResolviendo(null)
+                        setResuelto(
+                          'Resuelta. Sube en cuanto haya cobertura y queda en el historial de la sala.',
+                        )
+                        // El historial y el índice de la sala los calcula el
+                        // servidor: hasta que el cierre suba no cambian, y se
+                        // piden otra vez para que lo hagan en cuanto suba.
+                        void qc.invalidateQueries({ queryKey: ['room-timeline', room.id] })
+                        void qc.invalidateQueries({ queryKey: ['room-reliability', room.id] })
+                      }}
+                      onCancelar={() => setResolviendo(null)}
+                    />
+                  )}
+                </li>
+              )
+            })}
+
+            {averias.abiertas.length === 0 && (
+              <li className="py-2 text-sm text-muted">
+                Nada abierto en esta sala ahora mismo.
+              </li>
+            )}
+          </ul>
+
+          {/* Lo cerrado que todavía no ha subido se dice, no se esconde: es la
+              diferencia entre «ya está» y «ya está aquí». */}
+          {averias.esperandoSubir > 0 && (
+            <p className="mt-2 text-xs text-muted">
+              {cuantos(averias.esperandoSubir, 'avería resuelta', 'averías resueltas')} esperando
+              cobertura para subir.
+            </p>
+          )}
+        </section>
 
         <section aria-labelledby="sec-inv" className="mt-8">
           <div className="section-head">

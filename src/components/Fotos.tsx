@@ -1,5 +1,5 @@
 /**
- * Las fotos de una revisión: la fontanería y la tira.
+ * Las fotos de una revisión o de una incidencia: la fontanería y la tira.
  *
  * Se hacían en el aula, se comprimían, se subían a un bucket privado, se
  * enlazaban en `attachments`… y ahí acababa el viaje: ni la ficha de la sala ni
@@ -11,7 +11,7 @@
  * miniaturas de esta misma pantalla y la ficha del histórico
  * (`FichaDeObservacion`)—:
  *
- *  - **`useFotosDeRevision`**, que junta las subidas con las que esperan en el
+ *  - **`useFotos`**, que junta las subidas con las que esperan en el
  *    dispositivo. URL firmada y corta para las de arriba: el bucket es privado
  *    a propósito —las fotos enseñan instalaciones y a veces personas— y se pide
  *    un enlace de una hora al abrir el bloque, no uno público permanente. Y
@@ -19,14 +19,24 @@
  *    de hacer en un sótano no existe para la aplicación en toda la mañana, y
  *    quien la hizo no tiene forma de saber si salió bien.
  *  - **`VisorDeFotos`**, la foto a tamaño completo en su capa.
- *  - **`FotosDeRevision`**, la tira de miniaturas: la usa la cabecera de una
- *    corrección, donde las fotos de aquel día son contexto y no protagonista.
+ *  - **`TiraDeFotos`**, la tira de miniaturas: la usa la cabecera de una
+ *    corrección, donde las fotos de aquel día son contexto y no protagonista, y
+ *    el cierre de una avería, donde la foto que se acaba de hacer tiene que
+ *    verse antes de pulsar.
+ *
+ * Las tres piezas preguntan por el TIPO de cosa además de por los ids. Nacieron
+ * hablando solo de revisiones y la foto de una incidencia —que la aplicación
+ * sabía capturar desde el primer día— no tenía quien la enseñara: subía a un
+ * bucket privado y no se la veía nadie, que es la peor forma de pedir una foto.
+ *
+ * Vive en `components` y ya no dentro de `inspection` por lo mismo: dos
+ * pantallas de dos áreas distintas piden lo mismo.
  */
 
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db, leerBytesDeFoto } from '@/db/dexie'
+import { db, leerBytesDeFoto, type QueuedPhoto } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { fechaCorta } from '@/domain/fechas'
 
@@ -42,7 +52,7 @@ export interface Foto {
 }
 
 /**
- * Las fotos de una o varias revisiones, listas para pintar.
+ * Las fotos de una o varias cosas del mismo tipo, listas para pintar.
  *
  * Es una lista de revisiones y no un identificador porque una visita corregida
  * son varias filas de `inspections`, y las fotos de aquel día están repartidas
@@ -52,7 +62,7 @@ export interface Foto {
  * Las pendientes van primero: son las de hoy, y son las que alguien quiere
  * comprobar que han salido bien.
  */
-export function useFotosDeRevision(ids: string[]): {
+export function useFotos(entityType: QueuedPhoto['entityType'], ids: string[]): {
   fotos: Foto[]
   sinConexion: boolean
   /** La consulta de adjuntos aún no ha contestado. */
@@ -66,13 +76,13 @@ export function useFotosDeRevision(ids: string[]): {
    * `createSignedUrls` firma las diez de golpe: una petición, no una por foto.
    */
   const { data: subidas, isError, isPending } = useQuery({
-    queryKey: ['fotos-revision', [...ids].sort().join(',')],
+    queryKey: ['fotos', entityType, [...ids].sort().join(',')],
     enabled: ids.length > 0,
     queryFn: async (): Promise<Foto[]> => {
       const { data: adjuntos, error } = await supabase
         .from('attachments')
         .select('id, storage_path, taken_at')
-        .eq('entity_type', 'inspection')
+        .eq('entity_type', entityType)
         .in('entity_id', ids)
         .order('taken_at', { ascending: true })
       if (error) throw error
@@ -117,9 +127,9 @@ export function useFotosDeRevision(ids: string[]): {
           // las object URLs.
           await db.photos
             .where('[entityType+entityId]')
-            .anyOf(ids.map((id) => ['inspection', id]))
+            .anyOf(ids.map((id) => [entityType, id]))
             .toArray(),
-    [ids.join(',')],
+    [entityType, ids.join(',')],
     [],
   )
 
@@ -136,8 +146,8 @@ export function useFotosDeRevision(ids: string[]): {
     const ahora = new Set(pendientes.map((p) => p.id))
     const subioAlguna = [...idsEnColaAntes.current].some((id) => !ahora.has(id))
     idsEnColaAntes.current = ahora
-    if (subioAlguna) void qc.invalidateQueries({ queryKey: ['fotos-revision'] })
-  }, [pendientes, qc])
+    if (subioAlguna) void qc.invalidateQueries({ queryKey: ['fotos', entityType] })
+  }, [pendientes, entityType, qc])
 
   useEffect(() => {
     let vivo = true
@@ -211,7 +221,13 @@ export function SelloSinSubir(): React.ReactElement {
  * pantalla en mitad de una cabecera que ya cuenta tres cosas; en tira se
  * recorren con el pulgar y no desplazan nada.
  */
-export function FotosDeRevision({ ids }: { ids: string[] }): React.ReactElement | null {
+export function TiraDeFotos({
+  entityType,
+  ids,
+}: {
+  entityType: QueuedPhoto['entityType']
+  ids: string[]
+}): React.ReactElement | null {
   /*
    * La foto abierta se recuerda por IDENTIDAD, no por posición. La lista
    * cambia sola por debajo —una foto local que termina de subir se va de la
@@ -220,7 +236,7 @@ export function FotosDeRevision({ ids }: { ids: string[] }): React.ReactElement 
    * cierra, que es lo único honesto.
    */
   const [abiertaId, setAbiertaId] = useState<string | null>(null)
-  const { fotos, sinConexion } = useFotosDeRevision(ids)
+  const { fotos, sinConexion } = useFotos(entityType, ids)
   const abierta = abiertaId === null ? -1 : fotos.findIndex((f) => f.id === abiertaId)
 
   if (fotos.length === 0) {
@@ -323,7 +339,7 @@ export function VisorDeFotos({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Foto de la revisión"
+      aria-label="Foto"
       className="fixed inset-0 z-50 flex flex-col bg-black/95"
       style={{
         paddingTop: 'env(safe-area-inset-top)',
