@@ -26,12 +26,7 @@
  */
 
 import { useState } from 'react'
-import {
-  SelloSinSubir,
-  VisorDeFotos,
-  useFotosDeRevision,
-  type Foto,
-} from './FotosDeRevision'
+import { SelloSinSubir, VisorDeFotos, useFotos, type Foto } from '@/components/Fotos'
 
 /** Cuántas baldosas caben en la fila de abajo. Con la grande, cuatro fotos. */
 const BALDOSAS = 3
@@ -58,7 +53,8 @@ export function FichaDeObservacion({
    * visita con solo observación pintaría su cita igual, y el histórico tiene
    * cinco tarjetas a la vista — cinco consultas al servidor por nada.
    */
-  const { fotos, sinConexion, cargando } = useFotosDeRevision(
+  const { fotos, sinConexion, cargando } = useFotos(
+    'inspection',
     anunciadas > 0 || conFotoLocal ? ids : [],
   )
 

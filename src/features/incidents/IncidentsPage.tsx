@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { displayRoomCode, norm } from '@/domain/normalize'
 import { salasQueCasan, type SalaBuscable } from './busqueda'
 import { MaterialUsado } from './MaterialUsado'
+import { ResolverIncidencia } from './ResolverIncidencia'
 import { Borradores } from './Borradores'
 import { INCIDENT_KIND_LABELS, type IncidentKind, type IncidentState } from '@/domain/types'
 
@@ -70,6 +71,8 @@ export function IncidentsPage(): React.ReactElement {
   /* Qué incidencia tiene abierto el apunte de material. Solo una: el técnico
      está apuntando lo de una avería, no llevando la contabilidad de seis. */
   const [apuntando, setApuntando] = useState<string | null>(null)
+  /* Y cuál tiene abierto el formulario de cierre, por lo mismo. */
+  const [resolviendo, setResolviendo] = useState<string | null>(null)
 
   /*
    * La sala de cada incidencia, resuelta desde el espejo local.
@@ -284,16 +287,20 @@ export function IncidentsPage(): React.ReactElement {
     )
   }, [incidents, query, salas, idsDeSala])
 
+  /*
+   * Empezar una incidencia. **Cerrarla ya no pasa por aquí.**
+   *
+   * Cerrar era este mismo UPDATE con `state: 'resuelta'` y nada más: ni una
+   * palabra sobre qué se hizo, aunque la columna `resolution` lleva ahí desde el
+   * primer esquema. El histórico de las salas es el resultado — «Resuelta:
+   * Proyector: no da imagen» y punto—, y la próxima avería del mismo proyector
+   * empieza a ciegas. Ahora se cierra por `ResolverIncidencia`, que exige la
+   * explicación y va por la cola de salida, igual desde el escritorio que desde
+   * el aula sin cobertura.
+   */
   const advance = useMutation({
-    mutationFn: async (input: { id: string; state: IncidentState; resolution?: string }) => {
-      const { data: user } = await supabase.auth.getUser()
+    mutationFn: async (input: { id: string; state: IncidentState }) => {
       const patch: Record<string, unknown> = { state: input.state }
-
-      if (input.state === 'resuelta') {
-        patch['resolved_at'] = new Date().toISOString()
-        patch['resolved_by'] = user.user?.id ?? null
-        if (input.resolution) patch['resolution'] = input.resolution
-      }
 
       /*
        * Se pide la fila de vuelta, y sin ella esto es un fallo.
@@ -301,11 +308,11 @@ export function IncidentsPage(): React.ReactElement {
        * Un UPDATE que no alcanza ninguna fila **no es un error** para PostgREST:
        * responde 204 con `error` a null. Y a un técnico no le alcanza ninguna —la
        * única política de UPDATE que le sirve exige que sea su propio borrador—,
-       * así que pulsar «Resolver» entraba por `onSuccess`, invalidaba la consulta,
-       * la lista se redibujaba igual y la incidencia seguía abierta. Sin un
+       * así que pulsar el botón entraba por `onSuccess`, invalidaba la consulta,
+       * la lista se redibujaba igual y la incidencia seguía como estaba. Sin un
        * mensaje, sin un error, sin nada: la pantalla decía que sí y el servidor
-       * decía que no. Y el aviso «Solo un supervisor cierra incidencias» que hay
-       * escrito ahí abajo cuelga de `advance.isError`, o sea que nunca se pintaba.
+       * decía que no. Y el aviso que hay escrito ahí abajo cuelga de
+       * `advance.isError`, o sea que nunca se pintaba.
        */
       const { data, error } = await supabase
         .from('incidents')
@@ -467,18 +474,41 @@ export function IncidentsPage(): React.ReactElement {
                     >
                       Material
                     </button>
+                    {/* Abre el formulario; ya no cierra de un toque. Lo que
+                        pide —qué se ha hecho— es lo único que hace legible el
+                        cierre dentro de seis meses. */}
                     <button
                       type="button"
-                      onClick={() => advance.mutate({ id: i.id, state: 'resuelta' })}
+                      aria-expanded={resolviendo === i.id}
+                      onClick={() => setResolviendo((a) => (a === i.id ? null : i.id))}
                       className="key key-accent min-h-11 px-3 text-xs"
                     >
-                      Resolver
+                      {resolviendo === i.id ? 'Cancelar' : 'Resolver'}
                     </button>
                   </div>
                 )}
               </div>
 
               {apuntando === i.id && <MaterialUsado incidentId={i.id} roomId={i.room_id} />}
+
+              {resolviendo === i.id && (
+                <ResolverIncidencia
+                  incidencia={i}
+                  /* Aquí no se nombra el aparato: esta lista no tiene el
+                     inventario delante, y el título de lo que nace de una
+                     revisión ya empieza por él («Proyector: no da imagen»). La
+                     pregunta «¿cuál de las tres?» se hace en la ficha del aula,
+                     que es donde hay tres. */
+                  equipo={null}
+                  onCerrada={() => {
+                    setResolviendo(null)
+                    void qc.invalidateQueries({ queryKey: ['incidents'] })
+                    void qc.invalidateQueries({ queryKey: ['incidents-resueltas'] })
+                    void qc.invalidateQueries({ queryKey: ['incidents-total'] })
+                  }}
+                  onCancelar={() => setResolviendo(null)}
+                />
+              )}
             </li>
           )
         })}
@@ -529,11 +559,11 @@ export function IncidentsPage(): React.ReactElement {
         )}
 
       {/* `role="alert"` porque ahora sí llega: es la respuesta a un botón que
-          parecía funcionar y no hacía nada. */}
+          parecía funcionar y no hacía nada. Habla solo de «Empezar»: cerrar ya
+          no pasa por aquí, y lo hace quien la arregló. */}
       {advance.isError && (
         <p role="alert" className="mt-4 text-sm text-crit">
-          No se ha podido cambiar el estado: cerrar y empezar incidencias es cosa de
-          un supervisor.
+          No se ha podido marcar como empezada: eso es cosa de un supervisor.
         </p>
       )}
     </div>

@@ -171,10 +171,17 @@ export async function pullMaster(): Promise<ResultadoPull> {
   // Se escribe lo que SÍ haya llegado aunque otra tabla falle: media descarga
   // sirve de más que ninguna, y la que falta se reintenta en la siguiente.
   let filas = 0
-  const guardar = async <T>(res: Respuesta<Record<string, unknown>>, tabla: { bulkPut: (v: T[]) => Promise<unknown> }): Promise<void> => {
+  const guardar = async <T>(
+    res: Respuesta<Record<string, unknown>>,
+    tabla: { bulkPut: (v: T[]) => Promise<unknown> },
+    /** Filas que NO hay que escribir aunque el servidor las mande. */
+    omitir?: (fila: Record<string, unknown>) => boolean,
+  ): Promise<void> => {
     if (res.error || !res.data?.length) return
-    await tabla.bulkPut(res.data as T[])
-    filas += res.data.length
+    const utiles = omitir ? res.data.filter((f) => !omitir(f)) : res.data
+    if (utiles.length === 0) return
+    await tabla.bulkPut(utiles as T[])
+    filas += utiles.length
   }
 
   /**
@@ -255,7 +262,27 @@ export async function pullMaster(): Promise<ResultadoPull> {
   await guardar<Zone>(de('zones'), db.zones)
   await guardar<StockItem>(de('stock_items'), db.stockItems)
   await guardar<StockLevel>(de('stock_levels'), db.stockLevels)
-  await guardar<Incident>(de('incidents'), db.incidents)
+  /*
+   * Las incidencias, **menos las que este dispositivo ya ha cerrado**.
+   *
+   * La consulta pide las que no están resueltas, y arriba una avería cerrada en
+   * el aula sigue estándolo hasta que su cierre suba: viene en la respuesta,
+   * abierta. Escribirla tal cual reabre en el espejo algo que aquí ya está
+   * resuelto —vuelve a la lista de la sala, con su botón de «Resolver», y
+   * reaparece el triángulo del edificio— hasta que la cola se vacíe. Y lo hace
+   * justo en el momento en que menos se puede explicar: sin cobertura, que es
+   * cuando la descarga y la subida van a distinto ritmo.
+   *
+   * Mientras el asiento siga en la cola, quien sabe la verdad es la cola.
+   */
+  const cerradasEnCola = new Set(
+    (await db.outbox.where('entity').equals('incident_resolution').toArray()).map((e) =>
+      String(e.payload['incident_id'] ?? ''),
+    ),
+  )
+  await guardar<Incident>(de('incidents'), db.incidents, (i) =>
+    cerradasEnCola.has(String(i['id'])),
+  )
   await guardar<AssetType>(de('asset_types'), db.assetTypes)
   await guardar<Asset>(de('assets'), db.assets)
   await guardar<AssetRemoval>(de('asset_removals'), db.assetRemovals)

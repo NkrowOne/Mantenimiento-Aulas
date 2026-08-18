@@ -24,6 +24,7 @@ const TABLE: Record<OutboxEntry['entity'], string> = {
   inspection: 'inspections',
   inspection_check: 'inspection_checks',
   incident: 'incidents',
+  incident_resolution: 'incident_resolutions',
   stock_movement: 'stock_movements',
   attachment: 'attachments',
   asset_event: 'asset_events',
@@ -42,13 +43,16 @@ const ORDER: Record<OutboxEntry['entity'], number> = {
   inspection: 2,
   inspection_check: 3,
   incident: 4,
-  asset_event: 5,
-  stock_movement: 6,
-  room_inventory: 7,
+  // Detrás de la incidencia que cierra, por la misma razón: el cierre de una
+  // avería recién abierta viaja en la misma pasada que ella.
+  incident_resolution: 5,
+  asset_event: 6,
+  stock_movement: 7,
+  room_inventory: 8,
   // Detrás del equipo al que apunta: pedir la retirada de un aparato que
   // todavía no ha subido chocaría contra su clave ajena.
-  asset_removal: 8,
-  attachment: 9,
+  asset_removal: 9,
+  attachment: 10,
 }
 
 export type SyncState = 'inactivo' | 'sincronizando' | 'sin-conexion' | 'error'
@@ -158,6 +162,15 @@ const IGNORE_DUPLICATES = new Set<OutboxEntry['entity']>([
   'asset_removal',
   'room_inventory',
   'incident',
+  /*
+   * Y el cierre de una incidencia, por lo mismo que un movimiento de almacén: es
+   * un asiento. La tabla solo tiene política de INSERT —lo escrito no se
+   * reescribe— y el reenvío de uno que ya llegó trae la fila idéntica, así que
+   * pisarla sería pedir un UPDATE que nadie puede hacer. Con «no pises», el
+   * segundo envío no hace nada y la entrada sale de la cola, que es la verdad:
+   * el cierre está arriba.
+   */
+  'incident_resolution',
   'attachment',
 ])
 
