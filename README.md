@@ -287,6 +287,12 @@ npm run build
 
 ### Generar un informe
 
+Desde la pantalla de Informes de la propia aplicación, con `npm run dev`
+apuntando a una base con datos. No hace falta levantar nada más.
+
+El worker sigue sabiendo emitirlo por línea de órdenes, que es lo cómodo para
+iterar la plantilla contra un volcado real sin abrir un navegador:
+
 ```bash
 cd reports-worker && npm install
 DATABASE_URL=postgresql://... npm run render -- semanal informe.pdf
@@ -295,10 +301,6 @@ DATABASE_URL=postgresql://... npm run render -- semanal informe.pdf
 DATABASE_URL=... npm run render -- personalizado marzo.pdf 2026-03-01 2026-03-31
 DATABASE_URL=... npm run render -- semanal x.html --secciones=resumen,analisis --sin-ia
 ```
-
-Acepta `.html` como salida para iterar la plantilla sin WeasyPrint. En
-producción lo levanta `docker compose up reports-worker`, lo despierta `pg_cron`
-los viernes y se pide a mano desde la pantalla de Informes.
 
 El cliente de la IA se prueba sin gastar clave, contra un servidor que habla
 como la API de Gemini:
@@ -325,7 +327,8 @@ npm run informe:ia
 | Panel de administración: validar equipos, agrupar el catálogo, equipamiento por defecto y alta/baja de salas y edificios | ✅ |
 | Retirada de equipo con autorización: baja o vuelta al almacén | ✅ |
 | Inventario de una sala o de un edificio en PDF | ✅ marca, modelo, serie y las fechas de alta, cambio y baja; se imprime desde el navegador y avisa —en el papel— cuando la hoja se ha hecho sin servidor |
-| Worker de informes PDF | ✅ PDF real generado y revisado |
+| Informes desde la propia aplicación | ✅ documento renderizado y revisado en un navegador real; se imprime a PDF y se archiva en HTML autocontenido |
+| Worker de informes PDF (camino antiguo, ya opcional) | ✅ PDF real generado y revisado |
 | Análisis con IA (Gemini, con razonamiento) | ✅ probado contra un servidor de mentira; degrada a análisis calculado |
 | Buckets de Storage y sus políticas | ✅ 3 pruebas de RLS propias |
 | Despliegue: Compose, Caddy, claves, copias | ✅ |
@@ -360,7 +363,8 @@ Lo verificado y lo que no, sin adornos.
 | **La pila de Supabase nunca se ha levantado** | El `docker-compose.yml` está escrito pero jamás se ha ejecutado. Es lo primero que hay que probar |
 | **El flujo completo contra un servidor real** | Alta con código, PIN, revisión, foto y sincronización. Cada pieza está probada por separado; juntas, no |
 | **Ningún iPad ha abierto la aplicación** | Todo lo específico de iOS —límite de canvas, HEIC, `persist()`— sale de documentación, no de un dispositivo |
-| **El worker de informes como servicio HTTP** | Solo se ha probado el render por línea de comandos, no el endpoint que llama `pg_cron` |
+| **El informe contra datos reales** | La cadena entera está probada con un expediente escrito a mano y renderizada en un navegador; nunca ha leído un campus de verdad, así que las consultas de `datos.ts` no se han medido contra volumen |
+| **El worker de informes como servicio HTTP** | Solo se ha probado el render por línea de comandos, no el endpoint que llama `pg_cron`. Ya no hace falta para emitir un informe |
 | **`admin-user.ts` contra un GoTrue real** | La lógica es directa, pero nunca ha hablado con el servicio |
 | **Cero pruebas de interfaz** | Las 162 pruebas cubren dominio y criptografía. No hay ninguna de componentes |
 | **Sin linter configurado** | Se retiró el script `lint` porque no existía configuración y fallaba siempre |
@@ -476,10 +480,20 @@ es una afirmación falsa en un papel que se firma.
 
 ## Informes
 
-**El automático sale los viernes a las 07:00** con la semana de trabajo entera,
-de lunes a viernes. Cualquier otro se pide a mano desde la pantalla de Informes,
-eligiendo periodo, secciones, para quién está escrito y si el análisis lo
-redacta la IA. Un informe emitido no se regenera nunca: se versiona.
+**El informe se arma en la propia aplicación.** Se elige periodo, secciones,
+para quién está escrito y si el análisis lo redacta la IA; la pantalla lee los
+datos con la sesión de quien lo pide, calcula las cifras, le pide a Gemini la
+redacción y compone el documento. No hay un servicio detrás que pueda estar
+caído, ni una cola de la que nadie se entera, ni un token que sincronizar: lo
+único que se configura —y solo si se quiere el análisis redactado— es **la clave
+de Gemini**, y se pega desde la propia pantalla.
+
+**El PDF lo hace el navegador.** El documento sale maquetado para A4 y «Guardar
+como PDF» es un destino de impresión más, así que no hay que arrastrar media
+librería de PDF a una aplicación que se abre desde un iPad en un pasillo. Se
+archiva en Storage tal cual: HTML autocontenido, con los gráficos dentro como
+SVG y sin una sola petición a la red al abrirlo. Un informe emitido no se
+regenera nunca: se versiona.
 
 Lleva las dos cosas que hacen falta para responder «¿cómo vamos?» y «¿qué se ha
 hecho?»: el **estado** —indicadores con su variación, cobertura por edificio,
@@ -492,7 +506,7 @@ material consumido, inventarios y cambios de equipo.
 
 La regla que hace que este documento se pueda firmar:
 
-> **Las cifras se calculan con SQL. La IA solo escribe la prosa.**
+> **Las cifras se calculan a partir de los datos. La IA solo escribe la prosa.**
 
 Ni un número del informe sale del modelo. Los indicadores, las variaciones, los
 umbrales y los avisos los calcula `analisis.ts` con operaciones que se pueden
@@ -525,20 +539,41 @@ delatarlo es cómo está escrito. Por eso hay tres filtros y no uno:
    por «es importante destacar» las levanta todas.
 
 **Sin clave configurada el informe sale igual**, con el análisis calculado. No es
-un modo degradado con un hueco: es un informe completo con otra voz. La clave se
-pone en `GEMINI_API_KEY` o, si no hay acceso al servidor, desde la propia
-pantalla de Informes con perfil de administrador — el entorno manda sobre la
-base de datos si están las dos, y ni la pantalla ni la función `ia_estado()`
-devuelven nunca su valor.
+un modo degradado con un hueco: es un informe completo con otra voz.
+
+La clave se pega desde la pantalla de Informes, y hay dos sitios donde puede
+quedar. **En el despliegue** (`app_config`): la guarda un administrador una vez y
+la usan todos los supervisores; sale de la base solo por `ia_clave()`, que exige
+supervisor, y ni la pantalla ni `ia_estado()` la devuelven nunca. **En el
+dispositivo**: no sale de ese navegador, y es la salida para quien prefiera no
+dejar ninguna clave en la base. Ya no hay variable de entorno, y esa es la
+diferencia que importa — `GEMINI_API_KEY` declarada vacía «por si acaso» llegó a
+anular la clave que sí estaba guardada, con el registro diciendo «sin clave»
+mientras la clave estaba puesta.
+
+Es un cambio de postura respecto a la versión anterior, donde la clave no salía
+de la base jamás porque quien llamaba a Gemini era un contenedor del servidor.
+Ahora llama el navegador de un supervisor, así que la clave tiene que llegarle:
+no hay forma de tener las dos cosas. Si para un despliegue eso no es aceptable,
+la salida es no guardar ninguna clave en la base y que cada supervisor ponga la
+suya en su dispositivo.
 
 ### La cadena
 
-La cadena es **Postgres → análisis → ECharts SSR a SVG → HTML → WeasyPrint →
-Storage**, sin Chromium en ningún punto. Como los gráficos salen ya vectorizados, la plantilla
-no necesita ejecutar JavaScript, y eso permite usar WeasyPrint: unos 300 MB de
-imagen en lugar de 1,5 GB y ningún proceso de navegador que vigilar. Si algún
-día una plantilla necesitara JavaScript de verdad, el reemplazo es Gotenberg 8,
-no un contenedor de Playwright a mano.
+La cadena es **API → análisis → ECharts a SVG → HTML → impresión del navegador →
+Storage**, entera dentro de la aplicación. Los gráficos se renderizan a cadena
+SVG y se incrustan en el documento, así que el HTML no ejecuta JavaScript ni
+pide nada a la red: se archiva tal cual, se abre años después tal cual, y el PDF
+sale del propio navegador.
+
+Antes esa cadena empezaba en Postgres con el rol de servicio y terminaba en
+WeasyPrint dentro de un contenedor aparte, despertado por `pg_cron` a través de
+`pg_net`. Funcionaba, y tenía seis piezas y cinco formas distintas de no emitir
+ningún informe sin un solo error a la vista — hasta el punto de necesitar una
+pantalla de diagnóstico solo para averiguar cuál de las seis estaba rota. Ese
+camino sigue existiendo para quien tenga el worker desplegado (`request_report`,
+`enviar_informe` y el cron del viernes siguen ahí), pero ya no hace falta para
+emitir un informe.
 
 Los gráficos usan una paleta **validada**, no elegida a ojo: pasa las seis
 comprobaciones de contraste, croma y separación bajo daltonismo en ambos temas —y

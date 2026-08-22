@@ -68,7 +68,7 @@ describe('motivoParaNoPedir', () => {
     ).toMatch(/anterior a la inicial/)
   })
 
-  it('más de un año no se pide: el worker cargaría el histórico entero', () => {
+  it('más de un año no se pide: sería cargar el histórico entero', () => {
     expect(motivoParaNoPedir(base, 400)).toMatch(/un año/)
   })
 

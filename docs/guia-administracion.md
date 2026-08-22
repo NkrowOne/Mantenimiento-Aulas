@@ -921,10 +921,8 @@ se vuelvan a confirmar.
 
 Se imprime desde la ficha de una sala —**«Inventario en PDF»**— y desde la lista
 de salas de un edificio —**«Inventario del edificio»**—, y las dos salen del
-navegador con «Imprimir → Guardar como PDF», igual que las placas. No pasan por
-el worker de informes: eso es una tubería de servidor para un documento que se
-firma una vez y se archiva, y un inventario se reimprime cada vez que alguien
-apunta un número de serie.
+navegador con «Imprimir → Guardar como PDF», igual que las placas y, desde que
+el módulo de informes vive dentro de la aplicación, igual que el propio informe.
 
 La de una sala es la lista que el técnico se lleva al aula. **La del edificio es
 la que contesta a lo que se pregunta desde un despacho** y hasta ahora había que
@@ -1033,13 +1031,13 @@ otras pantallas.
 
 ## 8. Informes
 
-**El automático sale los viernes a las 07:00**, con la semana hasta el jueves
-—de lunes a jueves—. El viernes a esa hora aún no ha pasado: meterlo vacío en el
-periodo hacía que la comparación con la semana anterior saliera «bajando» todos
-los viernes, por diseño. Queda archivado en la pestaña **Informes**, con
-descarga; quien quiera la semana con el viernes dentro la pide a mano el lunes.
+**El informe se hace en la propia aplicación**, en la pestaña **Informes**. No
+hay ningún servicio detrás: la pantalla lee los datos, calcula las cifras, le
+pide a Gemini que redacte el análisis y compone el documento. Lo único que hay
+que configurar —y solo si se quiere el análisis redactado— es la clave de
+Gemini, que se pega en esa misma pantalla.
 
-Cualquier otro se pide a mano desde esa misma pantalla. Se elige:
+Se elige:
 
 | Qué se elige | Para qué sirve |
 |---|---|
@@ -1050,59 +1048,82 @@ Cualquier otro se pide a mano desde esa misma pantalla. Se elige:
 | **En qué fijarse** | Una instrucción libre para la redacción: «céntrate en el edificio H». No cambia ninguna cifra |
 | **Nota en portada** | Un texto que se imprime tal cual bajo el título. No pasa por la IA |
 
-Genera y espera: la pantalla avisa cuando el PDF está. Con IA suele tardar entre
-veinte segundos y un minuto.
+Al pulsar **Generar**, la pantalla va diciendo por dónde va —leyendo los datos,
+redactando el análisis, componiendo el documento— y termina enseñando el informe
+entero en la propia página. Con IA suele tardar entre veinte segundos y un
+minuto; sin ella, unos segundos.
 
-### Si no sale ningún informe
+Desde ahí salen dos botones:
 
-En la misma pantalla hay un desplegable — **«¿No sale el informe?»** — que le
-pregunta a la base por la tubería entera y contesta con palabras: si pg_net está
-instalado y **despachando su cola** (que son dos cosas distintas), qué contestó
-el worker las últimas veces, y qué hizo el cron. Se abre solo cuando un informe
-tarda más de la cuenta.
+- **Guardar como PDF** abre la impresión del navegador. Se elige «Guardar como
+  PDF» de destino y sale el documento en A4. Es lo mismo que se hace con la hoja
+  de inventario.
+- **Descargar** guarda el documento tal cual, en un solo fichero que se abre en
+  cualquier navegador sin conexión y sin nada instalado.
 
-Los tres diagnósticos que resuelven casi todo:
+El informe queda además **archivado** en la lista de abajo, con su procedencia
+—con IA o con el análisis calculado— debajo de cada periodo.
+
+### Si algo va mal
+
+Ya no hay tubería que diagnosticar: el informe se hace delante de quien lo pide,
+así que cuando falla, falla a la vista y con el motivo escrito. Lo que puede
+aparecer:
 
 | Lo que dice | Qué significa | Qué hacer |
 |---|---|---|
-| **Peticiones encoladas y nadie las despacha** | `pg_net` no está en `shared_preload_libraries`: todo parece funcionar y ningún informe se genera nunca. Fue un fallo real de este proyecto | Comprueba que la lista del servicio `db` en `docker-compose.yml` incluye `pg_net` y reinicia la base |
-| **El worker rechaza la llamada (401)** | El token de `app_config` no coincide con el del contenedor de informes | `scripts/deploy.sh` los siembra iguales; vuelve a desplegar o iguálalos a mano |
-| **No se alcanza el worker** | El contenedor `aulas-reports` está caído o fuera de la red | `docker compose up -d reports-worker` y mira su registro |
+| **No se ha podido leer *algo*** | Una de las consultas no ha llegado: sin conexión, o el perfil no es supervisor | Comprueba la conexión y el rol. El informe no se emite a medias a propósito: una cifra corta sin avisar es peor que ninguna |
+| **El análisis ha salido calculado y no redactado por la IA: …** | El informe está bien; lo que ha fallado es la redacción. El motivo va en la misma frase (sin clave, clave sin permiso, cuota agotada) | Si es la clave, se arregla en la tarjeta de arriba de esa misma pantalla |
+| **El informe está hecho, pero no se ha podido guardar…** | El documento existe y se puede imprimir, pero no ha entrado en el archivo. Suele ser que falta la migración `20260821000100_informes_en_el_navegador.sql` | Descárgalo para no perderlo y aplica las migraciones pendientes |
 
 **Un informe emitido no se regenera nunca: se versiona.** Si los datos cambian
-después, el PDF del viernes sigue diciendo lo que decía el viernes. Es lo que le
-da valor como registro.
+después, el documento del viernes sigue diciendo lo que decía el viernes. Es lo
+que le da valor como registro.
+
+Si en el archivo aparecen informes emitidos solos los viernes, es que el
+despliegue tiene además el worker antiguo y su `pg_cron`. Sigue funcionando y no
+estorba; no hace falta para nada de lo de arriba.
 
 ### El análisis con IA
 
 Lo que hay que tener claro antes de activarlo:
 
-> **Las cifras las calcula la base de datos. La IA solo escribe el texto.**
+> **Las cifras las calcula el sistema. La IA solo escribe el texto.**
 
 Ni un número del informe sale del modelo. Si en su redacción aparece una cifra de
 tres dígitos que no está en los datos —o dos fórmulas de las que delatan a un
 texto generado— se tira el texto entero y se emite con el análisis calculado.
 
-**El PDF no dice en ninguna parte que se haya usado IA.** Es un documento del
-servicio que habla del estado del campus, y va limpio. Si necesitas saber cómo se
-redactó un informe concreto, está en la pantalla de Informes: cada entrada del
-archivo lo indica debajo de su periodo.
+**El documento no dice en ninguna parte que se haya usado IA.** Es un documento
+del servicio que habla del estado del campus, y va limpio. Si necesitas saber
+cómo se redactó un informe concreto, está en la pantalla de Informes: cada
+entrada del archivo lo indica debajo de su periodo.
 
 **Sin clave, el informe sale igual.** El análisis lo escriben las reglas del
 sistema: es un texto completo, con su párrafo de entrada y su lista de cosas que
 hacer, no un hueco con un aviso.
 
-Para activarlo hacen falta dos cosas: una clave de
+Para activarlo hace falta una clave de
 [Google AI Studio](https://aistudio.google.com/apikey) —es de pago por uso; un
-informe semanal cuesta céntimos— y ponerla en un sitio:
+informe semanal cuesta céntimos— y pegarla en Informes → «Poner la clave de
+Gemini». Ahí se elige entre dos botones:
 
-- **En el servidor**, en `GEMINI_API_KEY` del `.env`. Es lo preferible.
-- **Desde la aplicación**, en Informes → «Poner la clave de Gemini», con perfil
-  de administrador. Sirve cuando no hay acceso al servidor. Se guarda en
-  `app_config`, que solo leen los administradores y el worker.
+- **Guardar para todo el equipo** (solo administradores) la deja en la
+  configuración del despliegue. Es lo normal: se pone una vez y la usan todos los
+  supervisores desde cualquier dispositivo.
+- **Guardar solo aquí** la deja únicamente en ese navegador. Es la salida si
+  prefieres que no haya ninguna clave guardada en la base.
 
-Si están las dos, manda la del servidor. La clave no se muestra nunca, ni
-recortada: la pantalla solo dice si hay una guardada.
+No hay que tocar ningún fichero ni reiniciar nada. La clave no se muestra nunca,
+ni recortada: la pantalla solo dice si hay una guardada.
+
+Una cosa que conviene saber, porque es un cambio respecto a versiones
+anteriores: al generarse el informe en el navegador, **la clave guardada para el
+equipo llega al navegador de cualquier supervisor** cuando pide un informe con
+IA. Antes vivía solo en el servidor porque era el servidor quien llamaba a
+Google. Un técnico no la ve —la función que la devuelve exige supervisor—, pero
+si en tu despliegue eso no es aceptable, la salida es no guardar ninguna clave
+para el equipo y que cada supervisor use «Guardar solo aquí».
 
 El modelo (`gemini-3.6-flash`) y cuánto se le deja pensar (`high`) se cambian en
 la misma pantalla. Bajar el razonamiento sale más barato y se nota: el análisis

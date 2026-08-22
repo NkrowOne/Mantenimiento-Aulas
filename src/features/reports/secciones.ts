@@ -1,13 +1,13 @@
 /**
  * Las secciones del informe, con nombre de persona.
  *
- * Espejo de `reports-worker/src/opciones.ts`. Las claves tienen que coincidir
- * —viajan tal cual en `params.secciones`—; los textos son de aquí, porque el
- * worker no tiene que saber cómo se llaman las cosas en una pantalla.
+ * Espejo de `informe/opciones.ts`. Las claves tienen que coincidir —viajan tal
+ * cual en `params.secciones` y son las que lee la plantilla—; los textos son de
+ * aquí, porque el contrato del informe no tiene que saber cómo se llaman las
+ * cosas en una pantalla.
  *
- * Si aquí aparece una sección que el worker todavía no conoce, el worker la
- * ignora y el informe sale sin ella. Es lo correcto durante los minutos que un
- * despliegue tarda en actualizar las dos piezas.
+ * Si aquí aparece una sección que la plantilla todavía no pinta, se ignora y el
+ * informe sale sin ella, en vez de reventar.
  */
 
 export interface SeccionInfo {

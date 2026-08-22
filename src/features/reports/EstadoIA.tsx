@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { NIVELES_RAZONAMIENTO } from './secciones'
 import { fechaCorta } from '@/domain/fechas'
+import { claveDelDispositivo, guardarClaveDelDispositivo } from './informe/clave'
 
 export interface Estado {
   clave_guardada: boolean
@@ -34,18 +35,26 @@ export function useEstadoIA(): { data: Estado | null | undefined } {
 }
 
 /**
- * El estado de la IA, y la forma de activarla sin tocar el servidor.
+ * El estado de la IA, y la forma de activarla.
  *
- * Dos cosas que esta tarjeta hace con cuidado:
+ * Esto es TODA la configuración que necesita el módulo de informes: una clave de
+ * Gemini. No hay variable de entorno, ni contenedor que reconstruir, ni token
+ * que sincronizar con nadie — el informe lo arma esta misma aplicación y llama a
+ * Google directamente. Se saca en https://aistudio.google.com/apikey.
  *
- *  · **No enseña la clave nunca.** Ni recortada. `ia_estado` devuelve un
- *    booleano y el nombre del modelo, y el campo de texto está siempre vacío:
- *    escribir en él sustituye lo que hubiera. Media clave en una pantalla sigue
- *    siendo media clave en el historial de un navegador compartido.
- *  · **Distingue «no hay clave aquí» de «no hay clave».** El worker puede tener
- *    la suya en `GEMINI_API_KEY` y esta pantalla no puede verla. Por eso se
- *    enseña también qué redactó el último informe: eso es lo que está pasando de
- *    verdad, y no una suposición.
+ * Dos sitios donde puede vivir, y hacen falta los dos:
+ *
+ *  · **En el despliegue** (`app_config`). Es lo normal: un administrador la pega
+ *    una vez y todos los supervisores emiten informes con IA. Requiere que esté
+ *    aplicada la migración que crea `ia_clave()`.
+ *  · **En este dispositivo**. Para quien prefiera no dejar ninguna clave en la
+ *    base, o para el rato en que la migración todavía no ha llegado. No sale de
+ *    este navegador y no la ve nadie más.
+ *
+ * La clave guardada en el despliegue no se enseña nunca, ni recortada:
+ * `ia_estado` devuelve un booleano y el nombre del modelo, y el campo de texto
+ * está siempre vacío. Media clave en una pantalla sigue siendo media clave en el
+ * historial de un navegador compartido.
  */
 export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement {
   const qc = useQueryClient()
@@ -54,6 +63,10 @@ export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement 
   const [clave, setClave] = useState('')
   const [modelo, setModelo] = useState('')
   const [thinking, setThinking] = useState('')
+  /* Se lee al montar y se refresca al guardar: `localStorage` no avisa de sus
+     propios cambios en la misma pestaña, así que un estado es la única forma de
+     que la tarjeta cuente lo que hay de verdad. */
+  const [enDispositivo, setEnDispositivo] = useState(() => Boolean(claveDelDispositivo()))
 
   const guardar = useMutation({
     mutationFn: async () => {
@@ -91,7 +104,14 @@ export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement 
     },
   })
 
-  const activa = estado?.clave_guardada || estado?.ultimo_con_ia
+  const guardarAquí = (): void => {
+    guardarClaveDelDispositivo(clave)
+    setEnDispositivo(Boolean(clave.trim()))
+    setClave('')
+    setAbierto(false)
+  }
+
+  const activa = estado?.clave_guardada || enDispositivo
   const funcionando = estado?.ultimo_con_ia
 
   return (
@@ -103,8 +123,8 @@ export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement 
             {activa ? (
               <>
                 El análisis lo redacta <span className="font-mono">{estado?.modelo}</span> razonando
-                antes de escribir. Las cifras no salen del modelo: se calculan con SQL y él solo
-                escribe el texto.
+                antes de escribir. Las cifras no salen del modelo: se calculan con los datos y él
+                solo escribe el texto.
               </>
             ) : (
               <>
@@ -130,10 +150,10 @@ export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement 
       {/*
         Dónde se dice esto y dónde no.
 
-        El PDF sale limpio: es un documento del servicio de mantenimiento y no
-        lleva ninguna etiqueta sobre cómo se preparó. Esta pantalla es el otro
-        lado de esa decisión — aquí sí se dice, con todo el detalle, porque es
-        donde se administra la herramienta y donde hay que poder auditarla.
+        El documento sale limpio: es del servicio de mantenimiento y no lleva
+        ninguna etiqueta sobre cómo se preparó. Esta pantalla es el otro lado de
+        esa decisión — aquí sí se dice, con todo el detalle, porque es donde se
+        administra la herramienta y donde hay que poder auditarla.
       */}
       <p className="mt-3 text-xs text-muted">
         {estado?.ultimo_analisis && (
@@ -143,11 +163,14 @@ export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement 
             {estado.ultimo_analisis}.{' '}
           </>
         )}
-        El PDF no menciona nada de esto: va limpio. La procedencia de cada informe
-        se ve aquí y en el archivo de abajo.
+        {enDispositivo && !estado?.clave_guardada && (
+          <>La clave que se está usando es la de este dispositivo. </>
+        )}
+        El informe no menciona nada de esto: va limpio. La procedencia de cada uno se ve aquí y en
+        el archivo de abajo.
       </p>
 
-      {esAdmin && !abierto && (
+      {!abierto && (
         <button
           type="button"
           onClick={() => {
@@ -157,11 +180,11 @@ export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement 
           }}
           className="key key-quiet mt-3 min-h-11 px-3 text-sm"
         >
-          {estado?.clave_guardada ? 'Cambiar la clave o el modelo' : 'Poner la clave de Gemini'}
+          {activa ? 'Cambiar la clave o el modelo' : 'Poner la clave de Gemini'}
         </button>
       )}
 
-      {esAdmin && abierto && (
+      {abierto && (
         <div className="mt-4 border-t border-line pt-4">
           <label className="block text-sm">
             <span className="text-muted">Clave de API de Gemini</span>
@@ -171,59 +194,70 @@ export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement 
               onChange={(e) => setClave(e.target.value)}
               autoComplete="off"
               spellCheck={false}
-              placeholder={
-                estado?.clave_guardada ? 'Hay una guardada; escribe para sustituirla' : 'AIza…'
-              }
+              placeholder={activa ? 'Hay una guardada; escribe para sustituirla' : 'AIza…'}
               className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-sm"
             />
           </label>
           <p className="mt-2 text-xs text-muted">
-            Se guarda en la configuración del despliegue, que solo leen los administradores y el
-            worker. En un despliegue con acceso al servidor es preferible ponerla en la variable
-            <span className="font-mono"> GEMINI_API_KEY</span>: si están las dos, manda esa.
+            Se saca en <span className="font-mono">aistudio.google.com/apikey</span>. Es de pago por
+            uso: un informe semanal cuesta céntimos, pero es una clave con factura, así que trátala
+            como un secreto.
           </p>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <label className="block text-sm">
-              <span className="text-muted">Modelo</span>
-              <input
-                type="text"
-                value={modelo}
-                onChange={(e) => setModelo(e.target.value)}
-                spellCheck={false}
-                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-sm"
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="text-muted">Razonamiento</span>
-              <select
-                value={thinking}
-                onChange={(e) => setThinking(e.target.value)}
-                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm"
-              >
-                {NIVELES_RAZONAMIENTO.map((n) => (
-                  <option key={n.clave} value={n.clave}>
-                    {n.etiqueta} — {n.detalle}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+          {esAdmin && (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="block text-sm">
+                <span className="text-muted">Modelo</span>
+                <input
+                  type="text"
+                  value={modelo}
+                  onChange={(e) => setModelo(e.target.value)}
+                  spellCheck={false}
+                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-sm"
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="text-muted">Razonamiento</span>
+                <select
+                  value={thinking}
+                  onChange={(e) => setThinking(e.target.value)}
+                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm"
+                >
+                  {NIVELES_RAZONAMIENTO.map((n) => (
+                    <option key={n.clave} value={n.clave}>
+                      {n.etiqueta} — {n.detalle}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
 
           {guardar.isError && (
-            <p className="mt-3 text-sm text-crit">
+            <p role="alert" className="mt-3 text-sm text-crit">
               {guardar.error instanceof Error ? guardar.error.message : 'No se ha podido guardar.'}
             </p>
           )}
 
           <div className="mt-4 flex flex-wrap gap-2">
+            {esAdmin && (
+              <button
+                type="button"
+                disabled={guardar.isPending}
+                onClick={() => guardar.mutate()}
+                className="key key-accent min-h-11 px-4 text-sm"
+              >
+                {guardar.isPending ? 'Guardando…' : 'Guardar para todo el equipo'}
+              </button>
+            )}
             <button
               type="button"
-              disabled={guardar.isPending}
-              onClick={() => guardar.mutate()}
-              className="key key-accent min-h-11 px-4 text-sm"
+              disabled={!clave.trim()}
+              onClick={guardarAquí}
+              className={`key min-h-11 px-4 text-sm ${esAdmin ? 'key-quiet' : 'key-accent'}`}
+              title="No sale de este navegador"
             >
-              {guardar.isPending ? 'Guardando…' : 'Guardar'}
+              Guardar solo aquí
             </button>
             <button
               type="button"
@@ -235,17 +269,34 @@ export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement 
             >
               Cancelar
             </button>
-            {estado?.clave_guardada && (
+            {esAdmin && estado?.clave_guardada && (
               <button
                 type="button"
                 disabled={quitar.isPending}
                 onClick={() => quitar.mutate()}
                 className="key key-quiet ml-auto min-h-11 px-3 text-sm text-crit"
               >
-                {quitar.isPending ? 'Quitando…' : 'Quitar la clave'}
+                {quitar.isPending ? 'Quitando…' : 'Quitar la del equipo'}
+              </button>
+            )}
+            {enDispositivo && (
+              <button
+                type="button"
+                onClick={() => {
+                  guardarClaveDelDispositivo('')
+                  setEnDispositivo(false)
+                }}
+                className="key key-quiet min-h-11 px-3 text-sm text-crit"
+              >
+                Quitar la de este dispositivo
               </button>
             )}
           </div>
+
+          <p className="mt-3 text-xs text-muted">
+            «Guardar para todo el equipo» la deja en la configuración del despliegue y la usan todos
+            los supervisores. «Guardar solo aquí» no sale de este navegador.
+          </p>
         </div>
       )}
     </section>
