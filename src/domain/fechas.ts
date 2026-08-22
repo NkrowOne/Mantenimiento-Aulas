@@ -50,6 +50,23 @@ export function inicioDeMes(ahora = new Date()): Date {
   return new Date(tentativa - desfase)
 }
 
+/**
+ * El instante en que empezó —o empezará— un día concreto en Madrid.
+ *
+ * Gemela de `public.inicio_del_dia(date)` en la base, y existe por el mismo
+ * motivo: los límites de un periodo son medianoche DE MADRID. Comparar un
+ * instante con una fecha suelta lo convierte usando la zona de quien pregunta,
+ * y una revisión de las 00:30 acababa contada en el informe del día anterior.
+ *
+ * El desfase se busca, no se supone: en España son dos horas en verano y una en
+ * invierno, y los dos domingos del cambio no tienen 24 horas.
+ */
+export function inicioDelDia(iso: string): Date {
+  const [año, mes, dia] = iso.split('-').map(Number)
+  const tentativa = Date.UTC(año!, mes! - 1, dia!)
+  return new Date(tentativa - desfaseMs(new Date(tentativa)))
+}
+
 /** Cuánto va Madrid por delante de UTC en ese instante, en milisegundos. */
 function desfaseMs(instante: Date): number {
   // `en-CA` con `hourCycle: 'h23'` da `AAAA-MM-DD, HH:MM:SS`, que se puede

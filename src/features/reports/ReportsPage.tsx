@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMemo, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import type { Role } from '@/domain/types'
 import { fechaCorta } from '@/domain/fechas'
-import { DiagnosticoInformes } from './DiagnosticoInformes'
 import { EstadoIA, useEstadoIA } from './EstadoIA'
 import { AUDIENCIAS, POR_DEFECTO, SECCIONES } from './secciones'
-import { type Eleccion, construirPeticion, motivoParaNoPedir } from './peticion'
+import { type Eleccion, motivoParaNoPedir } from './peticion'
 import {
   type Kind,
   type Rango,
@@ -15,6 +13,13 @@ import {
   hoyEnMadrid,
   nombrePeriodo,
 } from './periodos'
+import {
+  type InformeGenerado,
+  type Paso,
+  generarInforme,
+  nombreDeArchivo,
+} from './informe/generar'
+import { descargarDocumento, imprimirMarco } from './informe/imprimir'
 
 interface ReportRow {
   id: string
@@ -38,23 +43,35 @@ const KIND_LABEL: Record<Kind, string> = {
   personalizado: 'A medida',
 }
 
-/** Lo que tarda el worker en un informe con IA: consulta, razonamiento y PDF. */
-const ESPERA_MAX_MS = 150_000
+const PASOS: Record<Paso, string> = {
+  datos: 'Leyendo los datos del periodo…',
+  analisis: 'Calculando las cifras y redactando el análisis…',
+  documento: 'Componiendo el documento…',
+  archivo: 'Guardándolo en el archivo…',
+}
 
 /**
  * Informes.
  *
- * El automático sale **los viernes a las 07:00** con la semana de trabajo
- * entera. Lo de esta pantalla es lo otro: pedirlo cuando hace falta y decidir
- * qué lleva dentro.
+ * El informe se arma **aquí**, en el propio navegador: se leen los datos, se
+ * calculan las cifras, se le pide a Gemini que redacte el análisis y se compone
+ * el documento. No hay un servicio detrás que pueda estar caído, ni una cola de
+ * la que nadie se entera, ni un token que sincronizar. Lo único que hay que
+ * configurar para que el análisis lo escriba una IA es la clave de Gemini, y se
+ * pega en la tarjeta de arriba.
+ *
+ * El PDF lo hace el navegador: el documento está maquetado para A4 y «Guardar
+ * como PDF» es un destino de impresión más. Eso ahorra media librería en el
+ * arranque de una aplicación que se abre desde un iPad en un pasillo.
  *
  * Un informe emitido **no se regenera nunca**: se versiona. Si los datos cambian
- * después, el PDF del viernes tiene que seguir diciendo lo que decía el viernes,
- * o deja de servir como registro. De ahí que aquí no haya ningún botón de
- * «actualizar»: se emite otro y los dos quedan en el archivo.
+ * después, el documento del viernes tiene que seguir diciendo lo que decía el
+ * viernes, o deja de servir como registro. De ahí que aquí no haya ningún botón
+ * de «actualizar»: se emite otro y los dos quedan en el archivo.
  */
-export function ReportsPage({ role }: { role: Role }): React.ReactElement {
+export function ReportsPage(): React.ReactElement {
   const hoy = hoyEnMadrid()
+  const qc = useQueryClient()
 
   const [preset, setPreset] = useState<string>('semana')
   const [desde, setDesde] = useState('')
@@ -67,17 +84,14 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
   const [nota, setNota] = useState('')
   const [ajustes, setAjustes] = useState(false)
 
-  /** Desde qué informe se está esperando uno nuevo, desde cuándo y QUÉ se pidió. */
-  const [esperando, setEsperando] = useState<{
-    ultimoId: string | null
-    desde: number
-    pedido: { kind: Kind; start: string; end: string }
-  } | null>(null)
-  const [recien, setRecien] = useState<ReportRow | null>(null)
-  /* La espera venció sin informe. Antes esto se tragaba en silencio —la
-     pantalla volvía a su estado normal como si nada— y «nunca llega nada» no
-     tenía ni mensaje ni pista. Ahora se dice, y el diagnóstico se abre solo. */
-  const [agotado, setAgotado] = useState(false)
+  const [paso, setPaso] = useState<Paso | null>(null)
+  const [recien, setRecien] = useState<InformeGenerado | null>(null)
+  /* El fallo de una descarga, a la vista. `createSignedUrl` puede denegar por
+     permisos o red, y descartarlo dejaba el botón «Abrir» como un botón que a
+     veces no hace nada. */
+  const [falloDescarga, setFalloDescarga] = useState<string | null>(null)
+
+  const marco = useRef<HTMLIFrameElement>(null)
 
   const { data: estadoIA } = useEstadoIA()
 
@@ -94,9 +108,6 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
       if (error) throw error
       return (data ?? []) as ReportRow[]
     },
-    // Mientras se espera un informe se pregunta cada tres segundos. El resto del
-    // tiempo, nada: un archivo de informes no cambia solo.
-    refetchInterval: esperando ? 3000 : false,
   })
 
   const rango: Rango = useMemo(() => {
@@ -115,96 +126,48 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
   const impedimento = motivoParaNoPedir(eleccion, dias)
 
   const generar = useMutation({
-    mutationFn: async () => {
-      const { error } = await supabase.rpc('request_report', construirPeticion(eleccion))
-      if (error) throw error
-    },
-    onSuccess: () => {
-      /*
-       * Aquí antes había un `setTimeout` de cuatro segundos que refrescaba la
-       * lista y se daba por satisfecho. Con IA de por medio un informe puede
-       * tardar medio minuto, así que lo que se veía era la lista igual que
-       * estaba y ninguna explicación. Ahora se espera de verdad: se recuerda cuál
-       * era el último informe y se pregunta hasta que aparezca otro.
-       */
+    mutationFn: async (): Promise<InformeGenerado> => {
       setRecien(null)
-      setAgotado(false)
-      setEsperando({
-        ultimoId: reports?.[0]?.id ?? null,
-        desde: Date.now(),
-        pedido: { kind, start: rango.start, end: rango.end },
-      })
+      return generarInforme(eleccion, setPaso)
+    },
+    onSettled: () => setPaso(null),
+    onSuccess: (informe) => {
+      setRecien(informe)
+      // El archivo acaba de cambiar, y la tarjeta de la IA también: la
+      // procedencia del último informe es justo lo que enseña.
+      void qc.invalidateQueries({ queryKey: ['reports'] })
+      void qc.invalidateQueries({ queryKey: ['ia-estado'] })
     },
   })
 
-  useEffect(() => {
-    if (!esperando) return
-    const primero = reports?.[0]
-    /*
-     * «Listo» solo si es EL informe pedido, no el primero que aparezca.
-     *
-     * El archivo es compartido: mientras se espera puede aterrizar el informe
-     * de otro supervisor —o el automático del viernes— y presentarlo con el
-     * botón «Abrir el PDF» sería darle a alguien un documento que no pidió con
-     * cara de ser el suyo. El tipo y el periodo bastan para distinguirlo: son
-     * exactamente lo que se mandó en la petición.
-     */
-    if (
-      primero &&
-      primero.id !== esperando.ultimoId &&
-      primero.kind === esperando.pedido.kind &&
-      primero.period_start === esperando.pedido.start &&
-      primero.period_end === esperando.pedido.end
-    ) {
-      setRecien(primero)
-      setEsperando(null)
-      return
-    }
-    if (Date.now() - esperando.desde > ESPERA_MAX_MS) {
-      // La rendición se DICE. Tragársela dejaba la pantalla como si nada, que
-      // es exactamente cómo una tubería rota estuvo semanas sin diagnóstico.
-      setEsperando(null)
-      setAgotado(true)
-    }
-  }, [reports, esperando])
-
-  /* El fallo de una descarga, a la vista. `createSignedUrl` puede denegar por
-     permisos o red, y descartarlo dejaba el botón «Descargar» como un botón
-     que a veces no hace nada. */
-  const [falloDescarga, setFalloDescarga] = useState<string | null>(null)
-
-  async function descargar(path: string): Promise<void> {
+  async function abrir(path: string): Promise<void> {
     setFalloDescarga(null)
     const { data, error } = await supabase.storage.from('reports').createSignedUrl(path, 60)
     if (error || !data?.signedUrl) {
-      setFalloDescarga(
-        `No se ha podido preparar la descarga${error ? `: ${error.message}` : ''}.`,
-      )
+      setFalloDescarga(`No se ha podido preparar la descarga${error ? `: ${error.message}` : ''}.`)
       return
     }
     // Si el navegador bloquea la pestaña —el gesto caducó mientras se firmaba
     // la URL— se dice, en vez de fingir que el botón no hizo nada.
     const abierta = window.open(data.signedUrl, '_blank', 'noopener')
-    if (!abierta) setFalloDescarga('El navegador ha bloqueado la pestaña: vuelve a pulsar Descargar.')
+    if (!abierta) setFalloDescarga('El navegador ha bloqueado la pestaña: vuelve a pulsar Abrir.')
   }
 
   const alternar = (clave: string): void =>
     setSecciones((s) => (s.includes(clave) ? s.filter((x) => x !== clave) : [...s, clave]))
-
-  const esperandoDemasiado = esperando && Date.now() - esperando.desde > 40_000
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-4">
       <header>
         <h1 className="text-xl font-semibold">Informes</h1>
         <p className="mt-1 text-sm text-muted">
-          El automático sale los viernes a las 07:00 con la semana hasta el jueves — el viernes aún
-          no ha pasado, y meterlo vacío sesgaba la comparación—. Aquí se pide cuando haga falta, y
-          se elige qué lleva dentro.
+          El informe se arma aquí mismo con los datos del periodo que elijas, y sale listo para
+          imprimir o guardar como PDF. Queda archivado, y un informe emitido no se regenera: se
+          emite otro y los dos quedan.
         </p>
       </header>
 
-      <EstadoIA esAdmin={role === 'admin'} />
+      <EstadoIA />
 
       <section className="card p-4">
         <h2 className="font-semibold">Generar un informe</h2>
@@ -264,7 +227,7 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
           )}
 
           {/* Qué va a cubrir, escrito. Un botón que dice «semana en curso» sin
-              decir qué días son eso obliga a generar el PDF para averiguarlo. */}
+              decir qué días son eso obliga a generar el informe para averiguarlo. */}
           <p className="mt-3 text-sm">
             {!impedimento || impedimento.includes('sección') ? (
               <>
@@ -348,7 +311,7 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
                 <span>
                   <span className="block font-medium">Redactar el análisis con IA</span>
                   <span className="block text-xs text-muted">
-                    {estadoIA?.clave_guardada || estadoIA?.ultimo_con_ia
+                    {estadoIA?.clave_guardada
                       ? `Con ${estadoIA?.modelo}, razonando antes de escribir. Si falla, sale el análisis calculado.`
                       : 'No hay clave configurada, así que saldrá el análisis calculado de todas formas.'}
                   </span>
@@ -429,71 +392,106 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
             type="button"
-            disabled={impedimento !== null || generar.isPending || esperando !== null}
+            disabled={impedimento !== null || generar.isPending}
             onClick={() => generar.mutate()}
             className="key key-accent min-h-11 px-4 text-sm"
           >
-            {generar.isPending || esperando ? 'Generando…' : 'Generar'}
+            {generar.isPending ? 'Generando…' : 'Generar'}
           </button>
           {/* El motivo, a la vista: un botón apagado sin explicación deja a quien
               lo mira buscando qué le falta. */}
           {impedimento && <span className="text-sm text-muted">{impedimento}</span>}
         </div>
 
+        {/* En qué paso va. No es decoración: con IA la espera pasa del medio
+            minuto, y una barra que no dice nada se lee como una pantalla
+            colgada. */}
+        {generar.isPending && (
+          <p className="mt-3 text-sm text-muted" role="status">
+            {paso ? PASOS[paso] : 'Preparando…'}
+            {paso === 'analisis' && conIA && ' Con IA suele tardar entre veinte segundos y un minuto.'}
+          </p>
+        )}
+
         {generar.isError && (
-          <p className="mt-3 text-sm text-crit">
+          <p role="alert" className="mt-3 text-sm text-crit">
             {generar.error instanceof Error
               ? generar.error.message
-              : 'No se ha podido pedir el informe.'}
-          </p>
-        )}
-
-        {esperando && (
-          <p className="mt-3 text-sm text-muted" role="status">
-            En marcha. {conIA ? 'Con IA suele tardar entre veinte segundos y un minuto.' : 'Suele tardar unos segundos.'}
-            {/* «Sigue trabajando» era una suposición, y en el despliegue donde
-                la tubería estaba rota fue una mentira durante semanas. A partir
-                de aquí, la espera larga abre el diagnóstico de abajo, que
-                pregunta a la base qué está pasando de verdad. */}
-            {esperandoDemasiado &&
-              ' Está tardando más de lo normal: mira el diagnóstico de aquí abajo.'}
-          </p>
-        )}
-
-        {/* La rendición, dicha. Antes la espera vencía en silencio y la
-            pantalla volvía a su estado normal: una tubería rota podía pasarse
-            semanas sin que nada en la interfaz lo contara. */}
-        {agotado && !esperando && !recien && (
-          <p role="alert" className="mt-3 text-sm text-crit">
-            El informe no ha llegado en dos minutos y medio: algo de la tubería no está
-            respondiendo. El diagnóstico de aquí abajo le pregunta a la base qué pasa.
-          </p>
-        )}
-
-        {recien && (
-          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-card bg-ok-tint p-3 text-sm">
-            <span className="text-ok">
-              Listo: {KIND_LABEL[recien.kind]}, {nombrePeriodo({ start: recien.period_start, end: recien.period_end })}
-              {recien.params?.ia === false ? ' · análisis calculado' : ''}
-            </span>
-            <button
-              type="button"
-              onClick={() => void descargar(recien.storage_path)}
-              className="key key-ok ml-auto min-h-11 px-3 text-sm"
-            >
-              Abrir el PDF
-            </button>
-          </div>
-        )}
-
-        {falloDescarga && (
-          <p role="alert" className="mt-2 text-sm text-crit">
-            {falloDescarga}
+              : 'No se ha podido generar el informe.'}
           </p>
         )}
       </section>
 
-      <DiagnosticoInformes sugerido={Boolean(esperandoDemasiado) || agotado} />
+      {recien && (
+        <section className="card p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="font-semibold">
+                Listo: {KIND_LABEL[recien.kind as Kind]}, {recien.periodoTexto}
+              </h2>
+              <p className="mt-1 text-sm text-muted">
+                {recien.conIA
+                  ? 'El análisis lo ha redactado la IA. Las cifras no salen de ahí: se calculan con los datos.'
+                  : 'Con el análisis calculado a partir de los datos.'}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!imprimirMarco(marco.current)) {
+                    setFalloDescarga('La vista previa aún no está lista: espera un segundo y vuelve a pulsar.')
+                  }
+                }}
+                className="key key-accent min-h-11 px-3 text-sm"
+              >
+                Guardar como PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => descargarDocumento(recien.html, nombreDeArchivo(recien.kind, recien.rango))}
+                className="key key-quiet min-h-11 px-3 text-sm"
+              >
+                Descargar
+              </button>
+            </div>
+          </div>
+
+          {/* Lo que no ha salido como se pidió, dicho. Que el análisis venga
+              calculado cuando se marcó «con IA» no es un detalle: quien lo pidió
+              tiene que saber por qué, y casi siempre se arregla en un minuto. */}
+          {recien.avisoIA && (
+            <p className="mt-3 rounded-ctl border border-warn/40 bg-warn-tint p-3 text-sm text-warn">
+              El análisis ha salido calculado y no redactado por la IA: {recien.avisoIA}.
+            </p>
+          )}
+
+          {recien.motivoArchivo && (
+            <p role="alert" className="mt-3 rounded-ctl border border-warn/40 bg-warn-tint p-3 text-sm text-warn">
+              El informe está hecho, pero {recien.motivoArchivo}. Descárgalo para no perderlo.
+            </p>
+          )}
+
+          {/*
+            La vista previa, en un marco aislado.
+            El documento trae sus propios estilos de página —cuerpos en puntos,
+            márgenes en milímetros— y soltarlos en la aplicación repintaría media
+            pantalla. Sin `allow-scripts`: el informe no lleva ni una línea de
+            JavaScript y así se queda.
+          */}
+          <iframe
+            ref={marco}
+            title={`Informe · ${recien.periodoTexto}`}
+            srcDoc={recien.html}
+            sandbox="allow-same-origin allow-modals"
+            className="mt-4 h-[70vh] w-full rounded-card border border-line bg-white"
+          />
+          <p className="mt-2 text-xs text-muted">
+            «Guardar como PDF» abre la impresión del navegador: elige ese destino y sale el documento
+            en A4.
+          </p>
+        </section>
+      )}
 
       <section>
         <div className="section-head">
@@ -520,10 +518,10 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
                 </span>
                 <button
                   type="button"
-                  onClick={() => void descargar(r.storage_path)}
+                  onClick={() => void abrir(r.storage_path)}
                   className="key key-quiet min-h-11 px-3 text-xs"
                 >
-                  Descargar
+                  Abrir
                 </button>
               </li>
             )
@@ -538,7 +536,7 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
 
         {!falloArchivo && reports?.length === 0 && (
           <p className="mt-2 text-sm text-muted">
-            Aún no hay informes. El primer automático saldrá el viernes a las 07:00.
+            Aún no hay informes archivados. Genera el primero aquí arriba.
           </p>
         )}
 

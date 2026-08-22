@@ -1,0 +1,278 @@
+/**
+ * El informe, de principio a fin, dentro de la aplicación.
+ *
+ * La cadena entera: datos → cifras → redacción (Gemini, si hay clave) →
+ * documento → archivo. Sin worker, sin pg_net, sin cron, sin token y sin una
+ * sola variable de entorno. Lo único que hay que configurar para que el
+ * análisis lo escriba una IA es la clave de Gemini, y se pega desde la propia
+ * pantalla.
+ *
+ * EL ORDEN NO ES CASUAL. Primero la redacción calculada, siempre. Si Gemini
+ * contesta, se sustituye; si no contesta, si no hay clave o si quien pide el
+ * informe ha desmarcado la casilla, ya hay un texto completo esperando. Nunca
+ * hay un momento en el que el informe pueda quedarse sin análisis.
+ *
+ * Y EL ARCHIVO NO PUEDE TUMBAR EL INFORME. Guardar el documento en Storage es
+ * lo último y va aparte: si falla —la política todavía no está, no hay
+ * conexión— el informe ya está hecho y en pantalla, listo para imprimir. Lo que
+ * no se hace es callarlo: quien lo pidió tiene que saber que ese no ha quedado
+ * en el archivo.
+ */
+
+import { supabase } from '@/lib/supabase'
+import { ZONA } from '@/domain/fechas'
+import { type Eleccion, construirPeticion } from '../peticion'
+import { type Rango, nombrePeriodo } from '../periodos'
+import { cargarDatos } from './datos'
+import { lecturaCalculada, senales } from './analisis'
+import { configurarIA, redactar } from './ia'
+import { claveDeGemini } from './clave'
+import { leerOpciones } from './opciones'
+import { renderReport } from './plantilla'
+
+export interface InformeGenerado {
+  /** El documento entero, autocontenido. Es lo que se imprime y lo que se archiva. */
+  html: string
+  /*
+   * Qué informe es este, y no cuál está elegido AHORA en la pantalla.
+   *
+   * Van aquí porque el configurador sigue vivo mientras se lee el resultado:
+   * cambiar el periodo para pedir el siguiente reetiquetaba el que ya estaba
+   * hecho, y el fichero descargado salía con el nombre del que no era. Un
+   * documento bien hecho con la etiqueta equivocada es peor que un error.
+   */
+  kind: string
+  rango: Rango
+  periodoTexto: string
+  /** Qué redactó el análisis. Va al archivo para que el histórico lo diga. */
+  analisis: string
+  conIA: boolean
+  /** Por qué NO lo redactó la IA, cuando se pidió que lo hiciera. */
+  avisoIA: string | null
+  /** Dónde ha quedado guardado, o `null` si no se ha podido archivar. */
+  archivado: string | null
+  motivoArchivo: string | null
+}
+
+/** Los pasos, para que la pantalla pueda decir en cuál va. */
+export type Paso = 'datos' | 'analisis' | 'documento' | 'archivo'
+
+const TITULO: Record<string, string> = {
+  diario: 'Parte diario',
+  semanal: 'Informe semanal',
+  personalizado: 'Informe a medida',
+}
+
+/**
+ * La huella del documento, para que el mismo informe caiga siempre en la misma
+ * ruta y uno distinto en otra.
+ *
+ * `crypto.subtle` no existe fuera de un contexto seguro. La aplicación se sirve
+ * por HTTPS y en desarrollo `localhost` también cuenta, así que el respaldo es
+ * para un caso que no debería darse — pero un informe no se queda sin archivar
+ * por no poder calcular doce caracteres.
+ */
+async function huellaDe(texto: string): Promise<string> {
+  const bytes = new TextEncoder().encode(texto)
+  if (globalThis.crypto?.subtle) {
+    const resumen = await globalThis.crypto.subtle.digest('SHA-256', bytes)
+    return [...new Uint8Array(resumen)]
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+      .slice(0, 12)
+  }
+  // FNV-1a de 32 bits, dos pasadas con semillas distintas: no es criptografía y
+  // no pretende serlo. Solo tiene que distinguir dos documentos distintos.
+  const fnv = (semilla: number): string => {
+    let h = semilla
+    for (const b of bytes) {
+      h ^= b
+      h = Math.imul(h, 0x01000193) >>> 0
+    }
+    return h.toString(16).padStart(8, '0')
+  }
+  return `${fnv(0x811c9dc5)}${fnv(0x9dc5811c)}`.slice(0, 12)
+}
+
+/** Quién lo pide. El documento lo imprime en la portada. */
+async function solicitante(): Promise<{ id: string | null; nombre: string | undefined }> {
+  const { data } = await supabase.auth.getSession()
+  const id = data.session?.user.id ?? null
+  if (!id) return { id: null, nombre: undefined }
+
+  const { data: perfil } = await supabase.from('profiles').select('full_name').eq('id', id).maybeSingle()
+  const nombre = (perfil as { full_name?: string | null } | null)?.full_name
+  return { id, nombre: nombre ?? undefined }
+}
+
+export async function generarInforme(
+  eleccion: Eleccion,
+  avisar: (paso: Paso) => void = () => undefined,
+): Promise<InformeGenerado> {
+  // Por `construirPeticion` y no leyendo la elección a pelo: es la pieza que
+  // decide qué viaja y qué no —un enfoque en blanco no es una instrucción, una
+  // nota en blanco no es una caja vacía en la portada— y está probada aparte.
+  const opciones = leerOpciones(construirPeticion(eleccion).p_params)
+
+  avisar('datos')
+  const [datos, quienPide] = await Promise.all([
+    cargarDatos(eleccion.kind, eleccion.rango),
+    solicitante(),
+  ])
+
+  avisar('analisis')
+  const se = senales(datos)
+  let lectura = lecturaCalculada(datos)
+  let conIA = false
+  let avisoIA: string | null = null
+
+  if (opciones.ia) {
+    const encontrada = await claveDeGemini()
+    const cfg = encontrada
+      ? configurarIA({
+          clave: encontrada.clave,
+          ...(await ajustesGuardados()),
+          audiencia: opciones.audiencia,
+          ...(opciones.enfoque ? { enfoque: opciones.enfoque } : {}),
+        })
+      : null
+
+    if (!cfg) {
+      avisoIA = 'no hay ninguna clave de Gemini configurada'
+    } else {
+      const { lectura: redactada, motivo } = await redactar(datos, se, cfg)
+      if (redactada) {
+        lectura = redactada
+        conIA = true
+      } else {
+        avisoIA = motivo
+      }
+    }
+  }
+
+  avisar('documento')
+  // El pie del informe daba la hora UTC sin decirlo: un documento emitido a las
+  // 09:00 de Madrid ponía «07:00», y quien lo archivara lo fecharía mal.
+  const emitido = new Intl.DateTimeFormat('es-ES', {
+    timeZone: ZONA,
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(new Date())
+
+  const html = renderReport(datos, lectura, opciones, {
+    emitido,
+    ...(quienPide.nombre ? { solicitante: quienPide.nombre } : {}),
+  })
+
+  avisar('archivo')
+  const archivo = await archivar(html, eleccion, opciones, lectura.origen, conIA, quienPide.id)
+
+  return {
+    html,
+    kind: eleccion.kind,
+    rango: eleccion.rango,
+    periodoTexto: nombrePeriodo(eleccion.rango),
+    analisis: lectura.origen,
+    conIA,
+    avisoIA,
+    archivado: archivo.path,
+    motivoArchivo: archivo.motivo,
+  }
+}
+
+/**
+ * El modelo y el razonamiento guardados, si los hay.
+ *
+ * `ia_estado()` los devuelve junto con «hay clave o no», y es la misma llamada
+ * que ya hace la tarjeta de arriba de la pantalla. Si falla, se usan los valores
+ * por defecto: un informe no se queda sin redactar porque no se sepa qué modelo
+ * prefiere el despliegue.
+ */
+async function ajustesGuardados(): Promise<{ modelo?: string; thinking?: string }> {
+  try {
+    const { data, error } = await supabase.rpc('ia_estado')
+    if (error) return {}
+    const estado = data as { modelo?: string; thinking?: string } | null
+    return {
+      ...(estado?.modelo ? { modelo: estado.modelo } : {}),
+      ...(estado?.thinking ? { thinking: estado.thinking } : {}),
+    }
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * El documento, guardado donde se pueda volver a buscar.
+ *
+ * Un informe emitido **no se regenera nunca**: se versiona. Si los datos cambian
+ * después, el documento del viernes tiene que seguir diciendo lo que decía el
+ * viernes, o deja de servir como registro. De ahí que la ruta lleve la huella
+ * del contenido y que la subida no sobrescriba: el mismo documento cae en el
+ * mismo sitio —y volver a subirlo es un no-op— y uno distinto abre una ruta
+ * nueva.
+ */
+async function archivar(
+  html: string,
+  eleccion: Eleccion,
+  opciones: ReturnType<typeof leerOpciones>,
+  origen: string,
+  conIA: boolean,
+  quienPide: string | null,
+): Promise<{ path: string | null; motivo: string | null }> {
+  const hash = await huellaDe(html)
+  const path = `${eleccion.kind}/${eleccion.rango.start}_${eleccion.rango.end}_${hash}.html`
+
+  const subida = await supabase.storage
+    .from('reports')
+    .upload(path, new Blob([html], { type: 'text/html; charset=utf-8' }), {
+      contentType: 'text/html; charset=utf-8',
+      upsert: false,
+    })
+
+  // «Ya existe» no es un fallo: es el mismo documento, ya archivado. Cualquier
+  // otra cosa sí lo es, y hay que decirla.
+  if (subida.error && !/exists/i.test(subida.error.message)) {
+    return { path: null, motivo: `no se ha podido guardar el documento: ${subida.error.message}` }
+  }
+
+  /*
+   * En `params` se guarda cómo se hizo, no lo que se pidió: las secciones que
+   * de verdad salieron y quién redactó el análisis. Así el archivo puede decir
+   * «este de marzo salió sin IA» sin abrir el documento, y la pantalla puede
+   * marcarlo.
+   */
+  const huella = {
+    secciones: opciones.secciones,
+    comparar: opciones.comparar,
+    audiencia: opciones.audiencia,
+    ia: conIA,
+    analisis: origen,
+    ...(opciones.enfoque ? { enfoque: opciones.enfoque } : {}),
+    ...(opciones.nota ? { nota: opciones.nota } : {}),
+  }
+
+  const { error } = await supabase.from('reports').insert({
+    kind: eleccion.kind,
+    period_start: eleccion.rango.start,
+    period_end: eleccion.rango.end,
+    storage_path: path,
+    content_hash: hash,
+    params: huella,
+    generated_by: quienPide,
+  })
+
+  // Choque con el índice único: este informe ya estaba en el archivo, con el
+  // mismo contenido. No hay nada que arreglar.
+  if (error && error.code !== '23505') {
+    return { path, motivo: `el documento está guardado pero no ha entrado en el archivo: ${error.message}` }
+  }
+
+  return { path, motivo: null }
+}
+
+/** El nombre con el que se descarga: reconocible en una carpeta de descargas. */
+export function nombreDeArchivo(kind: string, rango: { start: string; end: string }): string {
+  const titulo = (TITULO[kind] ?? 'Informe').toLowerCase().replace(/\s+/g, '-')
+  return `${titulo}-${rango.start}_${rango.end}.html`
+}

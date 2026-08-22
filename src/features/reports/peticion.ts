@@ -1,12 +1,17 @@
 /**
- * Lo que se le manda a `request_report`, armado aparte de la pantalla.
+ * Lo que se pide, armado aparte de la pantalla.
  *
  * Está en su propio fichero por un fallo concreto que ya ocurrió una vez: la
  * pantalla recogía «Desde» y «Hasta», los guardaba en su estado y no los
- * incluía en la llamada. El worker calculaba entonces su periodo por defecto, y
- * quien pedía marzo recibía un PDF con los datos de ayer etiquetado «a medida».
+ * incluía en la petición. Se calculaba entonces el periodo por defecto, y quien
+ * pedía marzo recibía un informe con los datos de ayer etiquetado «a medida».
  * Un documento equivocado que parece legítimo es peor que un error, porque se
  * archiva y se cita.
+ *
+ * Sigue existiendo ahora que el informe se genera aquí mismo, y con el mismo
+ * oficio: `p_params` es lo que lee `leerOpciones` para decidir qué lleva el
+ * documento, y lo que se guarda en `reports.params` para que el archivo pueda
+ * decir cómo salió cada uno.
  *
  * Armar la petición es una función pura, así que se puede comprobar sin montar
  * un navegador. Es lo que hace `peticion.test.ts`.
@@ -39,7 +44,7 @@ export interface Peticion {
   }
 }
 
-/** Máximo que acepta la función de la base: más sería cargar el histórico entero. */
+/** Más de un año sería cargar el histórico entero para leerlo en cuatro páginas. */
 export const DIAS_MAXIMOS = 366
 
 export function construirPeticion(e: Eleccion): Peticion {

@@ -1,15 +1,15 @@
 /**
  * Los periodos que se pueden pedir, y cómo se llaman en español.
  *
- * Gemelo de `reports-worker/src/periods.ts`, y a propósito: el worker calcula
- * los suyos porque el informe automático no pasa por aquí, y esta pantalla
- * calcula los mismos para poder ENSEÑAR qué va a cubrir el informe antes de
- * pedirlo. Un botón que dice «esta semana» y no dice qué días son eso obliga a
- * generar un PDF para averiguarlo.
+ * Aquí se calculan las fechas **una vez** y se usan para todo: para ENSEÑAR qué
+ * va a cubrir el informe antes de pedirlo —un botón que dice «esta semana» y no
+ * dice qué días son eso obliga a generar el informe para averiguarlo— y para
+ * consultarlas al armarlo. Mientras había un worker esto era el gemelo de
+ * `reports-worker/src/periods.ts` y los dos tenían que coincidir; ahora hay un
+ * solo cálculo, que es la forma barata de que no se separen.
  *
- * La regla que mantiene a los dos de acuerdo: las fechas se calculan aquí y se
- * MANDAN. El worker solo calcula por su cuenta cuando no le llega ninguna, que
- * es el caso del viernes a las 07:00.
+ * El fichero sigue sin tocar la red ni la base: son fechas puras, y por eso se
+ * pueden comprobar enteras en `peticion.test.ts` sin montar nada.
  */
 
 import { ZONA } from '@/domain/fechas'
@@ -148,4 +148,90 @@ export function nombrePeriodo(r: Rango): string {
 export function diasDelRango(r: Rango): number {
   if (!r.start || !r.end) return 0
   return Math.round((aInstante(r.end) - aInstante(r.start)) / 86_400_000) + 1
+}
+
+/** Todas las fechas del rango, en orden. La serie diaria del informe sale de aquí. */
+export function diasDe(r: Rango): string[] {
+  const lista: string[] = []
+  if (!r.start || !r.end || r.end < r.start) return lista
+  for (let d = r.start; d <= r.end; d = sumaDias(d, 1)) lista.push(d)
+  return lista
+}
+
+/**
+ * El periodo comparable anterior.
+ *
+ * Un número solo no dice nada: «18 revisiones» es bueno o es malo según lo que
+ * hubiera antes. Lo que cuesta acertar es contra QUÉ.
+ *
+ * El caso general es el tramo de igual duración que termina justo antes, para
+ * que un informe de nueve días se compare con nueve y no con siete. Pero hay dos
+ * periodos que se piden constantemente y a los que esa regla les hace trampa:
+ *
+ *   SEMANA LABORAL   Los cinco días anteriores a un lunes son miércoles a
+ *                    domingo, sábado y domingo incluidos. Comparar una semana
+ *                    de trabajo con dos jornadas en las que el campus está
+ *                    cerrado hace que cualquier semana parezca buenísima. Se
+ *                    compara con la semana laboral anterior, día por día.
+ *   MES COMPLETO     Los treinta días anteriores al 1 de junio empiezan el 2 de
+ *                    mayo: se queda fuera el día 1 y el informe dice que mayo
+ *                    tuvo una incidencia menos de las que tuvo. Se compara con
+ *                    el mes de calendario anterior, entero.
+ *
+ * Cualquier otro rango —una quincena, un trimestre, tres días sueltos— va por la
+ * regla general, que no engaña a nadie porque nadie espera otra cosa.
+ */
+export function periodoAnterior(r: Rango): Rango {
+  const dias = diasDelRango(r)
+
+  if (dias <= 7 && diaDeLaSemana(r.start) === 1) {
+    return { start: sumaDias(r.start, -7), end: sumaDias(r.end, -7) }
+  }
+
+  if (esMesCompleto(r)) {
+    const { y, m } = partes(r.start)
+    const inicio = new Date(Date.UTC(y, m - 2, 1, 12))
+    const fin = new Date(Date.UTC(y, m - 1, 0, 12))
+    return {
+      start: inicio.toISOString().slice(0, 10),
+      end: fin.toISOString().slice(0, 10),
+    }
+  }
+
+  const end = sumaDias(r.start, -1)
+  return { start: sumaDias(end, -(dias - 1)), end }
+}
+
+/** Del día 1 al último, sea de 28, 29, 30 o 31. */
+function esMesCompleto(r: Rango): boolean {
+  const a = partes(r.start)
+  const b = partes(r.end)
+  if (a.d !== 1 || a.y !== b.y || a.m !== b.m) return false
+  const ultimo = new Date(Date.UTC(a.y, a.m, 0, 12)).getUTCDate()
+  return b.d === ultimo
+}
+
+/**
+ * Cómo se titula el tramo comparado, para el pie de los indicadores.
+ * «frente a la semana anterior» se entiende; «frente a 2026-07-20/2026-07-24», no.
+ */
+export function nombreComparacion(r: Rango): string {
+  const dias = diasDelRango(r)
+  if (dias === 1) return 'el día anterior'
+  if (dias === 7) return 'la semana anterior'
+  if (dias >= 5 && dias <= 6) return 'la semana anterior'
+  if (dias >= 28 && dias <= 31) return 'el mes anterior'
+  return `los ${dias} días anteriores`
+}
+
+/** «miércoles 19 de noviembre», para la cabecera de una jornada del diario. */
+export function nombreDia(iso: string): string {
+  const { d, m } = partes(iso)
+  return `${DIAS[diaDeLaSemana(iso) - 1]} ${d} de ${MESES[m - 1]}`
+}
+
+/** `L 27`, `M 28`… para el eje del gráfico diario, que no cabe más. */
+export function etiquetaDia(iso: string): string {
+  const inicial = ['L', 'M', 'X', 'J', 'V', 'S', 'D'][diaDeLaSemana(iso) - 1]
+  return `${inicial} ${partes(iso).d}`
 }
