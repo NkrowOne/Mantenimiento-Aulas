@@ -4,8 +4,8 @@
  * Antes esto era SQL contra Postgres con el rol de servicio, dentro de un
  * contenedor aparte. Ahora son consultas de la API con la sesión de quien pide
  * el informe: las mismas vistas que ya alimentan el panel, y RLS decidiendo qué
- * puede ver cada uno. Un supervisor lo ve todo; un técnico no llega ni a la
- * pantalla.
+ * puede ver cada uno. Quien pide un informe es administrador —la pestaña es
+ * suya—, así que lo ve todo.
  *
  * Dos reglas que ordenan todo este fichero, y que vienen del worker porque son
  * del informe y no de dónde se calcule:
@@ -851,9 +851,9 @@ async function salasQueRepiten(
 /**
  * Los nombres de quienes aparecen en el informe.
  *
- * Se piden de golpe y solo los que salen: `profiles` es una tabla que un
- * supervisor puede leer entera, pero traerse el personal completo para poner
- * cuatro nombres en una tabla es trabajo que no hace falta.
+ * Se piden de golpe y solo los que salen: `profiles` se puede leer entera desde
+ * aquí, pero traerse el personal completo para poner cuatro nombres en una tabla
+ * es trabajo que no hace falta.
  */
 async function nombresDePersona(ids: Array<string | null>): Promise<Map<string, string>> {
   const unicos = [...new Set(ids.filter((x): x is string => Boolean(x)))]

@@ -20,6 +20,12 @@
 --      solo escribía el rol de servicio.
 --   2. Leer la clave de Gemini que un administrador dejó guardada.
 --
+-- Las dos son de ADMINISTRADOR, y con eso se corrige de paso la fila del
+-- archivo, que era de supervisor de cuando la escribía el worker. Emitir un
+-- informe es de administrador: es un documento que se firma y se archiva, lleva
+-- dentro el reparto del trabajo con nombres, y emitirlo con IA hace pasar la
+-- clave del despliegue por el navegador de quien lo pide.
+--
 -- Lo de antes NO se retira: `request_report`, `enviar_informe` y el cron del
 -- viernes siguen donde estaban y siguen funcionando si el worker está
 -- desplegado. Lo que deja de ser cierto es que hagan falta.
@@ -49,10 +55,34 @@ update storage.buckets
 -- hash del contenido, de modo que el mismo documento cae siempre en el mismo
 -- sitio y otro distinto en otro—. Sin políticas de UPDATE ni DELETE: en RLS, lo
 -- que no se permite explícitamente queda denegado.
+--
+-- De administrador, igual que la pestaña: emitir un informe es de administrador
+-- y la base tiene que decir lo mismo que la pantalla. Una política más ancha que
+-- la interfaz no es una comodidad: es una puerta que nadie mira.
 drop policy if exists "supervisor archiva informes" on storage.objects;
-create policy "supervisor archiva informes"
+drop policy if exists "admin archiva informes" on storage.objects;
+create policy "admin archiva informes"
   on storage.objects for insert to authenticated
-  with check (bucket_id = 'reports' and public.is_supervisor());
+  with check (bucket_id = 'reports' and public.is_admin());
+
+-- -----------------------------------------------------------------------------
+-- 1 bis — Y la fila del archivo, por lo mismo
+--
+-- `reports` traía desde el esquema original una política de INSERT para
+-- supervisores, de cuando el documento lo subía el worker con el rol de
+-- servicio y esta fila era lo único que un humano escribía. Ahora las dos cosas
+-- las hace la misma pantalla, así que las dos piden el mismo rol: dejar la fila
+-- abierta a supervisor permitiría apuntar en el archivo un informe cuyo
+-- documento la política de arriba acaba de rechazar, y una entrada que no se
+-- puede abrir es peor que ninguna entrada.
+--
+-- El camino antiguo no se ve afectado: el worker escribe con el rol de servicio,
+-- que se salta RLS.
+-- -----------------------------------------------------------------------------
+drop policy if exists "supervisor genera informes" on reports;
+drop policy if exists "admin genera informes" on reports;
+create policy "admin genera informes" on reports
+  for insert to authenticated with check (public.is_admin());
 
 -- -----------------------------------------------------------------------------
 -- 2 — La clave de Gemini, para quien va a llamar a Gemini
@@ -61,12 +91,12 @@ create policy "supervisor archiva informes"
 --
 -- Antes la clave no salía de la base jamás: la leía el worker, que corría en el
 -- servidor, y `ia_estado()` solo decía si había una. Con el informe generándose
--- en el navegador, quien llama a Gemini es el navegador de un supervisor, así
--- que la clave tiene que llegarle. No hay forma de tener las dos cosas.
+-- en el navegador, quien llama a Gemini es el navegador de un administrador,
+-- así que la clave tiene que llegarle. No hay forma de tener las dos cosas.
 --
 -- Lo que se acota:
---   · Solo supervisores y administradores, que son exactamente quienes pueden
---     emitir un informe. Un técnico no la ve.
+--   · Solo administradores, que son exactamente quienes pueden emitir un
+--     informe. Ni un técnico ni un supervisor la ven.
 --   · Solo por esta función, que se puede auditar. `app_config` sigue cerrada a
 --     administradores por RLS y `ia_estado()` sigue sin devolver la clave: la
 --     pantalla de ajustes no la enseña ni recortada.
@@ -74,7 +104,7 @@ create policy "supervisor archiva informes"
 --     la aplicación no la guarda en el dispositivo.
 --
 -- Si eso no es aceptable para un despliegue concreto, la salida es no guardar
--- ninguna clave aquí: cada supervisor pone la suya en su propio dispositivo
+-- ninguna clave aquí: cada administrador pone la suya en su propio dispositivo
 -- desde la pantalla de Informes, y esta función devuelve vacío.
 -- -----------------------------------------------------------------------------
 create or replace function public.ia_clave()
@@ -86,8 +116,8 @@ as $$
 declare
   clave text;
 begin
-  if not public.is_supervisor() then
-    raise exception 'Solo un supervisor puede usar la IA de los informes'
+  if not public.is_admin() then
+    raise exception 'Solo un administrador puede usar la IA de los informes'
       using errcode = 'insufficient_privilege';
   end if;
 
@@ -99,7 +129,7 @@ end;
 $$;
 
 comment on function public.ia_clave() is
-  'Devuelve la clave de Gemini guardada en app_config a un supervisor, para que la aplicación pueda pedirle a Gemini la redacción del informe. Es la única función que la deja salir de la base.';
+  'Devuelve la clave de Gemini guardada en app_config a un administrador, para que la aplicación pueda pedirle a Gemini la redacción del informe. Es la única función que la deja salir de la base.';
 
 revoke execute on function public.ia_clave() from public, anon;
 grant execute on function public.ia_clave() to authenticated;

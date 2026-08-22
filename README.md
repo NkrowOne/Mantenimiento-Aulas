@@ -480,8 +480,11 @@ es una afirmación falsa en un papel que se firma.
 
 ## Informes
 
-**El informe se arma en la propia aplicación.** Se elige periodo, secciones,
-para quién está escrito y si el análisis lo redacta la IA; la pantalla lee los
+**El informe se arma en la propia aplicación**, en una pestaña de administrador:
+es un documento que se firma y se archiva, lleva dentro el reparto del trabajo
+con nombres, y emitirlo con IA hace pasar la clave del despliegue por el
+navegador de quien lo pide. Se elige periodo, secciones, para quién está escrito
+y si el análisis lo redacta la IA; la pantalla lee los
 datos con la sesión de quien lo pide, calcula las cifras, le pide a Gemini la
 redacción y compone el documento. No hay un servicio detrás que pueda estar
 caído, ni una cola de la que nadie se entera, ni un token que sincronizar: lo
@@ -542,21 +545,21 @@ delatarlo es cómo está escrito. Por eso hay tres filtros y no uno:
 un modo degradado con un hueco: es un informe completo con otra voz.
 
 La clave se pega desde la pantalla de Informes, y hay dos sitios donde puede
-quedar. **En el despliegue** (`app_config`): la guarda un administrador una vez y
-la usan todos los supervisores; sale de la base solo por `ia_clave()`, que exige
-supervisor, y ni la pantalla ni `ia_estado()` la devuelven nunca. **En el
-dispositivo**: no sale de ese navegador, y es la salida para quien prefiera no
-dejar ninguna clave en la base. Ya no hay variable de entorno, y esa es la
+quedar. **En el despliegue** (`app_config`): se guarda una vez y la usa
+cualquier administrador desde cualquier dispositivo; sale de la base solo por
+`ia_clave()`, que exige administrador, y ni la pantalla ni `ia_estado()` la
+devuelven nunca. **En el dispositivo**: no sale de ese navegador, y es la salida
+para quien prefiera no dejar ninguna clave en la base. Ya no hay variable de entorno, y esa es la
 diferencia que importa — `GEMINI_API_KEY` declarada vacía «por si acaso» llegó a
 anular la clave que sí estaba guardada, con el registro diciendo «sin clave»
 mientras la clave estaba puesta.
 
 Es un cambio de postura respecto a la versión anterior, donde la clave no salía
 de la base jamás porque quien llamaba a Gemini era un contenedor del servidor.
-Ahora llama el navegador de un supervisor, así que la clave tiene que llegarle:
-no hay forma de tener las dos cosas. Si para un despliegue eso no es aceptable,
-la salida es no guardar ninguna clave en la base y que cada supervisor ponga la
-suya en su dispositivo.
+Ahora llama el navegador de un administrador, así que la clave tiene que
+llegarle: no hay forma de tener las dos cosas. Si para un despliegue eso no es
+aceptable, la salida es no guardar ninguna clave en la base y que cada
+administrador ponga la suya en su dispositivo.
 
 ### La cadena
 

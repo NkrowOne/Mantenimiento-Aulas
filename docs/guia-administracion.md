@@ -126,8 +126,8 @@ mismo con `npm run admin -- …`.
 | Rol | Puede |
 |---|---|
 | `tecnico` | Revisar salas, abrir incidencias, **cerrarlas explicando qué hizo**, consumir material del almacén |
-| `supervisor` | Además: marcar incidencias «en curso», registrar compras, generar informes y corregir a mano una incidencia cerrada |
-| `admin` | Además: editar edificios y salas, gestionar usuarios, pestaña Datos y configurar la clave de la IA de los informes |
+| `supervisor` | Además: marcar incidencias «en curso», registrar compras y corregir a mano una incidencia cerrada |
+| `admin` | Además: editar edificios y salas, gestionar usuarios, pestaña Datos, y **emitir informes** con su clave de la IA |
 
 Un cambio de rol tarda hasta una hora en aplicarse, o es inmediato si la persona
 cierra y vuelve a entrar con su PIN. El rol viaja dentro del token.
@@ -1031,8 +1031,10 @@ otras pantallas.
 
 ## 8. Informes
 
-**El informe se hace en la propia aplicación**, en la pestaña **Informes**. No
-hay ningún servicio detrás: la pantalla lee los datos, calcula las cifras, le
+**El informe se hace en la propia aplicación**, en la pestaña **Informes**, que
+es de administrador: un informe es un documento que se firma y se archiva, lleva
+dentro el reparto del trabajo con nombres, y emitirlo con IA hace pasar la clave
+del despliegue por el navegador de quien lo pide. No hay ningún servicio detrás: la pantalla lee los datos, calcula las cifras, le
 pide a Gemini que redacte el análisis y compone el documento. Lo único que hay
 que configurar —y solo si se quiere el análisis redactado— es la clave de
 Gemini, que se pega en esa misma pantalla.
@@ -1072,7 +1074,7 @@ aparecer:
 
 | Lo que dice | Qué significa | Qué hacer |
 |---|---|---|
-| **No se ha podido leer *algo*** | Una de las consultas no ha llegado: sin conexión, o el perfil no es supervisor | Comprueba la conexión y el rol. El informe no se emite a medias a propósito: una cifra corta sin avisar es peor que ninguna |
+| **No se ha podido leer *algo*** | Una de las consultas no ha llegado: sin conexión, o el perfil no es de administrador | Comprueba la conexión y el rol. El informe no se emite a medias a propósito: una cifra corta sin avisar es peor que ninguna |
 | **El análisis ha salido calculado y no redactado por la IA: …** | El informe está bien; lo que ha fallado es la redacción. El motivo va en la misma frase (sin clave, clave sin permiso, cuota agotada) | Si es la clave, se arregla en la tarjeta de arriba de esa misma pantalla |
 | **El informe está hecho, pero no se ha podido guardar…** | El documento existe y se puede imprimir, pero no ha entrado en el archivo. Suele ser que falta la migración `20260821000100_informes_en_el_navegador.sql` | Descárgalo para no perderlo y aplica las migraciones pendientes |
 
@@ -1108,9 +1110,9 @@ Para activarlo hace falta una clave de
 informe semanal cuesta céntimos— y pegarla en Informes → «Poner la clave de
 Gemini». Ahí se elige entre dos botones:
 
-- **Guardar para todo el equipo** (solo administradores) la deja en la
-  configuración del despliegue. Es lo normal: se pone una vez y la usan todos los
-  supervisores desde cualquier dispositivo.
+- **Guardar para todo el equipo** la deja en la configuración del despliegue. Es
+  lo normal: se pone una vez y la usa cualquier administrador desde cualquier
+  dispositivo.
 - **Guardar solo aquí** la deja únicamente en ese navegador. Es la salida si
   prefieres que no haya ninguna clave guardada en la base.
 
@@ -1119,11 +1121,12 @@ ni recortada: la pantalla solo dice si hay una guardada.
 
 Una cosa que conviene saber, porque es un cambio respecto a versiones
 anteriores: al generarse el informe en el navegador, **la clave guardada para el
-equipo llega al navegador de cualquier supervisor** cuando pide un informe con
-IA. Antes vivía solo en el servidor porque era el servidor quien llamaba a
-Google. Un técnico no la ve —la función que la devuelve exige supervisor—, pero
-si en tu despliegue eso no es aceptable, la salida es no guardar ninguna clave
-para el equipo y que cada supervisor use «Guardar solo aquí».
+equipo llega al navegador de cualquier administrador** cuando pide un informe
+con IA. Antes vivía solo en el servidor porque era el servidor quien llamaba a
+Google. Ni un técnico ni un supervisor la ven —la función que la devuelve exige
+administrador—, pero si en tu despliegue eso no es aceptable, la salida es no
+guardar ninguna clave para el equipo y que cada administrador use «Guardar solo
+aquí».
 
 El modelo (`gemini-3.6-flash`) y cuánto se le deja pensar (`high`) se cambian en
 la misma pantalla. Bajar el razonamiento sale más barato y se nota: el análisis

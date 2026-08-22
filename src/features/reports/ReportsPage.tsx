@@ -1,7 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import type { Role } from '@/domain/types'
 import { fechaCorta } from '@/domain/fechas'
 import { EstadoIA, useEstadoIA } from './EstadoIA'
 import { AUDIENCIAS, POR_DEFECTO, SECCIONES } from './secciones'
@@ -70,7 +69,7 @@ const PASOS: Record<Paso, string> = {
  * viernes, o deja de servir como registro. De ahí que aquí no haya ningún botón
  * de «actualizar»: se emite otro y los dos quedan en el archivo.
  */
-export function ReportsPage({ role }: { role: Role }): React.ReactElement {
+export function ReportsPage(): React.ReactElement {
   const hoy = hoyEnMadrid()
   const qc = useQueryClient()
 
@@ -168,7 +167,7 @@ export function ReportsPage({ role }: { role: Role }): React.ReactElement {
         </p>
       </header>
 
-      <EstadoIA esAdmin={role === 'admin'} />
+      <EstadoIA />
 
       <section className="card p-4">
         <h2 className="font-semibold">Generar un informe</h2>

@@ -149,7 +149,11 @@ const TABS: Array<{ id: Tab; label: string; minRole: Role }> = [
   { id: 'incidencias', label: 'Incidencias', minRole: 'tecnico' },
   { id: 'almacen', label: 'Almacén', minRole: 'tecnico' },
   { id: 'historial', label: 'Historial', minRole: 'tecnico' },
-  { id: 'informes', label: 'Informes', minRole: 'supervisor' },
+  /* Informes es de administrador, no de supervisor. Un informe es un documento
+     que se firma y se archiva, y lleva dentro el reparto del trabajo con
+     nombres; además, emitirlo con IA hace pasar la clave del despliegue por el
+     navegador de quien lo pide. Las tres cosas apuntan al mismo sitio. */
+  { id: 'informes', label: 'Informes', minRole: 'admin' },
   { id: 'datos', label: 'Datos', minRole: 'admin' },
 ]
 
@@ -1176,14 +1180,14 @@ export function App(): React.ReactElement {
           {tab === 'incidencias' && <IncidentsPage />}
           {tab === 'almacen' && <StockPage role={role} />}
           {tab === 'historial' && <HistorialPage />}
-          {/* El rol llega porque la configuración de la IA —que guarda un
-              secreto— es de administrador, mientras que pedir informes es de
-              supervisor. La pestaña la ven los dos. */}
+          {/* Sin `role`: aquí dentro todo el mundo es administrador, así que la
+              pantalla no tiene que decidir nada según el rol. Lo que la protege
+              es el `puedeVer` de la línea de abajo. */}
           {/* El rol se comprueba TAMBIÉN aquí, y no solo en la barra de
               abajo: es lo único que hay entre un atajo —el de la tarjeta ámbar,
               o cualquiera que se añada mañana— y el panel de administración
               montado entero para quien no puede tocar nada de lo que enseña. */}
-          {tab === 'informes' && puedeVer('informes', role) && <ReportsPage role={role} />}
+          {tab === 'informes' && puedeVer('informes', role) && <ReportsPage />}
           {tab === 'datos' && puedeVer('datos', role) && <CleanupPage yo={userId} />}
         </Suspense>
       )}

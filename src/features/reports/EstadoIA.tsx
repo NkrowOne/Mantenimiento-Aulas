@@ -44,8 +44,8 @@ export function useEstadoIA(): { data: Estado | null | undefined } {
  *
  * Dos sitios donde puede vivir, y hacen falta los dos:
  *
- *  · **En el despliegue** (`app_config`). Es lo normal: un administrador la pega
- *    una vez y todos los supervisores emiten informes con IA. Requiere que esté
+ *  · **En el despliegue** (`app_config`). Es lo normal: se pega una vez y la
+ *    usan los administradores desde cualquier dispositivo. Requiere que esté
  *    aplicada la migración que crea `ia_clave()`.
  *  · **En este dispositivo**. Para quien prefiera no dejar ninguna clave en la
  *    base, o para el rato en que la migración todavía no ha llegado. No sale de
@@ -56,7 +56,7 @@ export function useEstadoIA(): { data: Estado | null | undefined } {
  * está siempre vacío. Media clave en una pantalla sigue siendo media clave en el
  * historial de un navegador compartido.
  */
-export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement {
+export function EstadoIA(): React.ReactElement {
   const qc = useQueryClient()
   const { data: estado } = useEstadoIA()
   const [abierto, setAbierto] = useState(false)
@@ -204,8 +204,7 @@ export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement 
             como un secreto.
           </p>
 
-          {esAdmin && (
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <label className="block text-sm">
                 <span className="text-muted">Modelo</span>
                 <input
@@ -230,8 +229,7 @@ export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement 
                   ))}
                 </select>
               </label>
-            </div>
-          )}
+          </div>
 
           {guardar.isError && (
             <p role="alert" className="mt-3 text-sm text-crit">
@@ -240,21 +238,19 @@ export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement 
           )}
 
           <div className="mt-4 flex flex-wrap gap-2">
-            {esAdmin && (
-              <button
-                type="button"
-                disabled={guardar.isPending}
-                onClick={() => guardar.mutate()}
-                className="key key-accent min-h-11 px-4 text-sm"
-              >
-                {guardar.isPending ? 'Guardando…' : 'Guardar para todo el equipo'}
-              </button>
-            )}
+            <button
+              type="button"
+              disabled={guardar.isPending}
+              onClick={() => guardar.mutate()}
+              className="key key-accent min-h-11 px-4 text-sm"
+            >
+              {guardar.isPending ? 'Guardando…' : 'Guardar para todo el equipo'}
+            </button>
             <button
               type="button"
               disabled={!clave.trim()}
               onClick={guardarAquí}
-              className={`key min-h-11 px-4 text-sm ${esAdmin ? 'key-quiet' : 'key-accent'}`}
+              className="key key-quiet min-h-11 px-4 text-sm"
               title="No sale de este navegador"
             >
               Guardar solo aquí
@@ -269,7 +265,7 @@ export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement 
             >
               Cancelar
             </button>
-            {esAdmin && estado?.clave_guardada && (
+            {estado?.clave_guardada && (
               <button
                 type="button"
                 disabled={quitar.isPending}
@@ -294,8 +290,9 @@ export function EstadoIA({ esAdmin }: { esAdmin: boolean }): React.ReactElement 
           </div>
 
           <p className="mt-3 text-xs text-muted">
-            «Guardar para todo el equipo» la deja en la configuración del despliegue y la usan todos
-            los supervisores. «Guardar solo aquí» no sale de este navegador.
+            «Guardar para todo el equipo» la deja en la configuración del despliegue y la usa
+            cualquier administrador desde cualquier dispositivo. «Guardar solo aquí» no sale de
+            este navegador.
           </p>
         </div>
       )}

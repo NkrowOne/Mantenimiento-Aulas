@@ -98,8 +98,8 @@ export interface ReportData {
    * Cada revisión hecha en el periodo, con su sala, su hora y su resultado.
    *
    * Es el registro del trabajo, no un agregado: «31 revisiones» dice cuánto se
-   * hizo y no dice qué se hizo. Un supervisor que quiere saber si se pasó por el
-   * CRAI el martes necesita las filas, no el total.
+   * hizo y no dice qué se hizo. Quien quiere saber si se pasó por el CRAI el
+   * martes necesita las filas, no el total.
    */
   revisiones: Array<{
     dia: string

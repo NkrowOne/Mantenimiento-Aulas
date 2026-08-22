@@ -8,8 +8,13 @@
  * `ia_clave()` todavía no se ha aplicado.
  *
  * Manda la del despliegue: es la que hace que activar la IA sea una cosa que se
- * hace una vez y no veintitrés. La local existe para que nadie se quede
- * bloqueado esperando a otra persona.
+ * hace una vez y no una por dispositivo. La local existe para que nadie se quede
+ * bloqueado esperando a que se aplique una migración.
+ *
+ * Las dos las pone un administrador, que es quien emite informes. `ia_clave()`
+ * lo exige, y aquí se recoge su negativa como «no hay clave»: si algún día la
+ * pestaña se abriera a otro rol, el informe le saldría con el análisis calculado
+ * en vez de reventar.
  *
  * Aquí no hay variables de entorno, ni las va a haber. Ese era exactamente el
  * problema: `GEMINI_API_KEY` declarada vacía «por si acaso» en el compose pisaba
