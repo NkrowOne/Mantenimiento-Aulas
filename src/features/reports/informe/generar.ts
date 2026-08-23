@@ -21,6 +21,7 @@
 
 import { supabase } from '@/lib/supabase'
 import { ZONA } from '@/domain/fechas'
+import { TOPE_CONSULTA_MS, conPlazo, señalConTope } from './espera'
 import { type Eleccion, construirPeticion } from '../peticion'
 import { type Rango, nombrePeriodo } from '../periodos'
 import { cargarDatos } from './datos'
@@ -94,20 +95,43 @@ async function huellaDe(texto: string): Promise<string> {
   return `${fnv(0x811c9dc5)}${fnv(0x9dc5811c)}`.slice(0, 12)
 }
 
-/** Quién lo pide. El documento lo imprime en la portada. */
-async function solicitante(): Promise<{ id: string | null; nombre: string | undefined }> {
-  const { data } = await supabase.auth.getSession()
-  const id = data.session?.user.id ?? null
-  if (!id) return { id: null, nombre: undefined }
+/**
+ * Quién lo pide. El documento lo imprime en la portada.
+ *
+ * NADA de esto puede impedir que salga el informe, y por eso va entero dentro de
+ * un `try` con plazo. Es un adorno de la portada: un nombre. `getSession()`
+ * puede tener que renovar el token contra el servidor, y si ese servidor no
+ * contesta, sin plazo se lleva por delante el informe completo —esperando, sin
+ * error y sin final— por no saber cómo firmar la primera página.
+ *
+ * Sin nombre, la portada no dice «a petición de» y ya está. Sin id, el archivo
+ * guarda la fila sin `generated_by`, que es exactamente lo que ya pasaba con el
+ * informe automático del viernes.
+ */
+const TOPE_PORTADA_MS = 8_000
 
-  const { data: perfil } = await supabase.from('profiles').select('full_name').eq('id', id).maybeSingle()
-  const nombre = (perfil as { full_name?: string | null } | null)?.full_name
-  return { id, nombre: nombre ?? undefined }
+async function solicitante(): Promise<{ id: string | null; nombre: string | undefined }> {
+  try {
+    const { data } = await conPlazo('la sesión', TOPE_PORTADA_MS, supabase.auth.getSession())
+    const id = data.session?.user.id ?? null
+    if (!id) return { id: null, nombre: undefined }
+
+    const { data: perfil } = await supabase
+      .from('profiles')
+      .select('full_name')
+      .eq('id', id)
+      .abortSignal(señalConTope(TOPE_PORTADA_MS))
+      .maybeSingle()
+    const nombre = (perfil as { full_name?: string | null } | null)?.full_name
+    return { id, nombre: nombre ?? undefined }
+  } catch {
+    return { id: null, nombre: undefined }
+  }
 }
 
 export async function generarInforme(
   eleccion: Eleccion,
-  avisar: (paso: Paso) => void = () => undefined,
+  avisar: (paso: Paso, detalle?: string) => void = () => undefined,
 ): Promise<InformeGenerado> {
   // Por `construirPeticion` y no leyendo la elección a pelo: es la pieza que
   // decide qué viaja y qué no —un enfoque en blanco no es una instrucción, una
@@ -116,7 +140,7 @@ export async function generarInforme(
 
   avisar('datos')
   const [datos, quienPide] = await Promise.all([
-    cargarDatos(eleccion.kind, eleccion.rango),
+    cargarDatos(eleccion.kind, eleccion.rango, (leyendo) => avisar('datos', leyendo)),
     solicitante(),
   ])
 
@@ -190,7 +214,7 @@ export async function generarInforme(
  */
 async function ajustesGuardados(): Promise<{ modelo?: string; thinking?: string }> {
   try {
-    const { data, error } = await supabase.rpc('ia_estado')
+    const { data, error } = await supabase.rpc('ia_estado').abortSignal(señalConTope(TOPE_CONSULTA_MS))
     if (error) return {}
     const estado = data as { modelo?: string; thinking?: string } | null
     return {
@@ -223,12 +247,21 @@ async function archivar(
   const hash = await huellaDe(html)
   const path = `${eleccion.kind}/${eleccion.rango.start}_${eleccion.rango.end}_${hash}.html`
 
-  const subida = await supabase.storage
-    .from('reports')
-    .upload(path, new Blob([html], { type: 'text/html; charset=utf-8' }), {
-      contentType: 'text/html; charset=utf-8',
-      upsert: false,
-    })
+  let subida
+  try {
+    subida = await conPlazo(
+      'la subida del documento',
+      TOPE_CONSULTA_MS,
+      supabase.storage
+        .from('reports')
+        .upload(path, new Blob([html], { type: 'text/html; charset=utf-8' }), {
+          contentType: 'text/html; charset=utf-8',
+          upsert: false,
+        }),
+    )
+  } catch (err) {
+    return { path: null, motivo: err instanceof Error ? err.message : String(err) }
+  }
 
   // «Ya existe» no es un fallo: es el mismo documento, ya archivado. Cualquier
   // otra cosa sí lo es, y hay que decirla.
@@ -260,7 +293,7 @@ async function archivar(
     content_hash: hash,
     params: huella,
     generated_by: quienPide,
-  })
+  }).abortSignal(señalConTope(TOPE_CONSULTA_MS))
 
   // Choque con el índice único: este informe ya estaba en el archivo, con el
   // mismo contenido. No hay nada que arreglar.

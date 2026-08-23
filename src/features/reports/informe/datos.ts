@@ -46,6 +46,7 @@
 
 import { supabase } from '@/lib/supabase'
 import { descargaEntera, type Pagina } from '@/sync/paginada'
+import { TOPE_CONSULTA_MS, esSilencio, señalConTope } from './espera'
 import { diaEnMadrid, horaCorta, inicioDelDia } from '@/domain/fechas'
 import {
   type Rango,
@@ -168,28 +169,76 @@ export interface FilasDelPeriodo {
 // ── Utilidades de lectura ────────────────────────────────────────────────────
 
 /**
- * Una tabla entera, por páginas y sin tragarse el error.
+ * El fallo de una lectura, dicho de forma que se pueda hacer algo con él.
  *
- * El nombre viaja para poder decir CUÁL falló: «no se ha podido leer» a secas
- * deja a quien lo lee sin nada que mirar.
+ * Distingue las dos cosas que se sienten igual desde la pantalla y piden
+ * respuestas opuestas: «ha contestado que no» —un permiso, una tabla que no
+ * está— se arregla con el rol o con la migración; «no ha contestado» se arregla
+ * con la red o con el servidor. Y en los dos casos se dice QUÉ, porque «no se ha
+ * podido leer» a secas deja a quien lo lee sin nada que mirar.
+ */
+function fallo(que: string, err: unknown): Error {
+  if (esSilencio(err)) {
+    return new Error(
+      `${que}: el servidor no ha contestado en ${Math.round(TOPE_CONSULTA_MS / 1000)} s. ` +
+        'Comprueba la conexión; si va bien, es la base la que no está respondiendo.',
+    )
+  }
+  return new Error(`No se ha podido leer ${que}: ${err instanceof Error ? err.message : String(err)}`)
+}
+
+/**
+ * Una tabla entera, por páginas, con plazo y sin tragarse el error.
+ *
+ * La señal se renueva en cada página a propósito: el plazo es por petición, no
+ * por descarga, porque una tabla de veinte páginas legítimamente tarda veinte
+ * veces más que una de una.
  */
 async function todas<T>(
   que: string,
-  porPagina: (desde: number, hasta: number) => PromiseLike<Pagina<T>>,
+  porPagina: (desde: number, hasta: number, señal: AbortSignal) => PromiseLike<Pagina<T>>,
 ): Promise<T[]> {
-  const r = await descargaEntera<T>(porPagina)
-  if (r.error) throw new Error(`No se ha podido leer ${que}: ${r.error.message}`)
+  const r = await descargaEntera<T>((d, h) => porPagina(d, h, señalConTope(TOPE_CONSULTA_MS)))
+  if (r.error) throw fallo(que, new Error(r.error.message))
   return r.data ?? []
+}
+
+/**
+ * Una consulta suelta, con plazo.
+ *
+ * Existe para que las quince consultas de este fichero no repitan quince veces
+ * el mismo `if (error) throw`, y sobre todo para que ninguna se quede esperando
+ * sin final: el `catch` es lo que convierte un servidor mudo en una frase.
+ */
+async function pide<T>(
+  que: string,
+  construir: (
+    señal: AbortSignal,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  try {
+    const { data, error } = await construir(señalConTope(TOPE_CONSULTA_MS))
+    if (error) throw new Error(error.message)
+    return data ?? []
+  } catch (err) {
+    throw fallo(que, err)
+  }
 }
 
 /** Un recuento del servidor, sin traerse las filas. */
 async function cuantas(
   que: string,
-  construir: () => PromiseLike<{ count: number | null; error: { message: string } | null }>,
+  construir: (
+    señal: AbortSignal,
+  ) => PromiseLike<{ count: number | null; error: { message: string } | null }>,
 ): Promise<number> {
-  const { count, error } = await construir()
-  if (error) throw new Error(`No se ha podido contar ${que}: ${error.message}`)
-  return count ?? 0
+  try {
+    const { count, error } = await construir(señalConTope(TOPE_CONSULTA_MS))
+    if (error) throw new Error(error.message)
+    return count ?? 0
+  } catch (err) {
+    throw fallo(que, err)
+  }
 }
 
 /** Los dos extremos del periodo como instantes, a medianoche de Madrid. */
@@ -238,7 +287,7 @@ export function porVisita(revisiones: FilaRevision[]): FilaRevision[] {
 async function filasDelPeriodo(r: Rango, conDiario: boolean): Promise<FilasDelPeriodo> {
   const { desde, hasta } = limites(r)
 
-  const revisiones = todas<FilaRevision>('las revisiones', (d, h) =>
+  const revisiones = todas<FilaRevision>('las revisiones', (d, h, señal) =>
     supabase
       .from('inspections_vigentes')
       .select('id,corrects,room_id,occurred_at,corrected_at,by_user,overall')
@@ -246,11 +295,11 @@ async function filasDelPeriodo(r: Rango, conDiario: boolean): Promise<FilasDelPe
       .lt('occurred_at', hasta)
       .order('occurred_at')
       .order('id')
-      .range(d, h),
+      .abortSignal(señal).range(d, h),
   )
 
   // Sin borradores en ninguna cuenta: una nota a medias no es trabajo abierto.
-  const abiertas = todas<FilaApertura>('los registros abiertos', (d, h) =>
+  const abiertas = todas<FilaApertura>('los registros abiertos', (d, h, señal) =>
     supabase
       .from('incidents')
       .select(
@@ -261,10 +310,10 @@ async function filasDelPeriodo(r: Rango, conDiario: boolean): Promise<FilasDelPe
       .lt('opened_at', hasta)
       .order('opened_at')
       .order('id')
-      .range(d, h),
+      .abortSignal(señal).range(d, h),
   )
 
-  const cerradas = todas<FilaCierre>('los registros cerrados', (d, h) =>
+  const cerradas = todas<FilaCierre>('los registros cerrados', (d, h, señal) =>
     supabase
       .from('incidents')
       .select('id,kind,title,resolution,external_ref,room_id,opened_at,resolved_at,resolved_by')
@@ -273,10 +322,10 @@ async function filasDelPeriodo(r: Rango, conDiario: boolean): Promise<FilasDelPe
       .lt('resolved_at', hasta)
       .order('resolved_at')
       .order('id')
-      .range(d, h),
+      .abortSignal(señal).range(d, h),
   )
 
-  const movimientos = todas<FilaMovimiento>('los movimientos de almacén', (d, h) =>
+  const movimientos = todas<FilaMovimiento>('los movimientos de almacén', (d, h, señal) =>
     supabase
       .from('stock_movements')
       .select('id,kind,qty,note,occurred_at,room_id,by_user,stock_item_id,incident_id')
@@ -284,7 +333,7 @@ async function filasDelPeriodo(r: Rango, conDiario: boolean): Promise<FilasDelPe
       .lt('occurred_at', hasta)
       .order('occurred_at')
       .order('id')
-      .range(d, h),
+      .abortSignal(señal).range(d, h),
   )
 
   /*
@@ -294,7 +343,7 @@ async function filasDelPeriodo(r: Rango, conDiario: boolean): Promise<FilasDelPe
    * consultas menos por informe, y ninguna de ellas dice nada que se enseñe.
    */
   const inventarios = conDiario
-    ? todas<FilaInventario>('los inventarios', (d, h) =>
+    ? todas<FilaInventario>('los inventarios', (d, h, señal) =>
         supabase
           .from('room_inventories')
           .select('id,occurred_at,room_id,by_user,note,asset_count')
@@ -302,12 +351,12 @@ async function filasDelPeriodo(r: Rango, conDiario: boolean): Promise<FilasDelPe
           .lt('occurred_at', hasta)
           .order('occurred_at')
           .order('id')
-          .range(d, h),
+          .abortSignal(señal).range(d, h),
       )
     : Promise.resolve([])
 
   const equipos = conDiario
-    ? todas<FilaEventoEquipo>('los movimientos de equipos', (d, h) =>
+    ? todas<FilaEventoEquipo>('los movimientos de equipos', (d, h, señal) =>
         supabase
           .from('asset_events')
           .select('id,kind,occurred_at,room_id,by_user,meta,asset_id')
@@ -315,7 +364,7 @@ async function filasDelPeriodo(r: Rango, conDiario: boolean): Promise<FilasDelPe
           .lt('occurred_at', hasta)
           .order('occurred_at')
           .order('id')
-          .range(d, h),
+          .abortSignal(señal).range(d, h),
       )
     : Promise.resolve([])
 
@@ -371,26 +420,34 @@ async function situacion(salas: FilaSala[]): Promise<Situacion> {
    * cientos de notas en «incidencias abiertas» de un informe firmado.
    */
   const [abiertas, estancadas, lamparas, bajoMinimo] = await Promise.all([
-    cuantas('las incidencias abiertas', () =>
+    cuantas('las incidencias abiertas', (señal) =>
       supabase
         .from('incidents')
         .select('*', head)
+        .abortSignal(señal)
         .neq('state', 'resuelta')
         .neq('state', 'borrador')
         .neq('kind', 'observacion'),
     ),
-    cuantas('las incidencias estancadas', () =>
+    cuantas('las incidencias estancadas', (señal) =>
       supabase
         .from('incidents')
         .select('*', head)
+        .abortSignal(señal)
         .neq('state', 'resuelta')
         .neq('state', 'borrador')
         .neq('kind', 'observacion')
         .lt('opened_at', hace7dias),
     ),
-    cuantas('las lámparas al límite', () => supabase.from('alerts_lamp_low').select('*', head)),
-    cuantas('el almacén bajo mínimo', () =>
-      supabase.from('stock_levels').select('*', head).eq('below_threshold', true),
+    cuantas('las lámparas al límite', (señal) =>
+      supabase.from('alerts_lamp_low').select('*', head).abortSignal(señal),
+    ),
+    cuantas('el almacén bajo mínimo', (señal) =>
+      supabase
+        .from('stock_levels')
+        .select('*', head)
+        .eq('below_threshold', true)
+        .abortSignal(señal),
     ),
   ])
 
@@ -419,27 +476,44 @@ async function situacion(salas: FilaSala[]): Promise<Situacion> {
 
 // ── El expediente completo ───────────────────────────────────────────────────
 
-export async function cargarDatos(kind: string, rango: Rango): Promise<ReportData> {
+/**
+ * Cuántas lecturas se dejan volar a la vez.
+ *
+ * Un informe son unas veinticinco consultas, y lanzarlas todas de golpe contra
+ * un PostgREST autoalojado —cuyo pool de conexiones es de diez de fábrica—
+ * significa que la mitad se queda esperando turno. Desde la pantalla eso no se
+ * distingue de un cuelgue: la línea de estado no se mueve y no hay error que
+ * enseñar. Se piden en tandas, que además es lo amable con la red de un iPad.
+ */
+export async function cargarDatos(
+  kind: string,
+  rango: Rango,
+  avisar: (leyendo: string) => void = () => undefined,
+): Promise<ReportData> {
   const anterior = periodoAnterior(rango)
 
-  const [ahoraFilas, antesFilas, salas] = await Promise.all([
-    filasDelPeriodo(rango, true),
-    filasDelPeriodo(anterior, false),
-    todas<FilaSala>('las salas', (d, h) =>
+  avisar('las salas y lo que pasó en el periodo')
+  const [salas, ahoraFilas] = await Promise.all([
+    todas<FilaSala>('las salas', (d, h, señal) =>
       supabase
         .from('room_overview')
         .select(
           'room_id,room_code,room_name,building_code,building_name,last_inspection_at,open_incidents',
         )
         .order('room_id')
-        .range(d, h),
+        .abortSignal(señal).range(d, h),
     ),
+    filasDelPeriodo(rango, true),
   ])
+
+  avisar('el periodo anterior, para comparar')
+  const antesFilas = await filasDelPeriodo(anterior, false)
 
   const ahora = contadores(ahoraFilas)
   const antes = contadores(antesFilas)
   const deSala = new Map(salas.map((s) => [s.room_id, s]))
 
+  avisar('la situación de hoy y las alertas')
   const [sit, porMes, reincidentes, lamparas, olvidadas, estancadas, articulos] = await Promise.all([
     situacion(salas),
     porMeses(),
@@ -450,6 +524,7 @@ export async function cargarDatos(kind: string, rango: Rango): Promise<ReportDat
     articulosDeAlmacen(),
   ])
 
+  avisar('el detalle de cada revisión')
   const visitas = porVisita(ahoraFilas.revisiones)
   const [revisiones, quien] = await Promise.all([
     filasDeRevisiones(visitas, deSala),
@@ -463,6 +538,7 @@ export async function cargarDatos(kind: string, rango: Rango): Promise<ReportDat
     ]),
   ])
 
+  avisar('el diario del periodo')
   const [eventos, topSalas] = await Promise.all([
     diarioDelPeriodo(ahoraFilas, deSala, quien, articulos),
     salasConMasIncidencias(ahoraFilas.abiertas, deSala),
@@ -598,13 +674,14 @@ export function porEdificio(
 }
 
 async function porMeses(): Promise<ReportData['porMes']> {
-  const { data, error } = await supabase
-    .from('incidents_by_month')
-    .select('month,total')
-    .order('month', { ascending: false })
-    .limit(12)
-  if (error) throw new Error(`No se ha podido leer la tendencia: ${error.message}`)
-  const filas = (data ?? []) as Array<{ month: string; total: number }>
+  const filas = await pide<{ month: string; total: number }>('la tendencia de doce meses', (señal) =>
+    supabase
+      .from('incidents_by_month')
+      .select('month,total')
+      .order('month', { ascending: false })
+      .limit(12)
+      .abortSignal(señal),
+  )
   return [...filas].reverse().map((m) => ({ month: m.month, total: num(m.total) }))
 }
 
@@ -635,19 +712,19 @@ async function salasConMasIncidencias(
    * quedarse con ocho filas es pedirle a la base el índice de 276 aulas cada
    * vez que alguien genera un informe.
    */
-  const { data, error } = await supabase
-    .from('room_reliability')
-    .select('room_id,score,hay_datos')
-    .in(
-      'room_id',
-      top.map((t) => t.roomId),
-    )
-  if (error) throw new Error(`No se ha podido leer la fiabilidad de las salas: ${error.message}`)
-  const fiabilidad = new Map(
-    ((data ?? []) as Array<{ room_id: string; score: number | null; hay_datos: boolean | null }>).map(
-      (f) => [f.room_id, f],
-    ),
+  const filas = await pide<{ room_id: string; score: number | null; hay_datos: boolean | null }>(
+    'la fiabilidad de las salas',
+    (señal) =>
+      supabase
+        .from('room_reliability')
+        .select('room_id,score,hay_datos')
+        .in(
+          'room_id',
+          top.map((t) => t.roomId),
+        )
+        .abortSignal(señal),
   )
+  const fiabilidad = new Map(filas.map((f) => [f.room_id, f]))
 
   return top.map((t) => {
     const f = fiabilidad.get(t.roomId)
@@ -696,18 +773,20 @@ function mediana(ordenados: number[]): number | null {
 }
 
 async function lamparasAlLimite(): Promise<ReportData['lamparas']> {
-  const { data, error } = await supabase
-    .from('alerts_lamp_low')
-    .select('building_code,room_code,lamp_pct,projector_hours')
-    .order('lamp_pct', { ascending: true })
-    .limit(12)
-  if (error) throw new Error(`No se han podido leer las lámparas: ${error.message}`)
-  return ((data ?? []) as Array<{
+  const filas = await pide<{
     building_code: string
     room_code: string
     lamp_pct: number
     projector_hours: number | null
-  }>).map((l) => ({
+  }>('las lámparas al límite', (señal) =>
+    supabase
+      .from('alerts_lamp_low')
+      .select('building_code,room_code,lamp_pct,projector_hours')
+      .order('lamp_pct', { ascending: true })
+      .limit(12)
+      .abortSignal(señal),
+  )
+  return filas.map((l) => ({
     building: l.building_code,
     room: l.room_code,
     horas: l.projector_hours === null ? null : num(l.projector_hours),
@@ -716,17 +795,17 @@ async function lamparasAlLimite(): Promise<ReportData['lamparas']> {
 }
 
 async function salasOlvidadas(): Promise<ReportData['olvidadas']> {
-  const { data, error } = await supabase
-    .from('alerts_overdue_rooms')
-    .select('building_code,room_code,days_since')
-    .order('days_since', { ascending: false, nullsFirst: true })
-    .limit(10)
-  if (error) throw new Error(`No se han podido leer las salas sin revisar: ${error.message}`)
-  return ((data ?? []) as Array<{
-    building_code: string
-    room_code: string
-    days_since: number | null
-  }>).map((o) => ({
+  const filas = await pide<{ building_code: string; room_code: string; days_since: number | null }>(
+    'las salas sin revisar',
+    (señal) =>
+      supabase
+        .from('alerts_overdue_rooms')
+        .select('building_code,room_code,days_since')
+        .order('days_since', { ascending: false, nullsFirst: true })
+        .limit(10)
+        .abortSignal(señal),
+  )
+  return filas.map((o) => ({
     building: o.building_code,
     room: o.room_code,
     dias: o.days_since === null ? null : num(o.days_since),
@@ -746,25 +825,27 @@ async function sinCerrarDesdeHaceUnaSemana(
   deSala: Map<string, FilaSala>,
 ): Promise<ReportData['estancadas']> {
   const hace7dias = new Date(Date.now() - 7 * 86_400_000).toISOString()
-  const { data, error } = await supabase
-    .from('incidents')
-    .select('external_ref,title,room_id,opened_at,severity')
-    .neq('state', 'resuelta')
-    .neq('state', 'borrador')
-    .neq('kind', 'observacion')
-    .lt('opened_at', hace7dias)
-    .order('opened_at', { ascending: true })
-    .limit(12)
-  if (error) throw new Error(`No se han podido leer las incidencias estancadas: ${error.message}`)
-
-  const ahora = Date.now()
-  return ((data ?? []) as Array<{
+  const filas = await pide<{
     external_ref: string | null
     title: string | null
     room_id: string | null
     opened_at: string
     severity: string | null
-  }>).map((i) => {
+  }>('las incidencias estancadas', (señal) =>
+    supabase
+      .from('incidents')
+      .select('external_ref,title,room_id,opened_at,severity')
+      .neq('state', 'resuelta')
+      .neq('state', 'borrador')
+      .neq('kind', 'observacion')
+      .lt('opened_at', hace7dias)
+      .order('opened_at', { ascending: true })
+      .limit(12)
+      .abortSignal(señal),
+  )
+
+  const ahora = Date.now()
+  return filas.map((i) => {
     const sala = i.room_id ? deSala.get(i.room_id) : undefined
     return {
       ref: i.external_ref,
@@ -781,7 +862,7 @@ async function sinCerrarDesdeHaceUnaSemana(
 async function articulosDeAlmacen(): Promise<Map<string, { name: string; unit: string }>> {
   const filas = await todas<{ id: string; name: string; unit: string }>(
     'el catálogo de almacén',
-    (d, h) => supabase.from('stock_items').select('id,name,unit').order('id').range(d, h),
+    (d, h, señal) => supabase.from('stock_items').select('id,name,unit').order('id').abortSignal(señal).range(d, h),
   )
   return new Map(filas.map((a) => [a.id, { name: a.name, unit: a.unit }]))
 }
@@ -830,14 +911,18 @@ export function materiales(
 async function salasQueRepiten(
   deSala: Map<string, FilaSala>,
 ): Promise<ReportData['reincidentes']> {
-  const { data, error } = await supabase
-    .from('room_repeat_offenders')
-    .select('room_id,item,veces')
-    .order('veces', { ascending: false })
-    .limit(12)
-  if (error) throw new Error(`No se han podido leer las salas que repiten: ${error.message}`)
+  const filas = await pide<{ room_id: string; item: string; veces: number }>(
+    'las salas que repiten el mismo repuesto',
+    (señal) =>
+      supabase
+        .from('room_repeat_offenders')
+        .select('room_id,item,veces')
+        .order('veces', { ascending: false })
+        .limit(12)
+        .abortSignal(señal),
+  )
 
-  return ((data ?? []) as Array<{ room_id: string; item: string; veces: number }>)
+  return filas
     .filter((r) => deSala.has(r.room_id))
     .slice(0, 6)
     .map((r) => ({
@@ -859,14 +944,11 @@ async function nombresDePersona(ids: Array<string | null>): Promise<Map<string, 
   const unicos = [...new Set(ids.filter((x): x is string => Boolean(x)))]
   if (unicos.length === 0) return new Map()
 
-  const { data, error } = await supabase.from('profiles').select('id,full_name').in('id', unicos)
-  if (error) throw new Error(`No se han podido leer los nombres: ${error.message}`)
-  return new Map(
-    ((data ?? []) as Array<{ id: string; full_name: string | null }>).map((p) => [
-      p.id,
-      p.full_name ?? '',
-    ]),
+  const filas = await pide<{ id: string; full_name: string | null }>(
+    'los nombres del personal',
+    (señal) => supabase.from('profiles').select('id,full_name').in('id', unicos).abortSignal(señal),
   )
+  return new Map(filas.map((p) => [p.id, p.full_name ?? '']))
 }
 
 /**
@@ -931,30 +1013,32 @@ async function filasDeRevisiones(
 
   const ids = conSala.map((v) => v.id)
   const [checks, aperturas] = await Promise.all([
-    supabase
-      .from('inspection_checks')
-      .select('inspection_id')
-      .in('inspection_id', ids)
-      .eq('result', 'incidencia'),
-    supabase
-      .from('incidents')
-      .select('opened_from_inspection_id')
-      .in('opened_from_inspection_id', ids)
-      .neq('state', 'borrador'),
+    pide<{ inspection_id: string }>('las comprobaciones de cada revisión', (señal) =>
+      supabase
+        .from('inspection_checks')
+        .select('inspection_id')
+        .in('inspection_id', ids)
+        .eq('result', 'incidencia')
+        .abortSignal(señal),
+    ),
+    pide<{ opened_from_inspection_id: string }>(
+      'los registros que nacieron de cada revisión',
+      (señal) =>
+        supabase
+          .from('incidents')
+          .select('opened_from_inspection_id')
+          .in('opened_from_inspection_id', ids)
+          .neq('state', 'borrador')
+          .abortSignal(señal),
+    ),
   ])
-  if (checks.error) {
-    throw new Error(`No se han podido leer las comprobaciones: ${checks.error.message}`)
-  }
-  if (aperturas.error) {
-    throw new Error(`No se han podido leer los registros de cada revisión: ${aperturas.error.message}`)
-  }
 
   const fallos = new Map<string, number>()
-  for (const c of (checks.data ?? []) as Array<{ inspection_id: string }>) {
+  for (const c of checks) {
     fallos.set(c.inspection_id, (fallos.get(c.inspection_id) ?? 0) + 1)
   }
   const nacidas = new Map<string, number>()
-  for (const i of (aperturas.data ?? []) as Array<{ opened_from_inspection_id: string }>) {
+  for (const i of aperturas) {
     const id = i.opened_from_inspection_id
     nacidas.set(id, (nacidas.get(id) ?? 0) + 1)
   }
@@ -983,24 +1067,28 @@ async function etiquetasDeEquipo(
   if (ids.length === 0) return new Map()
 
   const [equipos, tipos] = await Promise.all([
-    supabase.from('assets').select('id,label,serial,room_id,asset_type_id').in('id', ids),
-    supabase.from('asset_types').select('id,name'),
-  ])
-  if (equipos.error) throw new Error(`No se han podido leer los equipos: ${equipos.error.message}`)
-  if (tipos.error) throw new Error(`No se han podido leer los tipos de equipo: ${tipos.error.message}`)
-
-  const nombreTipo = new Map(
-    ((tipos.data ?? []) as Array<{ id: string; name: string }>).map((t) => [t.id, t.name]),
-  )
-
-  return new Map(
-    ((equipos.data ?? []) as Array<{
+    pide<{
       id: string
       label: string | null
       serial: string | null
       room_id: string | null
       asset_type_id: string | null
-    }>).map((a) => [
+    }>('los equipos del diario', (señal) =>
+      supabase
+        .from('assets')
+        .select('id,label,serial,room_id,asset_type_id')
+        .in('id', ids)
+        .abortSignal(señal),
+    ),
+    pide<{ id: string; name: string }>('los tipos de equipo', (señal) =>
+      supabase.from('asset_types').select('id,name').abortSignal(señal),
+    ),
+  ])
+
+  const nombreTipo = new Map(tipos.map((t) => [t.id, t.name]))
+
+  return new Map(
+    equipos.map((a) => [
       a.id,
       {
         titulo:

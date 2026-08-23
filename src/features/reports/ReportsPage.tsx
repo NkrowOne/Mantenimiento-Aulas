@@ -44,10 +44,10 @@ const KIND_LABEL: Record<Kind, string> = {
 }
 
 const PASOS: Record<Paso, string> = {
-  datos: 'Leyendo los datos del periodo…',
-  analisis: 'Calculando las cifras y redactando el análisis…',
-  documento: 'Componiendo el documento…',
-  archivo: 'Guardándolo en el archivo…',
+  datos: 'Leyendo los datos del periodo',
+  analisis: 'Calculando las cifras y redactando el análisis',
+  documento: 'Componiendo el documento',
+  archivo: 'Guardándolo en el archivo',
 }
 
 /**
@@ -84,7 +84,10 @@ export function ReportsPage(): React.ReactElement {
   const [nota, setNota] = useState('')
   const [ajustes, setAjustes] = useState(false)
 
-  const [paso, setPaso] = useState<Paso | null>(null)
+  /* En qué paso va y QUÉ está leyendo. Lo segundo no es adorno: cuando algo se
+     atasca, la diferencia entre «Leyendo los datos» y «leyendo el diario del
+     periodo» es la diferencia entre volver a llamar y saber dónde mirar. */
+  const [paso, setPaso] = useState<{ fase: Paso; detalle?: string } | null>(null)
   const [recien, setRecien] = useState<InformeGenerado | null>(null)
   /* El fallo de una descarga, a la vista. `createSignedUrl` puede denegar por
      permisos o red, y descartarlo dejaba el botón «Abrir» como un botón que a
@@ -128,7 +131,9 @@ export function ReportsPage(): React.ReactElement {
   const generar = useMutation({
     mutationFn: async (): Promise<InformeGenerado> => {
       setRecien(null)
-      return generarInforme(eleccion, setPaso)
+      return generarInforme(eleccion, (fase, detalle) =>
+        setPaso({ fase, ...(detalle ? { detalle } : {}) }),
+      )
     },
     onSettled: () => setPaso(null),
     onSuccess: (informe) => {
@@ -408,8 +413,10 @@ export function ReportsPage(): React.ReactElement {
             colgada. */}
         {generar.isPending && (
           <p className="mt-3 text-sm text-muted" role="status">
-            {paso ? PASOS[paso] : 'Preparando…'}
-            {paso === 'analisis' && conIA && ' Con IA suele tardar entre veinte segundos y un minuto.'}
+            {paso ? `${PASOS[paso.fase]}${paso.detalle ? `: ${paso.detalle}` : ''}…` : 'Preparando…'}
+            {paso?.fase === 'analisis' &&
+              conIA &&
+              ' Con IA suele tardar entre veinte segundos y un minuto.'}
           </p>
         )}
 
