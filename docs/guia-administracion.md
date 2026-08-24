@@ -1044,7 +1044,10 @@ Se elige:
 | Qué se elige | Para qué sirve |
 |---|---|
 | **Periodo** | Semana en curso, semana pasada, mes en curso, mes pasado, ayer, o dos fechas cualesquiera. Debajo se lee qué días va a cubrir antes de pedirlo |
-| **Secciones** | Las trece del informe, entre ellas la lista de todas las revisiones hechas y el diario de lo que pasó cada día. «Reparto del trabajo» lleva nombres de personas y por eso hay que marcarla a mano |
+| **Secciones** | Las dieciséis del informe, entre ellas la lista de todas las revisiones hechas y el diario de lo que pasó cada día. «Reparto del trabajo» lleva nombres de personas y por eso hay que marcarla a mano |
+| **Cuánto se tarda en cerrar** | La mediana, la media y las cerradas en menos de 48 h. **Se puede desmarcar**: es una cifra que describe bien y justifica mal, y hay reuniones donde no ayuda |
+| **Cada cierre, con sus días** | Lo contrario: cada cierre en una línea, con la hora a la que se abrió, la hora a la que se cerró, cuánto llevó escrito entero —«24 días y 2 h», no «24,1»— y qué se hizo. Es lo que sirve para justificar por qué una tardó lo que tardó. Van primero las que más tardaron, que son por las que se pregunta |
+| **Fotos del periodo** | Las que se hicieron en las incidencias, **dentro del propio documento**. No son enlaces: un enlace de Storage caduca en un minuto y el informe se archiva para dentro de un año. Engorda el documento, así que entran hasta dos docenas y las que no caben se cuentan al pie |
 | **Análisis con IA** | Si se desmarca, el informe sale con el análisis calculado |
 | **Escrito para** | Dirección (estado, tendencia y decisiones) o equipo técnico (qué salas tocar y con qué material) |
 | **En qué fijarse** | Una instrucción libre para la redacción: «céntrate en el edificio H». No cambia ninguna cifra |

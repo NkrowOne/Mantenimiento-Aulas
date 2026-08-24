@@ -69,6 +69,18 @@ import type { Contadores, ReportData, Situacion } from './tipos'
  */
 const TOPE_FILAS = 150
 
+/**
+ * Cuántas fotos entran, y cuánto pueden pesar entre todas.
+ *
+ * Van dentro del documento como `data:`, así que cada una engorda el informe
+ * un tercio más de lo que ocupa. El bucket admite 25 MB por fichero; se para
+ * mucho antes, porque un informe de 20 MB no se imprime ni se manda por correo,
+ * y porque a partir de dos docenas de fotos nadie las mira. Lo que se queda
+ * fuera se cuenta al pie: una selección callada se lee como si fuera todo.
+ */
+const TOPE_FOTOS = 24
+const TOPE_BYTES_FOTOS = 8 * 1024 * 1024
+
 const num = (v: unknown): number => Number(v ?? 0)
 
 // ── Filas tal y como llegan de la API ────────────────────────────────────────
@@ -144,6 +156,13 @@ interface FilaEventoEquipo {
   by_user: string | null
   meta: Record<string, unknown> | null
   asset_id: string
+}
+
+interface FilaAdjunto {
+  id: string
+  entity_id: string
+  storage_path: string
+  taken_at: string
 }
 
 export interface FilaSala {
@@ -489,6 +508,9 @@ export async function cargarDatos(
   kind: string,
   rango: Rango,
   avisar: (leyendo: string) => void = () => undefined,
+  /* Las fotos solo se bajan si van a salir: son dos docenas de descargas y unos
+     megabytes, y un informe que no las lleva no tiene por qué pagarlas. */
+  conFotos = false,
 ): Promise<ReportData> {
   const anterior = periodoAnterior(rango)
 
@@ -544,6 +566,33 @@ export async function cargarDatos(
     salasConMasIncidencias(ahoraFilas.abiertas, deSala),
   ])
 
+  const cierres = cierresDelPeriodo(ahoraFilas.cerradas, deSala, quien)
+
+  /*
+   * Las fotos, al final y en su propio paso: son descargas de verdad —una por
+   * foto— y es el tramo que más tarda de todo el informe. Que la línea de estado
+   * lo diga evita que parezca que se ha colgado justo cuando está trabajando
+   * más.
+   */
+  let fotos: ReportData['fotos'] = []
+  let fotosTotal = 0
+  if (conFotos) {
+    avisar('las fotos de las incidencias')
+    const deIncidencia = new Map(
+      [...ahoraFilas.abiertas, ...ahoraFilas.cerradas].map((i) => [
+        i.id,
+        {
+          titulo: i.title ?? '(sin describir)',
+          ref: i.external_ref,
+          sala: i.room_id ? deSala.get(i.room_id) : undefined,
+        },
+      ]),
+    )
+    const recogidas = await fotosDelPeriodo([...deIncidencia.keys()], deIncidencia)
+    fotos = recogidas.fotos
+    fotosTotal = recogidas.total
+  }
+
   return {
     kind,
     period: rango,
@@ -566,6 +615,10 @@ export async function cargarDatos(
     lamparas,
     estancadas,
     materiales: materiales(ahoraFilas.movimientos, articulos),
+    cierres: cierres.slice(0, TOPE_FILAS),
+    cierresTotal: cierres.length,
+    fotos,
+    fotosTotal,
     reincidentes,
     olvidadas,
     equipo: repartoDelTrabajo(ahoraFilas, quien),
@@ -906,6 +959,118 @@ export function materiales(
       consumido: a.consumido,
       incidencias: a.incidencias.size,
     }))
+}
+
+/**
+ * Cada cierre del periodo, con sus dos fechas y lo que llevó.
+ *
+ * Sale de las mismas filas que la mediana —no hay una consulta más— porque
+ * `resolved_at` y `opened_at` ya venían para calcularla. Lo que cambia es qué se
+ * hace con ellas: aquí no se agregan, se enseñan.
+ *
+ * Ordenado de más días a menos: quien abre esta tabla viene a mirar la que más
+ * tardó, no la primera del calendario.
+ */
+export function cierresDelPeriodo(
+  cerradas: FilaCierre[],
+  deSala: Map<string, FilaSala>,
+  quien: Map<string, string>,
+): ReportData['cierres'] {
+  return cerradas
+    .filter((i) => i.resolved_at)
+    .map((i) => {
+      const sala = i.room_id ? deSala.get(i.room_id) : undefined
+      return {
+        ref: i.external_ref,
+        titulo: i.title ?? '(sin describir)',
+        building: sala?.building_code ?? '—',
+        room: sala?.room_code ?? '',
+        abierta: diaEnMadrid(new Date(i.opened_at)),
+        horaAbierta: horaCorta(i.opened_at),
+        cerrada: diaEnMadrid(new Date(i.resolved_at!)),
+        horaCerrada: horaCorta(i.resolved_at!),
+        dias: (new Date(i.resolved_at!).getTime() - new Date(i.opened_at).getTime()) / 86_400_000,
+        resolucion: i.resolution || null,
+        quien: i.resolved_by ? (quien.get(i.resolved_by) ?? null) : null,
+      }
+    })
+    .sort((a, b) => b.dias - a.dias)
+}
+
+/**
+ * Las fotos del periodo, dentro del documento.
+ *
+ * Van como `data:` y no como enlace, y es la única forma que funciona: el
+ * informe se archiva y se abre meses después, y una URL firmada de Storage
+ * caduca en un minuto. Un documento con huecos donde había pruebas no sirve
+ * como registro de nada.
+ *
+ * Solo las de incidencias del periodo. Las de revisión y las de equipo se
+ * quedan fuera a propósito: son cientos, no cabrían, y la pregunta que se le
+ * hace a un informe es «qué ha pasado», no «enséñame el parque».
+ */
+async function fotosDelPeriodo(
+  incidencias: string[],
+  porIncidencia: Map<string, { titulo: string; ref: string | null; sala: FilaSala | undefined }>,
+): Promise<{ fotos: ReportData['fotos']; total: number }> {
+  if (incidencias.length === 0) return { fotos: [], total: 0 }
+
+  const adjuntos = await pide<FilaAdjunto>('las fotos de las incidencias', (señal) =>
+    supabase
+      .from('attachments')
+      .select('id,entity_id,storage_path,taken_at')
+      .eq('entity_type', 'incident')
+      .in('entity_id', incidencias)
+      .order('taken_at', { ascending: true })
+      .limit(TOPE_FOTOS * 4)
+      .abortSignal(señal),
+  )
+
+  const fotos: ReportData['fotos'] = []
+  let bytes = 0
+
+  for (const a of adjuntos) {
+    if (fotos.length >= TOPE_FOTOS || bytes > TOPE_BYTES_FOTOS) break
+    /*
+     * Una foto que no baja no tumba el informe. Puede faltar del bucket, puede
+     * no dejarla leer una política, puede no contestar el almacén: nada de eso
+     * es motivo para quedarse sin documento. Se salta y se cuenta al pie.
+     */
+    let blob: Blob
+    try {
+      const { data, error } = await supabase.storage.from('fotos').download(a.storage_path)
+      if (error || !data) continue
+      blob = data
+    } catch {
+      continue
+    }
+
+    const dato = await comoDataUrl(blob)
+    if (!dato) continue
+    bytes += dato.length
+    const de = porIncidencia.get(a.entity_id)
+    fotos.push({
+      dia: diaEnMadrid(new Date(a.taken_at)),
+      hora: horaCorta(a.taken_at),
+      building: de?.sala?.building_code ?? '—',
+      room: de?.sala?.room_code ?? '',
+      titulo: de?.titulo ?? 'Incidencia',
+      ref: de?.ref ?? null,
+      datos: dato,
+    })
+  }
+
+  return { fotos, total: adjuntos.length }
+}
+
+/** El binario metido en el documento. `FileReader` porque `btoa` revienta con 200 KB. */
+function comoDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolver) => {
+    const lector = new FileReader()
+    lector.onload = () => resolver(typeof lector.result === 'string' ? lector.result : '')
+    lector.onerror = () => resolver('')
+    lector.readAsDataURL(blob)
+  })
 }
 
 async function salasQueRepiten(

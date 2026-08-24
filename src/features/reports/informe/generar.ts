@@ -28,7 +28,7 @@ import { cargarDatos } from './datos'
 import { lecturaCalculada, senales } from './analisis'
 import { configurarIA, redactar } from './ia'
 import { claveDeGemini } from './clave'
-import { leerOpciones } from './opciones'
+import { leerOpciones, tiene } from './opciones'
 import { renderReport } from './plantilla'
 
 export interface InformeGenerado {
@@ -140,7 +140,12 @@ export async function generarInforme(
 
   avisar('datos')
   const [datos, quienPide] = await Promise.all([
-    cargarDatos(eleccion.kind, eleccion.rango, (leyendo) => avisar('datos', leyendo)),
+    cargarDatos(
+      eleccion.kind,
+      eleccion.rango,
+      (leyendo) => avisar('datos', leyendo),
+      tiene(opciones, 'fotos'),
+    ),
     solicitante(),
   ])
 
