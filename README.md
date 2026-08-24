@@ -342,6 +342,9 @@ npm run informe:ia
 - **[Guía de administración](docs/guia-administracion.md)** — editar datos, confirmar
   los nombres dudosos de la importación, usuarios, stock e informes.
 - **[Despliegue con Postgres gestionado](docs/despliegue-postgres-gestionado.md)**
+- **[Sincronización con los Excel de SharePoint](docs/sincronizacion-sharepoint.md)** —
+  cómo mantener al día el inventario de revisiones y el stock desde los dos libros,
+  quién manda en cada dato y qué hay que pedir a IT.
 
 ## Antes de producción
 
