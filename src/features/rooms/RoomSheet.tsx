@@ -67,6 +67,7 @@ import { flush } from '@/sync/outbox'
 import { DoorPlate } from '@/components/DoorPlate'
 import { RevisionesAnteriores } from '@/features/inspection/RevisionesAnteriores'
 import { ResolverIncidencia } from '@/features/incidents/ResolverIncidencia'
+import { useCierresEnCola } from '@/features/incidents/cierresEnCola'
 import { equipoDeIncidencia, sePuedeResolver } from '@/domain/resolucion'
 import type { Correccion } from '@/features/inspection/useInspection'
 import { displayRoomCode } from '@/domain/normalize'
@@ -218,31 +219,26 @@ export function RoomSheet({
    *
    * En orden de antigüedad: la que lleva más tiempo abierta va primero, que es
    * la que más se parece a lo que hay que atender.
-   *
-   * Y se descuentan las que ya se han cerrado aquí y siguen esperando cobertura.
-   * De que el espejo no las reabra se encarga la descarga (`sync/pull.ts`); esto
-   * es la misma verdad dicha donde se pinta, para que ni la ventana estrecha
-   * entre una descarga en vuelo y su escritura ofrezca cerrar dos veces lo
-   * mismo. Lo cerrado y sin subir no desaparece: se cuenta abajo.
    */
-  const averias = useLiveQuery(
-    async () => {
-      const [filas, cola] = await Promise.all([
-        db.incidents.where('room_id').equals(room.id).toArray(),
-        db.outbox.where('entity').equals('incident_resolution').toArray(),
-      ])
-      const cerradasEnCola = new Set(cola.map((e) => String(e.payload['incident_id'] ?? '')))
-
-      return {
-        abiertas: filas
-          .filter((i) => sePuedeResolver(i) && !cerradasEnCola.has(i.id))
-          .sort((a, b) => a.opened_at.localeCompare(b.opened_at)),
-        esperandoSubir: filas.filter((i) => cerradasEnCola.has(i.id)).length,
-      }
-    },
+  const deLaSala = useLiveQuery(
+    async () => await db.incidents.where('room_id').equals(room.id).toArray(),
     [room.id],
-    { abiertas: [] as Incident[], esperandoSubir: 0 },
+    [] as Incident[],
   )
+
+  /*
+   * Y las que ya se han cerrado aquí y esperan cobertura, que no vuelven a
+   * ofrecerse. De que el espejo no las reabra se encarga la descarga
+   * (`sync/pull.ts`); esto es la misma verdad dicha donde se pinta, para que ni
+   * la ventana entre una descarga en vuelo y su escritura ofrezca cerrar dos
+   * veces lo mismo. No desaparecen: se cuentan debajo de la lista.
+   */
+  const cerradasEnCola = useCierresEnCola()
+
+  const abiertas = deLaSala
+    .filter((i) => sePuedeResolver(i) && !cerradasEnCola.has(i.id))
+    .sort((a, b) => a.opened_at.localeCompare(b.opened_at))
+  const esperandoSubir = deLaSala.filter((i) => cerradasEnCola.has(i.id)).length
 
   /** Cómo se llama un equipo de esta sala. Es lo que nombra la avería. */
   const nombreDeEquipo = (assetId: string): string | null => {
@@ -619,8 +615,8 @@ export function RoomSheet({
         <section aria-labelledby="sec-averias" className="mt-8">
           <div className="section-head">
             <h2 id="sec-averias" className="eyebrow">Averías abiertas</h2>
-            {averias.abiertas.length > 0 && (
-              <span className="font-mono text-xs text-crit">{averias.abiertas.length}</span>
+            {abiertas.length > 0 && (
+              <span className="font-mono text-xs text-crit">{abiertas.length}</span>
             )}
           </div>
 
@@ -631,7 +627,7 @@ export function RoomSheet({
           )}
 
           <ul className="divide-y divide-line">
-            {averias.abiertas.map((i) => {
+            {abiertas.map((i) => {
               const equipo = equipoDeIncidencia(i, nombreDeEquipo)
               const dias = Math.floor(
                 (Date.now() - new Date(i.opened_at).getTime()) / 86_400_000,
@@ -681,16 +677,16 @@ export function RoomSheet({
                     <ResolverIncidencia
                       incidencia={i}
                       equipo={equipo}
+                      roomId={room.id}
                       onCerrada={() => {
                         setResolviendo(null)
                         setResuelto(
                           'Resuelta. Sube en cuanto haya cobertura y queda en el historial de la sala.',
                         )
-                        // El historial y el índice de la sala los calcula el
-                        // servidor: hasta que el cierre suba no cambian, y se
-                        // piden otra vez para que lo hagan en cuanto suba.
-                        void qc.invalidateQueries({ queryKey: ['room-timeline', room.id] })
-                        void qc.invalidateQueries({ queryKey: ['room-reliability', room.id] })
+                        // El historial y el índice los calcula el servidor, así
+                        // que no se piden aquí: hasta que el cierre suba
+                        // contestarían lo de antes. Los vuelve a pedir
+                        // `useCierresEnCola` cuando sube de verdad.
                       }}
                       onCancelar={() => setResolviendo(null)}
                     />
@@ -699,7 +695,7 @@ export function RoomSheet({
               )
             })}
 
-            {averias.abiertas.length === 0 && (
+            {abiertas.length === 0 && (
               <li className="py-2 text-sm text-muted">
                 Nada abierto en esta sala ahora mismo.
               </li>
@@ -708,10 +704,10 @@ export function RoomSheet({
 
           {/* Lo cerrado que todavía no ha subido se dice, no se esconde: es la
               diferencia entre «ya está» y «ya está aquí». */}
-          {averias.esperandoSubir > 0 && (
+          {esperandoSubir > 0 && (
             <p className="mt-2 text-xs text-muted">
-              {cuantos(averias.esperandoSubir, 'avería resuelta', 'averías resueltas')} esperando
-              cobertura para subir.
+              {cuantos(esperandoSubir, 'avería resuelta', 'averías resueltas')} esperando cobertura
+              para subir.
             </p>
           )}
         </section>

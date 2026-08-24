@@ -153,6 +153,17 @@ Lo que queda escrito:
 - La incidencia, cerrada con esa misma explicación en `incidents.resolution`, y
   saliendo en la línea de tiempo de la sala el día que se resolvió.
 - La foto, si la hubo, en `attachments` con `entity_type = 'incident'`.
+- **El material gastado**, como movimientos de consumo con su incidencia y su
+  sala. El formulario de cierre lo pide ahí mismo, que es donde alguien se
+  acuerda del cable que acaba de poner; antes vivía detrás de otro botón y no se
+  apuntaba casi nunca. Cada apunte resta del almacén en cuanto se pulsa, sin
+  esperar al cierre: la pieza se gastó aunque la avería siga abierta.
+
+El apunte enseña las existencias que el dispositivo tiene espejadas y avisa
+—sin bloquear— cuando se pasa de ellas. La copia puede estar vieja y quien tiene
+el cable en la mano es la persona; lo que no puede es enterarse solo el
+servidor, porque el saldo no puede quedar en negativo y ese apunte volvería
+rechazado a la cola.
 
 El `UPDATE` directo sobre `incidents` **sigue siendo solo de supervisor**: es lo
 que hace falta para reabrir una que se cerró por error o corregir un cierre.
