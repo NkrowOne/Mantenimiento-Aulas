@@ -72,14 +72,36 @@ const TOPE_FILAS = 150
 /**
  * Cuántas fotos entran, y cuánto pueden pesar entre todas.
  *
- * Van dentro del documento como `data:`, así que cada una engorda el informe
- * un tercio más de lo que ocupa. El bucket admite 25 MB por fichero; se para
- * mucho antes, porque un informe de 20 MB no se imprime ni se manda por correo,
- * y porque a partir de dos docenas de fotos nadie las mira. Lo que se queda
- * fuera se cuenta al pie: una selección callada se lee como si fuera todo.
+ * Van dentro del documento como `data:`, así que cada una engorda el informe un
+ * tercio más de lo que ocupa. El bucket admite 25 MB por fichero, pero un
+ * informe de 20 MB no se imprime ni se manda por correo. Lo que se queda fuera
+ * se cuenta al pie: una selección callada se lee como si fuera todo.
  */
-const TOPE_FOTOS = 24
+const TOPE_FOTOS = 40
 const TOPE_BYTES_FOTOS = 8 * 1024 * 1024
+
+/**
+ * A qué tamaño entra cada foto en el documento, y por qué a ESE.
+ *
+ * En el papel, cada foto ocupa un tercio del ancho de la caja: 57 mm. A 700 px
+ * de lado largo eso son más de 300 puntos por pulgada —el doble de lo que
+ * imprime cualquier impresora de oficina— y sigue dejando margen para ampliar
+ * en el PDF. Las de `attachments` vienen a 1600 px, que es el tamaño correcto
+ * para mirarlas en la ficha del aula a pantalla completa y seis veces más
+ * píxeles de los que este documento puede enseñar.
+ *
+ * Y salen en JPEG, no en WebP, aunque WebP pese menos: **el formato PDF no
+ * tiene WebP**. Sus filtros de imagen son DCT (JPEG), JPX, Flate, CCITT y
+ * JBIG2, y nada más. Un WebP dentro del HTML obliga al navegador a
+ * descomprimirlo y volver a comprimirlo al imprimir —perdiendo calidad otra
+ * vez, y a veces creciendo—, mientras que un JPEG puede pasar al PDF tal cual.
+ * Aquí el destino manda sobre la moda.
+ *
+ * Medido en Chromium sobre fotos de aula: 226 KB de media a 1600 px, 44 KB a
+ * 700 px. Cuarenta fotos pasan de unos 12 MB de documento a 2,3 MB.
+ */
+const FOTO_LADO_LARGO = 700
+const FOTO_MB = 0.06
 
 const num = (v: unknown): number => Number(v ?? 0)
 
@@ -1045,7 +1067,7 @@ async function fotosDelPeriodo(
       continue
     }
 
-    const dato = await comoDataUrl(blob)
+    const dato = await comoDataUrl(await paraElDocumento(blob))
     if (!dato) continue
     bytes += dato.length
     const de = porIncidencia.get(a.entity_id)
@@ -1061,6 +1083,37 @@ async function fotosDelPeriodo(
   }
 
   return { fotos, total: adjuntos.length }
+}
+
+/**
+ * La foto, al tamaño en el que se va a ver.
+ *
+ * Sin esto, el informe llevaba dentro fotos de 1600 px para enseñarlas a 57 mm:
+ * seis veces más píxeles de los que caben, y un documento de varios megabytes
+ * por cada dos docenas. Se reescala aquí y no al guardarlas, porque la de la
+ * ficha del aula sí se mira a pantalla completa y esa tiene que seguir entera.
+ *
+ * Es la misma librería que usa la captura (`lib/photos.ts`): reescala por pasos
+ * en vez de de golpe, que es lo que evita el lienzo negro del límite de área de
+ * canvas de Safari.
+ *
+ * Si falla, se devuelve la original. Una foto grande dentro del informe es peor
+ * que una pequeña y mejor que ninguna.
+ */
+async function paraElDocumento(foto: Blob): Promise<Blob> {
+  try {
+    const { default: comprimir } = await import('browser-image-compression')
+    const tipo = foto.type || 'image/jpeg'
+    return await comprimir(new File([foto], 'foto', { type: tipo }), {
+      maxWidthOrHeight: FOTO_LADO_LARGO,
+      maxSizeMB: FOTO_MB,
+      useWebWorker: true,
+      fileType: 'image/jpeg',
+      initialQuality: 0.72,
+    })
+  } catch {
+    return foto
+  }
 }
 
 /** El binario metido en el documento. `FileReader` porque `btoa` revienta con 200 KB. */
