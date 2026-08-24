@@ -19,7 +19,12 @@ import {
   generarInforme,
   nombreDeArchivo,
 } from './informe/generar'
-import { descargarDocumento, imprimirMarco } from './informe/imprimir'
+import {
+  descargarDocumento,
+  imprimirDocumento,
+  mostrarEn,
+  ventanaEnBlanco,
+} from './informe/imprimir'
 
 interface ReportRow {
   id: string
@@ -145,17 +150,29 @@ export function ReportsPage(): React.ReactElement {
     },
   })
 
+  /**
+   * Abre un informe del archivo, renderizado y no como código.
+   *
+   * La pestaña se pide ANTES de descargar: el permiso para abrirla dura lo que
+   * dura el gesto, y una espera por medio lo convierte en un bloqueo. Y el
+   * documento se vuelve a servir desde aquí con su tipo real porque el almacén
+   * puede entregar un HTML subido por un usuario como texto plano —es lo
+   * prudente por su parte—, y entonces lo que se ve es el código fuente.
+   */
   async function abrir(path: string): Promise<void> {
     setFalloDescarga(null)
-    const { data, error } = await supabase.storage.from('reports').createSignedUrl(path, 60)
-    if (error || !data?.signedUrl) {
-      setFalloDescarga(`No se ha podido preparar la descarga${error ? `: ${error.message}` : ''}.`)
+    const ventana = ventanaEnBlanco()
+    if (!ventana) {
+      setFalloDescarga('El navegador ha bloqueado la pestaña: vuelve a pulsar Abrir.')
       return
     }
-    // Si el navegador bloquea la pestaña —el gesto caducó mientras se firmaba
-    // la URL— se dice, en vez de fingir que el botón no hizo nada.
-    const abierta = window.open(data.signedUrl, '_blank', 'noopener')
-    if (!abierta) setFalloDescarga('El navegador ha bloqueado la pestaña: vuelve a pulsar Abrir.')
+    const { data, error } = await supabase.storage.from('reports').download(path)
+    if (error || !data) {
+      ventana.close()
+      setFalloDescarga(`No se ha podido abrir el informe${error ? `: ${error.message}` : ''}.`)
+      return
+    }
+    mostrarEn(ventana, data)
   }
 
   const alternar = (clave: string): void =>
@@ -446,20 +463,24 @@ export function ReportsPage(): React.ReactElement {
               <button
                 type="button"
                 onClick={() => {
-                  if (!imprimirMarco(marco.current)) {
-                    setFalloDescarga('La vista previa aún no está lista: espera un segundo y vuelve a pulsar.')
+                  setFalloDescarga(null)
+                  if (imprimirDocumento(recien.html, marco.current) === 'bloqueado') {
+                    setFalloDescarga(
+                      'El navegador ha bloqueado la ventana del informe. Permite las ventanas emergentes de esta página, o usa «Descargar el original».',
+                    )
                   }
                 }}
                 className="key key-accent min-h-11 px-3 text-sm"
               >
-                Guardar como PDF
+                Descargar PDF
               </button>
               <button
                 type="button"
                 onClick={() => descargarDocumento(recien.html, nombreDeArchivo(recien.kind, recien.rango))}
                 className="key key-quiet min-h-11 px-3 text-sm"
+                title="El original en HTML, del que sale el PDF"
               >
-                Descargar
+                Descargar el original
               </button>
             </div>
           </div>
@@ -493,9 +514,17 @@ export function ReportsPage(): React.ReactElement {
             sandbox="allow-same-origin allow-modals"
             className="mt-4 h-[70vh] w-full rounded-card border border-line bg-white"
           />
+          {/*
+            Sin esta línea, «Descargar PDF» abre un diálogo de impresión que el
+            usuario no ha pedido: se queda mirando una vista previa y una
+            impresora, decide que se ha equivocado de botón y cierra. El PDF sale
+            de ahí, pero solo si alguien dice dónde está. Es la misma frase que
+            la hoja de inventario, porque es el mismo gesto.
+          */}
           <p className="mt-2 text-xs text-muted">
-            «Guardar como PDF» abre la impresión del navegador: elige ese destino y sale el documento
-            en A4.
+            El informe se abre en una pestaña y se abre el diálogo de imprimir, que es de donde sale
+            el PDF: en el iPad, toca «Imprimir» y después «Compartir → Guardar en Archivos»; en el
+            ordenador, elige «Guardar como PDF» en el destino, en lugar de una impresora.
           </p>
         </section>
       )}
