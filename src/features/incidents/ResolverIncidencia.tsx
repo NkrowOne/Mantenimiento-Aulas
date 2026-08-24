@@ -37,6 +37,7 @@ import { db, enqueue } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { flush } from '@/sync/outbox'
 import { TiraDeFotos } from '@/components/Fotos'
+import { MaterialUsado } from './MaterialUsado'
 import { PHOTO_ACCEPT, capturePhoto } from '@/lib/photos'
 import { cierreDeIncidencia, incidenciaCerrada, problemaDeExplicacion } from '@/domain/resolucion'
 import { INCIDENT_KIND_LABELS, type IncidentKind } from '@/domain/types'
@@ -50,6 +51,7 @@ export interface IncidenciaQueSeCierra {
 export function ResolverIncidencia({
   incidencia,
   equipo,
+  roomId,
   onCerrada,
   onCancelar,
 }: {
@@ -63,6 +65,15 @@ export function ResolverIncidencia({
    * pantalla desplazándose, y la respuesta tiene que seguir a la vista.
    */
   equipo: string | null
+  /**
+   * Dónde se ha gastado el material, si se sabe.
+   *
+   * Va aquí y no dentro del apunte porque el almacén sabe cuánto queda y no
+   * dónde fue, y esa es justo la pregunta que se hace después: cuánto material
+   * se lleva un edificio. Nulo en las 118 incidencias del histórico que se
+   * importaron sin sala identificada.
+   */
+  roomId: string | null
   onCerrada: () => void
   onCancelar: () => void
 }): React.ReactElement {
@@ -219,6 +230,29 @@ export function ResolverIncidencia({
           espere cobertura. Una foto que se pide y no se devuelve deja de
           hacerse a las tres semanas. */}
       <TiraDeFotos entityType="incident" ids={[incidencia.id]} />
+
+      {/*
+        El material, aquí dentro y no en otro botón.
+
+        Es el apunte que nunca llegaba. Vivía detrás de un botón «Material»
+        aparte, en la pestaña de Incidencias, y con el aviso escrito en el propio
+        código: «se apunta antes de cerrar, porque después nadie vuelve a la
+        incidencia». Pues nadie lo apuntaba antes tampoco — el momento en que
+        alguien se acuerda del cable que ha puesto es exactamente este, contando
+        qué ha hecho, y no un toque anterior en otra pantalla.
+
+        Cada apunte sale del almacén en cuanto se pulsa «Apuntar»: es un
+        movimiento de consumo con su incidencia y su sala, y resta del inventario
+        igual que cualquier otra salida. Por eso no espera al cierre — el
+        material se gastó aunque la avería se quede sin cerrar hoy.
+      */}
+      <div className="mt-3">
+        <p className="eyebrow">Material usado (opcional)</p>
+        <p className="mt-1 text-xs leading-relaxed text-muted">
+          Lo que apuntes aquí sale del almacén y queda cargado a esta sala.
+        </p>
+        <MaterialUsado incidentId={incidencia.id} roomId={roomId} />
+      </div>
 
       {cerrar.isError && (
         <p role="alert" className="mt-2 text-sm text-crit">

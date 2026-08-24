@@ -7,8 +7,14 @@ import { displayRoomCode, norm } from '@/domain/normalize'
 import { salasQueCasan, type SalaBuscable } from './busqueda'
 import { MaterialUsado } from './MaterialUsado'
 import { ResolverIncidencia } from './ResolverIncidencia'
+import { useCierresEnCola } from './cierresEnCola'
 import { Borradores } from './Borradores'
-import { INCIDENT_KIND_LABELS, type IncidentKind, type IncidentState } from '@/domain/types'
+import {
+  INCIDENT_KIND_LABELS,
+  STALE_INCIDENT_DAYS,
+  type IncidentKind,
+  type IncidentState,
+} from '@/domain/types'
 
 interface IncidentRow {
   id: string
@@ -73,6 +79,17 @@ export function IncidentsPage(): React.ReactElement {
   const [apuntando, setApuntando] = useState<string | null>(null)
   /* Y cuál tiene abierto el formulario de cierre, por lo mismo. */
   const [resolviendo, setResolviendo] = useState<string | null>(null)
+
+  /*
+   * Lo que ya se ha cerrado aquí y sigue esperando cobertura.
+   *
+   * Esta lista la sirve el SERVIDOR, y el cierre viaja por la cola: entre una
+   * cosa y otra hay una ventana en la que la avería ya está resuelta en el
+   * dispositivo y el servidor todavía la da por abierta. Sin preguntarle a la
+   * cola, esa ventana se pintaba como «Abierta · Resolver» y había que
+   * resolverla otra vez para que pareciera hecha.
+   */
+  const cerradasEnCola = useCierresEnCola()
 
   /*
    * La sala de cada incidencia, resuelta desde el espejo local.
@@ -382,8 +399,15 @@ export function IncidentsPage(): React.ReactElement {
       <ul className="mt-3 divide-y divide-line">
         {visibles.map((i) => {
           const days = Math.floor((Date.now() - new Date(i.opened_at).getTime()) / 86_400_000)
-          const stale = i.state !== 'resuelta' && days > 7
           const sala = i.room_id ? (salas?.get(i.room_id) ?? null) : null
+          /* Cerrada aquí, aún no arriba. La fila lo dice y deja de ofrecer
+             acciones: pulsar «Resolver» otra vez solo añade un segundo asiento
+             de cierre para la misma avería. */
+          const esperandoSubir = cerradasEnCola.has(i.id)
+          const estado: IncidentState = esperandoSubir ? 'resuelta' : i.state
+          // Y deja de contar como estancada en el mismo momento: lo que se
+          // acaba de arreglar no lleva nueve días sin atender.
+          const stale = estado !== 'resuelta' && days > STALE_INCIDENT_DAYS
 
           return (
             <li key={i.id} className="py-3">
@@ -398,9 +422,9 @@ export function IncidentsPage(): React.ReactElement {
                 {/* Rectángulo, no píldora: esto es una etiqueta de un parte de
                     trabajo. La cápsula en todo es el tic más repetido. */}
                 <span
-                  className={`shrink-0 rounded-tag px-2 py-0.5 text-xs font-medium ${STATE_STYLE[i.state]}`}
+                  className={`shrink-0 rounded-tag px-2 py-0.5 text-xs font-medium ${STATE_STYLE[estado]}`}
                 >
-                  {STATE_LABEL[i.state]}
+                  {STATE_LABEL[estado]}
                 </span>
 
                 <div className="min-w-0 flex-1 basis-48">
@@ -452,7 +476,13 @@ export function IncidentsPage(): React.ReactElement {
                   )}
                 </div>
 
-                {i.state !== 'resuelta' && (
+                {esperandoSubir && (
+                  <span className="ml-auto shrink-0 rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
+                    sin subir
+                  </span>
+                )}
+
+                {i.state !== 'resuelta' && !esperandoSubir && (
                   <div className="ml-auto flex shrink-0 gap-2">
                     {i.state === 'abierta' && (
                       <button
@@ -463,9 +493,11 @@ export function IncidentsPage(): React.ReactElement {
                         Empezar
                       </button>
                     )}
-                    {/* El material se apunta antes de cerrar: después nadie
-                        vuelve a la incidencia, y ese era el dato que no llegaba
-                        nunca al almacén. */}
+                    {/* El material también se apunta dentro del cierre, que es
+                        donde alguien se acuerda del cable que ha puesto. Este
+                        botón se queda para la avería que sigue abierta: la
+                        pieza que se cambió mientras se espera otra, que se
+                        gastó igual aunque la avería no se cierre hoy. */}
                     <button
                       type="button"
                       aria-expanded={apuntando === i.id}
@@ -500,12 +532,12 @@ export function IncidentsPage(): React.ReactElement {
                      pregunta «¿cuál de las tres?» se hace en la ficha del aula,
                      que es donde hay tres. */
                   equipo={null}
-                  onCerrada={() => {
-                    setResolviendo(null)
-                    void qc.invalidateQueries({ queryKey: ['incidents'] })
-                    void qc.invalidateQueries({ queryKey: ['incidents-resueltas'] })
-                    void qc.invalidateQueries({ queryKey: ['incidents-total'] })
-                  }}
+                  roomId={i.room_id}
+                  /* Solo se cierra el formulario. La lista NO se vuelve a
+                     pedir aquí: el cierre acaba de entrar en la cola y el
+                     servidor todavía diría «abierta». La pide `useCierresEnCola`
+                     cuando el cierre sube de verdad. */
+                  onCerrada={() => setResolviendo(null)}
                   onCancelar={() => setResolviendo(null)}
                 />
               )}

@@ -277,13 +277,28 @@ HDMI de la mesa, ya da imagen»—, y **puedes añadir una foto** si hay algo qu
 enseñar. La foto es opcional a propósito: una regleta nueva se ve, un ajuste de
 la matriz de vídeo no.
 
+**Y ahí mismo apuntas el material que has gastado.** Busca el artículo, pon las
+unidades y pulsa «Apuntar»: sale del almacén y queda cargado a esa aula. Al
+lado de cada artículo ves cuánto queda —en rojo si está a cero—, así que se
+distingue de un vistazo cuál de los tres cables coger. Si apuntas más de lo que
+el almacén cree que hay, la aplicación te lo dice pero te deja apuntarlo: la
+cifra del dispositivo puede estar vieja y tú tienes el cable en la mano.
+
+> Apuntar el material es lo que hace que el informe sepa dónde se va el
+> almacén. No hace falta cerrar la avería para apuntarlo: si has cambiado una
+> pieza y sigues esperando otra, apúntalo igual.
+
 Es obligatorio porque esa frase es lo que lee quien atienda la próxima avería de
 esa aula. Con ella, «el proyector no da imagen» en abril se lee sabiendo que en
 marzo se le cambió la lámpara — y eso cambia lo que hay que hacer.
 
 Funciona **sin cobertura**, como todo lo demás: la avería sale de la lista al
 instante y el cierre sube en cuanto haya red. Mientras espera, la ficha lo dice
-(«1 avería resuelta esperando cobertura para subir»).
+(«1 avería resuelta esperando cobertura para subir») y en la pestaña de
+Incidencias esa avería sale ya como **«Resuelta · sin subir»**.
+
+> **No hay que resolverla dos veces.** Si la ves ahí con el sello «sin subir»,
+> está hecha: le falta cobertura, no un toque más.
 
 > La misma pantalla está en la pestaña **Incidencias**, con el mismo botón y la
 > misma pregunta, para cerrar desde el escritorio.
@@ -462,8 +477,14 @@ de aquel día, y la anterior se queda guardada y legible. Lo que no se puede es
 **¿Cómo cierro una incidencia?**
 Desde la ficha del aula, en «Averías abiertas» —o desde la pestaña
 Incidencias—, pulsando **«Resolver»** en la que has arreglado. Hay que escribir
-qué has hecho; la foto es opcional. Lo que no se puede es cerrarla sin decir
-nada: sin esa frase, la próxima avería de esa aula empieza a ciegas.
+qué has hecho; la foto y el material son opcionales. Lo que no se puede es
+cerrarla sin decir nada: sin esa frase, la próxima avería de esa aula empieza a
+ciegas.
+
+**La he resuelto y sigue apareciendo. ¿La cierro otra vez?**
+No. Si sale como **«Resuelta · sin subir»**, ya está cerrada en el dispositivo y
+solo le falta cobertura. Cerrarla otra vez no la cierra antes: solo apunta dos
+veces lo mismo.
 
 **¿Puedo usar mi móvil y el iPad a la vez?**
 Sí, pero cada dispositivo necesita su propia alta con su código.
