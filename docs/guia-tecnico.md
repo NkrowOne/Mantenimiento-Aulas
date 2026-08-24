@@ -277,16 +277,22 @@ HDMI de la mesa, ya da imagen»—, y **puedes añadir una foto** si hay algo qu
 enseñar. La foto es opcional a propósito: una regleta nueva se ve, un ajuste de
 la matriz de vídeo no.
 
-**Y ahí mismo apuntas el material que has gastado.** Busca el artículo, pon las
-unidades y pulsa «Apuntar»: sale del almacén y queda cargado a esa aula. Al
-lado de cada artículo ves cuánto queda —en rojo si está a cero—, así que se
-distingue de un vistazo cuál de los tres cables coger. Si apuntas más de lo que
-el almacén cree que hay, la aplicación te lo dice pero te deja apuntarlo: la
-cifra del dispositivo puede estar vieja y tú tienes el cable en la mano.
+**Si has gastado material, ahí mismo lo apuntas.** Pulsa «¿Has usado material?
+Apúntalo», busca el artículo, pon las unidades y dale a «Apuntar»: sale del
+almacén y queda cargado a esa aula. Al lado de cada artículo ves cuánto queda
+—en rojo si está a cero—, así que se distingue de un vistazo cuál de los tres
+cables coger. Si apuntas más de lo que el almacén cree que hay, la aplicación te
+lo dice pero te deja apuntarlo: la cifra del dispositivo puede estar vieja y tú
+tienes el cable en la mano.
+
+**Y si no has gastado nada, cierras sin más.** Lo único que no se puede saltar
+es la frase de qué has hecho; la foto y el material son opcionales de verdad —el
+botón de cerrar no espera a ninguno de los dos.
 
 > Apuntar el material es lo que hace que el informe sepa dónde se va el
 > almacén. No hace falta cerrar la avería para apuntarlo: si has cambiado una
-> pieza y sigues esperando otra, apúntalo igual.
+> pieza y sigues esperando otra, apúntalo igual desde la pestaña de
+> Incidencias, con el botón «Material».
 
 Es obligatorio porque esa frase es lo que lee quien atienda la próxima avería de
 esa aula. Con ella, «el proyector no da imagen» en abril se lee sabiendo que en

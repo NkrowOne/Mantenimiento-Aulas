@@ -18,11 +18,13 @@
  *    sin cobertura. Este formulario se abre también desde la ficha de la sala,
  *    con el aparato delante, y lo escrito viaja por la cola como todo lo demás.
  *
- * La explicación es obligatoria y la foto no, y ese reparto es deliberado: la
- * frase la puede escribir cualquiera en diez segundos y sirve para siempre; la
- * foto depende de que haya algo que enseñar —una regleta nueva se ve, un ajuste
- * de la matriz de vídeo no—, y exigirla convertiría el cierre en un trámite que
- * se esquiva dejando la incidencia abierta.
+ * **Lo único obligatorio es la explicación.** Ni la foto ni el material lo son,
+ * y ese reparto es deliberado: la frase la puede escribir cualquiera en diez
+ * segundos y sirve para siempre; la foto depende de que haya algo que enseñar
+ * —una regleta nueva se ve, un ajuste de la matriz de vídeo no— y muchas averías
+ * se arreglan sin gastar nada. Exigir cualquiera de las dos convertiría el
+ * cierre en un trámite que se esquiva dejando la incidencia abierta, que es
+ * exactamente lo que esto viene a evitar.
  *
  * La foto se guarda al elegirla, no al enviar el formulario: es de la
  * incidencia, no de este formulario, y así el error —el HEIC de iOS, sobre
@@ -84,6 +86,9 @@ export function ResolverIncidencia({
   const [tocado, setTocado] = useState(false)
   const [fotoError, setFotoError] = useState<string | null>(null)
   const [guardandoFoto, setGuardandoFoto] = useState(false)
+  /* Si el apunte de material está abierto. Cerrado de partida: la mayoría de las
+     averías se arreglan sin gastar nada, y quien sí ha gastado se acuerda. */
+  const [material, setMaterial] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const problema = problemaDeExplicacion(texto)
@@ -245,14 +250,33 @@ export function ResolverIncidencia({
         movimiento de consumo con su incidencia y su sala, y resta del inventario
         igual que cualquier otra salida. Por eso no espera al cierre — el
         material se gastó aunque la avería se quede sin cerrar hoy.
+
+        **Y va PLEGADO**, que es lo único que hace verdad la palabra «opcional».
+        Muchas averías se arreglan sin gastar nada —un cable suelto, una entrada
+        mal elegida, un reinicio— y en esas el buscador de artículos es un paso
+        más entre la frase y el botón de cerrar. Un formulario en el que hay que
+        pasar por encima de un campo para llegar al final enseña que ese campo
+        hay que rellenarlo. Cerrar no espera a nada de aquí: el botón de abajo
+        solo mira la explicación.
       */}
-      <div className="mt-3">
-        <p className="eyebrow">Material usado (opcional)</p>
-        <p className="mt-1 text-xs leading-relaxed text-muted">
-          Lo que apuntes aquí sale del almacén y queda cargado a esta sala.
-        </p>
-        <MaterialUsado incidentId={incidencia.id} roomId={roomId} />
-      </div>
+      {material ? (
+        <div className="mt-3">
+          <p className="eyebrow">Material usado</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted">
+            Lo que apuntes sale del almacén y queda cargado a esta sala. Puedes cerrar la avería
+            sin apuntar nada.
+          </p>
+          <MaterialUsado incidentId={incidencia.id} roomId={roomId} />
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setMaterial(true)}
+          className="key key-quiet mt-3 min-h-11 w-full px-3 text-sm"
+        >
+          ¿Has usado material? Apúntalo
+        </button>
+      )}
 
       {cerrar.isError && (
         <p role="alert" className="mt-2 text-sm text-crit">
