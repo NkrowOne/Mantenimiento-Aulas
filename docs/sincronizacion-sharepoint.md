@@ -22,8 +22,14 @@ Este documento es la propuesta previa a escribir código.
    fichero regenerado.** Es la única forma de conservar fórmulas, formatos
    condicionales, validaciones y tablas (apartado 6).
 4. Traer y llevar el fichero: **Graph con `Sites.Selected`**, sondeando por
-   `eTag` cada 30 minutos desde el servidor. Este despliegue no tiene entrada
-   desde Internet, así que los avisos en tiempo real de Graph quedan descartados.
+   `cTag` cada 30 minutos desde el servidor. Este despliegue no tiene entrada
+   desde Internet, así que los avisos en tiempo real de Graph quedan descartados
+   —y hay una segunda razón, en el documento de permisos—.
+   **Ojo antes de nada:** la documentación de Microsoft dice que la API de libro
+   de Excel **no admite permisos de aplicación**. Hay que probarlo con un token
+   app-only en un sitio desechable antes de pedir nada en producción. Está todo
+   en [`sincronizacion-sharepoint-permisos.md`](sincronizacion-sharepoint-permisos.md),
+   con la petición literal para IT.
 5. El disparo, con **`pg_cron` + `pg_net` contra un endpoint del worker**: la
    misma tubería que ya mueve los informes.
 6. Hace falta **una migración pequeña** (m², capacidad, código oficial de espacio
@@ -171,14 +177,22 @@ bidireccionalidad sea segura.
 | Alta de un aula nueva | ✅ (fila sin `Ref`) | ✅ | La sincronización le devuelve la matrícula |
 | Compras de almacén | ✅ | ✅ | Entra como movimiento `compra`, con fecha |
 | Fecha de revisión | ✅ | ✅ | Escribirla en el Excel **crea una revisión sin autor**, con `source = 'sharepoint'`, igual que hizo el importador con el histórico. Nunca pisa una revisión hecha en la app con fecha posterior |
-| Quién revisó, checks, fotos, resolución | ⛔ celda bloqueada | ✅ | Una celda no puede contener una revisión con sus checks y su autor. Va de la app al Excel, y la columna se protege para que nadie pierda el tiempo escribiendo ahí |
-| Incidencias y material consumido | ⛔ celda bloqueada | ✅ | Ídem: se registran en el aula, con foto y autor |
+| Quién revisó, checks, fotos, resolución | ⛔ columna de la app | ✅ | Una celda no puede contener una revisión con sus checks y su autor. Va de la app al Excel; si alguien escribe ahí, la pasada siguiente lo devuelve a su valor y lo dice en la hoja `Sincronización` |
+| Incidencias y material consumido | ⛔ columna de la app | ✅ | Ídem: se registran en el aula, con foto y autor |
 | Stock disponible | ⛔ celda de fórmula (`=Comprado − Instalado`) | ⛔ es una suma | En la base es `sum(qty)` sobre `stock_movements` y en el Excel lo calcula la propia hoja. Si los dos números discrepan, entra un movimiento de `ajuste` con nota diciendo de qué celda salió |
 
 Las tres filas con ⛔ no son una restricción que se elija: son cosas que una
-celda de texto no puede representar. Lo que sí se hace es **bloquear esas
-columnas en el libro** para que no haya ediciones que después haya que rechazar,
-y escribir en ellas desde la app para que el Excel las tenga siempre al día.
+celda de texto no puede representar.
+
+Y aquí hay una corrección que sale de comprobar la documentación: **la protección
+de hoja no sirve como control**. Serían justo las celdas que el worker escribe,
+`accessDenied` cubre «cambios en celdas bloqueadas», y una aplicación sin usuario
+**no puede desproteger** (`worksheetProtection: protect`/`unprotect` son
+`Application: Not supported`). Así que esas columnas se marcan con fondo gris y
+una nota en la cabecera, y el control real es otro: **la aplicación las reescribe
+en la pasada siguiente y lo deja dicho en la hoja `Sincronización`**. Candado,
+solo si la prueba del paso 0 demuestra que la escritura app-only pasa por encima
+de la protección.
 
 ---
 
@@ -202,20 +216,25 @@ Por qué esta y no otra: **este despliegue no tiene entrada desde Internet**. El
 dominio de la aplicación resuelve solo en el DNS interno o en el de la VPN, y eso
 es deliberado. Las suscripciones de Graph —los avisos en tiempo real— necesitan
 una URL pública que Microsoft pueda llamar, así que quedan descartadas de
-entrada. El sondeo va al revés: es el servidor el que sale a `graph.microsoft.com`
+entrada. Y hay dos razones más que las descartarían igual aunque la hubiera:
+**no se puede suscribir un fichero suelto** —solo carpetas— y su latencia máxima
+documentada para un elemento es de **seis horas**, o sea más lenta en el peor
+caso que sondear cada media hora. El sondeo va al revés: es el servidor el que sale a `graph.microsoft.com`
 por HTTPS, que es tráfico de salida normal y no abre nada.
 
-El sondeo es barato porque la primera llamada solo pide metadatos: si el `eTag`
-es el mismo que la última vez, se acabó la sincronización, y son dos kilobytes.
-El fichero solo se descarga cuando alguien lo ha tocado de verdad.
+El sondeo es barato porque la primera llamada solo pide metadatos: si el `cTag`
+—el del contenido, no el `eTag`, que cambia también al renombrar o al tocar una
+columna de biblioteca— es el mismo que la última vez, se acabó la sincronización,
+y son dos kilobytes. El fichero solo se descarga cuando alguien lo ha tocado de
+verdad.
 
-Permisos: **`Sites.Selected`**, no `Sites.Read.All`, y esta vez **con escritura**,
-porque la sincronización va en los dos sentidos. La diferencia con `Sites.*.All`
-es que con `Sites.Selected` un administrador concede acceso **a ese sitio y a
-ninguno más**, y es la única forma de que esta integración no sea una llave
-maestra del SharePoint entero. El secreto de cliente caduca —24 meses como
-máximo—, así que la fecha va anotada donde se anotan los certificados, o el día
-que expire la sincronización se para en silencio.
+Permisos: **`Sites.Selected` de Microsoft Graph con rol `write` sobre un sitio
+dedicado**, y certificado en vez de secreto de cliente. Por sí solo ese permiso
+**no da acceso a nada**: hace falta además que un administrador conceda ese sitio
+concreto, y sin los dos pasos la aplicación no entra en ninguna parte. Eso, la
+petición literal para IT, la lista de lo que **no** se pide, y el aviso de que la
+API de libro no documenta permisos de aplicación, están en
+[`sincronizacion-sharepoint-permisos.md`](sincronizacion-sharepoint-permisos.md).
 
 **Leer descargando, escribir por la API de libro.** La hoja «Material Instalado
 2025» declara un millón de filas usadas: pedir su rango completo por API es una
@@ -294,15 +313,29 @@ Las demás reglas:
    (`createSession` con `persistChanges: true`), no celda a celda: una pasada que
    actualiza 40 valores hace un puñado de llamadas, no 40.
 6. **La escritura va al final de la pasada, nunca a la vez que la lectura**, y
-   solo si el `eTag` de después de leer es el mismo que el de antes. Si alguien
+   solo si el `cTag` de después de leer es el mismo que el de antes. Si alguien
    tenía el libro abierto y guardó a media lectura, se descarta la pasada y se
    reintenta a la siguiente: media hora de retraso no le hace daño a nadie, medio
-   fichero sí.
-7. **Los tipos se respetan.** Las fechas se escriben como número de serie de Excel
+   fichero sí. Y **tras escribir hay que releer y guardar el `cTag` resultante**,
+   o el worker se resincroniza consigo mismo en bucle.
+7. **`null` es «no toques esta celda»; `""` es «bórrala».** Al escribir un rango,
+   `null` en la matriz le dice a la API que ignore esa celda —es la única defensa
+   documentada para no pisar fórmulas ni formato— y la cadena vacía borra el
+   valor, la fórmula y el formato de número. Un `?? ''` mal puesto en Node vacía
+   celdas de producción.
+8. **Una celda contra un rango mayor se replica** por todo el rango, como un
+   CTRL+Enter. Un error construyendo el payload rellena cientos de celdas con el
+   mismo dato.
+9. **Una petición cada vez, por libro**: Microsoft pide enviar la siguiente solo
+   tras recibir respuesta correcta a la anterior. Y `$batch` admite 20
+   subpeticiones como máximo. Las reglas completas —sesiones, throttling,
+   `formulas` frente a `valueTypes`— están en el apartado 9 del documento de
+   permisos.
+10. **Los tipos se respetan.** Las fechas se escriben como número de serie de Excel
    con su formato de fecha, no como texto: una fecha escrita como cadena rompe
    cualquier fórmula que la compare y ordena mal. Los porcentajes van como
    fracción (`0.73`), que es como están ya en la columna `% Lámparas`.
-8. **La primera escritura anota la versión previa del fichero** (`/versions`) en
+11. **La primera escritura anota la versión previa del fichero** (`/versions`) en
    el parte de la pasada. SharePoint versiona solo; saber a qué versión volver es
    lo que convierte un susto en un «restaurar».
 
@@ -387,18 +420,27 @@ sin la cual todo lo anterior es un cajón que se llena y no se vacía.
 
 ## 9. Lo que hay que pedir a IT antes de empezar
 
-1. **Registro de aplicación en Entra ID** para «Mantenimiento de Aulas», con
-   secreto de cliente y su fecha de caducidad anotada.
-2. **Permiso `Sites.Selected` con lectura y escritura**, concedido por un
-   administrador **sobre el sitio concreto** donde viven los dos libros. La
-   escritura es imprescindible: sin ella la sincronización solo va en un sentido.
-3. **La dirección exacta del sitio y la ruta de los dos ficheros**, tal como
+El detalle está en **[`sincronizacion-sharepoint-permisos.md`](sincronizacion-sharepoint-permisos.md)**:
+el correo redactado, el identificador exacto del permiso, quién puede concederlo,
+cómo se revoca y la lista de lo que **no** se pide. En resumen:
+
+1. **Un sitio de pruebas y un registro de aplicación desechables** para la prueba
+   del paso 0 — la que dice si la API de libro acepta un token sin usuario.
+   Primero eso, después todo lo demás.
+2. **Un registro de aplicación** dedicado, sin URI de redirección, con
+   **certificado** (no secreto de cliente).
+3. **Un solo permiso**: `Sites.Selected` de Microsoft Graph
+   (`883ea226-0bf2-4a8f-9f9d-92c9162a727d`), con consentimiento de administrador.
+   Por sí solo no da acceso a nada.
+4. **La concesión del rol `write` sobre un sitio dedicado y nuevo** donde vivan
+   solo los dos libros — ni `owner`, ni `manage`, ni `fullcontrol`.
+5. **La dirección exacta del sitio y la ruta de los dos ficheros**, tal como
    están, con sus espacios y sus tildes.
-4. **Confirmación de que `graph.microsoft.com` es alcanzable por HTTPS de salida**
+6. **Confirmación de que `graph.microsoft.com` es alcanzable por HTTPS de salida**
    desde el servidor, directamente o a través del proxy corporativo.
-5. **Que el versionado del sitio esté activado** (suele estarlo), para poder
+7. **Que el versionado del sitio esté activado** (suele estarlo), para poder
    volver atrás si una pasada escribe algo que no tocaba.
-6. **Un dueño humano para la cuarentena.** Quién decide, cuando el Excel dice una
+8. **Un dueño humano para la cuarentena.** Quién decide, cuando el Excel dice una
    serie y la aplicación dice otra, cuál de las dos es. Sin esa persona, la
    bandeja de choques se llena y la sincronización acaba desactivada.
 
@@ -434,6 +476,7 @@ pasada.
 
 | Fase | Qué se entrega | Se puede probar sin IT |
 |---|---|---|
+| **0** | **Prueba de concepto: ¿acepta la API de libro un token app-only?** Cinco llamadas contra un sitio desechable. Decide si el resto del plan es viable | ❌ necesita un registro y un sitio de pruebas |
 | 1 | Lector de los dos libros + cruce con salas por alias, en seco: dice qué entraría, qué chocaría y qué no sabe cruzar. No escribe nada | ✅ con los ficheros de hoy |
 | 2 | Migración del apartado 10 + tablas de paso + instantánea + fusión a tres bandas + cuarentena | ✅ |
 | 3 | Columna `Ref` y conversión de las hojas en tablas de Excel: la preparación del libro, una sola vez | ✅ sobre una copia |
@@ -447,10 +490,18 @@ del libro de revisión cruzan con las 276 de la base y cuántas no. Si cruzaran
 mal, todo lo demás sobra hasta arreglar los alias. Y la fase 3 conviene ensayarla
 sobre una copia del libro antes de tocar el que usa la gente.
 
+La fase 0 es la única que puede tumbar el plan entero, y es barata: cinco
+llamadas. Va delante de cualquier petición formal a IT.
+
 ---
 
 ## 12. Lo que puede salir mal
 
+- **Que la API de libro no acepte un token sin usuario.** Es el riesgo número uno
+  y el único que tumba el diseño entero: la documentación de Microsoft dice que
+  esas llamadas no admiten permisos de aplicación. Lo resuelve la fase 0, y si
+  sale que no, las salidas están en el apartado 6 del documento de permisos —
+  ninguna gratis.
 - **Que alguien regenere el fichero con un script.** Es el único fallo
   irreversible de esta lista: se pierden fórmulas y formatos y nadie sabe cuáles.
   Por eso la regla del apartado 6 va la primera y en negrita.

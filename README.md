@@ -346,6 +346,9 @@ npm run informe:ia
   cómo mantener el inventario de revisiones y el stock al día en los dos sentidos:
   identidad de fila, fusión a tres bandas, y cómo escribir en el libro sin
   llevarse por delante sus fórmulas ni su formato.
+- **[Permisos de SharePoint, y qué pedirle a IT](docs/sincronizacion-sharepoint-permisos.md)** —
+  el acceso mínimo (`Sites.Selected` sobre un solo sitio), el correo redactado, lo
+  que no se pide, y la prueba que hay que hacer antes de pedir nada.
 
 ## Antes de producción
 
