@@ -1,0 +1,377 @@
+/**
+ * Cruzar una fila de Excel con la sala que le corresponde en el maestro de hoy.
+ *
+ * Esto es la fase 1 de la sincronización: antes de escribir nada, hace falta
+ * saber cuántas filas de los dos libros encuentran su sala y cuántas no. Si el
+ * cruce fallara, todo lo demás sobra.
+ *
+ * El problema no es la comparación de cadenas, es que **el maestro ya no es el
+ * Excel del que salió**. Desde la importación se han renombrado edificios y
+ * salas, se han fusionado duplicados y algunas cosas se han archivado en la
+ * papelera. Un cruce que compare contra los nombres de hoy pierde justo las
+ * filas que alguien tocó, que son las interesantes. Por eso resuelve contra
+ * cuatro cosas a la vez:
+ *
+ *  1. La **matrícula** (`SALA-000087`), si el libro ya la lleva. Es la única que
+ *     no cambia nunca — ni al renombrar, ni al mover de planta, ni al fusionar.
+ *  2. Los **alias**, que es donde han ido quedando las referencias viejas:
+ *     `rename_building` y `rename_room` insertan en `room_aliases` la clave
+ *     anterior (`1.7 H`) precisamente para que esto siga cruzando.
+ *  3. El **maestro actual**, edificio + código de sala.
+ *  4. El **histórico de la auditoría** para los edificios que ya no existen.
+ *     `merge_building` mueve las zonas y borra el edificio de origen **sin
+ *     dejar ningún alias**: es el único cambio de nomenclatura que no se
+ *     autodocumenta, y sin `audit_log` una fila que diga `EDIFICIO CRAI` se
+ *     quedaría sin explicación. Con él, al menos se sabe por qué no cruza.
+ *
+ * Nada de esto escribe. Devuelve por qué cada fila cruza o no cruza, que es lo
+ * que hay que mirar antes de decidir si la sincronización es viable.
+ */
+
+import { cleanRoomRef, norm, splitIncidentKey, stripParenthetical, BUILDING_TYPOS } from './normalize'
+
+// -----------------------------------------------------------------------------
+// Lo que hace falta saber del maestro
+// -----------------------------------------------------------------------------
+
+export interface SalaConocida {
+  id: string
+  /** `SALA-000087`. La única referencia estable. */
+  shortRef: string
+  /** El código de la puerta, tal cual: `0.1P`, `-1.3`, `Aula 6`. */
+  code: string
+  name: string
+  /** `false` = archivada en la papelera. Cruza igual, pero se avisa. */
+  active: boolean
+  zona: string
+  edificioCodigo: string
+  edificioNombre: string
+  edificioActivo: boolean
+  /** Alias tal y como están en `room_aliases.alias_norm`, ya normalizados. */
+  alias: string[]
+}
+
+/**
+ * Un edificio que existió y hoy no está: renombrado con otro código, borrado o
+ * absorbido por una fusión. Sale de `audit_log`, que sí guarda `buildings`.
+ */
+export interface EdificioDesaparecido {
+  codigo: string
+  nombre: string
+  /** `borrado` o `fusionado`: la auditoría no distingue, pero el motivo ayuda. */
+  motivo: string
+}
+
+export interface Catalogo {
+  salas: SalaConocida[]
+  edificiosDesaparecidos?: EdificioDesaparecido[]
+}
+
+// -----------------------------------------------------------------------------
+// Lo que se quiere cruzar
+// -----------------------------------------------------------------------------
+
+export type ReferenciaDeSala =
+  /** Hoja «Estado Aulas»: edificio y planta arrastrados, más el código de aula. */
+  | { tipo: 'estado'; edificio: string; zona?: string; aula: string }
+  /** Hoja «Aulas Identificadas»: el edificio viene por su código (`Edificio C`). */
+  | { tipo: 'revision'; edificio: string; nombreAula: string; codigoOficial?: string }
+  /** Partes de material: `0.1 BC`, `Sotano -1.5 BC`, `Aula 6 CD`. */
+  | { tipo: 'parte'; ref: string }
+  /** La columna `Ref` que la sincronización escribirá en el libro. */
+  | { tipo: 'matricula'; ref: string }
+
+export type ViaDeCruce =
+  | 'matricula'
+  | 'alias'
+  | 'edificio+codigo'
+  | 'edificio+nombre'
+  | 'codigo-unico-en-el-maestro'
+
+export type Resolucion =
+  | { estado: 'resuelta'; sala: SalaConocida; via: ViaDeCruce; aviso?: string }
+  | { estado: 'ambigua'; candidatas: SalaConocida[]; motivo: string }
+  | { estado: 'sin_cruce'; motivo: string }
+
+// -----------------------------------------------------------------------------
+// El índice
+// -----------------------------------------------------------------------------
+
+export interface Indice {
+  porMatricula: Map<string, SalaConocida>
+  porAlias: Map<string, SalaConocida>
+  /** `H|1.7` → sala. La clave que usó el importador. */
+  porEdificioYCodigo: Map<string, SalaConocida>
+  /** Código de sala normalizado → todas las salas que lo llevan, en cualquier edificio. */
+  porCodigoSuelto: Map<string, SalaConocida[]>
+  /** Nombre normalizado de edificio → código. Incluye erratas conocidas. */
+  edificioPorNombre: Map<string, string>
+  /** Código de edificio → sigue vivo. */
+  edificioVivo: Map<string, boolean>
+  desaparecidos: Map<string, EdificioDesaparecido>
+}
+
+/**
+ * Quita la letra del edificio pegada al código: en el EDIFICIO P las salas se
+ * llaman `0.1P` y los partes escriben `0.1 P`. El importador ya lo hace al
+ * generar alias; aquí hace falta otra vez para cruzar en el sentido contrario.
+ */
+function sinSufijoDeEdificio(codeNorm: string, edificioCodigo: string): string {
+  if (!edificioCodigo || !codeNorm.endsWith(edificioCodigo)) return ''
+  return codeNorm.slice(0, -edificioCodigo.length).trim()
+}
+
+/**
+ * Todas las formas en que un mismo código puede aparecer escrito.
+ *
+ * Las tres reglas **se componen**, y esa es la parte que importa: `AULA -2.1 -
+ * LAB. DE LA SALUD` necesita las tres seguidas —quitar la palabra `AULA`,
+ * quitar la descripción de después del guion y quedarse con `-2.1`— y
+ * aplicándolas por separado no sale ninguna que valga.
+ *
+ * El guion que separa la descripción lleva espacios a los lados: `AULA 0.7 -
+ * HISTOLOGÍA` se parte, y `-1.1` no, que es justo lo que hace falta para no
+ * destrozar los sótanos.
+ */
+export function formasDeEscribir(texto: string, edificioCodigo = ''): string[] {
+  const out = new Set<string>()
+
+  const añadir = (v: string): void => {
+    const n = norm(v)
+    if (!n) return
+    out.add(n)
+    const desnudo = sinSufijoDeEdificio(n, edificioCodigo)
+    if (desnudo) out.add(desnudo)
+  }
+
+  let base = norm(texto)
+  añadir(base)
+
+  // `AULA 1.2` del libro de revisión es la sala `1.2` del maestro.
+  base = base.replace(/^(AULA|SALA)\s+/, '')
+  añadir(base)
+
+  // `5.4 (Lab 3D)` en la hoja de estado es `5.4` en todas partes.
+  base = norm(stripParenthetical(base))
+  añadir(base)
+
+  // `0.7 - HISTOLOGÍA`: el nombre descriptivo va detrás del guion.
+  const guion = base.split(/\s+-\s+/)[0]
+  if (guion) añadir(guion)
+
+  out.delete('')
+  return [...out]
+}
+
+function variantesDeCodigo(sala: SalaConocida): string[] {
+  return formasDeEscribir(sala.code, sala.edificioCodigo)
+}
+
+export function construirIndice(catalogo: Catalogo): Indice {
+  const ix: Indice = {
+    porMatricula: new Map(),
+    porAlias: new Map(),
+    porEdificioYCodigo: new Map(),
+    porCodigoSuelto: new Map(),
+    edificioPorNombre: new Map(),
+    edificioVivo: new Map(),
+    desaparecidos: new Map(),
+  }
+
+  for (const sala of catalogo.salas) {
+    ix.porMatricula.set(norm(sala.shortRef), sala)
+    for (const a of sala.alias) ix.porAlias.set(norm(a), sala)
+
+    for (const v of variantesDeCodigo(sala)) {
+      const clave = `${sala.edificioCodigo}|${v}`
+      // El primero gana: dos salas con el mismo código en el mismo edificio ya
+      // son un problema del maestro, no del cruce, y el importador las manda a
+      // cuarentena. Aquí basta con no perder la primera.
+      if (!ix.porEdificioYCodigo.has(clave)) ix.porEdificioYCodigo.set(clave, sala)
+
+      const lista = ix.porCodigoSuelto.get(v)
+      if (lista) lista.push(sala)
+      else ix.porCodigoSuelto.set(v, [sala])
+    }
+
+    ix.edificioPorNombre.set(norm(sala.edificioNombre), sala.edificioCodigo)
+    ix.edificioPorNombre.set(norm(sala.edificioCodigo), sala.edificioCodigo)
+    // «Edificio C» del libro de revisión contra «EDIFICIO CENTRAL» del maestro.
+    ix.edificioPorNombre.set(norm(`EDIFICIO ${sala.edificioCodigo}`), sala.edificioCodigo)
+    ix.edificioVivo.set(sala.edificioCodigo, sala.edificioActivo)
+  }
+
+  // Las erratas conocidas del Excel apuntan al nombre bueno, no a un edificio
+  // nuevo. `EDIFICO E` es `EDIFICIO E` y siempre lo fue.
+  for (const [errata, bueno] of Object.entries(BUILDING_TYPOS)) {
+    const codigo = ix.edificioPorNombre.get(norm(bueno))
+    if (codigo) ix.edificioPorNombre.set(norm(errata), codigo)
+  }
+
+  for (const e of catalogo.edificiosDesaparecidos ?? []) {
+    ix.desaparecidos.set(norm(e.nombre), e)
+    ix.desaparecidos.set(norm(e.codigo), e)
+    ix.desaparecidos.set(norm(`EDIFICIO ${e.codigo}`), e)
+  }
+
+  return ix
+}
+
+// -----------------------------------------------------------------------------
+// La resolución
+// -----------------------------------------------------------------------------
+
+function conAviso(sala: SalaConocida, via: ViaDeCruce, extra?: string): Resolucion {
+  const avisos: string[] = []
+  if (!sala.edificioActivo) avisos.push('el edificio está en la papelera')
+  if (!sala.active) avisos.push('la sala está archivada')
+  if (extra) avisos.unshift(extra)
+  return { estado: 'resuelta', sala, via, aviso: avisos.length ? avisos.join('; ') : undefined }
+}
+
+/**
+ * Busca una sala por su código en todo el maestro, sin edificio.
+ *
+ * Es el último recurso y solo vale si el código es único: `1.4` existe en medio
+ * campus, pero `0.1P` o `AULA -1.1` no. Se usa cuando el edificio de la fila ya
+ * no existe —lo típico tras una fusión—, que es justo el caso en que la fila
+ * es correcta y el maestro ha cambiado debajo.
+ */
+function porCodigoEnTodoElMaestro(ix: Indice, codigo: string, contexto: string): Resolucion {
+  let candidatas: SalaConocida[] = []
+  for (const forma of formasDeEscribir(codigo)) {
+    candidatas = ix.porCodigoSuelto.get(forma) ?? []
+    if (candidatas.length) break
+  }
+  if (candidatas.length === 1) {
+    return conAviso(candidatas[0]!, 'codigo-unico-en-el-maestro', contexto)
+  }
+  if (candidatas.length > 1) {
+    return {
+      estado: 'ambigua',
+      candidatas,
+      motivo: `${contexto}, y el código «${codigo}» existe en ${candidatas.length} edificios`,
+    }
+  }
+  return { estado: 'sin_cruce', motivo: `${contexto}, y no hay ninguna sala con el código «${codigo}»` }
+}
+
+/** Resuelve el edificio de una fila: nombre actual, errata, código o desaparecido. */
+function resolverEdificio(
+  ix: Indice,
+  bruto: string,
+): { codigo: string } | { desaparecido: EdificioDesaparecido } | null {
+  const n = norm(bruto)
+  if (!n) return null
+
+  const directo = ix.edificioPorNombre.get(n)
+  if (directo) return { codigo: directo }
+
+  const muerto = ix.desaparecidos.get(n)
+  if (muerto) return { desaparecido: muerto }
+
+  return null
+}
+
+export function resolverSala(ix: Indice, ref: ReferenciaDeSala): Resolucion {
+  // 1 — La matrícula. Si está, no hay nada más que mirar.
+  if (ref.tipo === 'matricula') {
+    const sala = ix.porMatricula.get(norm(ref.ref))
+    return sala
+      ? conAviso(sala, 'matricula')
+      : { estado: 'sin_cruce', motivo: `la matrícula «${ref.ref}» no existe en el maestro` }
+  }
+
+  // 2 — Un parte (`1.7 H`): alias primero, que es donde viven los renombrados.
+  if (ref.tipo === 'parte') {
+    const limpio = cleanRoomRef(ref.ref)
+    const porAlias = ix.porAlias.get(limpio)
+    if (porAlias) return conAviso(porAlias, 'alias')
+
+    const partes = splitIncidentKey(ref.ref)
+    if (!partes) {
+      return { estado: 'sin_cruce', motivo: `«${ref.ref}» no tiene la forma «sala EDIFICIO»` }
+    }
+    const sala = ix.porEdificioYCodigo.get(`${partes.buildingCode}|${norm(partes.roomCode)}`)
+    if (sala) return conAviso(sala, 'edificio+codigo')
+
+    if (!ix.edificioVivo.has(partes.buildingCode)) {
+      const muerto = ix.desaparecidos.get(norm(partes.buildingCode))
+      return porCodigoEnTodoElMaestro(
+        ix,
+        partes.roomCode,
+        muerto
+          ? `el edificio «${muerto.nombre}» ya no existe (${muerto.motivo})`
+          : `el código de edificio «${partes.buildingCode}» no está en el maestro`,
+      )
+    }
+    return {
+      estado: 'sin_cruce',
+      motivo: `el edificio «${partes.buildingCode}» existe, pero no tiene ninguna sala «${partes.roomCode}»`,
+    }
+  }
+
+  // 3 — Las dos hojas de aulas. Cambian en cómo nombran al edificio y a la sala,
+  //     pero el camino es el mismo: edificio, y dentro del edificio, código.
+  const bruto = ref.tipo === 'estado' ? ref.edificio : ref.edificio
+  const aula = ref.tipo === 'estado' ? ref.aula : ref.nombreAula
+  const via: ViaDeCruce = ref.tipo === 'estado' ? 'edificio+codigo' : 'edificio+nombre'
+
+  const edificio = resolverEdificio(ix, bruto)
+
+  if (edificio && 'desaparecido' in edificio) {
+    return porCodigoEnTodoElMaestro(
+      ix,
+      formasDeEscribir(aula).at(-1) ?? aula,
+      `el edificio «${edificio.desaparecido.nombre}» ya no existe (${edificio.desaparecido.motivo})`,
+    )
+  }
+
+  if (!edificio) {
+    return {
+      estado: 'sin_cruce',
+      motivo: `el edificio «${bruto}» no está en el maestro ni consta que lo haya estado`,
+    }
+  }
+
+  // Dentro del edificio, todas las formas de escribir el mismo código.
+  for (const c of formasDeEscribir(aula, edificio.codigo)) {
+    const sala = ix.porEdificioYCodigo.get(`${edificio.codigo}|${c}`)
+    if (sala) return conAviso(sala, via)
+  }
+
+  // Antes de rendirse: un alias puede llevar la referencia vieja de esta sala.
+  const porAlias = ix.porAlias.get(norm(`${aula} ${edificio.codigo}`))
+  if (porAlias) return conAviso(porAlias, 'alias')
+
+  return {
+    estado: 'sin_cruce',
+    motivo: `el edificio «${bruto}» existe (${edificio.codigo}), pero no tiene ninguna sala «${aula}»`,
+  }
+}
+
+// -----------------------------------------------------------------------------
+// El recuento, que es lo que se mira
+// -----------------------------------------------------------------------------
+
+export interface Recuento {
+  total: number
+  resueltas: number
+  porVia: Record<string, number>
+  conAviso: number
+  ambiguas: number
+  sinCruce: number
+}
+
+export function contar(resoluciones: Resolucion[]): Recuento {
+  const r: Recuento = { total: resoluciones.length, resueltas: 0, porVia: {}, conAviso: 0, ambiguas: 0, sinCruce: 0 }
+  for (const res of resoluciones) {
+    if (res.estado === 'resuelta') {
+      r.resueltas++
+      r.porVia[res.via] = (r.porVia[res.via] ?? 0) + 1
+      if (res.aviso) r.conAviso++
+    } else if (res.estado === 'ambigua') r.ambiguas++
+    else r.sinCruce++
+  }
+  return r
+}

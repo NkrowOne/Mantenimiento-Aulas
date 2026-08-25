@@ -106,6 +106,42 @@ Dos hallazgos que condicionan el diseño:
   y los números de serie discrepantes son material de cuarentena, no de
   sobreescritura automática.
 
+### El cruce contra el maestro, medido
+
+Fase 1, ya hecha: `npm run cruce:excel -- <material.xlsx> [<revision.xlsx>] [--seed]`
+lee los dos libros, los cruza contra el maestro y **no escribe nada**. Contra el
+maestro de una instalación recién cargada, hoy:
+
+| Hoja | Cruzan | Cómo |
+|---|---|---|
+| Estado Aulas y Salas de reunion | **276 de 276 (100%)** | edificio + código |
+| Material Instalado 2025 | 124 de 186 (67%) | 118 por alias, 6 por código único |
+| Material Instalado 2026 | 52 de 97 (54%) | 48 por alias, 4 por código único |
+| Aulas Identificadas (revisión) | 129 de 194 (66%) | edificio + nombre |
+| Aulas No Identificadas (revisión) | 7 de 35 (20%) | edificio + nombre |
+
+**El 100% de la hoja de estado es el dato que decide**: es la hoja que gobierna
+el inventario, y cruza entera. Lo demás no falla por el cruce, falla porque el
+maestro no tiene esos edificios:
+
+| Código que aparece | Filas | |
+|---|---|---|
+| `BC` | 30 | ya conocido: está en `UNKNOWN_BUILDING_CODES` desde la importación |
+| `S` | 30 | no existe en el maestro |
+| `G` | 17 | no existe |
+| `TM` | 15 | no existe |
+| `CSCA`, `CC`, `K`, `CEFF`, «Artes y Diseño 1 y 2» | 13 | no existen |
+
+Son 106 filas que **ninguna mejora del resolutor puede rescatar**: hasta que
+esos edificios se den de alta, no hay sala a la que apuntar. El resto de las que
+no cruzan son referencias sin código de sala —`Lab Docente 5`, `Modulo 5
+buhardilla`, `Aula 1, 2, 7 MSI`— y aulas del libro de revisión que el maestro no
+tiene todavía.
+
+Y 47 filas quedan **ambiguas**: el edificio no existe y el código —`1.1`, `0.2`—
+se repite en hasta ocho edificios. El cruce no elige por su cuenta; eso es
+cuarentena.
+
 ---
 
 ## 3. Lo primero para que sea bidireccional: que cada fila tenga nombre
@@ -531,7 +567,7 @@ pasada.
 | Fase | Qué se entrega | Se puede probar sin IT |
 |---|---|---|
 | **0** | **Prueba de concepto: ¿acepta la API de libro un token app-only?** Cinco llamadas contra un sitio desechable. Decide si se puede automatizar el transporte — **no** bloquea las fases 1 a 3, que valen igual con la vía manual | ❌ necesita un registro y un sitio de pruebas |
-| 1 | Lector de los dos libros + cruce con salas por alias, en seco: dice qué entraría, qué chocaría y qué no sabe cruzar. No escribe nada | ✅ con los ficheros de hoy |
+| 1 | **Hecho.** Lector de los dos libros + cruce contra el maestro, en seco: `npm run cruce:excel`. Resuelve por matrícula, alias, edificio+código y auditoría de edificios desaparecidos; cuenta y explica cada fila que no cruza. No escribe nada | ✅ con los ficheros de hoy |
 | 2 | Migración del apartado 10 + tablas de paso + instantánea + fusión a tres bandas + cuarentena | ✅ |
 | 3 | Columna `Ref` y conversión de las hojas en tablas de Excel: la preparación del libro, una sola vez | ✅ sobre una copia |
 | **3b** | **La vía manual completa**: pantalla de subida, previsualización de lo que entraría, y descarga del libro parcheado. Con esto ya se sincroniza, a mano y sin depender de nadie | ✅ |
