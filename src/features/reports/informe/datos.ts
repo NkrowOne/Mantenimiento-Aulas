@@ -195,6 +195,37 @@ export interface FilaSala {
   building_name: string
   last_inspection_at: string | null
   open_incidents: number | null
+  /**
+   * La sala ya no está en la lista de trabajo: archivada ella, o archivado su
+   * edificio. No sale de `room_overview` —esa vista es la lista de trabajo— y
+   * por eso llega por su propio camino.
+   */
+  archivada?: boolean
+}
+
+/**
+ * Lo que devuelve PostgREST para una relación de uno.
+ *
+ * En la respuesta viene un objeto —`zones` de una sala es UNA planta— pero el
+ * cliente, sin esquema generado, lo tipa como lista. Se acepta cualquiera de
+ * las dos formas y se normaliza con `uno()`: mentirle al compilador para que
+ * calle es lo que convierte un cambio de versión en un `undefined` a las tres
+ * de la tarde.
+ */
+type Embebido<T> = T | T[] | null | undefined
+
+const uno = <T,>(v: Embebido<T>): T | undefined => (Array.isArray(v) ? v[0] : (v ?? undefined))
+
+/** La sala tal y como está en la tabla, con su planta y su edificio. */
+interface FilaSalaCruda {
+  id: string
+  code: string
+  name: string | null
+  active: boolean
+  zones: Embebido<{
+    name: string | null
+    buildings: Embebido<{ code: string; name: string; active: boolean }>
+  }>
 }
 
 /** Todo lo que pasó dentro de un periodo, sin agregar. */
@@ -446,6 +477,61 @@ export function contadores(f: FilasDelPeriodo): Contadores {
   }
 }
 
+/**
+ * Las salas que el periodo menciona y la lista de trabajo ya no tiene.
+ *
+ * `room_overview` es **la lista de trabajo**: filtra por `r.active and b.active`
+ * a propósito, para que archivar un aula o un edificio los quite de la pantalla
+ * de revisar y de los 23 iPads. Pero el informe no es una lista de trabajo, es
+ * un registro de lo que pasó, y la regla que se escribió al crear la papelera
+ * dice exactamente eso: «archivar limpia la lista de trabajo; el pasado se
+ * sigue leyendo entero».
+ *
+ * Sin esto, el informe la incumplía en silencio. Cada revisión, cada incidencia
+ * y cada cierre de un aula archivada —o de un aula viva de un edificio
+ * archivado, que es el caso del edificio entero que se manda a la papelera— se
+ * caía por un `if (sala)` y desaparecía del reparto por edificios, del diario y
+ * de la lista de cierres. Los totales de arriba sí las contaban, así que el
+ * informe se contradecía a sí mismo: «43 revisiones» arriba y 38 repartidas
+ * entre los edificios, sin una palabra que explicara las cinco que faltaban.
+ *
+ * Solo se piden las que faltan, y solo si falta alguna: el caso normal —ninguna
+ * archivada en el periodo— no paga ni una consulta. Se leen de las tablas y no
+ * de una vista nueva porque las tablas ya las lee todo el personal y esto tiene
+ * que funcionar hoy, sin esperar a que el despliegue aplique una migración.
+ */
+async function salasFueraDeLaLista(faltan: string[]): Promise<FilaSala[]> {
+  if (faltan.length === 0) return []
+
+  const salas: FilaSala[] = []
+  // De cien en cien: los identificadores viajan en la URL y una lista larga se
+  // topa con el límite del servidor, que además contesta con un error opaco.
+  for (let i = 0; i < faltan.length; i += 100) {
+    const trozo = faltan.slice(i, i + 100)
+    const filas = await pide<FilaSalaCruda>('las salas archivadas', (señal) =>
+      supabase
+        .from('rooms')
+        .select('id,code,name,active,zones(name,buildings(code,name,active))')
+        .in('id', trozo)
+        .abortSignal(señal),
+    )
+    for (const r of filas) {
+      const edificio = uno(uno(r.zones)?.buildings)
+      salas.push({
+        room_id: r.id,
+        room_code: r.code,
+        room_name: r.name ?? '',
+        building_code: edificio?.code ?? '—',
+        building_name: edificio?.name ?? 'Sin edificio',
+        last_inspection_at: null,
+        open_incidents: 0,
+        archivada: true,
+      })
+    }
+  }
+  return salas
+}
+
 // ── La foto de hoy ───────────────────────────────────────────────────────────
 
 async function situacion(salas: FilaSala[]): Promise<Situacion> {
@@ -557,6 +643,22 @@ export async function cargarDatos(
   const antes = contadores(antesFilas)
   const deSala = new Map(salas.map((s) => [s.room_id, s]))
 
+  /*
+   * Y las que el periodo menciona pero la lista de trabajo ya no tiene. Van al
+   * mismo mapa: a partir de aquí, ninguna pieza del informe tiene que saber si
+   * un aula sigue en servicio para poder contar lo que pasó en ella.
+   */
+  const mencionadas = new Set<string>()
+  for (const filas of [ahoraFilas, antesFilas]) {
+    for (const r of filas.revisiones) if (r.room_id) mencionadas.add(r.room_id)
+    for (const i of filas.abiertas) if (i.room_id) mencionadas.add(i.room_id)
+    for (const i of filas.cerradas) if (i.room_id) mencionadas.add(i.room_id)
+    for (const m of filas.movimientos) if (m.room_id) mencionadas.add(m.room_id)
+    for (const v of filas.inventarios) if (v.room_id) mencionadas.add(v.room_id)
+  }
+  const archivadas = await salasFueraDeLaLista([...mencionadas].filter((id) => !deSala.has(id)))
+  for (const s of archivadas) deSala.set(s.room_id, s)
+
   avisar('la situación de hoy y las alertas')
   const [sit, porMes, reincidentes, lamparas, olvidadas, estancadas, articulos] = await Promise.all([
     situacion(salas),
@@ -599,18 +701,13 @@ export async function cargarDatos(
   let fotos: ReportData['fotos'] = []
   let fotosTotal = 0
   if (conFotos) {
-    avisar('las fotos de las incidencias')
-    const deIncidencia = new Map(
-      [...ahoraFilas.abiertas, ...ahoraFilas.cerradas].map((i) => [
-        i.id,
-        {
-          titulo: i.title ?? '(sin describir)',
-          ref: i.external_ref,
-          sala: i.room_id ? deSala.get(i.room_id) : undefined,
-        },
-      ]),
+    avisar('las fotos de las revisiones y las incidencias')
+    const recogidas = await fotosDelPeriodo(
+      ahoraFilas.abiertas,
+      ahoraFilas.cerradas,
+      visitas,
+      deSala,
     )
-    const recogidas = await fotosDelPeriodo([...deIncidencia.keys()], deIncidencia)
     fotos = recogidas.fotos
     fotosTotal = recogidas.total
   }
@@ -654,6 +751,7 @@ export async function cargarDatos(
       ahoraFilas.inventarios.length +
       ahoraFilas.equipos.length,
     sinSala: ahoraFilas.abiertas.filter((i) => i.room_id === null).length,
+    salasArchivadas: archivadas.length,
   }
 }
 
@@ -713,18 +811,35 @@ export function porEdificio(
     revisadas: number
     abiertas: number
     pendientes: number
+    archivado: boolean
   }
   const por = new Map<string, Acumulado>()
+  /*
+   * `archivado` nace en `true` y lo desmiente la lista de trabajo: si el
+   * edificio aporta una sola sala en servicio, es que está en servicio. Al
+   * revés no funcionaría — un edificio archivado no aparece por ninguna parte
+   * hasta que una revisión suya lo trae, y para entonces ya no hay quien
+   * distinga si estaba o no en la lista.
+   */
   const entrada = (code: string, name: string): Acumulado => {
     const previo = por.get(code)
     if (previo) return previo
-    const nueva: Acumulado = { code, name, salas: 0, revisadas: 0, abiertas: 0, pendientes: 0 }
+    const nueva: Acumulado = {
+      code,
+      name,
+      salas: 0,
+      revisadas: 0,
+      abiertas: 0,
+      pendientes: 0,
+      archivado: true,
+    }
     por.set(code, nueva)
     return nueva
   }
 
   for (const s of salas) {
     const e = entrada(s.building_code, s.building_name)
+    e.archivado = false
     e.salas += 1
     // «Pendientes hoy» es la cola viva del edificio, y `open_incidents` de
     // `room_overview` ya la cuenta con el mismo criterio que la pestaña: sin
@@ -1027,31 +1142,147 @@ export function cierresDelPeriodo(
  * caduca en un minuto. Un documento con huecos donde había pruebas no sirve
  * como registro de nada.
  *
- * Solo las de incidencias del periodo. Las de revisión y las de equipo se
- * quedan fuera a propósito: son cientos, no cabrían, y la pregunta que se le
- * hace a un informe es «qué ha pasado», no «enséñame el parque».
+ * **De dónde sale cada momento.** No hace falta adivinarlo, lo dice la propia
+ * aplicación: una foto colgada de una REVISIÓN se hizo mientras se revisaba el
+ * aula —es la que enseña el problema recién encontrado— y una colgada de una
+ * INCIDENCIA solo puede venir de la hoja de resolver, que es el único sitio
+ * desde el que se le añade una. Si esa incidencia ya está resuelta, la foto es
+ * el «después»; si sigue abierta, es una prueba de cómo está mientras espera.
+ *
+ * Y por eso van emparejadas: la incidencia guarda de qué revisión salió
+ * (`opened_from_inspection_id`), así que las fotos de aquella revisión y las
+ * del cierre son el antes y el después de lo mismo, y salen juntas.
+ *
+ * El orden no es cronológico a secas, y es deliberado: primero cada incidencia
+ * con lo suyo —lo que justifica—, y después las revisiones que no abrieron
+ * ninguna. Con el tope por medio, un orden por hora dejaría fuera justo los
+ * cierres, que son los que cierran el argumento.
  */
-async function fotosDelPeriodo(
-  incidencias: string[],
-  porIncidencia: Map<string, { titulo: string; ref: string | null; sala: FilaSala | undefined }>,
-): Promise<{ fotos: ReportData['fotos']; total: number }> {
-  if (incidencias.length === 0) return { fotos: [], total: 0 }
+type Momento = 'revision' | 'apertura' | 'cierre'
 
-  const adjuntos = await pide<FilaAdjunto>('las fotos de las incidencias', (señal) =>
-    supabase
-      .from('attachments')
-      .select('id,entity_id,storage_path,taken_at')
-      .eq('entity_type', 'incident')
-      .in('entity_id', incidencias)
-      .order('taken_at', { ascending: true })
-      .limit(TOPE_FOTOS * 4)
-      .abortSignal(señal),
+interface Candidata {
+  adjunto: FilaAdjunto
+  grupo: number
+  orden: number
+  momento: Momento
+  titulo: string
+  ref: string | null
+  sala: FilaSala | undefined
+}
+
+async function fotosDelPeriodo(
+  aperturas: FilaApertura[],
+  cierres: FilaCierre[],
+  visitas: FilaRevision[],
+  deSala: Map<string, FilaSala>,
+): Promise<{ fotos: ReportData['fotos']; total: number }> {
+  /*
+   * Una incidencia puede estar en las dos listas —abierta y cerrada dentro del
+   * mismo periodo— y entonces manda la cerrada: es la que sabe que ya se
+   * resolvió, y de eso depende si su foto es un «mientras espera» o un
+   * «después».
+   */
+  interface Ficha {
+    titulo: string
+    ref: string | null
+    sala: FilaSala | undefined
+    resuelta: boolean
+    inspeccion: string | null
+    cuando: string
+  }
+  const incidencias = new Map<string, Ficha>()
+  for (const i of aperturas) {
+    incidencias.set(i.id, {
+      titulo: i.title ?? '(sin describir)',
+      ref: i.external_ref,
+      sala: i.room_id ? deSala.get(i.room_id) : undefined,
+      resuelta: i.state === 'resuelta',
+      inspeccion: i.opened_from_inspection_id,
+      cuando: i.opened_at,
+    })
+  }
+  for (const i of cierres) {
+    const previa = incidencias.get(i.id)
+    incidencias.set(i.id, {
+      titulo: i.title ?? previa?.titulo ?? '(sin describir)',
+      ref: i.external_ref ?? previa?.ref ?? null,
+      sala: i.room_id ? deSala.get(i.room_id) : previa?.sala,
+      resuelta: true,
+      inspeccion: previa?.inspeccion ?? null,
+      cuando: previa?.cuando ?? i.opened_at,
+    })
+  }
+
+  const revisiones = new Map<string, FilaRevision>()
+  for (const v of visitas) revisiones.set(v.id, v)
+
+  if (incidencias.size === 0 && revisiones.size === 0) return { fotos: [], total: 0 }
+
+  const [deIncidencias, deRevisiones] = await Promise.all([
+    adjuntosDe('incident', [...incidencias.keys()]),
+    adjuntosDe('inspection', [...revisiones.keys()]),
+  ])
+
+  // El grupo ordena; el número sale del orden de apertura para que el documento
+  // recorra las incidencias como pasaron.
+  const grupoDe = new Map<string, number>()
+  ;[...incidencias.entries()]
+    .sort((a, b) => a[1].cuando.localeCompare(b[1].cuando))
+    .forEach(([id], i) => grupoDe.set(id, i))
+
+  // De qué incidencia es cada revisión, si abrió alguna. Es lo que empareja el
+  // antes con el después.
+  const incidenciaDeRevision = new Map<string, string>()
+  for (const [id, ficha] of incidencias) {
+    if (ficha.inspeccion) incidenciaDeRevision.set(ficha.inspeccion, id)
+  }
+
+  const candidatas: Candidata[] = []
+
+  for (const a of deIncidencias) {
+    const ficha = incidencias.get(a.entity_id)
+    if (!ficha) continue
+    candidatas.push({
+      adjunto: a,
+      grupo: grupoDe.get(a.entity_id) ?? 0,
+      orden: ficha.resuelta ? 2 : 1,
+      momento: ficha.resuelta ? 'cierre' : 'apertura',
+      titulo: ficha.titulo,
+      ref: ficha.ref,
+      sala: ficha.sala,
+    })
+  }
+
+  const SUELTAS = incidencias.size
+  for (const a of deRevisiones) {
+    const visita = revisiones.get(a.entity_id)
+    if (!visita) continue
+    const deIncidencia = incidenciaDeRevision.get(a.entity_id)
+    const ficha = deIncidencia ? incidencias.get(deIncidencia) : undefined
+    candidatas.push({
+      adjunto: a,
+      // Sin incidencia detrás, la foto de revisión va después de todas las
+      // incidencias: cuenta cómo se encontró el aula, no qué se arregló.
+      grupo: ficha && deIncidencia ? (grupoDe.get(deIncidencia) ?? 0) : SUELTAS,
+      orden: 0,
+      momento: 'revision',
+      titulo: ficha?.titulo ?? 'Revisión del aula',
+      ref: ficha?.ref ?? null,
+      sala: ficha?.sala ?? (visita.room_id ? deSala.get(visita.room_id) : undefined),
+    })
+  }
+
+  candidatas.sort(
+    (a, b) =>
+      a.grupo - b.grupo ||
+      a.orden - b.orden ||
+      a.adjunto.taken_at.localeCompare(b.adjunto.taken_at),
   )
 
   const fotos: ReportData['fotos'] = []
   let bytes = 0
 
-  for (const a of adjuntos) {
+  for (const c of candidatas) {
     if (fotos.length >= TOPE_FOTOS || bytes > TOPE_BYTES_FOTOS) break
     /*
      * Una foto que no baja no tumba el informe. Puede faltar del bucket, puede
@@ -1060,7 +1291,7 @@ async function fotosDelPeriodo(
      */
     let blob: Blob
     try {
-      const { data, error } = await supabase.storage.from('fotos').download(a.storage_path)
+      const { data, error } = await supabase.storage.from('fotos').download(c.adjunto.storage_path)
       if (error || !data) continue
       blob = data
     } catch {
@@ -1070,19 +1301,36 @@ async function fotosDelPeriodo(
     const dato = await comoDataUrl(await paraElDocumento(blob))
     if (!dato) continue
     bytes += dato.length
-    const de = porIncidencia.get(a.entity_id)
     fotos.push({
-      dia: diaEnMadrid(new Date(a.taken_at)),
-      hora: horaCorta(a.taken_at),
-      building: de?.sala?.building_code ?? '—',
-      room: de?.sala?.room_code ?? '',
-      titulo: de?.titulo ?? 'Incidencia',
-      ref: de?.ref ?? null,
+      dia: diaEnMadrid(new Date(c.adjunto.taken_at)),
+      hora: horaCorta(c.adjunto.taken_at),
+      building: c.sala?.building_code ?? '—',
+      room: c.sala?.room_code ?? '',
+      titulo: c.titulo,
+      ref: c.ref,
+      momento: c.momento,
       datos: dato,
     })
   }
 
-  return { fotos, total: adjuntos.length }
+  return { fotos, total: candidatas.length }
+}
+
+/** Los adjuntos de un puñado de filas, sin pedirlos todos de una vez. */
+async function adjuntosDe(tipo: 'incident' | 'inspection', ids: string[]): Promise<FilaAdjunto[]> {
+  if (ids.length === 0) return []
+  return pide<FilaAdjunto>(
+    tipo === 'incident' ? 'las fotos de las incidencias' : 'las fotos de las revisiones',
+    (señal) =>
+      supabase
+        .from('attachments')
+        .select('id,entity_id,storage_path,taken_at')
+        .eq('entity_type', tipo)
+        .in('entity_id', ids)
+        .order('taken_at', { ascending: true })
+        .limit(TOPE_FOTOS * 4)
+        .abortSignal(señal),
+  )
 }
 
 /**

@@ -93,7 +93,7 @@ export const SECCIONES: SeccionInfo[] = [
   {
     clave: 'fotos',
     etiqueta: 'Fotos del periodo',
-    detalle: 'Las que se hicieron en las incidencias, dentro del propio documento. Engorda el informe',
+    detalle: 'Las de las revisiones y las de las incidencias, dentro del propio documento y diciendo de cuándo es cada una: cómo se encontró y cómo quedó',
   },
   {
     clave: 'recomendaciones',

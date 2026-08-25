@@ -198,6 +198,33 @@ describe('el reparto por edificio', () => {
     expect(filas.find((b) => b.code === 'CRAI')).toMatchObject({ salas: 1, pendientes: 0 })
   })
 
+  /*
+   * El caso del edificio que se reorganiza: se manda a la papelera y sus aulas
+   * dejan de salir en `room_overview`. Lo que pasó en él durante el periodo no
+   * puede evaporarse — los totales de arriba lo siguen contando, así que el
+   * informe se contradiría a sí mismo.
+   */
+  it('cuenta el trabajo de un edificio archivado, y lo marca', () => {
+    const archivada: FilaSala = { ...sala('t1', 'TM', 0), archivada: true }
+    const conArchivada = new Map(deSala)
+    conArchivada.set(archivada.room_id, archivada)
+
+    const filas = porEdificio(
+      salas, // la lista de trabajo NO la trae: está archivada
+      [revision({ id: 'a', room_id: 't1' })],
+      [apertura({ id: '1', room_id: 't1' })],
+      conArchivada,
+    )
+
+    const tm = filas.find((b) => b.code === 'TM')
+    expect(tm).toMatchObject({ salas: 0, revisadas: 1, abiertas: 1, archivado: true })
+  })
+
+  it('un edificio en servicio no se marca como archivado', () => {
+    const filas = porEdificio(salas, [], [], deSala)
+    expect(filas.every((b) => !b.archivado)).toBe(true)
+  })
+
   it('las salas revisadas son distintas, no visitas', () => {
     const visitas = [
       revision({ id: 'a', room_id: 'h1' }),

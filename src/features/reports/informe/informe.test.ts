@@ -64,8 +64,11 @@ function expedienteDePrueba(): ReportData {
       { dia: '2026-07-31', revisiones: 2, abiertas: 1, resueltas: 1 },
     ],
     porEdificio: [
-      { code: 'H', name: 'EDIFICIO H', salas: 39, revisadas: 9, abiertas: 6, pendientes: 11 },
-      { code: 'CRAI', name: 'CRAI', salas: 12, revisadas: 4, abiertas: 3, pendientes: 4 },
+      { code: 'H', name: 'EDIFICIO H', salas: 39, revisadas: 9, abiertas: 6, pendientes: 11, archivado: false },
+      { code: 'CRAI', name: 'CRAI', salas: 12, revisadas: 4, abiertas: 3, pendientes: 4, archivado: false },
+      // Un edificio que ya no está en la lista de trabajo y en el que, aun así,
+      // se trabajó durante el periodo: sin salas en servicio y con revisiones.
+      { code: 'TM', name: 'TOMÁS MORO', salas: 0, revisadas: 5, abiertas: 2, pendientes: 1, archivado: true },
     ],
     porTipo: [
       { tipo: 'incidencia', total: 7 },
@@ -126,6 +129,18 @@ function expedienteDePrueba(): ReportData {
     ],
     cierresTotal: 9,
     fotos: [
+      // El antes y el después de la misma incidencia, y una revisión que no
+      // abrió ninguna: los tres momentos que el documento tiene que distinguir.
+      {
+        dia: '2026-07-27',
+        hora: '09:12',
+        building: 'H',
+        room: 'H-102',
+        titulo: 'Proyector sin señal en el aula 102',
+        ref: 'INC-4412',
+        momento: 'revision',
+        datos: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAoMBgDTD2qgAAAAASUVORK5CYII=',
+      },
       {
         dia: '2026-07-27',
         hora: '09:41',
@@ -133,10 +148,21 @@ function expedienteDePrueba(): ReportData {
         room: 'H-102',
         titulo: 'Proyector sin señal en el aula 102',
         ref: 'INC-4412',
+        momento: 'cierre',
+        datos: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAoMBgDTD2qgAAAAASUVORK5CYII=',
+      },
+      {
+        dia: '2026-07-28',
+        hora: '11:05',
+        building: 'CRAI',
+        room: 'CRAI-01',
+        titulo: 'Persiana atascada',
+        ref: null,
+        momento: 'apertura',
         datos: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAoMBgDTD2qgAAAAASUVORK5CYII=',
       },
     ],
-    fotosTotal: 3,
+    fotosTotal: 5,
     reincidentes: [{ building: 'H', room: 'H-102', item: 'Cable HDMI 3 m', veces: 4 }],
     olvidadas: [{ building: 'CRAI', room: 'CRAI-01', dias: 240 }],
     equipo: [{ nombre: 'Ana Pérez', revisiones: 11, registros: 6 }],
@@ -171,6 +197,7 @@ function expedienteDePrueba(): ReportData {
     ],
     eventosTotal: 27,
     sinSala: 2,
+    salasArchivadas: 3,
   }
 }
 
@@ -464,6 +491,56 @@ describe('las secciones que se pueden quitar y las que se pueden añadir', () =>
     expect(html).toContain('Proyector sin señal en el aula 102')
     // Y lo que no cabe se cuenta, en vez de recortar en silencio.
     expect(html).toMatch(/2 fotos más del periodo/)
+  })
+
+  /*
+   * La misma imagen vale para «así estaba» y para «así lo dejamos». Sin decir
+   * de cuándo es, una foto en un informe no demuestra nada — y son justo estas
+   * tres palabras las que convierten dos fotos del mismo proyector en la prueba
+   * de un trabajo hecho.
+   */
+  it('cada foto dice de qué momento es', () => {
+    const html = con(['fotos'])
+    expect(html).toContain('En la revisión')
+    expect(html).toContain('Al resolverla')
+    expect(html).toContain('Incidencia abierta')
+  })
+
+  it('la sección dice cuántas hay de cada momento', () => {
+    const html = con(['fotos'])
+    expect(html).toContain('1 de revisiones')
+    expect(html).toContain('1 de incidencias abiertas')
+    expect(html).toContain('1 de incidencias resueltas')
+  })
+
+  it('no nombra un momento del que no hay ninguna foto', () => {
+    const soloRevision = renderReport(
+      { ...d, fotos: d.fotos.filter((f) => f.momento === 'revision'), fotosTotal: 1 },
+      lectura,
+      leerOpciones({ secciones: ['fotos'] }),
+      { emitido: '31/07/2026, 9:14' },
+    )
+    expect(soloRevision).toContain('1 de revisiones')
+    expect(soloRevision).not.toContain('de incidencias resueltas')
+  })
+
+  /*
+   * El edificio que se manda a la papelera al reorganizar el campus. Su trabajo
+   * del periodo tiene que seguir contándose y verse marcado: un edificio
+   * archivado con cinco revisiones no es un edificio sin revisar, y borrarlo de
+   * la tabla dejaba el total de arriba sin cuadrar con la suma de las filas.
+   */
+  it('un edificio archivado sale en la cobertura, marcado y sin inventarse salas', () => {
+    const html = con(['edificios'])
+    // Con su marca, y con un guion donde iría el número de salas: un cero ahí
+    // se leería como «este edificio no tiene aulas».
+    expect(html).toContain('<span class="tenue">· archivado</span></td><td class="num">—</td>')
+    expect(html).toContain('1 edificio archivado')
+  })
+
+  it('el colofón dice que hubo salas fuera de la lista de trabajo', () => {
+    const html = con(['edificios'])
+    expect(html).toContain('3 salas del periodo ya no están en la lista de trabajo')
   })
 
   it('sin fotos no se imprime la sección: «no hay fotos» no informa', () => {
