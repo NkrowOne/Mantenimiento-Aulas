@@ -410,9 +410,15 @@ function seccionEdificios(d: ReportData, conTendencia: boolean): string {
    * Solo los edificios con algo que contar. Con diecisiete filas, once de ellas
    * a cero, la tabla ocupaba dos páginas para decir que no se pasó por allí. Los
    * que se quedan fuera se cuentan al pie: quitar filas sin avisar es esconder.
+   *
+   * El criterio es LO QUE PASÓ, no si el edificio sigue en la lista de trabajo.
+   * Antes se pedía además `salas > 0` y eso borraba del informe un edificio
+   * archivado entero —el que se manda a la papelera cuando se reorganiza el
+   * campus— con todas sus revisiones y sus incidencias dentro. El total de
+   * arriba las seguía contando, así que el documento se contradecía solo.
    */
   const conDatos = d.porEdificio.filter(
-    (b) => b.salas > 0 && (b.revisadas > 0 || b.abiertas > 0 || b.pendientes > 0),
+    (b) => b.revisadas > 0 || b.abiertas > 0 || b.pendientes > 0,
   )
   const cobertura = conDatos.slice(0, 12)
   // Los dos recortes por separado, porque el pie los nombra y no son lo mismo:
@@ -420,7 +426,8 @@ function seccionEdificios(d: ReportData, conTendencia: boolean): string {
   // filas TENIENDO datos es mentirle al lector en la línea que existe para no
   // esconderle nada.
   const recortados = conDatos.length - cobertura.length
-  const sinActividad = d.porEdificio.filter((b) => b.salas > 0).length - conDatos.length
+  const sinActividad = d.porEdificio.length - conDatos.length
+  const archivados = cobertura.filter((b) => b.archivado).length
 
   return `
   <section class="bloque">
@@ -444,10 +451,16 @@ function seccionEdificios(d: ReportData, conTendencia: boolean): string {
           ancho: '30%',
           celda: (b) => {
             const n = nombreEdificio(b.code, b.name)
-            return `<span class="mono">${esc(b.code)}</span>${n ? ` <span class="tenue">${esc(n)}</span>` : ''}`
+            // La marca va pegada al nombre y no en una columna aparte: es lo
+            // que explica el guion de la columna «Salas» de esa misma fila.
+            const marca = b.archivado ? ' <span class="tenue">· archivado</span>' : ''
+            return `<span class="mono">${esc(b.code)}</span>${n ? ` <span class="tenue">${esc(n)}</span>` : ''}${marca}`
           },
         },
-        { cab: 'Salas', num: true, celda: (b) => String(b.salas) },
+        // Un edificio archivado no tiene salas en servicio, y un cero ahí se
+        // leería como «no tiene aulas». El guion dice lo que es: no hay
+        // denominador, no un denominador de cero.
+        { cab: 'Salas', num: true, celda: (b) => (b.salas > 0 ? String(b.salas) : '—') },
         {
           cab: 'Revisadas',
           ancho: '26%',
@@ -468,13 +481,18 @@ function seccionEdificios(d: ReportData, conTendencia: boolean): string {
         },
       ])}
       ${
-        recortados > 0 || sinActividad > 0
+        recortados > 0 || sinActividad > 0 || archivados > 0
           ? `<p class="apunte">${[
               recortados > 0
                 ? `${plural(recortados, 'edificio')} con actividad fuera de la tabla por sitio`
                 : '',
               sinActividad > 0
                 ? `${plural(sinActividad, 'edificio')} sin actividad en el periodo`
+                : '',
+              // Que se sepa por qué esa fila no tiene salas: el edificio está en
+              // la papelera y su trabajo del periodo se cuenta igual.
+              archivados > 0
+                ? `${plural(archivados, 'edificio')} archivado${archivados === 1 ? '' : 's'}: fuera de la lista de trabajo, con lo que pasó en el periodo`
                 : '',
             ]
               .filter(Boolean)
@@ -926,6 +944,20 @@ function seccionCierres(d: ReportData): string {
  * `page-break-inside: avoid` en cada una: una foto partida entre dos páginas no
  * se lee, y en un informe que alguien firma queda como un descuido.
  */
+/**
+ * De qué momento es cada foto, escrito en el pie.
+ *
+ * Sin esto, tres fotos de la misma aula se leen como tres fotos de la misma
+ * aula. Con esto, la primera es el problema encontrado, la última es el aula
+ * arreglada, y entre las dos hay un trabajo hecho — que es exactamente lo que
+ * un informe tiene que poder demostrar.
+ */
+const MOMENTO: Record<ReportData['fotos'][number]['momento'], string> = {
+  revision: 'En la revisión',
+  apertura: 'Incidencia abierta',
+  cierre: 'Al resolverla',
+}
+
 function seccionFotos(d: ReportData): string {
   if (!d.fotos.length) {
     // Sin fotos no se imprime la sección: «no hay fotos» no informa de nada.
@@ -936,9 +968,24 @@ function seccionFotos(d: ReportData): string {
   for (let i = 0; i < d.fotos.length; i += 3) filas.push(d.fotos.slice(i, i + 3))
   const fuera = d.fotosTotal - d.fotos.length
 
+  const cuantas = (m: ReportData['fotos'][number]['momento']): number =>
+    d.fotos.filter((f) => f.momento === m).length
+  const reparto = (
+    [
+      [cuantas('revision'), 'de revisiones'],
+      [cuantas('apertura'), 'de incidencias abiertas'],
+      [cuantas('cierre'), 'de incidencias resueltas'],
+    ] as Array<[number, string]>
+  )
+    .filter(([n]) => n > 0)
+    .map(([n, que]) => `${n} ${que}`)
+    .join(', ')
+
   return `
   <section class="bloque">
     ${rotulo('Fotos del periodo', plural(d.fotos.length, 'foto'))}
+    <p class="apunte">Cada foto dice de cuándo es: ${esc(reparto)}. Las de una misma
+    incidencia van seguidas, de cómo se encontró a cómo quedó.</p>
     <table class="fotos">
       ${filas
         .map(
@@ -950,6 +997,7 @@ function seccionFotos(d: ReportData): string {
         <figure class="foto">
           <img src="${f.datos}" alt="">
           <figcaption>
+            <span class="momento">${esc(MOMENTO[f.momento])}</span>
             <span class="mono">${esc(f.building)} ${esc(f.room)}</span>
             <span class="tenue"> · ${esc(etiquetaDia(f.dia))} ${esc(f.hora)}</span>
             <span class="foto-de">${esc(recorta(f.titulo, 54))}</span>
@@ -964,7 +1012,7 @@ function seccionFotos(d: ReportData): string {
     ${
       fuera > 0
         ? `<p class="apunte">Hay ${plural(fuera, 'foto')} más del periodo que no caben en el
-           documento. Están en la ficha de cada incidencia.</p>`
+           documento. Están en la ficha de cada aula y de cada incidencia.</p>`
         : ''
     }
   </section>`
@@ -1031,6 +1079,17 @@ function colofon(d: ReportData, o: Opciones, pie: Pie): string {
   if (d.sinSala > 0) {
     partes.push(
       `${plural(d.sinSala, 'registro')} del periodo no tienen sala asignada, así que cuentan en los totales y no en el desglose por edificio.`,
+    )
+  }
+  /*
+   * Esta frase es la que faltaba cuando un edificio entero se fue a la papelera
+   * y su trabajo pareció evaporarse. Ahora se cuenta, y además se dice: sin
+   * esta línea, el informe y la pantalla de revisar enseñan campus distintos y
+   * no hay forma de saber cuál de los dos está mal.
+   */
+  if (d.salasArchivadas > 0) {
+    partes.push(
+      `${plural(d.salasArchivadas, 'sala')} del periodo ya no están en la lista de trabajo —archivadas ellas o su edificio—: lo que se hizo en ellas se cuenta aquí igual.`,
     )
   }
   // Contra el conjunto por defecto, no contra un número escrito a mano: al
@@ -1371,6 +1430,13 @@ export function renderReport(
     background: ${HAIR}; border: 0.5pt solid ${LINE};
   }
   .foto figcaption { font-size: 7.5pt; color: ${MUTED}; margin-top: 1.2mm; line-height: 1.35; }
+  /* El momento, en versalitas y encima de todo: es lo primero que hay que leer
+     de una foto en un informe. En negro sobre el gris del resto del pie, para
+     que se distinga sin necesidad de color — estos documentos se imprimen. */
+  .momento {
+    display: block; font-size: 6.5pt; font-weight: 600; color: ${INK2};
+    text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.4mm;
+  }
   .foto-de {
     display: block; font-family: "IBM Plex Serif", Georgia, serif;
     font-size: 8pt; color: ${INK2}; line-height: 1.35; margin-top: 0.4mm;
