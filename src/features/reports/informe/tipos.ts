@@ -90,6 +90,52 @@ export interface ReportData {
     gravedad: string
   }>
   materiales: Array<{ name: string; unidad: string; consumido: number; incidencias: number }>
+
+  /**
+   * Cada cierre del periodo, con sus dos fechas y lo que llevó.
+   *
+   * Es el desglose del que sale la mediana, y existe por separado porque
+   * responde a otra pregunta. «La mitad se cierra en 1,4 días» describe; «esta
+   * se abrió el martes a las 09:12, se cerró el 19 de agosto y llevó 24 días,
+   * porque hubo que pedir la lámpara» justifica. Lo primero se lee en una
+   * reunión; lo segundo es lo que hace falta cuando alguien pregunta por una en
+   * concreto.
+   */
+  cierres: Array<{
+    ref: string | null
+    titulo: string
+    building: string
+    room: string
+    /** `AAAA-MM-DD`, en hora de Madrid. */
+    abierta: string
+    horaAbierta: string
+    cerrada: string
+    horaCerrada: string
+    /** Días con decimales: la plantilla decide cómo escribirlo. */
+    dias: number
+    resolucion: string | null
+    quien: string | null
+  }>
+  cierresTotal: number
+
+  /**
+   * Las fotos del periodo, ya dentro del documento como `data:`.
+   *
+   * No como enlace: el informe se archiva y se abre años después, y un enlace
+   * firmado caduca en un minuto. Si la foto no viaja dentro, el documento de
+   * mañana tiene un hueco donde hoy hay una prueba.
+   */
+  fotos: Array<{
+    dia: string
+    hora: string
+    building: string
+    room: string
+    titulo: string
+    ref: string | null
+    /** `data:image/jpeg;base64,…` */
+    datos: string
+  }>
+  fotosTotal: number
   reincidentes: Array<{ building: string; room: string; item: string; veces: number }>
   olvidadas: Array<{ building: string; room: string; dias: number | null }>
   equipo: Array<{ nombre: string; revisiones: number; registros: number }>

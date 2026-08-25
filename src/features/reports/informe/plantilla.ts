@@ -88,6 +88,27 @@ export function nombreEdificio(code: string, name: string): string {
     .join(' ')
 }
 
+/**
+ * Los días escritos enteros, para justificar y no para resumir.
+ *
+ * `dias()` de `analisis.ts` redondea porque va en una cifra de cabecera: allí,
+ * «3,5 días» es exactamente lo que hace falta. Aquí no. Cuando alguien pregunta
+ * por qué una incidencia concreta llevó lo que llevó, «3,5 días» invita a la
+ * siguiente pregunta y «3 días y 12 h» la cierra. Y por debajo de un día se
+ * cuenta en horas, que es como lo cuenta quien estuvo allí.
+ */
+export function diasLargo(dias: number): string {
+  const horasTotales = dias * 24
+  if (horasTotales < 1) return `${Math.max(1, Math.round(horasTotales * 60))} min`
+  if (horasTotales < 24) return `${Math.round(horasTotales)} h`
+  const enteros = Math.floor(dias)
+  const horas = Math.round((dias - enteros) * 24)
+  // 24 h de resto son un día más, no «3 días y 24 h».
+  if (horas === 24) return plural(enteros + 1, 'día')
+  if (horas === 0) return plural(enteros, 'día')
+  return `${plural(enteros, 'día')} y ${horas} h`
+}
+
 /** Igual con las salas: en muchas, el código ES el nombre. */
 function nombreSala(code: string, name: string): string {
   return name.trim().toUpperCase() === code.trim().toUpperCase() ? '' : name.trim()
@@ -776,45 +797,176 @@ function seccionEstancadas(d: ReportData): string {
 }
 
 function seccionMateriales(d: ReportData): string {
-  const conCierres = d.resolucion.resueltas > 0
-  // Sin `evitar`: es un bloque alto, y prohibirle partirse lo empujaba entero a
-  // la página siguiente dejando media en blanco.
+  return `
+  <section class="bloque evitar">
+    ${rotulo('Material consumido', 'del almacén, en el periodo')}
+    ${
+      d.materiales.length
+        ? tabla(d.materiales, [
+            { cab: 'Artículo', ancho: '52%', celda: (m) => esc(m.name) },
+            { cab: 'Unidades', num: true, celda: (m) => `${m.consumido} ${esc(m.unidad)}` },
+            {
+              cab: 'Partes en los que se usó',
+              num: true,
+              celda: (m) => (m.incidencias ? String(m.incidencias) : '—'),
+            },
+          ])
+        : vacio('Sin consumo de almacén registrado en el periodo.')
+    }
+  </section>`
+}
+
+/**
+ * Cuánto se tarda en cerrar. Sección propia, y se puede quitar.
+ *
+ * Es una cifra que describe bien y justifica mal: «la mitad se cierra en 1,4
+ * días» no dice nada de la que llevó veinticuatro, y en una reunión donde hay
+ * que explicar UNA, el promedio se vuelve en contra de quien lo enseña. Por eso
+ * se desmarca sola, y por eso el desglose de al lado es otra sección: quien
+ * necesita justificar lleva los cierres uno a uno y deja fuera la media.
+ */
+function seccionTiempos(d: ReportData): string {
+  if (d.resolucion.resueltas === 0) {
+    return `
+  <section class="bloque evitar">
+    ${rotulo('Cuánto se tarda en cerrar')}
+    ${vacio('No se ha cerrado nada en el periodo.')}
+  </section>`
+  }
+
+  return `
+  <section class="bloque evitar">
+    ${rotulo('Cuánto se tarda en cerrar')}
+    <table class="cifras">
+      <tr><td>La mitad se cierra en</td><td class="num">${esc(textoDias(d.resolucion.medianaDias))}</td></tr>
+      ${
+        // Si la media dice lo mismo que la mediana, la fila solo repite.
+        textoDias(d.resolucion.mediaDias) !== textoDias(d.resolucion.medianaDias)
+          ? `<tr><td>Media, arrastrando las antiguas</td><td class="num">${esc(textoDias(d.resolucion.mediaDias))}</td></tr>`
+          : ''
+      }
+      <tr><td>Cerradas en menos de 48 h</td><td class="num">${d.resolucion.enMenosDe48h} de ${d.resolucion.resueltas}</td></tr>
+    </table>
+    <p class="apunte">La mediana va primero porque la media la mueve cualquier
+    parte antiguo que se cierre esta semana.</p>
+  </section>`
+}
+
+/**
+ * Cada cierre, con sus dos fechas y sus días escritos enteros.
+ *
+ * Esta es la sección que se lleva a una reunión donde hay que justificar un
+ * tiempo. Un promedio no justifica nada: lo que justifica es «se abrió el 27 de
+ * julio a las 09:12, se cerró el 20 de agosto a las 11:40, veinticuatro días y
+ * dos horas, y lo que se hizo fue cambiar la lámpara —que hubo que pedirla—».
+ * De ahí que estén las dos horas y el texto del cierre, y de ahí el orden: la
+ * que más tardó primero, que es por la que se pregunta.
+ */
+function seccionCierres(d: ReportData): string {
+  if (!d.cierres.length) {
+    return `
+  <section class="bloque evitar">
+    ${rotulo('Cada cierre, con sus días')}
+    ${vacio('No se ha cerrado ningún registro en el periodo.')}
+  </section>`
+  }
+
+  const conAutor = d.cierres.some((c) => c.quien)
+  const fuera = d.cierresTotal - d.cierres.length
+
   return `
   <section class="bloque">
-    ${rotulo('Material y tiempos')}
-    <table class="dos"><tr>
-      <td class="col-mitad">
-        <div class="sub-t">Más consumido en el periodo</div>
-        ${
-          d.materiales.length
-            ? tabla(d.materiales, [
-                { cab: 'Artículo', ancho: '58%', celda: (m) => esc(m.name) },
-                { cab: 'Unidades', num: true, celda: (m) => String(m.consumido) },
-                { cab: 'Partes', num: true, celda: (m) => (m.incidencias ? String(m.incidencias) : '—') },
-              ])
-            : vacio('Sin consumo de almacén registrado en el periodo.')
-        }
-      </td>
-      <td class="col-mitad">
-        <div class="sub-t">Cuánto se tarda en cerrar</div>
-        ${
-          conCierres
-            ? `<table class="cifras">
-          <tr><td>La mitad se cierra en</td><td class="num">${esc(textoDias(d.resolucion.medianaDias))}</td></tr>
-          ${
-            // Si la media dice lo mismo que la mediana, la fila solo repite.
-            textoDias(d.resolucion.mediaDias) !== textoDias(d.resolucion.medianaDias)
-              ? `<tr><td>Media, arrastrando las antiguas</td><td class="num">${esc(textoDias(d.resolucion.mediaDias))}</td></tr>`
-              : ''
-          }
-          <tr><td>Cerradas en menos de 48 h</td><td class="num">${d.resolucion.enMenosDe48h} de ${d.resolucion.resueltas}</td></tr>
-        </table>
-        <p class="apunte">La mediana va primero porque la media la mueve cualquier
-        parte antiguo que se cierre esta semana.</p>`
-            : vacio('No se ha cerrado nada en el periodo.')
-        }
-      </td>
-    </tr></table>
+    ${rotulo('Cada cierre, con sus días', plural(d.cierresTotal, 'cierre'))}
+    <table class="datos">
+      <thead><tr>
+        <th style="width:23%">Qué se cerró</th>
+        <th style="width:11%">Sala</th>
+        <th style="width:13%">Se abrió</th>
+        <th style="width:13%">Se cerró</th>
+        <th class="num" style="width:15%">Llevó</th>
+        <th>Qué se hizo${conAutor ? ' y quién' : ''}</th>
+      </tr></thead>
+      <tbody>
+        ${d.cierres
+          .map(
+            (c) => `<tr>
+        <td>${esc(recorta(c.titulo, 60))}${
+          c.ref ? `<span class="ev-det mono">${esc(c.ref)}</span>` : ''
+        }</td>
+        <td class="mono tenue">${esc(c.building)} ${esc(c.room)}</td>
+        <td class="mono tenue">${esc(etiquetaDia(c.abierta))} ${esc(c.horaAbierta)}</td>
+        <td class="mono tenue">${esc(etiquetaDia(c.cerrada))} ${esc(c.horaCerrada)}</td>
+        <td class="num"${c.dias >= 7 ? ` style="color:${WARN}"` : ''}>${esc(diasLargo(c.dias))}</td>
+        <td>${
+          c.resolucion
+            ? esc(recorta(c.resolucion, 120))
+            : '<span class="tenue">no se apuntó qué se hizo</span>'
+        }${c.quien ? `<span class="ev-det">${esc(c.quien)}</span>` : ''}</td>
+      </tr>`,
+          )
+          .join('')}
+      </tbody>
+    </table>
+    ${
+      fuera > 0
+        ? `<p class="apunte">Y ${plural(fuera, 'cierre')} más, fuera de la tabla por sitio.
+           Están todos en el histórico de cada sala.</p>`
+        : ''
+    }
+  </section>`
+}
+
+/**
+ * Las fotos, dentro del documento.
+ *
+ * Tres por fila y con su pie: sala, día y de qué incidencia es. Una foto sin
+ * saber de dónde salió no prueba nada — y este documento se archiva justamente
+ * para poder volver a él.
+ *
+ * `page-break-inside: avoid` en cada una: una foto partida entre dos páginas no
+ * se lee, y en un informe que alguien firma queda como un descuido.
+ */
+function seccionFotos(d: ReportData): string {
+  if (!d.fotos.length) {
+    // Sin fotos no se imprime la sección: «no hay fotos» no informa de nada.
+    return ''
+  }
+
+  const filas: Array<ReportData['fotos']> = []
+  for (let i = 0; i < d.fotos.length; i += 3) filas.push(d.fotos.slice(i, i + 3))
+  const fuera = d.fotosTotal - d.fotos.length
+
+  return `
+  <section class="bloque">
+    ${rotulo('Fotos del periodo', plural(d.fotos.length, 'foto'))}
+    <table class="fotos">
+      ${filas
+        .map(
+          (fila) => `<tr>${[0, 1, 2]
+            .map((i) => {
+              const f = fila[i]
+              if (!f) return '<td class="col-foto"></td>'
+              return `<td class="col-foto">
+        <figure class="foto">
+          <img src="${f.datos}" alt="">
+          <figcaption>
+            <span class="mono">${esc(f.building)} ${esc(f.room)}</span>
+            <span class="tenue"> · ${esc(etiquetaDia(f.dia))} ${esc(f.hora)}</span>
+            <span class="foto-de">${esc(recorta(f.titulo, 54))}</span>
+          </figcaption>
+        </figure>
+      </td>`
+            })
+            .join('')}</tr>`,
+        )
+        .join('')}
+    </table>
+    ${
+      fuera > 0
+        ? `<p class="apunte">Hay ${plural(fuera, 'foto')} más del periodo que no caben en el
+           documento. Están en la ficha de cada incidencia.</p>`
+        : ''
+    }
   </section>`
 }
 
@@ -931,7 +1083,10 @@ export function renderReport(
     ['lamparas', seccionLamparas(d)],
     ['estancadas', seccionEstancadas(d)],
     ['materiales', seccionMateriales(d)],
+    ['tiempos', seccionTiempos(d)],
+    ['cierres', seccionCierres(d)],
     ['equipo', seccionEquipo(d)],
+    ['fotos', seccionFotos(d)],
     ['recomendaciones', seccionRecomendaciones(l)],
   ]
 
@@ -1159,6 +1314,7 @@ export function renderReport(
   table.datos th + th, table.datos td + td { padding-left: 3.5mm; }
   table.datos td.num {
     font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
   table.datos tr { page-break-inside: avoid; }
 
@@ -1197,6 +1353,27 @@ export function renderReport(
   .ev-det {
     display: block; font-family: "IBM Plex Serif", Georgia, serif;
     font-size: 8pt; color: ${MUTED}; line-height: 1.4; margin-top: 0.4mm;
+  }
+
+  /* ── Fotos ──
+     Tres por fila, con su pie debajo. El salto se prohíbe en la CELDA y no en
+     la fila: prohibirlo en la fila entera empuja las tres a la página siguiente
+     y deja media en blanco. */
+  table.fotos { width: 100%; border-collapse: collapse; }
+  .col-foto {
+    width: 33.33%; vertical-align: top; padding: 0 4mm 5mm 0;
+    page-break-inside: avoid;
+  }
+  .col-foto:last-child { padding-right: 0; }
+  .foto { margin: 0; }
+  .foto img {
+    display: block; width: 100%; height: 42mm; object-fit: cover;
+    background: ${HAIR}; border: 0.5pt solid ${LINE};
+  }
+  .foto figcaption { font-size: 7.5pt; color: ${MUTED}; margin-top: 1.2mm; line-height: 1.35; }
+  .foto-de {
+    display: block; font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 8pt; color: ${INK2}; line-height: 1.35; margin-top: 0.4mm;
   }
 
   /* ── Medidor ── */

@@ -1044,7 +1044,10 @@ Se elige:
 | Qué se elige | Para qué sirve |
 |---|---|
 | **Periodo** | Semana en curso, semana pasada, mes en curso, mes pasado, ayer, o dos fechas cualesquiera. Debajo se lee qué días va a cubrir antes de pedirlo |
-| **Secciones** | Las trece del informe, entre ellas la lista de todas las revisiones hechas y el diario de lo que pasó cada día. «Reparto del trabajo» lleva nombres de personas y por eso hay que marcarla a mano |
+| **Secciones** | Las dieciséis del informe, entre ellas la lista de todas las revisiones hechas y el diario de lo que pasó cada día. «Reparto del trabajo» lleva nombres de personas y por eso hay que marcarla a mano |
+| **Cuánto se tarda en cerrar** | La mediana, la media y las cerradas en menos de 48 h. **Se puede desmarcar**: es una cifra que describe bien y justifica mal, y hay reuniones donde no ayuda |
+| **Cada cierre, con sus días** | Lo contrario: cada cierre en una línea, con la hora a la que se abrió, la hora a la que se cerró, cuánto llevó escrito entero —«24 días y 2 h», no «24,1»— y qué se hizo. Es lo que sirve para justificar por qué una tardó lo que tardó. Van primero las que más tardaron, que son por las que se pregunta |
+| **Fotos del periodo** | Las que se hicieron en las incidencias, **dentro del propio documento**. No son enlaces: un enlace de Storage caduca en un minuto y el informe se archiva para dentro de un año. Entran hasta cuarenta, reducidas al tamaño al que se imprimen —57 mm de ancho, unos 45 KB cada una en vez de 226 KB—, y las que no caben se cuentan al pie |
 | **Análisis con IA** | Si se desmarca, el informe sale con el análisis calculado |
 | **Escrito para** | Dirección (estado, tendencia y decisiones) o equipo técnico (qué salas tocar y con qué material) |
 | **En qué fijarse** | Una instrucción libre para la redacción: «céntrate en el edificio H». No cambia ninguna cifra |
@@ -1057,11 +1060,14 @@ minuto; sin ella, unos segundos.
 
 Desde ahí salen dos botones:
 
-- **Guardar como PDF** abre la impresión del navegador. Se elige «Guardar como
-  PDF» de destino y sale el documento en A4. Es lo mismo que se hace con la hoja
-  de inventario.
-- **Descargar** guarda el documento tal cual, en un solo fichero que se abre en
-  cualquier navegador sin conexión y sin nada instalado.
+- **Descargar PDF** abre el informe en una pestaña y lanza el diálogo de
+  imprimir, que es de donde sale el PDF: en el iPad, «Imprimir» y después
+  «Compartir → Guardar en Archivos»; en el ordenador, «Guardar como PDF» en el
+  destino, en lugar de una impresora. Es el mismo gesto que la hoja de
+  inventario y que las placas.
+- **Descargar el original** guarda el HTML del que sale ese PDF: un solo fichero
+  que se abre en cualquier navegador, sin conexión y sin nada instalado. Es lo
+  que conviene guardar para archivar; no es el PDF.
 
 El informe queda además **archivado** en la lista de abajo, con su procedencia
 —con IA o con el análisis calculado— debajo de cada periodo.
@@ -1077,6 +1083,7 @@ aparecer:
 | **No se ha podido leer *algo*** | Una de las consultas no ha llegado: sin conexión, o el perfil no es de administrador | Comprueba la conexión y el rol. El informe no se emite a medias a propósito: una cifra corta sin avisar es peor que ninguna |
 | **El análisis ha salido calculado y no redactado por la IA: …** | El informe está bien; lo que ha fallado es la redacción. El motivo va en la misma frase (sin clave, clave sin permiso, cuota agotada) | Si es la clave, se arregla en la tarjeta de arriba de esa misma pantalla |
 | **El informe está hecho, pero no se ha podido guardar…** | El documento existe y se puede imprimir, pero no ha entrado en el archivo. Suele ser que falta la migración `20260821000100_informes_en_el_navegador.sql` | Descárgalo para no perderlo y aplica las migraciones pendientes |
+| **El navegador ha bloqueado la ventana del informe** | «Descargar PDF» abre una pestaña, y el navegador la trata como emergente | Permite las ventanas emergentes de esta dirección, o usa «Descargar el original» |
 
 **Un informe emitido no se regenera nunca: se versiona.** Si los datos cambian
 después, el documento del viernes sigue diciendo lo que decía el viernes. Es lo

@@ -19,7 +19,12 @@ import {
   generarInforme,
   nombreDeArchivo,
 } from './informe/generar'
-import { descargarDocumento, imprimirMarco } from './informe/imprimir'
+import {
+  descargarDocumento,
+  imprimirDocumento,
+  mostrarEn,
+  ventanaEnBlanco,
+} from './informe/imprimir'
 
 interface ReportRow {
   id: string
@@ -44,10 +49,10 @@ const KIND_LABEL: Record<Kind, string> = {
 }
 
 const PASOS: Record<Paso, string> = {
-  datos: 'Leyendo los datos del periodo…',
-  analisis: 'Calculando las cifras y redactando el análisis…',
-  documento: 'Componiendo el documento…',
-  archivo: 'Guardándolo en el archivo…',
+  datos: 'Leyendo los datos del periodo',
+  analisis: 'Calculando las cifras y redactando el análisis',
+  documento: 'Componiendo el documento',
+  archivo: 'Guardándolo en el archivo',
 }
 
 /**
@@ -84,7 +89,10 @@ export function ReportsPage(): React.ReactElement {
   const [nota, setNota] = useState('')
   const [ajustes, setAjustes] = useState(false)
 
-  const [paso, setPaso] = useState<Paso | null>(null)
+  /* En qué paso va y QUÉ está leyendo. Lo segundo no es adorno: cuando algo se
+     atasca, la diferencia entre «Leyendo los datos» y «leyendo el diario del
+     periodo» es la diferencia entre volver a llamar y saber dónde mirar. */
+  const [paso, setPaso] = useState<{ fase: Paso; detalle?: string } | null>(null)
   const [recien, setRecien] = useState<InformeGenerado | null>(null)
   /* El fallo de una descarga, a la vista. `createSignedUrl` puede denegar por
      permisos o red, y descartarlo dejaba el botón «Abrir» como un botón que a
@@ -128,7 +136,9 @@ export function ReportsPage(): React.ReactElement {
   const generar = useMutation({
     mutationFn: async (): Promise<InformeGenerado> => {
       setRecien(null)
-      return generarInforme(eleccion, setPaso)
+      return generarInforme(eleccion, (fase, detalle) =>
+        setPaso({ fase, ...(detalle ? { detalle } : {}) }),
+      )
     },
     onSettled: () => setPaso(null),
     onSuccess: (informe) => {
@@ -140,17 +150,29 @@ export function ReportsPage(): React.ReactElement {
     },
   })
 
+  /**
+   * Abre un informe del archivo, renderizado y no como código.
+   *
+   * La pestaña se pide ANTES de descargar: el permiso para abrirla dura lo que
+   * dura el gesto, y una espera por medio lo convierte en un bloqueo. Y el
+   * documento se vuelve a servir desde aquí con su tipo real porque el almacén
+   * puede entregar un HTML subido por un usuario como texto plano —es lo
+   * prudente por su parte—, y entonces lo que se ve es el código fuente.
+   */
   async function abrir(path: string): Promise<void> {
     setFalloDescarga(null)
-    const { data, error } = await supabase.storage.from('reports').createSignedUrl(path, 60)
-    if (error || !data?.signedUrl) {
-      setFalloDescarga(`No se ha podido preparar la descarga${error ? `: ${error.message}` : ''}.`)
+    const ventana = ventanaEnBlanco()
+    if (!ventana) {
+      setFalloDescarga('El navegador ha bloqueado la pestaña: vuelve a pulsar Abrir.')
       return
     }
-    // Si el navegador bloquea la pestaña —el gesto caducó mientras se firmaba
-    // la URL— se dice, en vez de fingir que el botón no hizo nada.
-    const abierta = window.open(data.signedUrl, '_blank', 'noopener')
-    if (!abierta) setFalloDescarga('El navegador ha bloqueado la pestaña: vuelve a pulsar Abrir.')
+    const { data, error } = await supabase.storage.from('reports').download(path)
+    if (error || !data) {
+      ventana.close()
+      setFalloDescarga(`No se ha podido abrir el informe${error ? `: ${error.message}` : ''}.`)
+      return
+    }
+    mostrarEn(ventana, data)
   }
 
   const alternar = (clave: string): void =>
@@ -408,8 +430,10 @@ export function ReportsPage(): React.ReactElement {
             colgada. */}
         {generar.isPending && (
           <p className="mt-3 text-sm text-muted" role="status">
-            {paso ? PASOS[paso] : 'Preparando…'}
-            {paso === 'analisis' && conIA && ' Con IA suele tardar entre veinte segundos y un minuto.'}
+            {paso ? `${PASOS[paso.fase]}${paso.detalle ? `: ${paso.detalle}` : ''}…` : 'Preparando…'}
+            {paso?.fase === 'analisis' &&
+              conIA &&
+              ' Con IA suele tardar entre veinte segundos y un minuto.'}
           </p>
         )}
 
@@ -439,20 +463,24 @@ export function ReportsPage(): React.ReactElement {
               <button
                 type="button"
                 onClick={() => {
-                  if (!imprimirMarco(marco.current)) {
-                    setFalloDescarga('La vista previa aún no está lista: espera un segundo y vuelve a pulsar.')
+                  setFalloDescarga(null)
+                  if (imprimirDocumento(recien.html, marco.current) === 'bloqueado') {
+                    setFalloDescarga(
+                      'El navegador ha bloqueado la ventana del informe. Permite las ventanas emergentes de esta página, o usa «Descargar el original».',
+                    )
                   }
                 }}
                 className="key key-accent min-h-11 px-3 text-sm"
               >
-                Guardar como PDF
+                Descargar PDF
               </button>
               <button
                 type="button"
                 onClick={() => descargarDocumento(recien.html, nombreDeArchivo(recien.kind, recien.rango))}
                 className="key key-quiet min-h-11 px-3 text-sm"
+                title="El original en HTML, del que sale el PDF"
               >
-                Descargar
+                Descargar el original
               </button>
             </div>
           </div>
@@ -486,9 +514,17 @@ export function ReportsPage(): React.ReactElement {
             sandbox="allow-same-origin allow-modals"
             className="mt-4 h-[70vh] w-full rounded-card border border-line bg-white"
           />
+          {/*
+            Sin esta línea, «Descargar PDF» abre un diálogo de impresión que el
+            usuario no ha pedido: se queda mirando una vista previa y una
+            impresora, decide que se ha equivocado de botón y cierra. El PDF sale
+            de ahí, pero solo si alguien dice dónde está. Es la misma frase que
+            la hoja de inventario, porque es el mismo gesto.
+          */}
           <p className="mt-2 text-xs text-muted">
-            «Guardar como PDF» abre la impresión del navegador: elige ese destino y sale el documento
-            en A4.
+            El informe se abre en una pestaña y se abre el diálogo de imprimir, que es de donde sale
+            el PDF: en el iPad, toca «Imprimir» y después «Compartir → Guardar en Archivos»; en el
+            ordenador, elige «Guardar como PDF» en el destino, en lugar de una impresora.
           </p>
         </section>
       )}
