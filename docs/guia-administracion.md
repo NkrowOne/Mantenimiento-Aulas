@@ -1080,8 +1080,23 @@ Desde ahí salen dos botones:
   que se abre en cualquier navegador, sin conexión y sin nada instalado. Es lo
   que conviene guardar para archivar; no es el PDF.
 
-El informe queda además **archivado** en la lista de abajo, con su procedencia
-—con IA o con el análisis calculado— debajo de cada periodo.
+El informe queda además **archivado** en la lista de abajo, y cada entrada lleva
+un distintivo con **cómo salió su análisis**:
+
+| Distintivo | Qué pasó |
+|---|---|
+| **Redactado con IA** (verde) | Se pidió con IA y la IA lo escribió |
+| **Análisis calculado** (gris) | Se pidió sin IA. Salió como se quería |
+| **La IA falló** (ámbar) | Se pidió con IA, no se pudo, y salió con el análisis calculado. **El motivo se lee en la propia línea** —sin clave, clave sin permiso, cuota agotada— sin abrir el documento |
+
+El ámbar es el que importa: antes esos dos últimos casos ponían lo mismo, así que
+una clave caducada podía pasar semanas dando informes peores sin que nada lo
+dijera. Los informes emitidos antes de este cambio no guardaron el dato y salen
+sin distintivo — de esos no consta.
+
+Mientras se genera, la línea de estado dice **por dónde va la redacción**: «Calculando
+las cifras: redactando con *el modelo*…», y si la IA no puede, lo dice en ámbar en
+ese momento, no al final. El informe sigue adelante con el análisis calculado.
 
 ### Si algo va mal
 
@@ -1117,7 +1132,13 @@ texto generado— se tira el texto entero y se emite con el análisis calculado.
 **El documento no dice en ninguna parte que se haya usado IA.** Es un documento
 del servicio que habla del estado del campus, y va limpio. Si necesitas saber
 cómo se redactó un informe concreto, está en la pantalla de Informes: cada
-entrada del archivo lo indica debajo de su periodo.
+entrada del archivo lleva su distintivo.
+
+La tarjeta de arriba de esa pantalla resume lo mismo para el **último** informe.
+Si pidió IA y no la tuvo, se pone en rojo con el motivo y la fecha, ahí mismo
+donde se cambia la clave. Eso necesita aplicada la migración
+`20260825000100_el_archivo_dice_si_la_ia_fallo.sql`; sin ella la tarjeta sigue
+funcionando como antes, pero no distingue el fallo.
 
 **Sin clave, el informe sale igual.** El análisis lo escriben las reglas del
 sistema: es un texto completo, con su párrafo de entrada y su lista de cosas que

@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { fechaCorta } from '@/domain/fechas'
 import { EstadoIA, useEstadoIA } from './EstadoIA'
 import { AUDIENCIAS, POR_DEFECTO, SECCIONES } from './secciones'
+import { type HuellaDeRedaccion, redaccionDe } from './redaccion'
 import { type Eleccion, motivoParaNoPedir } from './peticion'
 import {
   type Kind,
@@ -33,13 +34,14 @@ interface ReportRow {
   period_end: string
   storage_path: string
   generated_at: string
-  params: {
-    ia?: boolean
-    analisis?: string
-    secciones?: string[]
-    audiencia?: string
-    nota?: string
-  } | null
+  params:
+    | (HuellaDeRedaccion & {
+        analisis?: string
+        secciones?: string[]
+        audiencia?: string
+        nota?: string
+      })
+    | null
 }
 
 const KIND_LABEL: Record<Kind, string> = {
@@ -50,7 +52,7 @@ const KIND_LABEL: Record<Kind, string> = {
 
 const PASOS: Record<Paso, string> = {
   datos: 'Leyendo los datos del periodo',
-  analisis: 'Calculando las cifras y redactando el análisis',
+  analisis: 'Calculando las cifras',
   documento: 'Componiendo el documento',
   archivo: 'Guardándolo en el archivo',
 }
@@ -92,7 +94,7 @@ export function ReportsPage(): React.ReactElement {
   /* En qué paso va y QUÉ está leyendo. Lo segundo no es adorno: cuando algo se
      atasca, la diferencia entre «Leyendo los datos» y «leyendo el diario del
      periodo» es la diferencia entre volver a llamar y saber dónde mirar. */
-  const [paso, setPaso] = useState<{ fase: Paso; detalle?: string } | null>(null)
+  const [paso, setPaso] = useState<{ fase: Paso; detalle?: string; fallo?: boolean } | null>(null)
   const [recien, setRecien] = useState<InformeGenerado | null>(null)
   /* El fallo de una descarga, a la vista. `createSignedUrl` puede denegar por
      permisos o red, y descartarlo dejaba el botón «Abrir» como un botón que a
@@ -136,8 +138,8 @@ export function ReportsPage(): React.ReactElement {
   const generar = useMutation({
     mutationFn: async (): Promise<InformeGenerado> => {
       setRecien(null)
-      return generarInforme(eleccion, (fase, detalle) =>
-        setPaso({ fase, ...(detalle ? { detalle } : {}) }),
+      return generarInforme(eleccion, (fase, detalle, fallo) =>
+        setPaso({ fase, ...(detalle ? { detalle } : {}), ...(fallo ? { fallo: true } : {}) }),
       )
     },
     onSettled: () => setPaso(null),
@@ -429,10 +431,15 @@ export function ReportsPage(): React.ReactElement {
             minuto, y una barra que no dice nada se lee como una pantalla
             colgada. */}
         {generar.isPending && (
-          <p className="mt-3 text-sm text-muted" role="status">
+          <p className={`mt-3 text-sm ${paso?.fallo ? 'text-warn' : 'text-muted'}`} role="status">
             {paso ? `${PASOS[paso.fase]}${paso.detalle ? `: ${paso.detalle}` : ''}…` : 'Preparando…'}
+            {/* La espera larga se anuncia solo mientras de verdad se está
+                esperando. Después de un fallo de la IA ya no hay nada que
+                esperar, y decir «suele tardar un minuto» sobre un aviso de
+                error lo convierte en ruido. */}
             {paso?.fase === 'analisis' &&
               conIA &&
+              !paso.fallo &&
               ' Con IA suele tardar entre veinte segundos y un minuto.'}
           </p>
         )}
@@ -537,6 +544,7 @@ export function ReportsPage(): React.ReactElement {
           {(reports ?? []).map((r) => {
             const parcial =
               r.params?.secciones && r.params.secciones.length < SECCIONES.length - 1
+            const redaccion = redaccionDe(r.params)
             return (
               <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm">
                 <span className="w-20 shrink-0 font-medium">{KIND_LABEL[r.kind]}</span>
@@ -546,12 +554,25 @@ export function ReportsPage(): React.ReactElement {
                   </span>
                   <span className="block text-xs text-muted">
                     {fechaCorta(r.generated_at)}
-                    {r.params?.ia === true && ' · con IA'}
-                    {r.params?.ia === false && ' · análisis calculado'}
                     {parcial && ` · ${r.params?.secciones?.length} secciones`}
                     {r.params?.nota && ` · «${r.params.nota}»`}
                   </span>
+                  {/* El motivo, escrito. Un informe marcado en ámbar sin decir
+                      por qué obliga a abrirlo para averiguar qué le pasó, y lo
+                      que le pasó no está dentro del documento. */}
+                  {redaccion?.aviso && (
+                    <span className="mt-0.5 block text-xs text-warn">
+                      El análisis salió calculado: {redaccion.aviso}
+                    </span>
+                  )}
                 </span>
+                {redaccion && (
+                  <span
+                    className={`shrink-0 rounded-tag px-2 py-0.5 text-[0.6875rem] font-medium ${redaccion.clase}`}
+                  >
+                    {redaccion.etiqueta}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => void abrir(r.storage_path)}

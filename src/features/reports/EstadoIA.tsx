@@ -11,6 +11,16 @@ export interface Estado {
   thinking: string
   ultimo_analisis: string | null
   ultimo_con_ia: boolean
+  /**
+   * Si el último informe PIDIÓ que redactara la IA, y por qué no pudo.
+   *
+   * Los dos son la diferencia entre «este salió calculado» y «este salió
+   * calculado porque la clave ya no tiene permiso», que es la frase que arregla
+   * el problema. `undefined` mientras el despliegue no tenga aplicada la
+   * migración que los devuelve; entonces la tarjeta se comporta como antes.
+   */
+  ultimo_pidio_ia?: boolean | null
+  ultimo_aviso?: string | null
   ultimo_informe: string | null
 }
 
@@ -113,6 +123,13 @@ export function EstadoIA(): React.ReactElement {
 
   const activa = estado?.clave_guardada || enDispositivo
   const funcionando = estado?.ultimo_con_ia
+  /*
+   * Que el último informe pidiera IA y no la tuviera es un fallo, y hay que
+   * decirlo aquí arriba. «Clave guardada» describía el ajuste y callaba el
+   * resultado: con la clave caducada la tarjeta seguía verde de conformidad
+   * mientras cada informe salía peor de lo pedido.
+   */
+  const falló = estado?.ultimo_pidio_ia === true && estado?.ultimo_con_ia === false
 
   return (
     <section className="card p-4">
@@ -136,14 +153,22 @@ export function EstadoIA(): React.ReactElement {
         </div>
         <span
           className={`shrink-0 rounded-tag px-2 py-1 text-xs font-semibold ${
-            funcionando
-              ? 'bg-ok-tint text-ok'
-              : activa
-                ? 'bg-warn-tint text-warn'
-                : 'bg-na-tint text-muted'
+            falló
+              ? 'bg-crit-tint text-crit'
+              : funcionando
+                ? 'bg-ok-tint text-ok'
+                : activa
+                  ? 'bg-warn-tint text-warn'
+                  : 'bg-na-tint text-muted'
           }`}
         >
-          {funcionando ? 'Redactando con IA' : activa ? 'Clave guardada' : 'Análisis calculado'}
+          {falló
+            ? 'La IA falló'
+            : funcionando
+              ? 'Redactando con IA'
+              : activa
+                ? 'Clave guardada'
+                : 'Análisis calculado'}
         </span>
       </div>
 
@@ -155,8 +180,21 @@ export function EstadoIA(): React.ReactElement {
         esa decisión — aquí sí se dice, con todo el detalle, porque es donde se
         administra la herramienta y donde hay que poder auditarla.
       */}
+      {/* El motivo del último fallo, con su fecha, en el sitio donde se cambia
+          la clave. Es lo que convierte «no está redactando» en algo que se
+          puede arreglar sin salir de la pantalla. */}
+      {falló && (
+        <p role="alert" className="mt-3 rounded-ctl border border-crit/40 bg-crit-tint p-3 text-sm text-crit">
+          El último informe
+          {estado?.ultimo_informe ? ` (${fechaCorta(estado.ultimo_informe)})` : ''} pidió que lo
+          redactara la IA y salió con el análisis calculado
+          {estado?.ultimo_aviso ? `: ${estado.ultimo_aviso}` : ''}. Los informes se siguen emitiendo
+          enteros; lo que falta es el texto del análisis.
+        </p>
+      )}
+
       <p className="mt-3 text-xs text-muted">
-        {estado?.ultimo_analisis && (
+        {estado?.ultimo_analisis && !falló && (
           <>
             El último informe
             {estado.ultimo_informe ? ` (${fechaCorta(estado.ultimo_informe)})` : ''} salió con{' '}

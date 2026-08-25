@@ -58,6 +58,17 @@ export interface InformeGenerado {
 /** Los pasos, para que la pantalla pueda decir en cuál va. */
 export type Paso = 'datos' | 'analisis' | 'documento' | 'archivo'
 
+/**
+ * Cómo se cuenta un paso mientras pasa.
+ *
+ * El `fallo` no es un error que interrumpa nada —si algo interrumpe, se lanza—
+ * sino un paso que no ha salido como se pidió y del que el informe se ha
+ * recuperado solo. La IA que no contesta es el caso: el documento sigue
+ * adelante con el análisis calculado, y quien mira la pantalla tiene que verlo
+ * en ese momento, no descubrirlo al abrir el PDF.
+ */
+export type Avisar = (paso: Paso, detalle?: string, fallo?: boolean) => void
+
 const TITULO: Record<string, string> = {
   diario: 'Parte diario',
   semanal: 'Informe semanal',
@@ -131,7 +142,7 @@ async function solicitante(): Promise<{ id: string | null; nombre: string | unde
 
 export async function generarInforme(
   eleccion: Eleccion,
-  avisar: (paso: Paso, detalle?: string) => void = () => undefined,
+  avisar: Avisar = () => undefined,
 ): Promise<InformeGenerado> {
   // Por `construirPeticion` y no leyendo la elección a pelo: es la pieza que
   // decide qué viaja y qué no —un enfoque en blanco no es una instrucción, una
@@ -168,13 +179,20 @@ export async function generarInforme(
 
     if (!cfg) {
       avisoIA = 'no hay ninguna clave de Gemini configurada'
+      avisar('analisis', 'sin clave de Gemini: sale el análisis calculado', true)
     } else {
+      avisar('analisis', `redactando con ${cfg.modelo}`)
       const { lectura: redactada, motivo } = await redactar(datos, se, cfg)
       if (redactada) {
         lectura = redactada
         conIA = true
+        avisar('analisis', 'redacción terminada')
       } else {
         avisoIA = motivo
+        // En cuanto se sabe, y no al final. Un fallo de la IA añade hasta seis
+        // segundos de reintentos, y quien mira la pantalla merece enterarse
+        // mientras pasa y no cuando ya no puede hacer nada.
+        avisar('analisis', `la IA no ha podido (${motivo}): sigue el análisis calculado`, true)
       }
     }
   }
@@ -194,7 +212,11 @@ export async function generarInforme(
   })
 
   avisar('archivo')
-  const archivo = await archivar(html, eleccion, opciones, lectura.origen, conIA, quienPide.id)
+  const archivo = await archivar(html, eleccion, opciones, quienPide.id, {
+    origen: lectura.origen,
+    conIA,
+    avisoIA,
+  })
 
   return {
     html,
@@ -245,9 +267,8 @@ async function archivar(
   html: string,
   eleccion: Eleccion,
   opciones: ReturnType<typeof leerOpciones>,
-  origen: string,
-  conIA: boolean,
   quienPide: string | null,
+  redaccion: { origen: string; conIA: boolean; avisoIA: string | null },
 ): Promise<{ path: string | null; motivo: string | null }> {
   const hash = await huellaDe(html)
   const path = `${eleccion.kind}/${eleccion.rango.start}_${eleccion.rango.end}_${hash}.html`
@@ -279,13 +300,22 @@ async function archivar(
    * de verdad salieron y quién redactó el análisis. Así el archivo puede decir
    * «este de marzo salió sin IA» sin abrir el documento, y la pantalla puede
    * marcarlo.
+   *
+   * Y con `ia` sola no basta, porque `false` tapa dos cosas que no se parecen
+   * en nada: un informe que se pidió sin IA a propósito y uno que la pidió y no
+   * la tuvo. El primero salió como se quería; el segundo salió a medias y nadie
+   * se enteró. De ahí `ia_pedida` y `aviso_ia`: el archivo guarda si se intentó
+   * y por qué no salió, que es lo que convierte «no fue con IA» en «la clave no
+   * tiene permiso, cámbiala y vuelve a emitirlo».
    */
   const huella = {
     secciones: opciones.secciones,
     comparar: opciones.comparar,
     audiencia: opciones.audiencia,
-    ia: conIA,
-    analisis: origen,
+    ia: redaccion.conIA,
+    ia_pedida: opciones.ia,
+    analisis: redaccion.origen,
+    ...(redaccion.avisoIA ? { aviso_ia: redaccion.avisoIA } : {}),
     ...(opciones.enfoque ? { enfoque: opciones.enfoque } : {}),
     ...(opciones.nota ? { nota: opciones.nota } : {}),
   }
