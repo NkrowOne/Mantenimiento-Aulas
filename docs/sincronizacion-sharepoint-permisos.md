@@ -10,6 +10,18 @@ confirmar está en el apartado 7, dicho como lo que es.
 
 ---
 
+## 0. Antes de leer nada de esto: puede que no haga falta
+
+Todo este documento trata de **automatizar el transporte** del fichero. Si el libro se
+sube a mano a la aplicación y se descarga ya parcheado —la opción 0 del apartado 5 del
+[documento de diseño](sincronizacion-sharepoint.md)—, **no hace falta nada de lo que
+viene aquí**: ni registro de aplicación, ni consentimiento, ni `Sites.Selected`, ni
+certificado. La sincronización funciona igual; lo que la dispara es una persona.
+
+Sigue leyendo si se quiere automatizar ese viaje.
+
+---
+
 ## 1. El problema que hay que mirar antes de pedir nada
 
 **La documentación de Microsoft dice que la API de libro de Excel no admite permisos de

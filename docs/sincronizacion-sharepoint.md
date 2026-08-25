@@ -10,7 +10,7 @@ Este documento es la propuesta previa a escribir código.
 
 ---
 
-## 0. La recomendación, en seis líneas
+## 0. La recomendación, en siete líneas
 
 1. **La aplicación manda por defecto**, pero el Excel puede corregir: una edición
    posterior en la hoja entra en la base. Bidireccional de verdad.
@@ -21,18 +21,22 @@ Este documento es la propuesta previa a escribir código.
 3. **Se escribe celda a celda con la API de libro de Graph, nunca subiendo el
    fichero regenerado.** Es la única forma de conservar fórmulas, formatos
    condicionales, validaciones y tablas (apartado 6).
-4. Traer y llevar el fichero: **Graph con `Sites.Selected`**, sondeando por
-   `cTag` cada 30 minutos desde el servidor. Este despliegue no tiene entrada
-   desde Internet, así que los avisos en tiempo real de Graph quedan descartados
-   —y hay una segunda razón, en el documento de permisos—.
-   **Ojo antes de nada:** la documentación de Microsoft dice que la API de libro
-   de Excel **no admite permisos de aplicación**. Hay que probarlo con un token
-   app-only en un sitio desechable antes de pedir nada en producción. Está todo
-   en [`sincronizacion-sharepoint-permisos.md`](sincronizacion-sharepoint-permisos.md),
+4. **Empezar sin permisos**: una pantalla donde se sube el `.xlsx` y se descarga
+   ya parcheado, y el viaje a SharePoint lo hace una persona. No necesita ni
+   registro de aplicación ni permiso de nadie, y el fichero vuelve intacto — está
+   probado sobre este libro (apartado 5, opción 0). Automatizar el transporte
+   después es cambiar una pieza, no rehacer el trabajo.
+5. Si se automatiza: **Graph con `Sites.Selected`**, sondeando por `cTag` cada 30
+   minutos desde el servidor. Este despliegue no tiene entrada desde Internet, así
+   que los avisos en tiempo real quedan descartados. **Ojo:** la documentación de
+   Microsoft dice que la API de libro de Excel **no admite permisos de
+   aplicación**; hay que probarlo con un token app-only en un sitio desechable
+   antes de pedir nada. Está en
+   [`sincronizacion-sharepoint-permisos.md`](sincronizacion-sharepoint-permisos.md),
    con la petición literal para IT.
-5. El disparo, con **`pg_cron` + `pg_net` contra un endpoint del worker**: la
-   misma tubería que ya mueve los informes.
-6. Hace falta **una migración pequeña** (m², capacidad, código oficial de espacio
+6. El disparo de la vía automática, con **`pg_cron` + `pg_net` contra un endpoint
+   del worker**: la misma tubería que ya mueve los informes.
+7. En los dos casos hace falta **una migración pequeña** (m², capacidad, código oficial de espacio
    y las tablas de sincronización) y **una decisión de IT** (registro de
    aplicación y permiso de lectura **y escritura** sobre ese sitio).
 
@@ -198,7 +202,57 @@ de la protección.
 
 ## 5. Cómo se trae y se lleva el fichero
 
-### Opción A — Microsoft Graph desde el servidor (recomendada)
+### Opción 0 — a mano, sin permisos: subirlo a la app y bajarlo parcheado
+
+La que menos depende de nadie, y por eso va la primera.
+
+Una pantalla en administración: **arrastras el `.xlsx`**, la aplicación lo lee, cruza,
+y te enseña **qué entraría, qué se rellenaría y qué choca** antes de tocar nada. Lo
+confirmas, se aplica a la base, y la aplicación te devuelve **ese mismo fichero con
+las celdas que manda la app ya escritas** —fecha de revisión, estado, consumo, las
+matrículas `Ref` recién asignadas—. Lo subes tú a SharePoint.
+
+Lo que esto elimina, entero: registro de aplicación en Entra ID, consentimiento de
+administrador, `Sites.Selected`, certificado y su caducidad, throttling, unidades de
+recurso… y **el riesgo número uno del proyecto**, porque la API de libro de Graph no
+hace falta si no se usa.
+
+**Y el fichero no se rompe.** Un `.xlsx` es un zip de XML: se reescribe únicamente el
+`<v>` de las celdas que cambian dentro de `xl/worksheets/sheetN.xml`, y las demás
+entradas del zip se copian **byte a byte**. Probado sobre este libro, cambiando dos
+celdas de la hoja de estado: se modificó **una sola entrada del zip**, no se perdió
+ninguna, y siguen intactos los 4 formatos condicionales, el autofiltro `A1:X416`, la
+fila de cabecera inmovilizada, las fórmulas de Bolsa —incluida la `N5` tecleada a
+mano—, los 4 comentarios de celda, la **etiqueta de confidencialidad**
+(`docMetadata/LabelInfo.xml`) y los **seis ficheros de metadatos de SharePoint**
+(`customXml/`).
+
+Esos dos últimos importan más de lo que parece: regenerar el libro con una librería
+se lleva por delante la etiqueta de Purview y los metadatos de columna de SharePoint,
+y el fichero vuelve a su sitio degradado sin que nadie lo note. Con el parche
+quirúrgico vuelve idéntico salvo en las celdas que cambiaron.
+
+Dos detalles del parcheo:
+
+- **Para texto, `t="inlineStr"`** con `<is><t>…</t></is>`, que evita tener que tocar
+  `xl/sharedStrings.xml` y recontar cadenas.
+- **`<calcPr fullCalcOnLoad="1"/>`** en `xl/workbook.xml` cuando se cambia una celda
+  de la que cuelga una fórmula: si no, el total cacheado sigue diciendo lo de antes
+  hasta que alguien fuerce el recálculo. Hoy el libro trae
+  `<calcPr calcId="191028" calcCompleted="0"/>`, sin esa marca.
+
+Lo que se paga: alguien tiene que acordarse de hacerlo, y entre que descargas y subes
+puede editarlo otro en SharePoint. Lo segundo **no rompe nada**: se guarda el hash del
+fichero que emitió la aplicación, y si el que subes no coincide, es que alguien lo
+tocó por medio — que es exactamente el caso que la fusión a tres bandas del apartado 4
+sabe resolver. Se avisa y se fusiona igual.
+
+Y no es un desvío del camino automático: **el lector, la fusión y el parcheador son
+los mismos módulos**. Entre esta opción y la A solo cambia el transporte —quién mueve
+el fichero—. Si mañana IT autoriza Graph, se sustituye esa pieza y todo lo demás sigue
+donde estaba.
+
+### Opción A — Microsoft Graph desde el servidor
 
 Una aplicación registrada en Entra ID con credenciales de cliente, y el worker
 preguntando cada media hora si el fichero cambió.
@@ -476,11 +530,12 @@ pasada.
 
 | Fase | Qué se entrega | Se puede probar sin IT |
 |---|---|---|
-| **0** | **Prueba de concepto: ¿acepta la API de libro un token app-only?** Cinco llamadas contra un sitio desechable. Decide si el resto del plan es viable | ❌ necesita un registro y un sitio de pruebas |
+| **0** | **Prueba de concepto: ¿acepta la API de libro un token app-only?** Cinco llamadas contra un sitio desechable. Decide si se puede automatizar el transporte — **no** bloquea las fases 1 a 3, que valen igual con la vía manual | ❌ necesita un registro y un sitio de pruebas |
 | 1 | Lector de los dos libros + cruce con salas por alias, en seco: dice qué entraría, qué chocaría y qué no sabe cruzar. No escribe nada | ✅ con los ficheros de hoy |
 | 2 | Migración del apartado 10 + tablas de paso + instantánea + fusión a tres bandas + cuarentena | ✅ |
 | 3 | Columna `Ref` y conversión de las hojas en tablas de Excel: la preparación del libro, una sola vez | ✅ sobre una copia |
-| 4 | Cliente de Graph: sondeo por `eTag`, descarga, y escritura por la API de libro con las reglas del apartado 6 | ❌ necesita el registro de aplicación |
+| **3b** | **La vía manual completa**: pantalla de subida, previsualización de lo que entraría, y descarga del libro parcheado. Con esto ya se sincroniza, a mano y sin depender de nadie | ✅ |
+| 4 | Cliente de Graph: sondeo por `cTag`, descarga, y escritura por la API de libro con las reglas del apartado 6 | ❌ necesita el registro de aplicación |
 | 5 | Endpoint del worker + `cron.schedule` + botón «sincronizar ahora» | ✅ |
 | 6 | Bandeja de choques en administración + hoja `Sincronización` en el libro | ✅ |
 
@@ -490,18 +545,18 @@ del libro de revisión cruzan con las 276 de la base y cuántas no. Si cruzaran
 mal, todo lo demás sobra hasta arreglar los alias. Y la fase 3 conviene ensayarla
 sobre una copia del libro antes de tocar el que usa la gente.
 
-La fase 0 es la única que puede tumbar el plan entero, y es barata: cinco
-llamadas. Va delante de cualquier petición formal a IT.
+La fase 0 es barata —cinco llamadas— y va delante de cualquier petición formal a
+IT. Pero ya no tumba el plan: si sale que no, se queda la fase 3b y la
+sincronización funciona igual, con una persona moviendo el fichero.
 
 ---
 
 ## 12. Lo que puede salir mal
 
-- **Que la API de libro no acepte un token sin usuario.** Es el riesgo número uno
-  y el único que tumba el diseño entero: la documentación de Microsoft dice que
-  esas llamadas no admiten permisos de aplicación. Lo resuelve la fase 0, y si
-  sale que no, las salidas están en el apartado 6 del documento de permisos —
-  ninguna gratis.
+- **Que la API de libro no acepte un token sin usuario.** La documentación de
+  Microsoft dice que esas llamadas no admiten permisos de aplicación. Lo resuelve
+  la fase 0. Deja de ser mortal desde que existe la vía manual del apartado 5: si
+  sale que no, se pierde la automatización del transporte, no la sincronización.
 - **Que alguien regenere el fichero con un script.** Es el único fallo
   irreversible de esta lista: se pierden fórmulas y formatos y nadie sabe cuáles.
   Por eso la regla del apartado 6 va la primera y en negrita.
