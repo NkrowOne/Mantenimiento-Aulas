@@ -343,8 +343,9 @@ npm run informe:ia
   los nombres dudosos de la importación, usuarios, stock e informes.
 - **[Despliegue con Postgres gestionado](docs/despliegue-postgres-gestionado.md)**
 - **[Sincronización con los Excel de SharePoint](docs/sincronizacion-sharepoint.md)** —
-  cómo mantener al día el inventario de revisiones y el stock desde los dos libros,
-  quién manda en cada dato y qué hay que pedir a IT.
+  cómo mantener el inventario de revisiones y el stock al día en los dos sentidos:
+  identidad de fila, fusión a tres bandas, y cómo escribir en el libro sin
+  llevarse por delante sus fórmulas ni su formato.
 
 ## Antes de producción
 
