@@ -555,10 +555,26 @@ Excel; `space_code` es lo que dice Patrimonio. Son tres identidades distintas co
 tres dueños distintos, y meterlas en la misma columna es garantizar que una pise
 a otra.
 
-Y las tablas de la sincronización: el registro de ficheros vistos con su `eTag` y
-su hash, las filas aterrizadas, **la instantánea de la última fusión** —la del
-apartado 4, sin la cual no hay bidireccionalidad segura— y el parte de cada
-pasada.
+Y las tablas de la sincronización, que son cuatro:
+
+| Tabla | Qué guarda | Por qué |
+|---|---|---|
+| `sync_ficheros` | Cada `.xlsx` visto, con su `cTag` y su `sha256` | La idempotencia va por hash y no por nombre ni fecha: los dos libros se llaman siempre igual, y la fecha cambia cuando alguien abre el libro y lo cierra sin tocarlo |
+| `sync_filas` | Cada fila de cada hoja tal cual venía, con su `Ref` | Contesta «¿de dónde salió este dato?» seis meses después, y permite repetir una pasada fallida sin consecuencias |
+| **`sync_celdas`** | **La instantánea: el valor exacto de cada celda tras la última pasada correcta** | **El antepasado común del apartado 4. Es la única de las cuatro que no se puede reconstruir si se pierde, y sin ella «bidireccional» solo puede significar «gana el último»** |
+| `sync_partes` | El parte de cada pasada, abierto antes de empezar | Una pasada que se murió a la mitad tiene que verse como una fila sin cerrar, no desaparecer |
+
+Los choques no estrenan tabla: van a `import_quarantine`, que ya existe y ya
+tiene pantalla de resolución, con `source` empezando por `sharepoint` para
+distinguirlos de los que dejó la importación inicial. `sync_choques` es solo la
+vista con ese filtro y el orden con que se mira.
+
+**Hecho** en `20260826000100_sincronizacion_con_sharepoint.sql`, con las tres
+columnas nuevas, sus límites (un aula de 0 m² o de 4.000 asientos es un dedo que
+resbaló, y se rechaza en la puerta) y su RLS: todo esto es material de
+administración, y el parte lo lee además el supervisor, porque «¿cuándo se
+sincronizó por última vez y cuántos choques dejó?» es una pregunta de quien firma
+el informe del viernes.
 
 ---
 
@@ -568,7 +584,7 @@ pasada.
 |---|---|---|
 | **0** | **Prueba de concepto: ¿acepta la API de libro un token app-only?** Cinco llamadas contra un sitio desechable. Decide si se puede automatizar el transporte — **no** bloquea las fases 1 a 3, que valen igual con la vía manual | ❌ necesita un registro y un sitio de pruebas |
 | 1 | **Hecho.** Lector de los dos libros + cruce contra el maestro, en seco: `npm run cruce:excel`. Resuelve por matrícula, alias, edificio+código y auditoría de edificios desaparecidos; cuenta y explica cada fila que no cruza. No escribe nada | ✅ con los ficheros de hoy |
-| 2 | Migración del apartado 10 + tablas de paso + instantánea + fusión a tres bandas + cuarentena | ✅ |
+| 2 | **Hecho.** Migración del apartado 10 + las cuatro tablas de sincronización + la instantánea + la fusión a tres bandas (`src/domain/fusion.ts`, 30 pruebas) + los choques a `import_quarantine`. Sigue sin escribir nada: devuelve decisiones | ✅ |
 | 3 | Columna `Ref` y conversión de las hojas en tablas de Excel: la preparación del libro, una sola vez | ✅ sobre una copia |
 | **3b** | **La vía manual completa**: pantalla de subida, previsualización de lo que entraría, y descarga del libro parcheado. Con esto ya se sincroniza, a mano y sin depender de nadie | ✅ |
 | 4 | Cliente de Graph: sondeo por `cTag`, descarga, y escritura por la API de libro con las reglas del apartado 6 | ❌ necesita el registro de aplicación |
