@@ -124,16 +124,41 @@ maestro de una instalación recién cargada, hoy:
 el inventario, y cruza entera. Lo demás no falla por el cruce, falla porque el
 maestro no tiene esos edificios:
 
-| Código que aparece | Filas | |
+| Código que aparece | Filas | Qué dice la evidencia |
 |---|---|---|
-| `BC` | 30 | ya conocido: está en `UNKNOWN_BUILDING_CODES` desde la importación |
-| `S` | 30 | no existe en el maestro |
-| `G` | 17 | no existe |
-| `TM` | 15 | no existe |
-| `CSCA`, `CC`, `K`, `CEFF`, «Artes y Diseño 1 y 2» | 13 | no existen |
+| `S` | 30 | ninguna aula exclusiva: sin decidir |
+| `BC` | 30 | ninguna aula exclusiva: sin decidir. Ya venía marcado en `UNKNOWN_BUILDING_CODES` desde la importación |
+| `G` | 17 | **3 aulas solo existen en el EDIFICIO H**: única lectura posible |
+| `TM` | 15 | ninguna aula exclusiva: sin decidir |
+| `CSCA`, `K`, «Artes y Diseño 2» | 11 | ninguna aula exclusiva: sin decidir |
+| `CC`, `CEFF`, «Artes y Diseño 1» | 3 | sus aulas ya no existen: no hay de dónde deducir nada |
 
-Son 106 filas que **ninguna mejora del resolutor puede rescatar**: hasta que
-esos edificios se den de alta, no hay sala a la que apuntar. El resto de las que
+**No son edificios que falten por dar de alta: es la nomenclatura anterior a los
+renombrados.** Y eso, que parece una buena noticia, deja un problema propio: ni
+`merge_building` ni el cambio de código de un edificio dejan alias del
+**edificio** —solo de las salas que existían entonces—, así que un parte que
+dice `1.4 S` se queda sin traducción y ninguna heurística de nombres la inventa:
+`S` puede ser Salud, Servicios o Seminarios.
+
+Se intentó deducir de las aulas, que sí siguen existiendo, y ahí apareció la
+trampa que conviene dejar escrita: **contar coincidencias premia al edificio más
+grande**. Los códigos de aula de este campus son genéricos —`1.1`, `2.3`,
+`-1.2`— y el edificio con cien salas contiene casi cualquier lista. Con ese
+criterio, `S` encajaba «30 de 30» con el edificio P, «26 de 30» con el M, y tres
+códigos parecían resueltos. No lo estaban: eso mide el tamaño de P, no la
+identidad de `S`.
+
+Lo que discrimina son las aulas que existen en **un solo** edificio, y contadas
+así **nueve de los diez códigos no tienen ninguna**. Solo `G` la tiene, y por eso
+es el único que la evidencia decide.
+
+Los demás los declara una persona, una línea por código en `OLD_BUILDING_CODES`
+(`src/domain/normalize.ts`), y `npm run cruce:excel` imprime el bloque listo para
+pegar con lo que propone para cada uno. Nace vacío a propósito: rellenarlo a ojo
+cuelga treinta partes del edificio que no era, y no se descubre hasta que alguien
+busca un histórico y no está. Lo que cruza por una de esas líneas queda marcado
+como `nomenclatura-vieja`, que no es lo mismo que haber cruzado por el maestro
+de hoy. El resto de las que
 no cruzan son referencias sin código de sala —`Lab Docente 5`, `Modulo 5
 buhardilla`, `Aula 1, 2, 7 MSI`— y aulas del libro de revisión que el maestro no
 tiene todavía.

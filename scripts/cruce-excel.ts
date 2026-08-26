@@ -23,7 +23,7 @@
 
 import readXlsxFile from 'read-excel-file/node'
 import { readFileSync } from 'node:fs'
-import { construirIndice, contar, resolverSala } from '../src/domain/cruce'
+import { construirIndice, contar, proponerEquivalencias, resolverSala } from '../src/domain/cruce'
 import type { Catalogo, EdificioDesaparecido, Resolucion, SalaConocida } from '../src/domain/cruce'
 
 const text = (row: unknown[], i: number): string => String(row[i] ?? '').trim()
@@ -275,14 +275,21 @@ async function main(): Promise<void> {
   }
 
   const ix = construirIndice(catalogo)
-  const desconocidos = new Map<string, number>()
+  const desconocidos = new Map<string, { filas: number; aulas: string[] }>()
 
-  /** Anota el código de edificio de una fila que no cruzó, si es que se lee uno. */
-  const anotarDesconocido = (res: Resolucion, codigo: string): void => {
+  /**
+   * Anota el código de edificio de una fila que no cruzó, **y con qué aula
+   * venía**. El aula es lo que después permite deducir a qué edificio de hoy
+   * corresponde el código viejo: los nombres no se parecen, las aulas sí están.
+   */
+  const anotarDesconocido = (res: Resolucion, codigo: string, aula: string): void => {
     if (res.estado === 'resuelta' || !codigo) return
     const c = codigo.toUpperCase()
     if (ix.edificioVivo.has(c)) return
-    desconocidos.set(c, (desconocidos.get(c) ?? 0) + 1)
+    const v = desconocidos.get(c) ?? { filas: 0, aulas: [] }
+    v.filas++
+    if (aula) v.aulas.push(aula)
+    desconocidos.set(c, v)
   }
 
   // --- Hoja de estado: edificio y planta van en celdas combinadas ---
@@ -321,8 +328,11 @@ async function main(): Promise<void> {
       if (!ref) continue
       const r0 = resolverSala(ix, { tipo: 'parte', ref })
       res.push(r0)
-      const sufijo = ref.trim().split(/\s+/).pop() ?? ''
-      if (/^[A-Za-z]{1,4}$/.test(sufijo)) anotarDesconocido(r0, sufijo)
+      const trozos = ref.trim().split(/\s+/)
+      const sufijo = trozos[trozos.length - 1] ?? ''
+      if (/^[A-Za-z]{1,4}$/.test(sufijo)) {
+        anotarDesconocido(r0, sufijo, trozos.slice(0, -1).join(' '))
+      }
       etq.push(ref)
     }
     if (res.length) informe({ titulo: hoja, resoluciones: res, etiquetas: etq })
@@ -352,7 +362,7 @@ async function main(): Promise<void> {
           codigoOficial: text(fila, 2),
         })
         res.push(r0)
-        anotarDesconocido(r0, text(fila, 0).replace(/^edificio\s+/i, ''))
+        anotarDesconocido(r0, text(fila, 0).replace(/^edificio\s+/i, ''), nombreAula)
         etq.push(`${nombreAula} (${text(fila, 0)})`)
       }
       if (res.length) informe({ titulo: `${hoja} — ${revision.split('/').pop()}`, resoluciones: res, etiquetas: etq })
@@ -366,10 +376,64 @@ async function main(): Promise<void> {
   // por más listo que sea el resolutor.
   if (desconocidos.size) {
     console.log('\n── Códigos de edificio que aparecen y no están en el maestro')
-    for (const [codigo, n] of [...desconocidos.entries()].sort((a, b) => b[1] - a[1])) {
-      console.log(`     · ${codigo}: ${n} filas`)
+    console.log('   Es nomenclatura anterior a los renombrados: no son edificios que dar')
+    console.log('   de alta. Pero ni `merge_building` ni el cambio de código de un edificio')
+    console.log('   dejan alias del edificio, así que hay que deducir la equivalencia — y')
+    console.log('   se deduce de las aulas, que sí están, no del parecido de los nombres.\n')
+
+    const equivalencias = proponerEquivalencias(
+      ix,
+      [...desconocidos.entries()].map(([codigo, v]) => ({ codigo, aulas: v.aulas })),
+    )
+    const filasDe = (c: string): number => desconocidos.get(c)?.filas ?? 0
+
+    for (const eq of equivalencias.sort((a, b) => filasDe(b.codigo) - filasDe(a.codigo))) {
+      const n = filasDe(eq.codigo)
+      console.log(
+        `     · ${eq.codigo}: ${n} ${n === 1 ? 'fila' : 'filas'}, ` +
+          `${eq.aulas} ${eq.aulas === 1 ? 'aula' : 'aulas'}` +
+          (eq.reconocibles < eq.aulas ? ` (${eq.reconocibles} siguen existiendo)` : ''),
+      )
+      for (const c of eq.candidatas.slice(0, 3)) {
+        console.log(
+          `         ${c.edificioNombre} (${c.edificioCodigo}): ${c.aciertos} de ${eq.reconocibles}` +
+            `, ${c.exclusivos} solo suyas`,
+        )
+      }
+      console.log(
+        eq.veredicto === 'unica'
+          ? `         → aplicable: ${eq.motivo}`
+          : `         → no: ${eq.motivo}`,
+      )
     }
-    console.log('   Ninguna de esas filas puede cruzar hasta que el edificio exista.')
+
+    const unicas = equivalencias.filter((e) => e.veredicto === 'unica')
+    const pendientes = equivalencias.filter((e) => e.veredicto !== 'unica')
+    const filasDeUnicas = unicas.reduce((n, e) => n + filasDe(e.codigo), 0)
+    const filasPendientes = pendientes.reduce((n, e) => n + filasDe(e.codigo), 0)
+
+    console.log(
+      `\n   ${unicas.length} de ${equivalencias.length} códigos los decide la evidencia ` +
+        `(${filasDeUnicas} filas). Los otros ${pendientes.length} (${filasPendientes} filas) ` +
+        `no los decide nadie más que tú.`,
+    )
+    console.log('   Las equivalencias se declaran en `OLD_BUILDING_CODES`, en src/domain/normalize.ts:\n')
+    // `ARTES Y DISEÑO 2` no es un identificador: si sale sin comillas, la línea
+    // pegada tal cual no compila.
+    const clave = (c: string): string => (/^[A-Za-z_$][\w$]*$/.test(c) ? c : `'${c}'`)
+    const cuantas = (c: string): string => {
+      const n = filasDe(c)
+      return `${n} ${n === 1 ? 'fila' : 'filas'}`
+    }
+    for (const eq of unicas) {
+      console.log(`     ${clave(eq.codigo)}: '${eq.candidatas[0]?.edificioCodigo}',   // ${cuantas(eq.codigo)} — ${eq.motivo}`)
+    }
+    for (const eq of pendientes) {
+      const sugerencia = eq.candidatas[0]?.edificioCodigo ?? '???'
+      console.log(`     // ${clave(eq.codigo)}: '${sugerencia}',   // ${cuantas(eq.codigo)} — ${eq.motivo}`)
+    }
+    console.log('\n   Cada línea que añadas hace cruzar sus filas en la pasada siguiente,')
+    console.log('   marcadas como `nomenclatura-vieja` y no como si fueran del maestro de hoy.')
   }
 
   console.log('\nNada se ha escrito: ni en la base, ni en el Excel.\n')

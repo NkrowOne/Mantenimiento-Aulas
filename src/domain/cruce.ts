@@ -28,7 +28,14 @@
  * que hay que mirar antes de decidir si la sincronización es viable.
  */
 
-import { cleanRoomRef, norm, splitIncidentKey, stripParenthetical, BUILDING_TYPOS } from './normalize'
+import {
+  cleanRoomRef,
+  norm,
+  splitIncidentKey,
+  stripParenthetical,
+  BUILDING_TYPOS,
+  OLD_BUILDING_CODES,
+} from './normalize'
 
 // -----------------------------------------------------------------------------
 // Lo que hace falta saber del maestro
@@ -63,6 +70,11 @@ export interface EdificioDesaparecido {
 }
 
 export interface Catalogo {
+  /**
+   * Equivalencias de nomenclatura vieja para este catálogo. Por defecto las
+   * declaradas en `OLD_BUILDING_CODES`; se puede pasar otra cosa para probar.
+   */
+  equivalencias?: Record<string, string>
   salas: SalaConocida[]
   edificiosDesaparecidos?: EdificioDesaparecido[]
 }
@@ -82,6 +94,8 @@ export type ReferenciaDeSala =
   | { tipo: 'matricula'; ref: string }
 
 export type ViaDeCruce =
+  /** Traducido por una equivalencia declarada en `OLD_BUILDING_CODES`. */
+  | 'nomenclatura-vieja'
   | 'matricula'
   | 'alias'
   | 'edificio+codigo'
@@ -108,6 +122,8 @@ export interface Indice {
   edificioPorNombre: Map<string, string>
   /** Código de edificio → sigue vivo. */
   edificioVivo: Map<string, boolean>
+  /** Código viejo declarado → código del edificio de hoy. */
+  equivalencias: Map<string, string>
   desaparecidos: Map<string, EdificioDesaparecido>
 }
 
@@ -175,6 +191,7 @@ export function construirIndice(catalogo: Catalogo): Indice {
     porCodigoSuelto: new Map(),
     edificioPorNombre: new Map(),
     edificioVivo: new Map(),
+    equivalencias: new Map(),
     desaparecidos: new Map(),
   }
 
@@ -206,6 +223,20 @@ export function construirIndice(catalogo: Catalogo): Indice {
   for (const [errata, bueno] of Object.entries(BUILDING_TYPOS)) {
     const codigo = ix.edificioPorNombre.get(norm(bueno))
     if (codigo) ix.edificioPorNombre.set(norm(errata), codigo)
+  }
+
+  // Las equivalencias declaradas de nomenclatura vieja. Solo se registran las
+  // que apuntan a un edificio que existe: una línea con un destino que ya no
+  // está es una errata, y traducir hacia la nada es peor que no traducir.
+  for (const [viejo, actual] of Object.entries(catalogo.equivalencias ?? OLD_BUILDING_CODES)) {
+    const codigo = norm(actual)
+    if (!ix.edificioVivo.has(codigo)) continue
+    // Las dos formas, porque las hojas escriben tanto `1.4 S` como `EDIFICIO S`
+    // y las dos tienen que quedar marcadas como traducción y no como cruce.
+    for (const forma of [norm(viejo), norm(`EDIFICIO ${viejo}`)]) {
+      ix.equivalencias.set(forma, codigo)
+      ix.edificioPorNombre.set(forma, codigo)
+    }
   }
 
   for (const e of catalogo.edificiosDesaparecidos ?? []) {
@@ -295,6 +326,23 @@ export function resolverSala(ix: Indice, ref: ReferenciaDeSala): Resolucion {
     const sala = ix.porEdificioYCodigo.get(`${partes.buildingCode}|${norm(partes.roomCode)}`)
     if (sala) return conAviso(sala, 'edificio+codigo')
 
+    // El código de edificio puede ser de los de antes. Si hay equivalencia
+    // declarada se traduce, y se dice: haber cruzado por una tabla escrita a
+    // mano no es lo mismo que haber cruzado por el maestro de hoy.
+    const actual = ix.equivalencias.get(norm(partes.buildingCode))
+    if (actual) {
+      for (const c of formasDeEscribir(partes.roomCode, actual)) {
+        const traducida = ix.porEdificioYCodigo.get(`${actual}|${c}`)
+        if (traducida) {
+          return conAviso(
+            traducida,
+            'nomenclatura-vieja',
+            `«${partes.buildingCode}» es nomenclatura vieja de «${traducida.edificioNombre}»`,
+          )
+        }
+      }
+    }
+
     if (!ix.edificioVivo.has(partes.buildingCode)) {
       const muerto = ix.desaparecidos.get(norm(partes.buildingCode))
       return porCodigoEnTodoElMaestro(
@@ -334,10 +382,18 @@ export function resolverSala(ix: Indice, ref: ReferenciaDeSala): Resolucion {
     }
   }
 
+  // Si el edificio se resolvió por una equivalencia declarada, la fila cruza
+  // pero no por el maestro de hoy, y eso tiene que verse en el informe.
+  const traducido = ix.equivalencias.get(norm(bruto)) === edificio.codigo
+
   // Dentro del edificio, todas las formas de escribir el mismo código.
   for (const c of formasDeEscribir(aula, edificio.codigo)) {
     const sala = ix.porEdificioYCodigo.get(`${edificio.codigo}|${c}`)
-    if (sala) return conAviso(sala, via)
+    if (sala) {
+      return traducido
+        ? conAviso(sala, 'nomenclatura-vieja', `«${bruto}» es nomenclatura vieja de «${sala.edificioNombre}»`)
+        : conAviso(sala, via)
+    }
   }
 
   // Antes de rendirse: un alias puede llevar la referencia vieja de esta sala.
@@ -374,4 +430,161 @@ export function contar(resoluciones: Resolucion[]): Recuento {
     else r.sinCruce++
   }
   return r
+}
+
+// -----------------------------------------------------------------------------
+// Los códigos de edificio que ya no existen: a quién corresponden hoy
+// -----------------------------------------------------------------------------
+
+/**
+ * Lo observado de un código de edificio que el maestro no tiene: qué aulas
+ * aparecen escritas con él.
+ */
+export interface Huerfano {
+  codigo: string
+  /** Los códigos de aula vistos junto a ese código de edificio, tal cual venían. */
+  aulas: string[]
+}
+
+export interface Candidata {
+  edificioCodigo: string
+  edificioNombre: string
+  /** Cuántas de las aulas observadas existen en ese edificio. */
+  aciertos: number
+  /**
+   * Cuántas existen **solo** ahí. Es lo único que discrimina de verdad: un aula
+   * `1.1` que está en ocho edificios no señala a ninguno.
+   */
+  exclusivos: number
+}
+
+export interface Equivalencia {
+  codigo: string
+  /** Cuántas aulas distintas se vieron con ese código. */
+  aulas: number
+  /** Cuántas de ellas existen en algún sitio del maestro. */
+  reconocibles: number
+  candidatas: Candidata[]
+  /**
+   * `unica`         — un solo edificio tiene aulas que no están en ningún otro,
+   *                   y además es el que más encaja. Es lo único aplicable sin
+   *                   preguntar.
+   * `ambigua`       — varios edificios tienen aulas exclusivas, o ninguno la
+   *                   tiene y entonces lo que hay es tamaño, no evidencia.
+   * `sin_candidata` — ninguna de esas aulas existe hoy en ninguna parte.
+   */
+  veredicto: 'unica' | 'ambigua' | 'sin_candidata'
+  /** Por qué ese veredicto, en una línea, para el informe. */
+  motivo: string
+}
+
+/**
+ * Propone a qué edificio de hoy corresponde cada código viejo, **deduciéndolo de
+ * las aulas** y no del parecido de los nombres.
+ *
+ * El problema real: `S`, `G`, `TM`, `BC`… no son edificios que falten por dar de
+ * alta, son la nomenclatura anterior a los renombrados. Pero `merge_building` y
+ * los cambios de código de edificio no dejan alias para el **edificio**, solo
+ * para las salas que existían entonces, así que un parte antiguo que dice `1.4 S`
+ * se queda sin traducción y no hay heurística de nombres que la invente: `S`
+ * puede ser Salud, Servicios o Seminarios.
+ *
+ * Lo que sí hay es evidencia. Un código viejo arrastra la lista de aulas que se
+ * nombraron con él, y esas aulas siguen existiendo en el edificio al que fueron
+ * a parar.
+ *
+ * Con una trampa que hay que esquivar y que es la razón de que esto cuente dos
+ * cosas y no una: **contar coincidencias premia al edificio más grande**. Los
+ * códigos de aula son genéricos —`1.1`, `2.3`, `-1.2`— y el edificio con cien
+ * salas contiene casi cualquier lista que se le ponga delante. Medido sobre
+ * estos libros, `S` encaja «30 de 30» con el edificio P y «26 de 30» con el M, y
+ * eso no dice que `S` fuera P: dice que P es grande.
+ *
+ * Lo que discrimina son las aulas que están en **un solo** edificio. Si de las
+ * treinta hay doce que solo existen en P, la equivalencia es evidencia. Si no
+ * hay ninguna exclusiva, no se ha demostrado nada por mucho que los totales
+ * cuadren, y el veredicto lo dice.
+ *
+ * Aplicar una equivalencia equivocada cuelga treinta partes del edificio que no
+ * era sin que salte nada, y no se descubre hasta que alguien busca un histórico
+ * y no está.
+ */
+export function proponerEquivalencias(ix: Indice, huerfanos: Huerfano[]): Equivalencia[] {
+  return huerfanos
+    .map((h) => {
+      const porEdificio = new Map<string, Candidata>()
+      let reconocibles = 0
+
+      for (const aula of new Set(h.aulas.map((a) => norm(a)))) {
+        // Las mismas formas de escribir que usa el cruce: un parte que dice
+        // `AULA 1.4` y una sala que se llama `1.4` son la misma aula.
+        const encontradas = new Map<string, SalaConocida>()
+        for (const forma of formasDeEscribir(aula)) {
+          for (const s of ix.porCodigoSuelto.get(forma) ?? []) encontradas.set(s.id, s)
+        }
+        if (encontradas.size === 0) continue
+        reconocibles++
+
+        // Un edificio suma **una vez por aula**, aunque tenga dos salas que
+        // encajen: si no, un edificio grande gana dos veces por el mismo dato.
+        const edificios = new Map<string, SalaConocida>()
+        for (const s of encontradas.values()) {
+          if (!edificios.has(s.edificioCodigo)) edificios.set(s.edificioCodigo, s)
+        }
+        const exclusiva = edificios.size === 1
+
+        for (const [codigo, s] of edificios) {
+          const c = porEdificio.get(codigo) ?? {
+            edificioCodigo: codigo,
+            edificioNombre: s.edificioNombre,
+            aciertos: 0,
+            exclusivos: 0,
+          }
+          c.aciertos++
+          if (exclusiva) c.exclusivos++
+          porEdificio.set(codigo, c)
+        }
+      }
+
+      const candidatas = [...porEdificio.values()].sort(
+        (a, b) => b.exclusivos - a.exclusivos || b.aciertos - a.aciertos,
+      )
+      const conExclusivas = candidatas.filter((c) => c.exclusivos > 0)
+      const mejor = candidatas[0]
+
+      if (!mejor) {
+        return {
+          codigo: h.codigo,
+          aulas: new Set(h.aulas.map((a) => norm(a))).size,
+          reconocibles,
+          candidatas,
+          veredicto: 'sin_candidata' as const,
+          motivo: 'ninguna de esas aulas existe hoy: no hay de dónde deducir nada',
+        }
+      }
+
+      let veredicto: Equivalencia['veredicto'] = 'ambigua'
+      let motivo: string
+      if (conExclusivas.length === 0) {
+        motivo =
+          'ninguna de esas aulas es exclusiva de un edificio: los totales que cuadran son tamaño, no evidencia'
+      } else if (conExclusivas.length > 1) {
+        motivo = `${conExclusivas.length} edificios tienen aulas que solo están ahí: o se repartieron, o el código nombraba a más de uno`
+      } else if (mejor.aciertos < Math.max(...candidatas.map((c) => c.aciertos))) {
+        motivo = 'el que tiene las aulas exclusivas no es el que más encaja: los datos se contradicen'
+      } else {
+        veredicto = 'unica'
+        motivo = `${mejor.exclusivos} de esas aulas solo existen en ${mejor.edificioNombre}`
+      }
+
+      return {
+        codigo: h.codigo,
+        aulas: new Set(h.aulas.map((a) => norm(a))).size,
+        reconocibles,
+        candidatas,
+        veredicto,
+        motivo,
+      }
+    })
+    .sort((a, b) => b.aulas - a.aulas)
 }
