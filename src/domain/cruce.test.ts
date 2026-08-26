@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { construirIndice, contar, formasDeEscribir, proponerEquivalencias, resolverSala } from './cruce'
+import {
+  construirIndice,
+  contar,
+  equivalenciasDesdeAuditoria,
+  formasDeEscribir,
+  proponerEquivalencias,
+  resolverSala,
+} from './cruce'
 import type { Catalogo, SalaConocida } from './cruce'
 
 function sala(p: Partial<SalaConocida> & { code: string; edificioCodigo: string }): SalaConocida {
@@ -271,5 +278,128 @@ describe('las equivalencias declaradas de nomenclatura vieja', () => {
     const ix = construirIndice({ salas: MAESTRO.salas, equivalencias: { S: 'NO_EXISTE' } })
     expect(ix.equivalencias.size).toBe(0)
     expect(resolverSala(ix, { tipo: 'parte', ref: '1.4 S' }).estado).not.toBe('resuelta')
+  })
+})
+
+describe('la auditoría sabe lo que pasó, y no hay que deducirlo', () => {
+  it('renombrar un edificio deja la equivalencia escrita: misma fila, otro código', () => {
+    const eq = equivalenciasDesdeAuditoria({
+      vivos: [{ id: 'b1', codigo: 'H' }],
+      renombrados: [{ rowId: 'b1', codigoViejo: 'G' }],
+      fusiones: [],
+      borrados: [],
+    })
+    expect(eq).toEqual({ G: 'H' })
+  })
+
+  it('fusionar deja el salto de las zonas, y el borrado deja el código que tenía al morir', () => {
+    const eq = equivalenciasDesdeAuditoria({
+      vivos: [{ id: 'b2', codigo: 'CRAI' }],
+      renombrados: [],
+      fusiones: [{ deId: 'b1', aId: 'b2' }],
+      borrados: [{ rowId: 'b1', codigo: 'BC' }],
+    })
+    expect(eq).toEqual({ BC: 'CRAI' })
+  })
+
+  it('una cadena entera apunta al mismo sitio: renombrado dos veces y fusionado después', () => {
+    const eq = equivalenciasDesdeAuditoria({
+      vivos: [{ id: 'b3', codigo: 'P' }],
+      renombrados: [
+        { rowId: 'b1', codigoViejo: 'S' },
+        { rowId: 'b1', codigoViejo: 'SAL' },
+      ],
+      fusiones: [
+        { deId: 'b1', aId: 'b2' },
+        { deId: 'b2', aId: 'b3' },
+      ],
+      borrados: [{ rowId: 'b1', codigo: 'SALUD' }],
+    })
+    expect(eq).toEqual({ S: 'P', SAL: 'P', SALUD: 'P' })
+  })
+
+  it('un código que sigue vivo hoy no es una equivalencia', () => {
+    // `H` se renombró a `X` y luego alguien creó otro edificio `H`. La fila
+    // vieja no puede secuestrar un código que hoy es de otro.
+    const eq = equivalenciasDesdeAuditoria({
+      vivos: [
+        { id: 'b1', codigo: 'X' },
+        { id: 'b9', codigo: 'H' },
+      ],
+      renombrados: [{ rowId: 'b1', codigoViejo: 'H' }],
+      fusiones: [],
+      borrados: [],
+    })
+    expect(eq).toEqual({})
+  })
+
+  it('una cadena que no llega a ningún edificio vivo no inventa un destino', () => {
+    const eq = equivalenciasDesdeAuditoria({
+      vivos: [],
+      renombrados: [],
+      fusiones: [{ deId: 'b1', aId: 'b2' }],
+      borrados: [{ rowId: 'b1', codigo: 'CEFF' }],
+    })
+    expect(eq).toEqual({})
+  })
+
+  it('un ciclo en la auditoría no cuelga el proceso', () => {
+    const eq = equivalenciasDesdeAuditoria({
+      vivos: [],
+      renombrados: [],
+      fusiones: [
+        { deId: 'b1', aId: 'b2' },
+        { deId: 'b2', aId: 'b1' },
+      ],
+      borrados: [{ rowId: 'b1', codigo: 'X' }],
+    })
+    expect(eq).toEqual({})
+  })
+})
+
+describe('los edificios que existen pero no tienen ni una sala', () => {
+  // El importador creó `S`, `G`, `TM`, `BC`, `CC` y `CEFF` como «Edificio X
+  // (sin identificar)» al verlos en los partes. La hoja de estado —la única que
+  // define salas— no lista ninguna dentro, así que se quedaron vacíos. Un
+  // catálogo construido solo desde las salas los pierde.
+  const CAT: Catalogo = {
+    salas: [
+      sala({ code: '0.1P', edificioCodigo: 'P', shortRef: 'SALA-000010' }),
+      sala({ code: '9.9', edificioCodigo: 'H', shortRef: 'SALA-000011' }),
+      sala({ code: '9.9', edificioCodigo: 'M', shortRef: 'SALA-000012' }),
+    ],
+    edificios: [
+      { codigo: 'P', nombre: 'EDIFICIO P', activo: true },
+      { codigo: 'H', nombre: 'EDIFICIO H', activo: true },
+      { codigo: 'M', nombre: 'EDIFICIO M', activo: true },
+      { codigo: 'S', nombre: 'Edificio S (sin identificar)', activo: true, sinIdentificar: true },
+      { codigo: 'CSQ', nombre: 'SIMULACION QUIRURGICA', activo: true },
+    ],
+  }
+  const IXE = construirIndice(CAT)
+
+  it('el índice sabe cuáles están vacíos y cuáles no', () => {
+    expect(IXE.edificioVacio.has('S')).toBe(true)
+    expect(IXE.edificioVacio.has('P')).toBe(false)
+    // Y existen, que es lo que el cruce decía mal cuando el catálogo salía
+    // solo de las salas.
+    expect(IXE.edificioVivo.has('S')).toBe(true)
+  })
+
+  it('un aula de un edificio sin identificar se busca en todo el maestro', () => {
+    const r = resolverSala(IXE, { tipo: 'parte', ref: '0.1P S' })
+    expect(r).toMatchObject({ estado: 'resuelta', via: 'codigo-unico-en-el-maestro' })
+    if (r.estado === 'resuelta') expect(r.aviso).toContain('sin identificar')
+  })
+
+  it('y si el código se repite, queda ambigua en vez de elegir', () => {
+    const r = resolverSala(IXE, { tipo: 'parte', ref: '9.9 S' })
+    expect(r.estado).toBe('ambigua')
+  })
+
+  it('un edificio vacío pero identificado no manda a buscar por ahí: lo dice y ya', () => {
+    const r = resolverSala(IXE, { tipo: 'estado', edificio: 'SIMULACION QUIRURGICA', aula: 'AULA I' })
+    expect(r.estado).toBe('sin_cruce')
+    if (r.estado === 'sin_cruce') expect(r.motivo).toContain('no tiene ninguna sala')
   })
 })

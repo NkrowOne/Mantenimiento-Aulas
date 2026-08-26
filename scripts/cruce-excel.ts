@@ -23,7 +23,14 @@
 
 import readXlsxFile from 'read-excel-file/node'
 import { readFileSync } from 'node:fs'
-import { construirIndice, contar, proponerEquivalencias, resolverSala } from '../src/domain/cruce'
+import {
+  construirIndice,
+  contar,
+  equivalenciasDesdeAuditoria,
+  proponerEquivalencias,
+  resolverSala,
+} from '../src/domain/cruce'
+import { OLD_BUILDING_CODES } from '../src/domain/normalize'
 import type { Catalogo, EdificioDesaparecido, Resolucion, SalaConocida } from '../src/domain/cruce'
 
 const text = (row: unknown[], i: number): string => String(row[i] ?? '').trim()
@@ -70,7 +77,7 @@ function partirValores(linea: string): string[] {
 function catalogoDesdeSeed(ruta: string): Catalogo {
   const lineas = readFileSync(ruta, 'utf8').split('\n')
 
-  const edificios = new Map<string, { code: string; name: string }>()
+  const edificios = new Map<string, { code: string; name: string; sinIdentificar?: boolean }>()
   const zonas = new Map<string, { buildingId: string; name: string }>()
   const salas: SalaConocida[] = []
   const porId = new Map<string, SalaConocida>()
@@ -78,7 +85,9 @@ function catalogoDesdeSeed(ruta: string): Catalogo {
   for (const l of lineas) {
     if (l.startsWith('insert into buildings ')) {
       const v = partirValores(l)
-      if (v[0]) edificios.set(v[0], { code: v[1] ?? '', name: v[2] ?? '' })
+      // v[4] es `needs_review`: el importador lo pone en los que vio en los
+      // partes y no supo identificar.
+      if (v[0]) edificios.set(v[0], { code: v[1] ?? '', name: v[2] ?? '', sinIdentificar: /true/i.test(v[4] ?? '') })
     } else if (l.startsWith('insert into zones ')) {
       const v = partirValores(l)
       if (v[0]) zonas.set(v[0], { buildingId: v[1] ?? '', name: v[2] ?? '' })
@@ -116,7 +125,18 @@ function catalogoDesdeSeed(ruta: string): Catalogo {
     if (sala && v[3]) sala.alias.push(v[3])
   }
 
-  return { salas }
+  return {
+    salas,
+    // Todos los edificios, tengan salas o no. Los seis «sin identificar» que el
+    // importador creó desde los partes no tienen ninguna, y sin esta lista el
+    // cruce diría que no existen.
+    edificios: [...edificios.values()].map((e) => ({
+      codigo: e.code,
+      nombre: e.name,
+      activo: true,
+      sinIdentificar: e.sinIdentificar,
+    })),
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -167,6 +187,50 @@ async function catalogoDesdeBase(url: string): Promise<Catalogo> {
        order by old_data->>'code', at desc
     `
 
+    // Y a dónde fueron a parar, que es distinto de saber que se fueron.
+    //
+    // `rename_building` hace `update buildings set code` sobre la misma fila, y
+    // `merge_building` mueve las zonas con `update zones set building_id` antes
+    // de borrar el origen. Las dos cosas se auditan, así que la equivalencia
+    // entre el código viejo y el edificio de hoy **está escrita**: no hay que
+    // deducirla de las aulas ni preguntársela a nadie.
+    const edificiosVivos = await sql<
+      Array<{ id: string; codigo: string; nombre: string; activo: boolean; sin_identificar: boolean }>
+    >`
+      select id, code as codigo, name as nombre, active as activo,
+             needs_review as sin_identificar
+        from buildings
+    `
+    const renombrados = await sql<Array<{ row_id: string; codigo_viejo: string }>>`
+      select row_id, old_data->>'code' as codigo_viejo
+        from audit_log
+       where table_name = 'buildings' and op = 'UPDATE'
+         and old_data->>'code' is distinct from new_data->>'code'
+         and old_data->>'code' is not null
+    `
+    const fusiones = await sql<Array<{ de_id: string; a_id: string }>>`
+      select distinct old_data->>'building_id' as de_id,
+                      new_data->>'building_id' as a_id
+        from audit_log
+       where table_name = 'zones' and op = 'UPDATE'
+         and old_data->>'building_id' is distinct from new_data->>'building_id'
+         and old_data->>'building_id' is not null
+         and new_data->>'building_id' is not null
+    `
+    const borrados = await sql<Array<{ row_id: string; codigo: string }>>`
+      select row_id, old_data->>'code' as codigo
+        from audit_log
+       where table_name = 'buildings' and op = 'DELETE'
+         and old_data->>'code' is not null
+    `
+
+    const equivalencias = equivalenciasDesdeAuditoria({
+      vivos: edificiosVivos.map((e) => ({ id: e.id, codigo: e.codigo })),
+      renombrados: renombrados.map((r) => ({ rowId: r.row_id, codigoViejo: r.codigo_viejo })),
+      fusiones: fusiones.map((f) => ({ deId: f.de_id, aId: f.a_id })),
+      borrados: borrados.map((b) => ({ rowId: b.row_id, codigo: b.codigo })),
+    })
+
     const vivos = new Set(filas.map((f) => f.edificio_codigo))
     const desaparecidos: EdificioDesaparecido[] = muertos
       .filter((m) => !vivos.has(m.codigo))
@@ -189,7 +253,17 @@ async function catalogoDesdeBase(url: string): Promise<Catalogo> {
         edificioActivo: f.edificio_activo,
         alias: f.alias ?? [],
       })),
+      edificios: edificiosVivos.map((e) => ({
+        codigo: e.codigo,
+        nombre: e.nombre,
+        activo: e.activo,
+        sinIdentificar: e.sin_identificar,
+      })),
       edificiosDesaparecidos: desaparecidos,
+      // Lo declarado a mano manda sobre lo deducido: si alguien escribió una
+      // línea en `OLD_BUILDING_CODES` es porque sabe algo que la auditoría no
+      // puede saber —los códigos que ya eran viejos antes de cargar la base.
+      equivalencias: { ...equivalencias, ...OLD_BUILDING_CODES },
     }
   } finally {
     await sql.end({ timeout: 5 })
@@ -253,6 +327,12 @@ async function main(): Promise<void> {
   if (usarSeed) {
     catalogo = catalogoDesdeSeed('supabase/seed.sql')
     console.log(`Maestro: supabase/seed.sql — ${catalogo.salas.length} salas (instalación recién cargada)`)
+    console.log(
+      '   ⚠ El seed no tiene auditoría ni renombrados: en este maestro ningún\n' +
+        '     edificio ha cambiado nunca de nombre. Lo que salga abajo sobre\n' +
+        '     nomenclatura vieja no dice qué pasó de verdad — para eso hace falta\n' +
+        '     la base, que es donde están los cambios: DATABASE_URL=… sin --seed.',
+    )
   } else {
     const url = process.env.DATABASE_URL
     if (!url) {
@@ -271,6 +351,13 @@ async function main(): Promise<void> {
     )
     for (const e of catalogo.edificiosDesaparecidos ?? []) {
       console.log(`   · ${e.nombre} (${e.codigo}): ${e.motivo}`)
+    }
+    const n = Object.keys(catalogo.equivalencias ?? {}).length
+    if (n) {
+      console.log(`   ${n} equivalencias de nomenclatura vieja reconstruidas desde la auditoría:`)
+      for (const [viejo, actual] of Object.entries(catalogo.equivalencias ?? {})) {
+        console.log(`   · ${viejo} → ${actual}`)
+      }
     }
   }
 
@@ -376,10 +463,11 @@ async function main(): Promise<void> {
   // por más listo que sea el resolutor.
   if (desconocidos.size) {
     console.log('\n── Códigos de edificio que aparecen y no están en el maestro')
-    console.log('   Es nomenclatura anterior a los renombrados: no son edificios que dar')
-    console.log('   de alta. Pero ni `merge_building` ni el cambio de código de un edificio')
-    console.log('   dejan alias del edificio, así que hay que deducir la equivalencia — y')
-    console.log('   se deduce de las aulas, que sí están, no del parecido de los nombres.\n')
+    console.log('   Es nomenclatura anterior a los renombrados: no son edificios que dar de')
+    console.log('   alta. Los cambios hechos en la aplicación ya se han traducido arriba con')
+    console.log('   la auditoría; lo que queda aquí es lo que la aplicación no puede saber:')
+    console.log('   códigos que ya eran viejos antes de cargar la base. Para ésos se intenta')
+    console.log('   deducir de las aulas, con la cautela de abajo.\n')
 
     const equivalencias = proponerEquivalencias(
       ix,

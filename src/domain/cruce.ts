@@ -69,7 +69,25 @@ export interface EdificioDesaparecido {
   motivo: string
 }
 
+export interface EdificioConocido {
+  codigo: string
+  nombre: string
+  activo: boolean
+  /** `buildings.needs_review`: lo creó el importador sin saber qué era. */
+  sinIdentificar?: boolean
+}
+
 export interface Catalogo {
+  /**
+   * Los edificios del maestro. Hace falta aparte de las salas porque **hay
+   * edificios sin ninguna sala**: el importador creó `S`, `G`, `TM`, `BC`, `CC`
+   * y `CEFF` como «Edificio X (sin identificar)» al ver esas referencias en los
+   * partes, y la hoja de estado —la única que define salas— no lista ninguna
+   * dentro de ellos. Un catálogo construido solo desde las salas los pierde, y
+   * entonces el cruce dice «ese edificio no está en el maestro», que es falso y
+   * manda a buscar en el sitio equivocado.
+   */
+  edificios?: EdificioConocido[]
   /**
    * Equivalencias de nomenclatura vieja para este catálogo. Por defecto las
    * declaradas en `OLD_BUILDING_CODES`; se puede pasar otra cosa para probar.
@@ -122,6 +140,8 @@ export interface Indice {
   edificioPorNombre: Map<string, string>
   /** Código de edificio → sigue vivo. */
   edificioVivo: Map<string, boolean>
+  /** Código de edificio → no tiene ninguna sala en el maestro. */
+  edificioVacio: Map<string, EdificioConocido>
   /** Código viejo declarado → código del edificio de hoy. */
   equivalencias: Map<string, string>
   desaparecidos: Map<string, EdificioDesaparecido>
@@ -191,12 +211,26 @@ export function construirIndice(catalogo: Catalogo): Indice {
     porCodigoSuelto: new Map(),
     edificioPorNombre: new Map(),
     edificioVivo: new Map(),
+    edificioVacio: new Map(),
     equivalencias: new Map(),
     desaparecidos: new Map(),
   }
 
+  // Primero los edificios, salas o no: un edificio vacío existe igual.
+  for (const e of catalogo.edificios ?? []) {
+    const codigo = norm(e.codigo)
+    if (!codigo) continue
+    ix.edificioVivo.set(codigo, e.activo)
+    ix.edificioPorNombre.set(codigo, codigo)
+    ix.edificioPorNombre.set(norm(e.nombre), codigo)
+    ix.edificioPorNombre.set(norm(`EDIFICIO ${codigo}`), codigo)
+    ix.edificioVacio.set(codigo, e)
+  }
+
   for (const sala of catalogo.salas) {
     ix.porMatricula.set(norm(sala.shortRef), sala)
+    // Tiene salas: ya no está vacío.
+    ix.edificioVacio.delete(norm(sala.edificioCodigo))
     for (const a of sala.alias) ix.porAlias.set(norm(a), sala)
 
     for (const v of variantesDeCodigo(sala)) {
@@ -343,6 +377,26 @@ export function resolverSala(ix: Indice, ref: ReferenciaDeSala): Resolucion {
       }
     }
 
+    const vacio = ix.edificioVacio.get(norm(partes.buildingCode))
+    if (vacio) {
+      // Un edificio «sin identificar» y sin una sola sala no es donde está el
+      // aula: es el hueco que el importador abrió al ver esta misma referencia
+      // y no saber a qué edificio llevarla. Así que se busca el código por todo
+      // el maestro, igual que con un edificio desaparecido — que es lo que en la
+      // práctica es.
+      if (vacio.sinIdentificar) {
+        return porCodigoEnTodoElMaestro(
+          ix,
+          partes.roomCode,
+          `«${vacio.codigo}» es un edificio sin identificar y sin ninguna sala`,
+        )
+      }
+      return {
+        estado: 'sin_cruce',
+        motivo: `el edificio «${vacio.nombre}» existe pero no tiene ninguna sala`,
+      }
+    }
+
     if (!ix.edificioVivo.has(partes.buildingCode)) {
       const muerto = ix.desaparecidos.get(norm(partes.buildingCode))
       return porCodigoEnTodoElMaestro(
@@ -399,6 +453,21 @@ export function resolverSala(ix: Indice, ref: ReferenciaDeSala): Resolucion {
   // Antes de rendirse: un alias puede llevar la referencia vieja de esta sala.
   const porAlias = ix.porAlias.get(norm(`${aula} ${edificio.codigo}`))
   if (porAlias) return conAviso(porAlias, 'alias')
+
+  const vacio = ix.edificioVacio.get(edificio.codigo)
+  if (vacio) {
+    if (vacio.sinIdentificar) {
+      return porCodigoEnTodoElMaestro(
+        ix,
+        formasDeEscribir(aula).at(-1) ?? aula,
+        `«${vacio.codigo}» es un edificio sin identificar y sin ninguna sala`,
+      )
+    }
+    return {
+      estado: 'sin_cruce',
+      motivo: `el edificio «${vacio.nombre}» existe pero no tiene ninguna sala`,
+    }
+  }
 
   return {
     estado: 'sin_cruce',
@@ -587,4 +656,89 @@ export function proponerEquivalencias(ix: Indice, huerfanos: Huerfano[]): Equiva
       }
     })
     .sort((a, b) => b.aulas - a.aulas)
+}
+
+// -----------------------------------------------------------------------------
+// La equivalencia que sí consta: la auditoría
+// -----------------------------------------------------------------------------
+
+/**
+ * Lo que `audit_log` guarda de los cambios de nomenclatura, en crudo.
+ *
+ * Las cuatro piezas juntas reconstruyen el camino completo de un edificio, y
+ * ninguna sirve sola.
+ */
+export interface RastroDeAuditoria {
+  /** Los edificios de hoy: `id` → código actual. */
+  vivos: Array<{ id: string; codigo: string }>
+  /**
+   * Cada vez que `rename_building` cambió el código: la fila es la misma
+   * (`rowId`), así que el código viejo y el nuevo son el mismo edificio.
+   */
+  renombrados: Array<{ rowId: string; codigoViejo: string }>
+  /**
+   * Cada `update zones set building_id` de `merge_building`: el edificio de
+   * origen se quedó sin zonas y después se borró.
+   */
+  fusiones: Array<{ deId: string; aId: string }>
+  /** Los `delete from buildings`, con el código que tenían al morir. */
+  borrados: Array<{ rowId: string; codigo: string }>
+}
+
+/**
+ * Reconstruye, desde la auditoría, a qué edificio de hoy corresponde cada código
+ * que se usó alguna vez. Sin heurísticas: es lo que pasó.
+ *
+ * Es la respuesta correcta al problema de la nomenclatura vieja, y es exacta
+ * donde la deducción por aulas solo podía ser probable. Los cambios se hicieron
+ * en la aplicación y la aplicación los apuntó:
+ *
+ *  - `rename_building` hace `update buildings set code = …` **sobre la misma
+ *    fila**, así que la auditoría deja el código viejo y el nuevo con el mismo
+ *    `row_id`. La equivalencia está escrita, no hay que adivinarla.
+ *  - `merge_building` mueve las zonas con `update zones set building_id = …`
+ *    —y `zones` también se audita— y después borra el edificio de origen. El
+ *    salto de `building_id` es la equivalencia, y el `DELETE` da el código con
+ *    el que murió.
+ *
+ * Lo que hay que seguir son las cadenas: un edificio renombrado dos veces y
+ * fusionado después tiene tres códigos históricos y todos apuntan al mismo sitio
+ * de hoy. Por eso esto camina el grafo en vez de mirar un solo salto.
+ *
+ * Solo puede saber lo que pasó **dentro de la aplicación**. Un código que ya era
+ * viejo cuando se cargó la base —los que traen los partes de 2025— no dejó
+ * rastro aquí, y ése sí hay que declararlo a mano.
+ */
+export function equivalenciasDesdeAuditoria(r: RastroDeAuditoria): Record<string, string> {
+  const codigoDe = new Map(r.vivos.map((v) => [v.id, norm(v.codigo)]))
+  const vivosHoy = new Set(r.vivos.map((v) => norm(v.codigo)))
+  const absorbidoPor = new Map(r.fusiones.map((f) => [f.deId, f.aId]))
+
+  /** Sigue la cadena de fusiones hasta un edificio que exista hoy. */
+  const codigoActual = (id: string): string | undefined => {
+    const visto = new Set<string>()
+    let actual: string | undefined = id
+    while (actual && !visto.has(actual)) {
+      const vivo = codigoDe.get(actual)
+      if (vivo) return vivo
+      visto.add(actual)
+      actual = absorbidoPor.get(actual)
+    }
+    return undefined
+  }
+
+  const out: Record<string, string> = {}
+  const anotar = (viejo: string, id: string): void => {
+    const destino = codigoActual(id)
+    const v = norm(viejo)
+    // Un código que sigue vivo con su propio nombre no es una equivalencia: si
+    // `H` se renombró a `X` y después alguien dio de alta otro edificio `H`, la
+    // fila vieja no puede secuestrar un código que hoy es de otro.
+    if (!destino || !v || v === destino || vivosHoy.has(v)) return
+    out[v] = destino
+  }
+
+  for (const x of r.renombrados) anotar(x.codigoViejo, x.rowId)
+  for (const x of r.borrados) anotar(x.codigo, x.rowId)
+  return out
 }
