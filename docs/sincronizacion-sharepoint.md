@@ -200,8 +200,13 @@ hoja, con la matrícula que la aplicación ya asigna**.
 | Bolsa 2026 / 2025 | `Articulo / Material` | ya es único; se normaliza con `canonAlmacen()` |
 | Material Instalado 2026 / 2025 | `N.º Incidencia` | ya es único (`I260102_0002`) |
 
-La columna `Ref` va **la primera, bloqueada y con fondo gris**, y la rellena la
-primera pasada de sincronización. A partir de ahí da igual cómo se ordene, se
+La columna `Ref` la rellena la primera pasada de sincronización, y va **al
+final**, no la primera. Aquí el diseño estaba equivocado y lo corrigió el código:
+insertar una columna a la izquierda desplaza todas las demás y obliga a
+reescribir cada referencia de la hoja —las fórmulas, el rango del autofiltro
+(`A1:X416`), los cuatro formatos condicionales, la validación—, que es
+exactamente la clase de operación que rompe el libro en silencio. Al final no
+desplaza nada, y para lo que sirve la columna da lo mismo dónde esté. A partir de ahí da igual cómo se ordene, se
 filtre o se inserte: cada fila se reconoce por su matrícula, no por dónde esté.
 
 **Y cierra el círculo en el otro sentido**: si alguien añade un aula nueva al
@@ -623,8 +628,8 @@ el informe del viernes.
 | **0** | **Prueba de concepto: ¿acepta la API de libro un token app-only?** Cinco llamadas contra un sitio desechable. Decide si se puede automatizar el transporte — **no** bloquea las fases 1 a 3, que valen igual con la vía manual | ❌ necesita un registro y un sitio de pruebas |
 | 1 | **Hecho.** Lector de los dos libros + cruce contra el maestro, en seco: `npm run cruce:excel`. Resuelve por matrícula, alias, edificio+código y auditoría de edificios desaparecidos; cuenta y explica cada fila que no cruza. No escribe nada | ✅ con los ficheros de hoy |
 | 2 | **Hecho.** Migración del apartado 10 + las cuatro tablas de sincronización + la instantánea + la fusión a tres bandas (`src/domain/fusion.ts`, 30 pruebas) + los choques a `import_quarantine`. Sigue sin escribir nada: devuelve decisiones | ✅ |
-| 3 | Columna `Ref` y conversión de las hojas en tablas de Excel: la preparación del libro, una sola vez | ✅ sobre una copia |
-| **3b** | **La vía manual completa**: pantalla de subida, previsualización de lo que entraría, y descarga del libro parcheado. Con esto ya se sincroniza, a mano y sin depender de nadie | ✅ |
+| 3 | **Hecho** (la columna `Ref`; las hojas como tablas de Excel, no: no hace falta para identificar filas). La columna va **al final**, no la primera — insertarla a la izquierda obliga a reescribir cada fórmula, el rango del autofiltro y los cuatro formatos condicionales | ✅ |
+| **3b** | **Hecho a medias**: la pantalla existe (`Preparar el Excel de SharePoint`, en administración) y hace el viaje entero de subir → previsualizar → descargar parcheado, **en el sentido app → Excel**. Falta el sentido contrario: que las correcciones del Excel entren en la base, que necesita la instantánea de la fase 2 aplicándose de verdad | ✅ |
 | 4 | Cliente de Graph: sondeo por `cTag`, descarga, y escritura por la API de libro con las reglas del apartado 6 | ❌ necesita el registro de aplicación |
 | 5 | Endpoint del worker + `cron.schedule` + botón «sincronizar ahora» | ✅ |
 | 6 | Bandeja de choques en administración + hoja `Sincronización` en el libro | ✅ |
