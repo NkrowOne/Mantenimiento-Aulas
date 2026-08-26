@@ -1107,6 +1107,7 @@ aparecer:
 | Lo que dice | Qué significa | Qué hacer |
 |---|---|---|
 | **No se ha podido leer *algo*** | Una de las consultas no ha llegado: sin conexión, o el perfil no es de administrador | Comprueba la conexión y el rol. El informe no se emite a medias a propósito: una cifra corta sin avisar es peor que ninguna |
+| ***algo*: la petición no ha llegado a salir** | La consulta murió antes de tener respuesta. Es red, no permisos: el dispositivo se ha quedado sin cobertura, o el servidor ha cortado la conexión | Vuelve a intentarlo. Si el iPad tiene red y se repite siempre en el mismo punto, mira el registro de Caddy o de Kong |
 | **El análisis ha salido calculado y no redactado por la IA: …** | El informe está bien; lo que ha fallado es la redacción. El motivo va en la misma frase (sin clave, clave sin permiso, cuota agotada) | Si es la clave, se arregla en la tarjeta de arriba de esa misma pantalla |
 | **El informe está hecho, pero no se ha podido guardar…** | El documento existe y se puede imprimir, pero no ha entrado en el archivo. Suele ser que falta la migración `20260821000100_informes_en_el_navegador.sql` | Descárgalo para no perderlo y aplica las migraciones pendientes |
 | **El navegador ha bloqueado la ventana del informe** | «Descargar PDF» abre una pestaña, y el navegador la trata como emergente | Permite las ventanas emergentes de esta dirección, o usa «Descargar el original» |

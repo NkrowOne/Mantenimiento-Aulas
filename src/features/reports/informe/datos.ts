@@ -46,7 +46,7 @@
 
 import { supabase } from '@/lib/supabase'
 import { descargaEntera, type Pagina } from '@/sync/paginada'
-import { TOPE_CONSULTA_MS, esSilencio, señalConTope } from './espera'
+import { TOPE_CONSULTA_MS, esRedCaida, esSilencio, señalConTope } from './espera'
 import { diaEnMadrid, horaCorta, inicioDelDia } from '@/domain/fechas'
 import {
   type Rango,
@@ -256,6 +256,14 @@ function fallo(que: string, err: unknown): Error {
         'Comprueba la conexión; si va bien, es la base la que no está respondiendo.',
     )
   }
+  // «TypeError: Load failed» era lo que llegaba a la pantalla, y no dice nada.
+  // La petición ni siquiera llegó a tener respuesta: eso es red, no permisos.
+  if (esRedCaida(err)) {
+    return new Error(
+      `${que}: la petición no ha llegado a salir. Comprueba la conexión y vuelve a intentarlo; ` +
+        'si el dispositivo tiene red, es el servidor el que está cortando.',
+    )
+  }
   return new Error(`No se ha podido leer ${que}: ${err instanceof Error ? err.message : String(err)}`)
 }
 
@@ -282,6 +290,59 @@ async function todas<T>(
  * el mismo `if (error) throw`, y sobre todo para que ninguna se quede esperando
  * sin final: el `catch` es lo que convierte un servidor mudo en una frase.
  */
+/**
+ * Cuántos identificadores caben en una consulta sin que la URL reviente.
+ *
+ * `.in('id', [...])` los mete TODOS en la línea de petición, y ahí no hay
+ * paginación que valga: la URL crece con el periodo que se pida. Medido sobre
+ * lo que arma supabase-js, cada identificador ocupa 39 caracteres —36 del uuid
+ * y 3 de la coma codificada—, así que cien son unos 4 KB.
+ *
+ * El tope de la línea de petición es de 8 KB de fábrica en nginx, que es lo que
+ * hay debajo de Kong. Doscientos identificadores ya no caben (comprobado contra
+ * un servidor con ese mismo tope: 431), y un mes de movimientos de equipo son
+ * cientos o miles. Lo que le llegaba a la pantalla era «TypeError: Load
+ * failed», que no dice absolutamente nada de esto.
+ *
+ * Cien deja la URL en la mitad del tope. No se sube más: el margen es para las
+ * cabeceras, que viajan en la misma petición y también cuentan —el token de
+ * sesión solo ya pasa del kilobyte—.
+ */
+const TOPE_IDS_POR_CONSULTA = 100
+
+/** La lista partida en trozos que quepan. Pura, para poder probarla. */
+export function trozos<T>(lista: T[], tamaño = TOPE_IDS_POR_CONSULTA): T[][] {
+  if (tamaño < 1) throw new Error('un trozo tiene que tener al menos un elemento')
+  const partes: T[][] = []
+  for (let i = 0; i < lista.length; i += tamaño) partes.push(lista.slice(i, i + tamaño))
+  return partes
+}
+
+/**
+ * Lo mismo que `pide`, pero para una consulta que filtra por una lista de
+ * identificadores: va por trozos y junta.
+ *
+ * En serie y no en paralelo a propósito. Un PostgREST autoalojado trae diez
+ * conexiones de fábrica y el informe ya lanza sus consultas en tandas; soltar
+ * aquí veinte peticiones más de golpe es la forma de convertir un informe
+ * grande en el cuelgue que costó el «nunca me llega a dar el informe».
+ */
+async function pidePorTrozos<T>(
+  que: string,
+  ids: string[],
+  construir: (
+    trozo: string[],
+    señal: AbortSignal,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  if (ids.length === 0) return []
+  const todo: T[] = []
+  for (const trozo of trozos(ids)) {
+    todo.push(...(await pide<T>(que, (señal) => construir(trozo, señal))))
+  }
+  return todo
+}
+
 async function pide<T>(
   que: string,
   construir: (
@@ -503,33 +564,27 @@ export function contadores(f: FilasDelPeriodo): Contadores {
 async function salasFueraDeLaLista(faltan: string[]): Promise<FilaSala[]> {
   if (faltan.length === 0) return []
 
-  const salas: FilaSala[] = []
-  // De cien en cien: los identificadores viajan en la URL y una lista larga se
-  // topa con el límite del servidor, que además contesta con un error opaco.
-  for (let i = 0; i < faltan.length; i += 100) {
-    const trozo = faltan.slice(i, i + 100)
-    const filas = await pide<FilaSalaCruda>('las salas archivadas', (señal) =>
-      supabase
-        .from('rooms')
-        .select('id,code,name,active,zones(name,buildings(code,name,active))')
-        .in('id', trozo)
-        .abortSignal(señal),
-    )
-    for (const r of filas) {
-      const edificio = uno(uno(r.zones)?.buildings)
-      salas.push({
-        room_id: r.id,
-        room_code: r.code,
-        room_name: r.name ?? '',
-        building_code: edificio?.code ?? '—',
-        building_name: edificio?.name ?? 'Sin edificio',
-        last_inspection_at: null,
-        open_incidents: 0,
-        archivada: true,
-      })
+  const filas = await pidePorTrozos<FilaSalaCruda>('las salas archivadas', faltan, (trozo, señal) =>
+    supabase
+      .from('rooms')
+      .select('id,code,name,active,zones(name,buildings(code,name,active))')
+      .in('id', trozo)
+      .abortSignal(señal),
+  )
+
+  return filas.map((r) => {
+    const edificio = uno(uno(r.zones)?.buildings)
+    return {
+      room_id: r.id,
+      room_code: r.code,
+      room_name: r.name ?? '',
+      building_code: edificio?.code ?? '—',
+      building_name: edificio?.name ?? 'Sin edificio',
+      last_inspection_at: null,
+      open_incidents: 0,
+      archivada: true,
     }
-  }
-  return salas
+  })
 }
 
 // ── La foto de hoy ───────────────────────────────────────────────────────────
@@ -902,16 +957,18 @@ async function salasConMasIncidencias(
    * quedarse con ocho filas es pedirle a la base el índice de 276 aulas cada
    * vez que alguien genera un informe.
    */
-  const filas = await pide<{ room_id: string; score: number | null; hay_datos: boolean | null }>(
+  const filas = await pidePorTrozos<{
+    room_id: string
+    score: number | null
+    hay_datos: boolean | null
+  }>(
     'la fiabilidad de las salas',
-    (señal) =>
+    top.map((t) => t.roomId),
+    (trozo, señal) =>
       supabase
         .from('room_reliability')
         .select('room_id,score,hay_datos')
-        .in(
-          'room_id',
-          top.map((t) => t.roomId),
-        )
+        .in('room_id', trozo)
         .abortSignal(señal),
   )
   const fiabilidad = new Map(filas.map((f) => [f.room_id, f]))
@@ -1319,14 +1376,15 @@ async function fotosDelPeriodo(
 /** Los adjuntos de un puñado de filas, sin pedirlos todos de una vez. */
 async function adjuntosDe(tipo: 'incident' | 'inspection', ids: string[]): Promise<FilaAdjunto[]> {
   if (ids.length === 0) return []
-  return pide<FilaAdjunto>(
+  return pidePorTrozos<FilaAdjunto>(
     tipo === 'incident' ? 'las fotos de las incidencias' : 'las fotos de las revisiones',
-    (señal) =>
+    ids,
+    (trozo, señal) =>
       supabase
         .from('attachments')
         .select('id,entity_id,storage_path,taken_at')
         .eq('entity_type', tipo)
-        .in('entity_id', ids)
+        .in('entity_id', trozo)
         .order('taken_at', { ascending: true })
         .limit(TOPE_FOTOS * 4)
         .abortSignal(señal),
@@ -1410,9 +1468,11 @@ async function nombresDePersona(ids: Array<string | null>): Promise<Map<string, 
   const unicos = [...new Set(ids.filter((x): x is string => Boolean(x)))]
   if (unicos.length === 0) return new Map()
 
-  const filas = await pide<{ id: string; full_name: string | null }>(
+  const filas = await pidePorTrozos<{ id: string; full_name: string | null }>(
     'los nombres del personal',
-    (señal) => supabase.from('profiles').select('id,full_name').in('id', unicos).abortSignal(señal),
+    unicos,
+    (trozo, señal) =>
+      supabase.from('profiles').select('id,full_name').in('id', trozo).abortSignal(señal),
   )
   return new Map(filas.map((p) => [p.id, p.full_name ?? '']))
 }
@@ -1479,21 +1539,25 @@ async function filasDeRevisiones(
 
   const ids = conSala.map((v) => v.id)
   const [checks, aperturas] = await Promise.all([
-    pide<{ inspection_id: string }>('las comprobaciones de cada revisión', (señal) =>
-      supabase
-        .from('inspection_checks')
-        .select('inspection_id')
-        .in('inspection_id', ids)
-        .eq('result', 'incidencia')
-        .abortSignal(señal),
+    pidePorTrozos<{ inspection_id: string }>(
+      'las comprobaciones de cada revisión',
+      ids,
+      (trozo, señal) =>
+        supabase
+          .from('inspection_checks')
+          .select('inspection_id')
+          .in('inspection_id', trozo)
+          .eq('result', 'incidencia')
+          .abortSignal(señal),
     ),
-    pide<{ opened_from_inspection_id: string }>(
+    pidePorTrozos<{ opened_from_inspection_id: string }>(
       'los registros que nacieron de cada revisión',
-      (señal) =>
+      ids,
+      (trozo, señal) =>
         supabase
           .from('incidents')
           .select('opened_from_inspection_id')
-          .in('opened_from_inspection_id', ids)
+          .in('opened_from_inspection_id', trozo)
           .neq('state', 'borrador')
           .abortSignal(señal),
     ),
@@ -1525,25 +1589,31 @@ async function filasDeRevisiones(
   })
 }
 
-/** Cómo se llama cada tipo de movimiento de equipo cuando no hay etiqueta. */
+/**
+ * Cómo se llama cada equipo que sale en el diario.
+ *
+ * Recibe los identificadores de los que VAN A SALIR, no los de todo el periodo:
+ * quien llama ya ha recortado. Es la diferencia entre pedir ciento cincuenta
+ * fichas y pedir todas las del mes.
+ */
 async function etiquetasDeEquipo(
-  eventos: FilaEventoEquipo[],
+  deLosQueSalen: string[],
 ): Promise<Map<string, { titulo: string; serial: string | null; roomId: string | null }>> {
-  const ids = [...new Set(eventos.map((e) => e.asset_id))]
+  const ids = [...new Set(deLosQueSalen)]
   if (ids.length === 0) return new Map()
 
   const [equipos, tipos] = await Promise.all([
-    pide<{
+    pidePorTrozos<{
       id: string
       label: string | null
       serial: string | null
       room_id: string | null
       asset_type_id: string | null
-    }>('los equipos del diario', (señal) =>
+    }>('los equipos del diario', ids, (trozo, señal) =>
       supabase
         .from('assets')
         .select('id,label,serial,room_id,asset_type_id')
-        .in('id', ids)
+        .in('id', trozo)
         .abortSignal(señal),
     ),
     pide<{ id: string; name: string }>('los tipos de equipo', (señal) =>
@@ -1585,8 +1655,6 @@ async function diarioDelPeriodo(
   quien: Map<string, string>,
   articulos: Map<string, { name: string; unit: string }>,
 ): Promise<ReportData['eventos']> {
-  const equipos = await etiquetasDeEquipo(f.equipos)
-
   interface Crudo {
     at: string
     tipo: string
@@ -1597,6 +1665,8 @@ async function diarioDelPeriodo(
     ref: string | null
     roomId: string | null
     byUser: string | null
+    /** De qué equipo es, cuando lo es. Se resuelve DESPUÉS del recorte. */
+    assetId?: string
   }
   const todos: Crudo[] = []
 
@@ -1658,39 +1728,56 @@ async function diarioDelPeriodo(
   }
 
   for (const e of f.equipos) {
-    const equipo = equipos.get(e.asset_id)
     const notaCruda = e.meta?.['nota']
     const nota = typeof notaCruda === 'string' ? notaCruda : ''
     todos.push({
       at: e.occurred_at,
       tipo: 'equipo',
       subtipo: e.kind,
-      titulo: equipo?.titulo ?? 'Equipo',
+      titulo: 'Equipo',
       detalle: nota || null,
       cantidad: null,
-      ref: equipo?.serial ?? null,
-      roomId: e.room_id ?? equipo?.roomId ?? null,
+      ref: null,
+      roomId: e.room_id,
       byUser: e.by_user,
+      assetId: e.asset_id,
     })
   }
 
-  return todos
-    .sort((a, b) => a.at.localeCompare(b.at))
-    .slice(0, TOPE_FILAS)
-    .map((e) => {
-      const sala = e.roomId ? deSala.get(e.roomId) : undefined
-      return {
-        dia: diaEnMadrid(new Date(e.at)),
-        hora: horaCorta(e.at),
-        tipo: e.tipo,
-        subtipo: e.subtipo,
-        titulo: e.titulo,
-        detalle: e.detalle,
-        cantidad: e.cantidad,
-        ref: e.ref,
-        building: sala?.building_code ?? '—',
-        room: sala?.room_code ?? '',
-        quien: e.byUser ? (quien.get(e.byUser) ?? null) : null,
-      }
-    })
+  /*
+   * El recorte, ANTES de ir a buscar cómo se llama cada equipo.
+   *
+   * Al revés —que es como estaba— el informe pedía la ficha de todos los
+   * equipos que se habían movido en el periodo para poder poner nombre a los
+   * ciento cincuenta apuntes que caben. En una semana son unos pocos; en un mes
+   * de inventario son miles, y todos viajaban dentro de la URL de una sola
+   * consulta. Ese es el «TypeError: Load failed» que llegaba a la pantalla: la
+   * petición no era rechazada por la base, es que no llegaba a salir.
+   *
+   * Ahora se ordena, se corta, y solo se pregunta por los que van a salir
+   * impresos. La lista queda acotada por `TOPE_FILAS`, pase lo que pase.
+   */
+  const recortados = todos.sort((a, b) => a.at.localeCompare(b.at)).slice(0, TOPE_FILAS)
+  const equipos = await etiquetasDeEquipo(
+    recortados.map((e) => e.assetId).filter((x): x is string => Boolean(x)),
+  )
+
+  return recortados.map((e) => {
+    const equipo = e.assetId ? equipos.get(e.assetId) : undefined
+    const roomId = e.roomId ?? equipo?.roomId ?? null
+    const sala = roomId ? deSala.get(roomId) : undefined
+    return {
+      dia: diaEnMadrid(new Date(e.at)),
+      hora: horaCorta(e.at),
+      tipo: e.tipo,
+      subtipo: e.subtipo,
+      titulo: equipo?.titulo ?? e.titulo,
+      detalle: e.detalle,
+      cantidad: e.cantidad,
+      ref: equipo?.serial ?? e.ref,
+      building: sala?.building_code ?? '—',
+      room: sala?.room_code ?? '',
+      quien: e.byUser ? (quien.get(e.byUser) ?? null) : null,
+    }
+  })
 }

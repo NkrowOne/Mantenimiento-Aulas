@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { conPlazo, esSilencio, señalConTope } from './espera'
+import { conPlazo, esRedCaida, esSilencio, señalConTope } from './espera'
 
 /**
  * El fallo que estas pruebas existen para impedir no es un error: es la
@@ -64,5 +64,46 @@ describe('la señal con tope', () => {
     } finally {
       AbortSignal.timeout = original
     }
+  })
+})
+
+/*
+ * La tercera categoría, la que se colaba tal cual en la pantalla del informe:
+ * «TypeError: Load failed». Ni es un plazo agotado —ahí hubo petición y no hubo
+ * respuesta— ni es un permiso denegado, que llega con su mensaje de la base. Es
+ * que la petición no llegó a salir.
+ */
+describe('la red que no llega', () => {
+  it('reconoce cómo lo dice cada navegador', () => {
+    expect(esRedCaida(new TypeError('Load failed'))).toBe(true)
+    expect(esRedCaida(new TypeError('Failed to fetch'))).toBe(true)
+    expect(esRedCaida(new TypeError('NetworkError when attempting to fetch resource'))).toBe(true)
+  })
+
+  /*
+   * El caso que se me escapó al escribirlo: por el camino de la descarga
+   * paginada el `TypeError` original no llega nunca. `descargaEntera` lo recoge,
+   * se queda con el mensaje y sigue con un `Error` normal — así que mirar el
+   * tipo dejaba sin clasificar justo la consulta más larga del informe.
+   */
+  it('lo reconoce también cuando ya ha perdido el tipo por el camino', () => {
+    expect(esRedCaida(new Error('TypeError: Load failed'))).toBe(true)
+    expect(esRedCaida(new Error('Load failed'))).toBe(true)
+    expect(esRedCaida('Failed to fetch')).toBe(true)
+  })
+
+  it('no confunde un permiso denegado con un fallo de red', () => {
+    expect(esRedCaida(new Error('permission denied for table assets'))).toBe(false)
+    expect(esRedCaida(new Error('JWT expired'))).toBe(false)
+  })
+
+  it('no se solapa con el plazo agotado: cada uno pide una respuesta distinta', () => {
+    const plazo = new DOMException('Se agotó la espera', 'TimeoutError')
+    expect(esSilencio(plazo)).toBe(true)
+    expect(esRedCaida(plazo)).toBe(false)
+
+    const red = new TypeError('Load failed')
+    expect(esRedCaida(red)).toBe(true)
+    expect(esSilencio(red)).toBe(false)
   })
 })
