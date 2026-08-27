@@ -342,6 +342,13 @@ npm run informe:ia
 - **[Guía de administración](docs/guia-administracion.md)** — editar datos, confirmar
   los nombres dudosos de la importación, usuarios, stock e informes.
 - **[Despliegue con Postgres gestionado](docs/despliegue-postgres-gestionado.md)**
+- **[Sincronización con los Excel de SharePoint](docs/sincronizacion-sharepoint.md)** —
+  cómo mantener el inventario de revisiones y el stock al día en los dos sentidos:
+  identidad de fila, fusión a tres bandas, y cómo escribir en el libro sin
+  llevarse por delante sus fórmulas ni su formato.
+- **[Permisos de SharePoint, y qué pedirle a IT](docs/sincronizacion-sharepoint-permisos.md)** —
+  el acceso mínimo (`Sites.Selected` sobre un solo sitio), el correo redactado, lo
+  que no se pide, y la prueba que hay que hacer antes de pedir nada.
 
 ## Antes de producción
 

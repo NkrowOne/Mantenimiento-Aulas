@@ -66,6 +66,38 @@ export function canonicalZone(raw: string): string {
 }
 
 /** Códigos que aparecen en las incidencias pero no en la hoja de estado. */
+/**
+ * Códigos de edificio de la nomenclatura anterior a los renombrados → el código
+ * del edificio que hoy ocupa su sitio.
+ *
+ * `S`, `G`, `TM`, `BC`, `CSCA`, `K`, `CC`, `CEFF` y los dos de Artes y Diseño
+ * aparecen en 106 filas de los partes y del libro de revisión, y **no son
+ * edificios que falten por dar de alta**: son la forma de nombrarlos de antes.
+ * El problema es que ni `merge_building` ni el cambio de código de un edificio
+ * dejan alias del **edificio** —solo de las salas que existían entonces—, así
+ * que un parte que dice `1.4 S` se queda sin traducción.
+ *
+ * Y no se puede deducir. `npm run cruce:excel` lo mide: de los diez códigos,
+ * **nueve no tienen ninguna aula exclusiva** de un solo edificio. Los códigos de
+ * aula de este campus son genéricos —`1.1`, `2.3`, `-1.2`— y encajan en casi
+ * cualquier sitio, así que los totales que cuadran («S: 30 de 30 con el edificio
+ * P») miden el tamaño del edificio, no su identidad. Rellenar esto a ojo cuelga
+ * treinta partes del edificio que no era y no se descubre hasta que alguien
+ * busca un histórico y no está.
+ *
+ * Por eso nace vacío: lo rellena quien sabe la respuesta, una línea por código,
+ * y el informe del cruce dice exactamente cuáles faltan y qué edificios propone
+ * para cada uno. En cuanto haya una línea aquí, esas filas cruzan solas y
+ * quedan marcadas como `nomenclatura-vieja`, que no es lo mismo que haber
+ * cruzado por el maestro de hoy.
+ *
+ *   export const OLD_BUILDING_CODES: Record<string, string> = {
+ *     S: 'X',        // 30 filas
+ *     BC: 'CRAI',    // 30 filas
+ *   }
+ */
+export const OLD_BUILDING_CODES: Record<string, string> = {}
+
 export const UNKNOWN_BUILDING_CODES = ['BC', 'CEFF'] as const
 
 export function classifyRoom(name: string): RoomKind {

@@ -9,6 +9,7 @@ import { EquiposPendientes } from './EquiposPendientes'
 import { MaestroSalas } from './MaestroSalas'
 import { RecuperarCopia } from './RecuperarCopia'
 import { RetiradasPendientes } from './RetiradasPendientes'
+import { SincronizarExcel } from './SincronizarExcel'
 import { UsersPage } from './UsersPage'
 
 interface ProvisionalBuilding {
@@ -157,6 +158,11 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
 
       <EquipoPorDefecto />
       <MaestroSalas />
+
+      {/* Va después del maestro porque lee de él: la matrícula que escribe en el
+          libro sale de las salas de aquí al lado, y prepararlo con el maestro a
+          medio arreglar deja el Excel apuntando a lo que había antes. */}
+      <SincronizarExcel />
 
       <section>
         <h1 className="text-xl font-semibold">Edificios sin identificar</h1>

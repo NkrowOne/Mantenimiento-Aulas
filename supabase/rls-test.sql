@@ -2998,3 +2998,117 @@ begin;
   end $$;
   rollback to savepoint s2;
 rollback;
+
+\echo ''
+\echo '=== 74. Las tablas de la sincronización no las lee cualquiera ==='
+--
+-- Lo que aterriza la sincronización es el libro entero, con columnas que en la
+-- hoja no ve todo el mundo, y la instantánea es lo que decide quién gana cada
+-- celda de la pasada siguiente. Poder escribirla desde un cliente sería poder
+-- decidir a posteriori quién ganó.
+begin;
+  -- Material de prueba: un fichero aterrizado, su instantánea y un choque.
+  insert into sync_ficheros (id, origen, nombre, sha256, bytes)
+    values (9001, 'material_aulas', 'Material_Aulas.xlsx', 'deadbeef', 1234);
+  insert into sync_filas (fichero_id, hoja, fila, ref, contenido, sha256)
+    values (9001, 'Estado Aulas', 2, 'SALA-000001', '{"Serie":"X1"}'::jsonb, 'cafe');
+  insert into sync_celdas (hoja, ref, columna, valor_base)
+    values ('Estado Aulas', 'SALA-000001', 'Serie', 'X1');
+  insert into import_quarantine (source, row_ref, raw, reason)
+    values ('sharepoint:material_aulas', 'SALA-000001',
+            '{"Serie":"X1"}'::jsonb, 'los dos lados cambiaron');
+
+  savepoint s1;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  select case
+    when (select count(*) from sync_celdas) = 0
+     and (select count(*) from sync_filas) = 0
+     and (select count(*) from sync_choques) = 0
+    then 'OK: un técnico no ve el libro aterrizado ni la instantánea'
+    else 'FALLO: la sincronización deja sus datos a la vista de cualquiera'
+  end as resultado;
+  rollback to savepoint s1;
+
+  -- La vista tiene `security_invoker`: sin él consultaría con los permisos de
+  -- quien la creó y se saltaría la RLS de `import_quarantine` entera.
+  savepoint s2;
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  select case
+    when (select count(*) from sync_choques) = 0
+     and (select count(*) from sync_partes) = 0
+    then 'OK: ni un supervisor ve los choques por la puerta de la vista'
+    else 'FALLO: sync_choques se salta la RLS de import_quarantine'
+  end as resultado;
+  rollback to savepoint s2;
+
+  savepoint s3;
+  select test_as('44444444-4444-4444-8444-444444444444', 'admin');
+  select case
+    when (select count(*) from sync_celdas) = 1
+     and (select count(*) from sync_choques) = 1
+    then 'OK: el administrador sí, que es quien resuelve los choques'
+    else 'FALLO: el administrador no puede mirar lo que tiene que resolver'
+  end as resultado;
+
+  -- Y nadie escribe la instantánea desde la API: eso es del worker, que va con
+  -- service-role y no pasa por aquí.
+  do $$
+  declare n int;
+  begin
+    insert into sync_celdas (hoja, ref, columna, valor_base)
+      values ('Estado Aulas', 'SALA-000001', 'Serie', 'INVENTADO');
+    get diagnostics n = row_count;
+    if n > 0 then
+      raise exception 'FALLO: se escribieron % celdas de la instantánea desde la API', n;
+    end if;
+  exception when insufficient_privilege then
+    raise notice 'OK: RLS bloqueó escribir la instantánea desde la API';
+  end $$;
+  rollback to savepoint s3;
+rollback;
+
+\echo ''
+\echo '=== 75. Los tres datos de Espacios rechazan lo imposible ==='
+--
+-- Un aula de 0 m² o de 4.000 asientos es un dedo que resbaló en la hoja. Se
+-- rechaza en la puerta: después ya nadie recuerda cuál era el valor bueno.
+begin;
+  do $$
+  declare r uuid;
+  begin
+    select id into r from rooms limit 1;
+
+    begin
+      update rooms set area_m2 = 0 where id = r;
+      raise exception 'FALLO: un aula de 0 m² entró';
+    exception when check_violation then
+      raise notice 'OK: 0 m² no es una superficie';
+    end;
+
+    begin
+      update rooms set seats = 4000 where id = r;
+      raise exception 'FALLO: un aula de 4.000 asientos entró';
+    exception when check_violation then
+      raise notice 'OK: 4.000 asientos no es una capacidad';
+    end;
+
+    update rooms set area_m2 = 62.5, seats = 40, space_code = '11A002' where id = r;
+    raise notice 'OK: los valores razonables entran';
+  end $$;
+
+  -- Y un código de espacio no se repite: si aparece dos veces es que el libro
+  -- tiene un error, y vale más que la base lo diga a que lo repita en silencio.
+  do $$
+  declare a uuid; b uuid;
+  begin
+    select id into a from rooms order by short_ref limit 1;
+    select id into b from rooms order by short_ref offset 1 limit 1;
+    update rooms set space_code = '11A999' where id = a;
+    begin
+      update rooms set space_code = '11A999' where id = b;
+      raise exception 'FALLO: dos salas con el mismo código de espacio';
+    exception when unique_violation then
+      raise notice 'OK: un código de espacio identifica un espacio';
+    end;
+  end $$;
+rollback;
