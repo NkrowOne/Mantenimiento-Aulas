@@ -26,7 +26,7 @@
  */
 
 import { useState } from 'react'
-import { SelloSinSubir, VisorDeFotos, useFotos, type Foto } from '@/components/Fotos'
+import { SelloFuera, SelloSinSubir, VisorDeFotos, useFotos, type Foto } from '@/components/Fotos'
 
 /** Cuántas baldosas caben en la fila de abajo. Con la grande, cuatro fotos. */
 const BALDOSAS = 3
@@ -163,6 +163,7 @@ export function FichaDeObservacion({
                       </span>
                     )}
                     {!ultima && f.pendiente && <SelloSinSubir />}
+                    {!ultima && !f.pendiente && f.retirada && <SelloFuera />}
                   </button>
                 </li>
               )
@@ -181,6 +182,7 @@ export function FichaDeObservacion({
 
       {abierta !== -1 && (
         <VisorDeFotos
+          entityType="inspection"
           fotos={fotos}
           indice={abierta}
           onIr={(i) => setAbiertaId(fotos[i]?.id ?? null)}

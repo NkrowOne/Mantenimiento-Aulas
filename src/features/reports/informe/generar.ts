@@ -72,7 +72,7 @@ export type Avisar = (paso: Paso, detalle?: string, fallo?: boolean) => void
 const TITULO: Record<string, string> = {
   diario: 'Parte diario',
   semanal: 'Informe semanal',
-  personalizado: 'Informe a medida',
+  personalizado: 'Informe del periodo',
 }
 
 /**

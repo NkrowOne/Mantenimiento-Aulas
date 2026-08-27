@@ -45,10 +45,12 @@ import * as echarts from 'echarts'
  *        --mode light --surface "#FFFFFF"
  */
 const CATEGORICAL = ['#4A78D4', '#12A396', '#B063D6', '#8A8F3C'] as const
-const INK = '#12171C'
-const MUTED = '#5C6875'
-const LINE = '#DBE0E6'
-const REJILLA = '#EDF0F3'
+/* Los mismos grises que la plantilla, para que el gráfico no venga de otro
+   documento: la tinta tira un punto al cálido y la rejilla es más suave. */
+const INK = '#1A2226'
+const MUTED = '#57676E'
+const LINE = '#DEE2E0'
+const REJILLA = '#EDEFEC'
 
 /** Ancho útil de la caja de texto del A4, en píxeles CSS. 178 mm exactos. */
 export const ANCHO_TOTAL = 672

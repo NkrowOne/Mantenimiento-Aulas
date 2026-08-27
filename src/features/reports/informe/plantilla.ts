@@ -47,24 +47,46 @@ import { type Indicador, type Lectura, dias as textoDias, indicadores, plural, p
 import { SECCIONES_POR_DEFECTO, type Opciones, type Seccion, tiene } from './opciones'
 import { etiquetaDia, nombreDia } from '../periodos'
 
-// La paleta de la aplicación, para que el PDF y la pantalla sean el mismo producto.
-const ACENTO = '#046A78'
-const INK = '#12171C'
-const INK2 = '#3C4A4E'
-const MUTED = '#5C6875'
-const LINE = '#D9DFE3'
-const HAIR = '#EAEEF0'
-const PAPEL = '#F7F7F5'
-const OK = '#137A47'
-const WARN = '#8A5A00'
-const CRIT = '#B02318'
+/*
+ * La paleta de la aplicación, para que el PDF y la pantalla sean el mismo
+ * producto, con el papel un punto más cálido que la pantalla.
+ *
+ * Los grises tiraban a azul de terminal y el rojo era de señal de tráfico. Un
+ * informe de mantenimiento no da malas noticias: cuenta cómo va el trabajo, y
+ * casi siempre va bien. Los tonos de estado siguen ahí —hacen falta para
+ * distinguir de un vistazo lo que urge—, solo que dichos en voz normal.
+ *
+ * Todos pasan 4,5:1 sobre el blanco Y sobre el crema del papel, que es donde de
+ * verdad se leen. El más justo es MUTED, que es además el que más letra pequeña
+ * lleva: 5,9 sobre blanco y 5,4 sobre crema.
+ */
+const ACENTO = '#0B6B70'
+/** El acento aguado, para fondos teñidos: números de hallazgo, píldoras. */
+const TINTE = '#E9F1F0'
+const INK = '#1A2226'
+const INK2 = '#42525A'
+const MUTED = '#57676E'
+const LINE = '#DEE2E0'
+const HAIR = '#EDEFEC'
+const PAPEL = '#F6F5F1'
+const OK = '#1B6E4B'
+const WARN = '#8A5B14'
+const CRIT = '#A33529'
 
-const TONOS: Record<string, string> = { neutro: INK, ok: OK, aviso: WARN, critico: CRIT }
-
+/*
+ * Cómo se llama cada informe, que es también cómo se llama el fichero PDF y lo
+ * primero que se lee de la portada.
+ *
+ * El de fechas elegidas a mano se llamaba «Informe a medida». Es lenguaje de
+ * folleto —lo «a medida» es el traje, no el documento— y encima no dice nada:
+ * quien lo abre seis meses después necesita saber DE QUÉ periodo es, y eso ya
+ * va al lado en todos los sitios donde aparece el título. «Informe del periodo»
+ * no promete nada y no estorba.
+ */
 const TITULO_TIPO: Record<string, string> = {
   diario: 'Parte diario',
   semanal: 'Informe semanal',
-  personalizado: 'Informe a medida',
+  personalizado: 'Informe del periodo',
 }
 
 /**
@@ -112,6 +134,16 @@ export function diasLargo(dias: number): string {
 /** Igual con las salas: en muchas, el código ES el nombre. */
 function nombreSala(code: string, name: string): string {
   return name.trim().toUpperCase() === code.trim().toUpperCase() ? '' : name.trim()
+}
+
+/**
+ * La primera en mayúscula, para cuando el texto abre una línea.
+ *
+ * `periodoTexto` se escribe en minúscula porque casi siempre va detrás de algo
+ * —«Informe semanal · del 27 al 31»—, y en la portada abre el renglón él solo.
+ */
+function mayuscula(t: string): string {
+  return t.charAt(0).toUpperCase() + t.slice(1)
 }
 
 /** Corta por palabra entera y avisa con puntos suspensivos. */
@@ -171,10 +203,21 @@ function variacion(ind: Indicador): string {
  * altura, que es la razón por la que existe la retícula.
  */
 function panelIndicadores(inds: Indicador[], comparar: boolean, comparacion: string): string {
+  /*
+   * Solo se pinta de color lo que urge.
+   *
+   * Las cuatro cifras salían cada una del color de su tono, y el resultado era
+   * un semáforo: «18 revisiones» en ámbar porque se hicieron menos que la
+   * semana pasada, al lado de «23 pendientes» en rojo. Cuando todo está
+   * coloreado, el color deja de decir nada y el panel parece una alarma incluso
+   * en una semana buena. Ahora la cifra va en tinta y el rojo se reserva para
+   * lo crítico —lo que hay que mirar hoy—; lo demás lo cuentan el detalle de
+   * debajo y la flecha de la variación, que siguen con su color.
+   */
   const celda = (i: Indicador | undefined): string =>
     i
       ? `<div class="panel-et">${esc(i.etiqueta)}</div>
-      <div class="panel-val" style="color:${TONOS[i.tono] ?? INK}">${esc(i.valor)}</div>
+      <div class="panel-val" style="color:${i.tono === 'critico' ? CRIT : INK}">${esc(i.valor)}</div>
       <div class="panel-det">${esc(i.detalle)}</div>
       ${comparar && i.delta ? variacion(i) : ''}`
       : ''
@@ -243,19 +286,6 @@ function franja(partes: Array<{ nombre: string; valor: number; color: string }>)
 function medidor(parte: number, total: number, tono = ACENTO): string {
   const pct = total ? Math.min(100, Math.round((parte / total) * 100)) : 0
   return `<span class="med"><span style="width:${Math.max(pct === 0 ? 0 : 2, pct)}%;background:${tono}"></span></span>`
-}
-
-/**
- * Saca la primera letra a un elemento propio para poder hacerla capitular.
- *
- * Si el párrafo empieza por algo que no sea una letra —una cifra, un signo— se
- * deja como está: una capitular sobre un «3» parece una errata.
- */
-function capitular(texto: string): string {
-  const limpio = texto.trim()
-  const primera = limpio.charAt(0)
-  if (!/\p{L}/u.test(primera)) return esc(limpio)
-  return `<span class="capitular">${esc(primera)}</span>${esc(limpio.slice(1))}`
 }
 
 function vacio(texto: string): string {
@@ -685,7 +715,7 @@ function seccionEventos(d: ReportData, conRevisiones: boolean): string {
         </tbody>
       </table>`
           : truncado && dia >= ultimoDiaListado
-            ? `<p class="vacio">Los movimientos de este día no caben en el listado recortado.</p>`
+            ? `<p class="vacio">Este día no cabe entero aquí. Está completo en el histórico de cada sala.</p>`
             : `<p class="vacio">Solo revisiones: ningún registro nuevo ni consumo de material.</p>`
       }
     </div>`
@@ -1211,26 +1241,39 @@ export function renderReport(
     }
   }
 
-  /* ── Cabecera ── */
+  /* ── Cabecera ──
+     Sin versalitas y sin tracking de cartel. La línea de arriba dice de quién
+     es el documento y de qué tipo es, y para eso no hace falta levantar la voz:
+     el punto de color hace el trabajo que hacían las mayúsculas. */
   .masthead { string-set: cabecera "${esc(titulo)} · ${esc(d.periodoTexto)}"; }
   .kicker {
-    font-size: 7.5pt; letter-spacing: .14em; text-transform: uppercase;
-    color: ${ACENTO}; font-weight: 600;
+    font-size: 9pt; color: ${MUTED}; font-weight: 500; letter-spacing: 0;
   }
+  .kicker .punto {
+    display: inline-block; width: 2.2mm; height: 2.2mm; border-radius: 50%;
+    background: ${ACENTO}; margin-right: 1.8mm;
+  }
+  .kicker b { color: ${INK2}; font-weight: 600; }
   h1 {
     font-family: "IBM Plex Serif", Georgia, serif;
-    font-size: 21pt; line-height: 1.16; font-weight: 600;
-    letter-spacing: -0.01em; color: ${INK};
-    margin: 2.5mm 0 0; max-width: 150mm;
+    font-size: 22pt; line-height: 1.22; font-weight: 600;
+    letter-spacing: -0.005em; color: ${INK};
+    margin: 3mm 0 0; max-width: 152mm;
   }
   .sumario {
-    margin-top: 2mm; font-size: 8.5pt; color: ${MUTED};
+    margin-top: 2.4mm; font-size: 9pt; color: ${MUTED};
+    font-variant-numeric: tabular-nums;
   }
-  .sumario .mono { font-variant-numeric: tabular-nums; }
-  .filete { height: 2.4pt; width: 22mm; background: ${ACENTO}; margin: 4mm 0 0; }
+  /* El filete ya no corta: acompaña. Redondeado y corto, del ancho de una
+     palabra. */
+  .filete {
+    height: 1.8pt; width: 14mm; border-radius: 1pt; background: ${ACENTO};
+    margin: 4.5mm 0 0;
+  }
   .nota-pedido {
-    margin-top: 4mm; padding: 2.5mm 3mm; background: ${PAPEL};
-    border-left: 2pt solid ${LINE}; font-family: "IBM Plex Serif", Georgia, serif;
+    margin-top: 4.5mm; padding: 3mm 3.5mm; background: ${PAPEL};
+    border-radius: 1.8mm; border-left: 2pt solid ${ACENTO};
+    font-family: "IBM Plex Serif", Georgia, serif;
     font-size: 9pt; color: ${INK2};
   }
 
@@ -1242,39 +1285,35 @@ export function renderReport(
   .col-texto { width: 62%; padding-right: 10mm; vertical-align: top; }
   .col-panel { width: 38%; vertical-align: top; }
 
+  /*
+   * La entradilla, en bandera y sin partir palabras.
+   *
+   * Iba justificada con guiones, que es lo que se hace en un periódico porque
+   * allí la columna es estrecha y la mancha tiene que ser un rectángulo. Aquí
+   * no: justificar abre ríos entre palabras, y partir «acumu-lado» al final de
+   * la línea obliga a montar la palabra en la cabeza. En bandera se lee más
+   * rápido y suena a alguien contando algo, que es de lo que va este párrafo.
+   */
   .entradilla {
     font-family: "IBM Plex Serif", Georgia, serif;
-    font-size: 10.5pt; line-height: 1.62; color: ${INK2};
-    text-align: justify; hyphens: auto;
-  }
-  /*
-   * La capitular, en un span y no en ::first-letter.
-   *
-   * Con ::first-letter, WeasyPrint flota la letra pero NO retira su hueco del
-   * flujo: la primera línea empezaba por la segunda letra colocada debajo de la
-   * primera, y se leía «S han hecho» con la «e» tapada. Con un elemento propio
-   * se controlan alto de línea, ancho y sangría, y se comprueba mirando el PDF.
-   */
-  .capitular {
-    float: left; font-size: 25pt; line-height: 0.82; font-weight: 600;
-    color: ${ACENTO}; margin: 1.2mm 1.8mm 0 0;
+    font-size: 10.5pt; line-height: 1.68; color: ${INK2};
+    text-align: left; hyphens: none;
   }
 
-  .panel { background: ${PAPEL}; padding: 3mm; page-break-inside: avoid; }
+  .panel {
+    background: ${PAPEL}; padding: 4mm; border-radius: 2mm;
+    page-break-inside: avoid;
+  }
   .panel-t {
-    font-size: 7pt; font-weight: 600; text-transform: uppercase; letter-spacing: .1em;
-    color: ${MUTED}; margin-bottom: 2.5mm;
+    font-size: 8.5pt; font-weight: 600; color: ${INK2}; margin-bottom: 3mm;
   }
   .panel-rej { width: 100%; border-collapse: collapse; }
   .panel-c { width: 50%; vertical-align: top; padding: 0 3mm 0 0; }
   .panel-c2 { padding-top: 4mm; }
-  .panel-et {
-    font-size: 6.8pt; text-transform: uppercase; letter-spacing: .07em; color: ${MUTED};
-    line-height: 1.3;
-  }
+  .panel-et { font-size: 8pt; color: ${MUTED}; line-height: 1.3; }
   .panel-val {
-    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 17pt; font-weight: 600;
-    font-variant-numeric: tabular-nums; line-height: 1.05; margin: 0.8mm 0 0.6mm;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 16pt; font-weight: 600;
+    font-variant-numeric: tabular-nums; line-height: 1.05; margin: 1mm 0 0.8mm;
   }
   .panel-det { font-size: 7.5pt; color: ${MUTED}; line-height: 1.35; }
   .panel-nota {
@@ -1294,27 +1333,39 @@ export function renderReport(
   .var.mal { color: ${WARN}; }
   .var.neutra { color: ${MUTED}; }
 
-  /* ── Secciones ── */
-  .bloque { margin-top: 9mm; }
+  /* ── Secciones ──
+     El rótulo iba en versalitas con tracking y una raya negra debajo: catorce
+     de esos en un documento de veinte páginas son catorce veces que alguien te
+     habla en mayúsculas. En caja normal, con la serif del texto y una raya
+     clara, el ojo los encuentra igual —son lo único a ese tamaño— y el
+     documento baja el tono. */
+  .bloque { margin-top: 11mm; }
   .bloque.evitar { page-break-inside: avoid; }
   .rotulo {
     display: flex; align-items: baseline; gap: 3mm;
-    border-bottom: 0.75pt solid ${INK}; padding-bottom: 1.4mm; margin-bottom: 4mm;
+    border-bottom: 0.6pt solid ${LINE}; padding-bottom: 1.8mm; margin-bottom: 4.5mm;
     /* Un rótulo suelto al pie de una página, con su sección en la siguiente, es
        el fallo de maquetación que más delata a un documento generado. */
     page-break-after: avoid;
   }
   .rotulo > span:first-child {
-    font-size: 8pt; font-weight: 600; text-transform: uppercase; letter-spacing: .1em;
+    font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 12pt; font-weight: 600; letter-spacing: -0.005em; color: ${INK};
   }
-  .rotulo-apunte { font-size: 8pt; color: ${MUTED}; letter-spacing: 0; }
+  .rotulo-apunte { font-size: 8.5pt; color: ${MUTED}; letter-spacing: 0; }
   .sub { margin-top: 6mm; }
-  .sub-t { font-size: 9pt; font-weight: 600; margin-bottom: 2mm; page-break-after: avoid; }
+  .sub-t { font-size: 9.5pt; font-weight: 600; margin-bottom: 2.4mm; page-break-after: avoid; }
+  /* El apunte que explica una tabla va SOBRE ella, así que necesita aire por
+     abajo: sin él, la frase y la cabecera de la tabla se leían como un bloque
+     de texto con una línea en negrita en medio. */
   .apunte {
     font-family: "IBM Plex Serif", Georgia, serif;
-    font-size: 8.5pt; line-height: 1.5; color: ${MUTED}; margin: 2mm 0 0; max-width: 130mm;
+    font-size: 8.5pt; line-height: 1.5; color: ${MUTED}; margin: 2mm 0 3.5mm;
+    max-width: 130mm;
   }
-  .vacio { font-size: 9pt; color: ${MUTED}; font-style: italic; }
+  /* Sin cursiva: en un documento generado, la cursiva de «sin datos» se lee
+     como una disculpa del programa. Es una frase normal, y se dice normal. */
+  .vacio { font-size: 8.8pt; color: ${MUTED}; }
   .tenue { color: ${MUTED}; }
   .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
 
@@ -1337,9 +1388,12 @@ export function renderReport(
     page-break-inside: avoid;
   }
   .col-nota:last-child { padding-right: 0; }
+  /* El número del hallazgo, en una píldora teñida en vez de en cifras sueltas
+     de máquina de escribir. Ocupa lo mismo y se lee como una etiqueta. */
   .nota-n {
-    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 8pt; color: ${ACENTO};
-    letter-spacing: .05em; margin-bottom: 1.2mm;
+    display: inline-block; font-size: 7.5pt; font-weight: 600; color: ${ACENTO};
+    background: ${TINTE}; border-radius: 4mm; padding: 0.5mm 2.4mm;
+    margin-bottom: 1.8mm;
   }
   .nota-t { font-size: 9.5pt; font-weight: 600; line-height: 1.3; margin-bottom: 1.4mm; }
   .nota-c {
@@ -1350,10 +1404,13 @@ export function renderReport(
   /* ── Tablas ── */
   table.datos { width: 100%; border-collapse: collapse; font-size: 8.8pt; }
   table.datos thead { display: table-header-group; }
+  /* Las cabeceras, en caja normal: «Pendientes hoy» es más rápido de leer que
+     «PENDIENTES HOY», y la raya que las separa de los datos no necesita ser
+     negra para separar. */
   table.datos th {
-    text-align: left; font-weight: 500; color: ${MUTED}; font-size: 7pt;
-    text-transform: uppercase; letter-spacing: .07em; line-height: 1.25;
-    border-bottom: 0.5pt solid ${INK}; padding: 0 4mm 1.4mm 0;
+    text-align: left; font-weight: 600; color: ${MUTED}; font-size: 8pt;
+    letter-spacing: 0; line-height: 1.25;
+    border-bottom: 0.6pt solid ${LINE}; padding: 0 4mm 1.6mm 0;
   }
   /* Sin sangría por la izquierda, dos rótulos contiguos se leían como uno:
      «SALASREVISADAS». La calle va por la izquierda de la columna numérica, que
@@ -1400,14 +1457,17 @@ export function renderReport(
     border-bottom: 0.5pt solid ${LINE}; padding-bottom: 1.2mm; margin-bottom: 1.5mm;
     page-break-after: avoid;
   }
-  .dia-fecha { font-size: 9pt; font-weight: 600; }
+  .dia-fecha {
+    font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 9.5pt; font-weight: 600;
+  }
   .dia-res { font-size: 8pt; color: ${MUTED}; }
   table.diario td { padding-top: 1.4mm; padding-bottom: 1.4mm; border-bottom: 0; }
   table.diario tr:not(:last-child) td { border-bottom: 0.5pt solid ${HAIR}; }
   .tag {
-    display: inline-block; font-size: 6.8pt; text-transform: uppercase;
-    letter-spacing: .07em; color: ${MUTED}; border: 0.5pt solid ${LINE};
-    border-radius: 2px; padding: 0.3mm 1.2mm; white-space: nowrap;
+    display: inline-block; font-size: 7.5pt; letter-spacing: 0; color: ${MUTED};
+    background: ${PAPEL}; border: 0.5pt solid ${LINE};
+    border-radius: 3mm; padding: 0.4mm 1.8mm; white-space: nowrap;
   }
   .ev-det {
     display: block; font-family: "IBM Plex Serif", Georgia, serif;
@@ -1427,15 +1487,15 @@ export function renderReport(
   .foto { margin: 0; }
   .foto img {
     display: block; width: 100%; height: 42mm; object-fit: cover;
-    background: ${HAIR}; border: 0.5pt solid ${LINE};
+    background: ${HAIR}; border: 0.5pt solid ${LINE}; border-radius: 1.5mm;
   }
   .foto figcaption { font-size: 7.5pt; color: ${MUTED}; margin-top: 1.2mm; line-height: 1.35; }
   /* El momento, en versalitas y encima de todo: es lo primero que hay que leer
      de una foto en un informe. En negro sobre el gris del resto del pie, para
      que se distinga sin necesidad de color — estos documentos se imprimen. */
   .momento {
-    display: block; font-size: 6.5pt; font-weight: 600; color: ${INK2};
-    text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.4mm;
+    display: block; font-size: 7.5pt; font-weight: 600; color: ${ACENTO};
+    letter-spacing: 0; margin-bottom: 0.4mm;
   }
   .foto-de {
     display: block; font-family: "IBM Plex Serif", Georgia, serif;
@@ -1444,8 +1504,8 @@ export function renderReport(
 
   /* ── Medidor ── */
   .med {
-    display: inline-block; width: 14mm; height: 1.4mm; background: ${HAIR};
-    margin-right: 2mm; vertical-align: middle; overflow: hidden;
+    display: inline-block; width: 14mm; height: 1.6mm; background: ${HAIR};
+    border-radius: 0.8mm; margin-right: 2mm; vertical-align: middle; overflow: hidden;
   }
   .med > span { display: block; height: 100%; }
   .med-n {
@@ -1456,7 +1516,7 @@ export function renderReport(
   /* ── Franja de composición ── */
   .franja {
     height: 3.4mm; width: 100%; overflow: hidden; background: ${HAIR};
-    margin-bottom: 2mm;
+    border-radius: 1.7mm; margin-bottom: 2mm;
   }
   .franja > span {
     display: inline-block; height: 3.4mm; vertical-align: top;
@@ -1475,12 +1535,17 @@ export function renderReport(
   .acciones { margin: 0; padding: 0; list-style: none; counter-reset: acc; }
   .acciones li {
     counter-increment: acc; position: relative;
-    padding: 0 0 3.5mm 9mm; page-break-inside: avoid;
+    padding: 0 0 4mm 10mm; page-break-inside: avoid;
   }
+  /* El número dentro de un disco teñido: la lista de lo que hay que hacer es lo
+     único del documento que pide algo a alguien, y se agradece que no lo pida
+     con una cifra a palo seco. */
   .acciones li::before {
-    content: counter(acc, decimal-leading-zero);
-    position: absolute; left: 0; top: 0.2mm;
-    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 9pt; color: ${ACENTO};
+    content: counter(acc);
+    position: absolute; left: 0; top: -0.2mm;
+    width: 6.4mm; height: 6.4mm; border-radius: 50%;
+    background: ${TINTE}; color: ${ACENTO};
+    font-size: 8.5pt; font-weight: 600; text-align: center; line-height: 6.4mm;
   }
   .acc-t { font-size: 9.5pt; font-weight: 600; line-height: 1.35; }
   .acc-p {
@@ -1500,12 +1565,11 @@ export function renderReport(
 <body>
 
 <header class="masthead">
-  <div class="kicker">Mantenimiento de aulas · ${esc(titulo)}</div>
+  <div class="kicker"><span class="punto"></span><b>Mantenimiento de aulas</b> · ${esc(titulo)}</div>
   <h1>${esc(l.titular)}</h1>
   <div class="sumario">
-    <span class="mono">${esc(d.periodoTexto)}</span> · emitido el
-    <span class="mono">${esc(pie.emitido)}</span>${
-      pie.solicitante ? ` · a petición de ${esc(pie.solicitante)}` : ''
+    ${esc(mayuscula(d.periodoTexto))} · emitido el ${esc(pie.emitido)}${
+      pie.solicitante ? ` · lo pidió ${esc(pie.solicitante)}` : ''
     }
   </div>
   <div class="filete"></div>
@@ -1516,7 +1580,7 @@ ${
   tiene(o, 'resumen')
     ? `<table class="entrada"><tr>
   <td class="col-texto">
-    <p class="entradilla">${capitular(l.entradilla)}</p>
+    <p class="entradilla">${esc(l.entradilla.trim())}</p>
   </td>
   <td class="col-panel">
     ${panelIndicadores(inds, comparar, d.comparacionTexto)}

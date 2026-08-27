@@ -553,3 +553,42 @@ describe('las secciones que se pueden quitar y las que se pueden añadir', () =>
     expect(sinFotos).not.toContain('Fotos del periodo')
   })
 })
+
+/**
+ * La portada, que es lo único que lee mucha gente.
+ *
+ * Y el nombre del documento, que es además el nombre del fichero PDF: sale del
+ * `<title>` cuando el navegador lo guarda.
+ */
+describe('cómo se presenta el informe', () => {
+  const d = expedienteDePrueba()
+  const portada = (kind: ReportData['kind']): string => {
+    const x = { ...d, kind }
+    return renderReport(x, lecturaCalculada(x), opcionesCompletas, {
+      emitido: '31/07/2026, 9:14',
+      solicitante: 'Eduardo Rubio',
+    })
+  }
+
+  it('el de fechas elegidas a mano no es un traje: es el informe del periodo', () => {
+    const html = portada('personalizado')
+    expect(html).toContain('<title>Informe del periodo · del 27 al 31 de julio de 2026</title>')
+    expect(html).not.toMatch(/a medida/i)
+  })
+
+  it('el periodo abre la línea, y una línea abre en mayúscula', () => {
+    // El texto se guarda en minúscula porque casi siempre va detrás de algo.
+    expect(d.periodoTexto).toBe('del 27 al 31 de julio de 2026')
+    expect(portada('semanal')).toContain('Del 27 al 31 de julio de 2026 · emitido el')
+  })
+
+  it('quien lo pidió se dice como se dice hablando', () => {
+    expect(portada('semanal')).toContain('lo pidió Eduardo Rubio')
+  })
+
+  it('no grita: ni versalitas de cartel ni párrafos justificados', () => {
+    const html = portada('semanal')
+    expect(html).not.toContain('text-transform: uppercase')
+    expect(html).not.toContain('text-align: justify')
+  })
+})

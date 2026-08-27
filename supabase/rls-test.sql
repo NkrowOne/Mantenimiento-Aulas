@@ -2940,3 +2940,61 @@ begin;
   end $$;
   rollback to savepoint s4;
 rollback;
+
+\echo ''
+\echo '=== 73. Retirar una foto del informe: sí. Tocar la foto: no ==='
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  insert into attachments (id, entity_type, entity_id, storage_path, taken_at, by_user)
+  values ('88888888-8888-4888-8888-888888888881', 'inspection',
+          '33333333-3333-4333-8333-333333333331', 'inspection/x/y.jpg', now(),
+          '11111111-1111-4111-8111-111111111111');
+
+  -- 1 — Se retira, firmada. Es lo que hace el botón del visor de fotos.
+  update attachments
+     set hidden_at = now(), hidden_by = '11111111-1111-4111-8111-111111111111'
+   where id = '88888888-8888-4888-8888-888888888881';
+  select case
+    when (select hidden_at is not null
+            from attachments where id = '88888888-8888-4888-8888-888888888881')
+    then 'OK: la foto queda fuera de los informes'
+    else 'FALLO: la foto sigue publicándose'
+  end as resultado;
+
+  -- 2 — Y se vuelve a poner. Sin esto sería un borrado con otro nombre.
+  update attachments set hidden_at = null, hidden_by = null
+   where id = '88888888-8888-4888-8888-888888888881';
+  select case
+    when (select hidden_at is null
+            from attachments where id = '88888888-8888-4888-8888-888888888881')
+    then 'OK: y se puede volver a incluir'
+    else 'FALLO: retirarla era irreversible'
+  end as resultado;
+
+  -- 3 — La firma no se puede poner a nombre de otro.
+  savepoint s1;
+  do $$
+  begin
+    update attachments
+       set hidden_at = now(), hidden_by = '22222222-2222-4222-8222-222222222222'
+     where id = '88888888-8888-4888-8888-888888888881';
+    raise exception 'FALLO: se retiró una foto a nombre de otro';
+  exception when insufficient_privilege then
+    raise notice 'OK: RLS bloqueó la firma ajena';
+  end $$;
+  rollback to savepoint s1;
+
+  -- 4 — Y lo que de verdad importa: la foto en sí sigue siendo inmutable. El
+  -- permiso es por columnas, así que la ruta no se toca ni por descuido.
+  savepoint s2;
+  do $$
+  begin
+    update attachments set storage_path = 'inspection/otra.jpg'
+     where id = '88888888-8888-4888-8888-888888888881';
+    raise exception 'FALLO: un técnico cambió la ruta de una foto';
+  exception when insufficient_privilege then
+    raise notice 'OK: la ruta de la foto sigue sin poder tocarse';
+  end $$;
+  rollback to savepoint s2;
+rollback;
