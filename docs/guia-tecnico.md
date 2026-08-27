@@ -452,6 +452,17 @@ hay muchas, la última baldosa dice «+N» y desde ahí se recorren todas. Una f
 recién hecha aparece marcada **«sin subir»** hasta que haya cobertura: así sabes
 que la tiene el aparato y que todavía no ha salido de él.
 
+**Si en una foto sale alguien.** Pasa: se hace con una mano mientras la otra
+sujeta un cable, y detrás hay un compañero o una clase. Abre la foto a pantalla
+completa y pulsa **Que no salga en el informe**. La foto se queda donde está
+—en la ficha del aula, con su hora—, y lo único que cambia es que los informes
+dejan de imprimirla. Queda marcada **«fuera del informe»** en su baldosa, y el
+mismo botón la vuelve a incluir si te has pasado de precavido. Esto necesita
+cobertura: no es de las cosas que esperan en la cola.
+
+Borrar una foto no se puede, y es a propósito: es la prueba de cómo se encontró
+un aula, y una prueba que cualquiera puede hacer desaparecer no prueba nada.
+
 Si sale un aviso sobre **HEIC**, ve a *Ajustes → Cámara → Formatos* y pon **Más
 compatible**. Es cosa del iPhone, no de la aplicación.
 

@@ -1373,7 +1373,14 @@ async function fotosDelPeriodo(
   return { fotos, total: candidatas.length }
 }
 
-/** Los adjuntos de un puñado de filas, sin pedirlos todos de una vez. */
+/**
+ * Los adjuntos de un puñado de filas, sin pedirlos todos de una vez.
+ *
+ * Solo las publicables. Una foto retirada del informe —`hidden_at`— sigue en su
+ * sitio y se sigue viendo en la ficha de la sala: lo que no hace es imprimirse.
+ * Es la salida para lo que se cuela en una foto de aula hecha con una mano
+ * mientras la otra sujeta un cable, que casi siempre es una persona.
+ */
 async function adjuntosDe(tipo: 'incident' | 'inspection', ids: string[]): Promise<FilaAdjunto[]> {
   if (ids.length === 0) return []
   return pidePorTrozos<FilaAdjunto>(
@@ -1385,6 +1392,7 @@ async function adjuntosDe(tipo: 'incident' | 'inspection', ids: string[]): Promi
         .select('id,entity_id,storage_path,taken_at')
         .eq('entity_type', tipo)
         .in('entity_id', trozo)
+        .is('hidden_at', null)
         .order('taken_at', { ascending: true })
         .limit(TOPE_FOTOS * 4)
         .abortSignal(señal),

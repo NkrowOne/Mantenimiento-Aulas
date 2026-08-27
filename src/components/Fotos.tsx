@@ -34,7 +34,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, leerBytesDeFoto, type QueuedPhoto } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
@@ -49,6 +49,8 @@ export interface Foto {
   takenAt: string
   /** Sigue en el dispositivo esperando cobertura. */
   pendiente: boolean
+  /** Retirada de los informes. Sigue guardada y se sigue viendo aquí. */
+  retirada: boolean
 }
 
 /**
@@ -81,7 +83,7 @@ export function useFotos(entityType: QueuedPhoto['entityType'], ids: string[]): 
     queryFn: async (): Promise<Foto[]> => {
       const { data: adjuntos, error } = await supabase
         .from('attachments')
-        .select('id, storage_path, taken_at')
+        .select('id, storage_path, taken_at, hidden_at')
         .eq('entity_type', entityType)
         .in('entity_id', ids)
         .order('taken_at', { ascending: true })
@@ -102,6 +104,7 @@ export function useFotos(entityType: QueuedPhoto['entityType'], ids: string[]): 
           url: porRuta.get(a['storage_path'] as string) ?? '',
           takenAt: a['taken_at'] as string,
           pendiente: false,
+          retirada: a['hidden_at'] !== null,
         }))
         .filter((f) => f.url !== '')
     },
@@ -163,7 +166,9 @@ export function useFotos(entityType: QueuedPhoto['entityType'], ids: string[]): 
         if (!bytes) continue
         const url = URL.createObjectURL(bytes)
         urls.push(url)
-        nuevas.push({ id: p.id, url, takenAt: p.takenAt, pendiente: true })
+        // Una foto que aún no ha subido no está en ningún informe todavía: no
+        // hay nada de lo que retirarla.
+        nuevas.push({ id: p.id, url, takenAt: p.takenAt, pendiente: true, retirada: false })
       }
 
       // La lectura es asíncrona: si el bloque se cerró mientras leía, lo que se
@@ -217,6 +222,72 @@ export function SelloSinSubir(): React.ReactElement {
 }
 
 /**
+ * La marca de «esta no sale en el informe».
+ *
+ * Va sobre la miniatura por lo mismo que la de «sin subir»: quien retiró una
+ * foto la semana pasada tiene que verlo desde la ficha, sin abrir las doce de
+ * una en una para averiguar cuáles quitó. Con palabra y no con un color, y en
+ * el gris del sistema y no en rojo: no es un error de nadie, es una decisión
+ * tomada.
+ */
+export function SelloFuera(): React.ReactElement {
+  return (
+    <span className="absolute inset-x-0 bottom-0 bg-sunken py-0.5 text-center text-[0.625rem] font-semibold leading-tight text-ink-2">
+      fuera del
+      <br />
+      informe
+    </span>
+  )
+}
+
+/**
+ * Retirar una foto del informe, y volver a ponerla.
+ *
+ * Es un UPDATE de dos columnas y no un borrado, y esa es toda la idea: la foto
+ * se queda donde está —en la ficha de la sala, con su hora y su autor—, y lo
+ * único que cambia es que el informe deja de imprimirla. Lo de fondo lo explica
+ * `20260827000100_foto_fuera_del_informe.sql`; aquí solo hay que saber que se
+ * deshace con el mismo botón.
+ *
+ * Necesita red. No pasa por la cola de salida a propósito: la cola es para lo
+ * que se produce en el aula sin cobertura —una revisión, una foto, un cierre—,
+ * y esto se decide mirando el informe desde una mesa. Sin conexión, el botón lo
+ * dice y no finge.
+ */
+function useRetirarDelInforme(entityType: QueuedPhoto['entityType']): {
+  decidir: (id: string, retirar: boolean) => void
+  ocupado: boolean
+  fallo: boolean
+} {
+  const qc = useQueryClient()
+  const m = useMutation({
+    mutationFn: async ({ id, retirar }: { id: string; retirar: boolean }): Promise<void> => {
+      // El autor lo pide la restricción de la tabla: retirada sin firma no
+      // existe. Volver a ponerla deja las dos columnas en nulo.
+      const autor = retirar ? ((await supabase.auth.getUser()).data.user?.id ?? null) : null
+      if (retirar && !autor) throw new Error('sin sesión')
+
+      const { error } = await supabase
+        .from('attachments')
+        .update(
+          retirar
+            ? { hidden_at: new Date().toISOString(), hidden_by: autor }
+            : { hidden_at: null, hidden_by: null },
+        )
+        .eq('id', id)
+      if (error) throw error
+      await qc.invalidateQueries({ queryKey: ['fotos', entityType] })
+    },
+  })
+
+  return {
+    decidir: (id, retirar) => m.mutate({ id, retirar }),
+    ocupado: m.isPending,
+    fallo: m.isError,
+  }
+}
+
+/**
  * La tira de miniaturas. Doce fotos en rejilla son un bloque más alto que la
  * pantalla en mitad de una cabecera que ya cuenta tres cosas; en tira se
  * recorren con el pulgar y no desplazan nada.
@@ -265,6 +336,7 @@ export function TiraDeFotos({
                 className="h-20 w-20 object-cover"
               />
               {f.pendiente && <SelloSinSubir />}
+              {!f.pendiente && f.retirada && <SelloFuera />}
             </button>
           </li>
         ))}
@@ -272,6 +344,7 @@ export function TiraDeFotos({
 
       {abierta !== -1 && (
         <VisorDeFotos
+          entityType={entityType}
           fotos={fotos}
           indice={abierta}
           onIr={(i) => setAbiertaId(fotos[i]?.id ?? null)}
@@ -293,11 +366,14 @@ export function TiraDeFotos({
  * con teclado desde el escritorio del coordinador.
  */
 export function VisorDeFotos({
+  entityType,
   fotos,
   indice,
   onIr,
   onCerrar,
 }: {
+  /** De qué son estas fotos: lo necesita el botón de retirarla del informe. */
+  entityType: QueuedPhoto['entityType']
   fotos: Foto[]
   indice: number
   onIr: (i: number) => void
@@ -305,6 +381,7 @@ export function VisorDeFotos({
 }): React.ReactElement {
   const cerrar = useRef<HTMLButtonElement>(null)
   const foto = fotos[indice]!
+  const informe = useRetirarDelInforme(entityType)
 
   useEffect(() => {
     // El foco entra en la capa: sin esto el tabulador sigue recorriendo la ficha
@@ -350,6 +427,7 @@ export function VisorDeFotos({
         <p className="min-w-0 truncate font-mono text-xs text-white/70">
           {fechaCorta(foto.takenAt)}
           {foto.pendiente && ' · sin subir todavía'}
+          {!foto.pendiente && foto.retirada && ' · fuera del informe'}
           {fotos.length > 1 && ` · ${indice + 1} de ${fotos.length}`}
         </p>
         <button
@@ -377,6 +455,30 @@ export function VisorDeFotos({
           className="max-h-full max-w-full object-contain"
         />
       </div>
+
+      {/* La decisión sobre esta foto va debajo de la foto, que es donde se
+          toma: se mira lo que salió en ella y se decide. Encima de la
+          navegación, para que pasar a la siguiente no quede debajo del dedo que
+          acaba de retirar esta. */}
+      {!foto.pendiente && (
+        <div className="px-4 pt-1">
+          <button
+            type="button"
+            disabled={informe.ocupado}
+            onClick={() => informe.decidir(foto.id, !foto.retirada)}
+            className="key key-quiet min-h-touch w-full px-4 text-sm"
+          >
+            {foto.retirada ? 'Volver a incluirla en el informe' : 'Que no salga en el informe'}
+          </button>
+          <p className="mt-1.5 text-center text-xs text-white/70">
+            {informe.fallo
+              ? 'No se ha podido: hace falta conexión. Inténtalo otra vez.'
+              : foto.retirada
+                ? 'Retirada de los informes. Sigue guardada aquí.'
+                : 'La foto se queda guardada; solo deja de imprimirse.'}
+          </p>
+        </div>
+      )}
 
       {fotos.length > 1 && (
         <div className="flex items-center justify-between gap-3 px-4 py-3">

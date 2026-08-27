@@ -47,7 +47,7 @@ interface ReportRow {
 const KIND_LABEL: Record<Kind, string> = {
   diario: 'Diario',
   semanal: 'Semanal',
-  personalizado: 'A medida',
+  personalizado: 'Del periodo',
 }
 
 const PASOS: Record<Paso, string> = {
