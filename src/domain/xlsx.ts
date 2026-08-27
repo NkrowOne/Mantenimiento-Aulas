@@ -306,13 +306,37 @@ function aplicarEnFila(cuerpo: string, cambios: Cambio[]): string {
     },
   )
 
-  // Las celdas que no existían van dentro de la fila y **en orden de columna**.
+  // Las celdas que no existían van dentro de la fila y **en orden de columna**,
+  // y heredan el estilo de su vecina de la izquierda. En estas hojas el formato
+  // corre por filas —la banda de la cabecera, el borde de la cuadrícula— y una
+  // celda sin estilo en medio se ve: la cabecera `Ref` saldría sin el color de
+  // las demás y en esa fila se rompería el borde. Contra el libro real solo
+  // pasa dos veces (414 de las 416 celdas de la columna ya existían vacías con
+  // su estilo), pero esas dos se notan.
   for (const c of [...pendientes.values()].sort(
     (a, b) => columnaANumero(partirCelda(a.celda).columna) - columnaANumero(partirCelda(b.celda).columna),
   )) {
-    out = insertarCelda(out, c.celda, xmlDeCelda(c.celda, '', c.valor as Exclude<ValorCelda, null>))
+    const estilo = estiloDeLaIzquierda(out, columnaANumero(partirCelda(c.celda).columna))
+    out = insertarCelda(out, c.celda, xmlDeCelda(c.celda, estilo, c.valor as Exclude<ValorCelda, null>))
   }
   return out
+}
+
+/** El `s` de la celda existente más cercana por la izquierda, o nada. */
+function estiloDeLaIzquierda(cuerpo: string, columna: number): string {
+  let mejor = ''
+  let mejorCol = 0
+  for (const m of cuerpo.matchAll(/<c\b([^>]*?)\/>|<c\b([^>]*?)>/g)) {
+    const attrs = m[1] ?? m[2] ?? ''
+    const ref = /\br="([A-Z]+)\d+"/.exec(attrs)?.[1]
+    if (!ref) continue
+    const n = columnaANumero(ref)
+    if (n < columna && n > mejorCol) {
+      mejorCol = n
+      mejor = /\bs="(\d+)"/.exec(attrs)?.[1] ?? ''
+    }
+  }
+  return mejor
 }
 
 function insertarCelda(cuerpo: string, ref: string, xml: string): string {

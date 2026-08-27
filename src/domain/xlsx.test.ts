@@ -133,6 +133,29 @@ describe('las celdas y filas que no existían se crean en su sitio', () => {
     expect(out.indexOf('r="99"')).toBeLessThan(out.indexOf('</sheetData>'))
   })
 
+  it('una celda nueva hereda el estilo de su vecina de la izquierda', () => {
+    // En estas hojas el formato corre por filas: sin esto, la cabecera `Ref`
+    // saldría sin la banda de color de las demás cabeceras y en la fila se
+    // rompería el borde de la cuadrícula.
+    const hoja = `<worksheet><sheetData><row r="1"><c r="A1" s="7" t="s"><v>0</v></c></row></sheetData></worksheet>`
+    const out = parchearHojaXml(hoja, [{ celda: 'B1', valor: 'Ref' }])
+    expect(out).toContain('<c r="B1" s="7" t="inlineStr">')
+  })
+
+  it('manda la vecina más cercana, no cualquiera de la fila', () => {
+    // A1 lleva la banda (s="7") pero B1 ya no: D1 hereda lo de B1 — nada.
+    // Saltar hasta A1 vestiría la celda con un formato que su tramo de la
+    // fila ya no lleva.
+    const hoja = `<worksheet><sheetData><row r="1"><c r="A1" s="7"/><c r="B1"/></row></sheetData></worksheet>`
+    const out = parchearHojaXml(hoja, [{ celda: 'D1', valor: 'x' }])
+    expect(out).toContain('<c r="D1" t="inlineStr">')
+  })
+
+  it('en una fila nueva no hay vecinas y no se inventa un estilo', () => {
+    const out = parchearHojaXml(HOJA, [{ celda: 'A9', valor: 'x' }])
+    expect(out).toContain('<c r="A9" t="inlineStr">')
+  })
+
   it('varios cambios de golpe se aplican todos', () => {
     const out = parchearHojaXml(HOJA, [
       { celda: 'A2', valor: 1 },
