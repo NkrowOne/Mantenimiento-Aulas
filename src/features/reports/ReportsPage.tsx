@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { fechaCorta } from '@/domain/fechas'
 import { EstadoIA, useEstadoIA } from './EstadoIA'
 import { AUDIENCIAS, POR_DEFECTO, SECCIONES } from './secciones'
+import { type HuellaDeRedaccion, redaccionDe } from './redaccion'
 import { type Eleccion, motivoParaNoPedir } from './peticion'
 import {
   type Kind,
@@ -19,7 +20,12 @@ import {
   generarInforme,
   nombreDeArchivo,
 } from './informe/generar'
-import { descargarDocumento, imprimirMarco } from './informe/imprimir'
+import {
+  descargarDocumento,
+  imprimirDocumento,
+  mostrarEn,
+  ventanaEnBlanco,
+} from './informe/imprimir'
 
 interface ReportRow {
   id: string
@@ -28,26 +34,27 @@ interface ReportRow {
   period_end: string
   storage_path: string
   generated_at: string
-  params: {
-    ia?: boolean
-    analisis?: string
-    secciones?: string[]
-    audiencia?: string
-    nota?: string
-  } | null
+  params:
+    | (HuellaDeRedaccion & {
+        analisis?: string
+        secciones?: string[]
+        audiencia?: string
+        nota?: string
+      })
+    | null
 }
 
 const KIND_LABEL: Record<Kind, string> = {
   diario: 'Diario',
   semanal: 'Semanal',
-  personalizado: 'A medida',
+  personalizado: 'Del periodo',
 }
 
 const PASOS: Record<Paso, string> = {
-  datos: 'Leyendo los datos del periodo…',
-  analisis: 'Calculando las cifras y redactando el análisis…',
-  documento: 'Componiendo el documento…',
-  archivo: 'Guardándolo en el archivo…',
+  datos: 'Leyendo los datos del periodo',
+  analisis: 'Calculando las cifras',
+  documento: 'Componiendo el documento',
+  archivo: 'Guardándolo en el archivo',
 }
 
 /**
@@ -84,7 +91,10 @@ export function ReportsPage(): React.ReactElement {
   const [nota, setNota] = useState('')
   const [ajustes, setAjustes] = useState(false)
 
-  const [paso, setPaso] = useState<Paso | null>(null)
+  /* En qué paso va y QUÉ está leyendo. Lo segundo no es adorno: cuando algo se
+     atasca, la diferencia entre «Leyendo los datos» y «leyendo el diario del
+     periodo» es la diferencia entre volver a llamar y saber dónde mirar. */
+  const [paso, setPaso] = useState<{ fase: Paso; detalle?: string; fallo?: boolean } | null>(null)
   const [recien, setRecien] = useState<InformeGenerado | null>(null)
   /* El fallo de una descarga, a la vista. `createSignedUrl` puede denegar por
      permisos o red, y descartarlo dejaba el botón «Abrir» como un botón que a
@@ -128,7 +138,9 @@ export function ReportsPage(): React.ReactElement {
   const generar = useMutation({
     mutationFn: async (): Promise<InformeGenerado> => {
       setRecien(null)
-      return generarInforme(eleccion, setPaso)
+      return generarInforme(eleccion, (fase, detalle, fallo) =>
+        setPaso({ fase, ...(detalle ? { detalle } : {}), ...(fallo ? { fallo: true } : {}) }),
+      )
     },
     onSettled: () => setPaso(null),
     onSuccess: (informe) => {
@@ -140,17 +152,29 @@ export function ReportsPage(): React.ReactElement {
     },
   })
 
+  /**
+   * Abre un informe del archivo, renderizado y no como código.
+   *
+   * La pestaña se pide ANTES de descargar: el permiso para abrirla dura lo que
+   * dura el gesto, y una espera por medio lo convierte en un bloqueo. Y el
+   * documento se vuelve a servir desde aquí con su tipo real porque el almacén
+   * puede entregar un HTML subido por un usuario como texto plano —es lo
+   * prudente por su parte—, y entonces lo que se ve es el código fuente.
+   */
   async function abrir(path: string): Promise<void> {
     setFalloDescarga(null)
-    const { data, error } = await supabase.storage.from('reports').createSignedUrl(path, 60)
-    if (error || !data?.signedUrl) {
-      setFalloDescarga(`No se ha podido preparar la descarga${error ? `: ${error.message}` : ''}.`)
+    const ventana = ventanaEnBlanco()
+    if (!ventana) {
+      setFalloDescarga('El navegador ha bloqueado la pestaña: vuelve a pulsar Abrir.')
       return
     }
-    // Si el navegador bloquea la pestaña —el gesto caducó mientras se firmaba
-    // la URL— se dice, en vez de fingir que el botón no hizo nada.
-    const abierta = window.open(data.signedUrl, '_blank', 'noopener')
-    if (!abierta) setFalloDescarga('El navegador ha bloqueado la pestaña: vuelve a pulsar Abrir.')
+    const { data, error } = await supabase.storage.from('reports').download(path)
+    if (error || !data) {
+      ventana.close()
+      setFalloDescarga(`No se ha podido abrir el informe${error ? `: ${error.message}` : ''}.`)
+      return
+    }
+    mostrarEn(ventana, data)
   }
 
   const alternar = (clave: string): void =>
@@ -407,9 +431,16 @@ export function ReportsPage(): React.ReactElement {
             minuto, y una barra que no dice nada se lee como una pantalla
             colgada. */}
         {generar.isPending && (
-          <p className="mt-3 text-sm text-muted" role="status">
-            {paso ? PASOS[paso] : 'Preparando…'}
-            {paso === 'analisis' && conIA && ' Con IA suele tardar entre veinte segundos y un minuto.'}
+          <p className={`mt-3 text-sm ${paso?.fallo ? 'text-warn' : 'text-muted'}`} role="status">
+            {paso ? `${PASOS[paso.fase]}${paso.detalle ? `: ${paso.detalle}` : ''}…` : 'Preparando…'}
+            {/* La espera larga se anuncia solo mientras de verdad se está
+                esperando. Después de un fallo de la IA ya no hay nada que
+                esperar, y decir «suele tardar un minuto» sobre un aviso de
+                error lo convierte en ruido. */}
+            {paso?.fase === 'analisis' &&
+              conIA &&
+              !paso.fallo &&
+              ' Con IA suele tardar entre veinte segundos y un minuto.'}
           </p>
         )}
 
@@ -439,20 +470,24 @@ export function ReportsPage(): React.ReactElement {
               <button
                 type="button"
                 onClick={() => {
-                  if (!imprimirMarco(marco.current)) {
-                    setFalloDescarga('La vista previa aún no está lista: espera un segundo y vuelve a pulsar.')
+                  setFalloDescarga(null)
+                  if (imprimirDocumento(recien.html, marco.current) === 'bloqueado') {
+                    setFalloDescarga(
+                      'El navegador ha bloqueado la ventana del informe. Permite las ventanas emergentes de esta página, o usa «Descargar el original».',
+                    )
                   }
                 }}
                 className="key key-accent min-h-11 px-3 text-sm"
               >
-                Guardar como PDF
+                Descargar PDF
               </button>
               <button
                 type="button"
                 onClick={() => descargarDocumento(recien.html, nombreDeArchivo(recien.kind, recien.rango))}
                 className="key key-quiet min-h-11 px-3 text-sm"
+                title="El original en HTML, del que sale el PDF"
               >
-                Descargar
+                Descargar el original
               </button>
             </div>
           </div>
@@ -486,9 +521,17 @@ export function ReportsPage(): React.ReactElement {
             sandbox="allow-same-origin allow-modals"
             className="mt-4 h-[70vh] w-full rounded-card border border-line bg-white"
           />
+          {/*
+            Sin esta línea, «Descargar PDF» abre un diálogo de impresión que el
+            usuario no ha pedido: se queda mirando una vista previa y una
+            impresora, decide que se ha equivocado de botón y cierra. El PDF sale
+            de ahí, pero solo si alguien dice dónde está. Es la misma frase que
+            la hoja de inventario, porque es el mismo gesto.
+          */}
           <p className="mt-2 text-xs text-muted">
-            «Guardar como PDF» abre la impresión del navegador: elige ese destino y sale el documento
-            en A4.
+            El informe se abre en una pestaña y se abre el diálogo de imprimir, que es de donde sale
+            el PDF: en el iPad, toca «Imprimir» y después «Compartir → Guardar en Archivos»; en el
+            ordenador, elige «Guardar como PDF» en el destino, en lugar de una impresora.
           </p>
         </section>
       )}
@@ -501,6 +544,7 @@ export function ReportsPage(): React.ReactElement {
           {(reports ?? []).map((r) => {
             const parcial =
               r.params?.secciones && r.params.secciones.length < SECCIONES.length - 1
+            const redaccion = redaccionDe(r.params)
             return (
               <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm">
                 <span className="w-20 shrink-0 font-medium">{KIND_LABEL[r.kind]}</span>
@@ -510,12 +554,25 @@ export function ReportsPage(): React.ReactElement {
                   </span>
                   <span className="block text-xs text-muted">
                     {fechaCorta(r.generated_at)}
-                    {r.params?.ia === true && ' · con IA'}
-                    {r.params?.ia === false && ' · análisis calculado'}
                     {parcial && ` · ${r.params?.secciones?.length} secciones`}
                     {r.params?.nota && ` · «${r.params.nota}»`}
                   </span>
+                  {/* El motivo, escrito. Un informe marcado en ámbar sin decir
+                      por qué obliga a abrirlo para averiguar qué le pasó, y lo
+                      que le pasó no está dentro del documento. */}
+                  {redaccion?.aviso && (
+                    <span className="mt-0.5 block text-xs text-warn">
+                      El análisis salió calculado: {redaccion.aviso}
+                    </span>
+                  )}
                 </span>
+                {redaccion && (
+                  <span
+                    className={`shrink-0 rounded-tag px-2 py-0.5 text-[0.6875rem] font-medium ${redaccion.clase}`}
+                  >
+                    {redaccion.etiqueta}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => void abrir(r.storage_path)}

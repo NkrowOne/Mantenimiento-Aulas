@@ -153,6 +153,17 @@ Lo que queda escrito:
 - La incidencia, cerrada con esa misma explicación en `incidents.resolution`, y
   saliendo en la línea de tiempo de la sala el día que se resolvió.
 - La foto, si la hubo, en `attachments` con `entity_type = 'incident'`.
+- **El material gastado**, como movimientos de consumo con su incidencia y su
+  sala. El formulario de cierre lo pide ahí mismo, que es donde alguien se
+  acuerda del cable que acaba de poner; antes vivía detrás de otro botón y no se
+  apuntaba casi nunca. Cada apunte resta del almacén en cuanto se pulsa, sin
+  esperar al cierre: la pieza se gastó aunque la avería siga abierta.
+
+El apunte enseña las existencias que el dispositivo tiene espejadas y avisa
+—sin bloquear— cuando se pasa de ellas. La copia puede estar vieja y quien tiene
+el cable en la mano es la persona; lo que no puede es enterarse solo el
+servidor, porque el saldo no puede quedar en negativo y ese apunte volvería
+rechazado a la cola.
 
 El `UPDATE` directo sobre `incidents` **sigue siendo solo de supervisor**: es lo
 que hace falta para reabrir una que se cerró por error o corregir un cierre.
@@ -1044,7 +1055,10 @@ Se elige:
 | Qué se elige | Para qué sirve |
 |---|---|
 | **Periodo** | Semana en curso, semana pasada, mes en curso, mes pasado, ayer, o dos fechas cualesquiera. Debajo se lee qué días va a cubrir antes de pedirlo |
-| **Secciones** | Las trece del informe, entre ellas la lista de todas las revisiones hechas y el diario de lo que pasó cada día. «Reparto del trabajo» lleva nombres de personas y por eso hay que marcarla a mano |
+| **Secciones** | Las dieciséis del informe, entre ellas la lista de todas las revisiones hechas y el diario de lo que pasó cada día. «Reparto del trabajo» lleva nombres de personas y por eso hay que marcarla a mano |
+| **Cuánto se tarda en cerrar** | La mediana, la media y las cerradas en menos de 48 h. **Se puede desmarcar**: es una cifra que describe bien y justifica mal, y hay reuniones donde no ayuda |
+| **Cada cierre, con sus días** | Lo contrario: cada cierre en una línea, con la hora a la que se abrió, la hora a la que se cerró, cuánto llevó escrito entero —«24 días y 2 h», no «24,1»— y qué se hizo. Es lo que sirve para justificar por qué una tardó lo que tardó. Van primero las que más tardaron, que son por las que se pregunta |
+| **Fotos del periodo** | Las de las revisiones **y** las de las incidencias, **dentro del propio documento**. No son enlaces: un enlace de Storage caduca en un minuto y el informe se archiva para dentro de un año. Cada una dice de cuándo es —«En la revisión», «Incidencia abierta», «Al resolverla»— y las de una misma incidencia van seguidas, de cómo se encontró a cómo quedó. Entran hasta cuarenta, reducidas al tamaño al que se imprimen —57 mm de ancho, unos 45 KB cada una en vez de 226 KB—, y las que no caben se cuentan al pie. **No salen las retiradas**: cualquiera del equipo puede abrir una foto en la ficha del aula y marcar «Que no salga en el informe» —lo normal es que se haya colado una persona detrás del proyector—. La foto sigue guardada y visible ahí; solo deja de imprimirse, y se puede volver a incluir |
 | **Análisis con IA** | Si se desmarca, el informe sale con el análisis calculado |
 | **Escrito para** | Dirección (estado, tendencia y decisiones) o equipo técnico (qué salas tocar y con qué material) |
 | **En qué fijarse** | Una instrucción libre para la redacción: «céntrate en el edificio H». No cambia ninguna cifra |
@@ -1057,14 +1071,32 @@ minuto; sin ella, unos segundos.
 
 Desde ahí salen dos botones:
 
-- **Guardar como PDF** abre la impresión del navegador. Se elige «Guardar como
-  PDF» de destino y sale el documento en A4. Es lo mismo que se hace con la hoja
-  de inventario.
-- **Descargar** guarda el documento tal cual, en un solo fichero que se abre en
-  cualquier navegador sin conexión y sin nada instalado.
+- **Descargar PDF** abre el informe en una pestaña y lanza el diálogo de
+  imprimir, que es de donde sale el PDF: en el iPad, «Imprimir» y después
+  «Compartir → Guardar en Archivos»; en el ordenador, «Guardar como PDF» en el
+  destino, en lugar de una impresora. Es el mismo gesto que la hoja de
+  inventario y que las placas.
+- **Descargar el original** guarda el HTML del que sale ese PDF: un solo fichero
+  que se abre en cualquier navegador, sin conexión y sin nada instalado. Es lo
+  que conviene guardar para archivar; no es el PDF.
 
-El informe queda además **archivado** en la lista de abajo, con su procedencia
-—con IA o con el análisis calculado— debajo de cada periodo.
+El informe queda además **archivado** en la lista de abajo, y cada entrada lleva
+un distintivo con **cómo salió su análisis**:
+
+| Distintivo | Qué pasó |
+|---|---|
+| **Redactado con IA** (verde) | Se pidió con IA y la IA lo escribió |
+| **Análisis calculado** (gris) | Se pidió sin IA. Salió como se quería |
+| **La IA falló** (ámbar) | Se pidió con IA, no se pudo, y salió con el análisis calculado. **El motivo se lee en la propia línea** —sin clave, clave sin permiso, cuota agotada— sin abrir el documento |
+
+El ámbar es el que importa: antes esos dos últimos casos ponían lo mismo, así que
+una clave caducada podía pasar semanas dando informes peores sin que nada lo
+dijera. Los informes emitidos antes de este cambio no guardaron el dato y salen
+sin distintivo — de esos no consta.
+
+Mientras se genera, la línea de estado dice **por dónde va la redacción**: «Calculando
+las cifras: redactando con *el modelo*…», y si la IA no puede, lo dice en ámbar en
+ese momento, no al final. El informe sigue adelante con el análisis calculado.
 
 ### Si algo va mal
 
@@ -1075,8 +1107,41 @@ aparecer:
 | Lo que dice | Qué significa | Qué hacer |
 |---|---|---|
 | **No se ha podido leer *algo*** | Una de las consultas no ha llegado: sin conexión, o el perfil no es de administrador | Comprueba la conexión y el rol. El informe no se emite a medias a propósito: una cifra corta sin avisar es peor que ninguna |
+| ***algo*: la petición no ha llegado a salir** | La consulta murió antes de tener respuesta. Es red, no permisos: el dispositivo se ha quedado sin cobertura, o el servidor ha cortado la conexión | Vuelve a intentarlo. Si el iPad tiene red y se repite siempre en el mismo punto, mira el registro de Caddy o de Kong |
 | **El análisis ha salido calculado y no redactado por la IA: …** | El informe está bien; lo que ha fallado es la redacción. El motivo va en la misma frase (sin clave, clave sin permiso, cuota agotada) | Si es la clave, se arregla en la tarjeta de arriba de esa misma pantalla |
 | **El informe está hecho, pero no se ha podido guardar…** | El documento existe y se puede imprimir, pero no ha entrado en el archivo. Suele ser que falta la migración `20260821000100_informes_en_el_navegador.sql` | Descárgalo para no perderlo y aplica las migraciones pendientes |
+| **El navegador ha bloqueado la ventana del informe** | «Descargar PDF» abre una pestaña, y el navegador la trata como emergente | Permite las ventanas emergentes de esta dirección, o usa «Descargar el original» |
+| **Un edificio sale con «· archivado» y un guion en «Salas»** | No es un fallo: ese edificio está en la papelera, así que no tiene aulas en la lista de trabajo, pero durante el periodo se trabajó en él y eso se cuenta igual | Nada, salvo que no debiera estar archivado: se restaura desde **Datos → papelera** |
+
+#### Cuando faltan datos de un edificio en el histórico
+
+Renombrar un edificio **no pierde nada**: `rename_building` cambia el código y el
+nombre de la misma fila, y las revisiones y las incidencias cuelgan de la sala,
+no del texto. Si al renombrar CRAI a T. Moro parece que se ha perdido el
+histórico, lo que ha pasado es otra cosa, y son dos:
+
+1. **El edificio (o sus aulas) está archivado.** Hasta este cambio, el informe
+   leía las salas de `room_overview` —que es la lista de trabajo y filtra lo
+   archivado— y dejaba caer en silencio todo lo que pasó en ellas: no salían en
+   el reparto por edificio, ni en el diario, ni en la lista de cierres, aunque
+   los totales de arriba sí las contaran. Ahora salen, marcadas, y el pie del
+   informe dice cuántas salas del periodo ya no están en la lista de trabajo.
+2. **Se creó un edificio nuevo en vez de renombrar el que había.** Entonces hay
+   dos: el viejo con todo el histórico y el nuevo con aulas recién creadas, que
+   por eso aparecen como no revisadas. Eso no lo arregla el informe, porque no
+   hay nada que arreglar en él: son dos edificios distintos y cada uno tiene lo
+   suyo.
+
+   Hoy la aplicación **no** puede unirlos desde el panel: la fusión de edificios
+   existe (`merge_building`) pero la pantalla de Datos solo la ofrece para los
+   edificios provisionales que dejó la importación, no para dos que se crearon a
+   mano. Y aunque se llame a la función directamente, si las mismas aulas están
+   duplicadas en los dos —dos «1.7»— la fusión se rechaza por el índice único de
+   la planta. Hace falta decidir aula por aula cuál se queda.
+
+Para distinguir un caso del otro, mira en **Datos**: si aparece un CRAI en la
+papelera, es el primero —y este cambio ya lo arregla—; si aparece un CRAI
+**activo** con aulas, al lado de un T. Moro también activo, es el segundo.
 
 **Un informe emitido no se regenera nunca: se versiona.** Si los datos cambian
 después, el documento del viernes sigue diciendo lo que decía el viernes. Es lo
@@ -1099,7 +1164,13 @@ texto generado— se tira el texto entero y se emite con el análisis calculado.
 **El documento no dice en ninguna parte que se haya usado IA.** Es un documento
 del servicio que habla del estado del campus, y va limpio. Si necesitas saber
 cómo se redactó un informe concreto, está en la pantalla de Informes: cada
-entrada del archivo lo indica debajo de su periodo.
+entrada del archivo lleva su distintivo.
+
+La tarjeta de arriba de esa pantalla resume lo mismo para el **último** informe.
+Si pidió IA y no la tuvo, se pone en rojo con el motivo y la fecha, ahí mismo
+donde se cambia la clave. Eso necesita aplicada la migración
+`20260825000100_el_archivo_dice_si_la_ia_fallo.sql`; sin ella la tarjeta sigue
+funcionando como antes, pero no distingue el fallo.
 
 **Sin clave, el informe sale igual.** El análisis lo escriben las reglas del
 sistema: es un texto completo, con su párrafo de entrada y su lista de cosas que

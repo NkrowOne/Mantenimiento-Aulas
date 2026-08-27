@@ -18,11 +18,13 @@
  *    sin cobertura. Este formulario se abre también desde la ficha de la sala,
  *    con el aparato delante, y lo escrito viaja por la cola como todo lo demás.
  *
- * La explicación es obligatoria y la foto no, y ese reparto es deliberado: la
- * frase la puede escribir cualquiera en diez segundos y sirve para siempre; la
- * foto depende de que haya algo que enseñar —una regleta nueva se ve, un ajuste
- * de la matriz de vídeo no—, y exigirla convertiría el cierre en un trámite que
- * se esquiva dejando la incidencia abierta.
+ * **Lo único obligatorio es la explicación.** Ni la foto ni el material lo son,
+ * y ese reparto es deliberado: la frase la puede escribir cualquiera en diez
+ * segundos y sirve para siempre; la foto depende de que haya algo que enseñar
+ * —una regleta nueva se ve, un ajuste de la matriz de vídeo no— y muchas averías
+ * se arreglan sin gastar nada. Exigir cualquiera de las dos convertiría el
+ * cierre en un trámite que se esquiva dejando la incidencia abierta, que es
+ * exactamente lo que esto viene a evitar.
  *
  * La foto se guarda al elegirla, no al enviar el formulario: es de la
  * incidencia, no de este formulario, y así el error —el HEIC de iOS, sobre
@@ -37,6 +39,7 @@ import { db, enqueue } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { flush } from '@/sync/outbox'
 import { TiraDeFotos } from '@/components/Fotos'
+import { MaterialUsado } from './MaterialUsado'
 import { PHOTO_ACCEPT, capturePhoto } from '@/lib/photos'
 import { cierreDeIncidencia, incidenciaCerrada, problemaDeExplicacion } from '@/domain/resolucion'
 import { INCIDENT_KIND_LABELS, type IncidentKind } from '@/domain/types'
@@ -50,6 +53,7 @@ export interface IncidenciaQueSeCierra {
 export function ResolverIncidencia({
   incidencia,
   equipo,
+  roomId,
   onCerrada,
   onCancelar,
 }: {
@@ -63,6 +67,15 @@ export function ResolverIncidencia({
    * pantalla desplazándose, y la respuesta tiene que seguir a la vista.
    */
   equipo: string | null
+  /**
+   * Dónde se ha gastado el material, si se sabe.
+   *
+   * Va aquí y no dentro del apunte porque el almacén sabe cuánto queda y no
+   * dónde fue, y esa es justo la pregunta que se hace después: cuánto material
+   * se lleva un edificio. Nulo en las 118 incidencias del histórico que se
+   * importaron sin sala identificada.
+   */
+  roomId: string | null
   onCerrada: () => void
   onCancelar: () => void
 }): React.ReactElement {
@@ -73,6 +86,9 @@ export function ResolverIncidencia({
   const [tocado, setTocado] = useState(false)
   const [fotoError, setFotoError] = useState<string | null>(null)
   const [guardandoFoto, setGuardandoFoto] = useState(false)
+  /* Si el apunte de material está abierto. Cerrado de partida: la mayoría de las
+     averías se arreglan sin gastar nada, y quien sí ha gastado se acuerda. */
+  const [material, setMaterial] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const problema = problemaDeExplicacion(texto)
@@ -219,6 +235,48 @@ export function ResolverIncidencia({
           espere cobertura. Una foto que se pide y no se devuelve deja de
           hacerse a las tres semanas. */}
       <TiraDeFotos entityType="incident" ids={[incidencia.id]} />
+
+      {/*
+        El material, aquí dentro y no en otro botón.
+
+        Es el apunte que nunca llegaba. Vivía detrás de un botón «Material»
+        aparte, en la pestaña de Incidencias, y con el aviso escrito en el propio
+        código: «se apunta antes de cerrar, porque después nadie vuelve a la
+        incidencia». Pues nadie lo apuntaba antes tampoco — el momento en que
+        alguien se acuerda del cable que ha puesto es exactamente este, contando
+        qué ha hecho, y no un toque anterior en otra pantalla.
+
+        Cada apunte sale del almacén en cuanto se pulsa «Apuntar»: es un
+        movimiento de consumo con su incidencia y su sala, y resta del inventario
+        igual que cualquier otra salida. Por eso no espera al cierre — el
+        material se gastó aunque la avería se quede sin cerrar hoy.
+
+        **Y va PLEGADO**, que es lo único que hace verdad la palabra «opcional».
+        Muchas averías se arreglan sin gastar nada —un cable suelto, una entrada
+        mal elegida, un reinicio— y en esas el buscador de artículos es un paso
+        más entre la frase y el botón de cerrar. Un formulario en el que hay que
+        pasar por encima de un campo para llegar al final enseña que ese campo
+        hay que rellenarlo. Cerrar no espera a nada de aquí: el botón de abajo
+        solo mira la explicación.
+      */}
+      {material ? (
+        <div className="mt-3">
+          <p className="eyebrow">Material usado</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted">
+            Lo que apuntes sale del almacén y queda cargado a esta sala. Puedes cerrar la avería
+            sin apuntar nada.
+          </p>
+          <MaterialUsado incidentId={incidencia.id} roomId={roomId} />
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setMaterial(true)}
+          className="key key-quiet mt-3 min-h-11 w-full px-3 text-sm"
+        >
+          ¿Has usado material? Apúntalo
+        </button>
+      )}
 
       {cerrar.isError && (
         <p role="alert" className="mt-2 text-sm text-crit">

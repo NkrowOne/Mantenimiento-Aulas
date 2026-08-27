@@ -52,7 +52,7 @@ const TONOS: Record<string, string> = { neutro: INK, ok: OK, aviso: WARN, critic
 const TITULO_TIPO: Record<string, string> = {
   diario: 'Parte diario',
   semanal: 'Informe semanal',
-  personalizado: 'Informe a medida',
+  personalizado: 'Informe del periodo',
 }
 
 /**

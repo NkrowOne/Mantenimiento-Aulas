@@ -47,24 +47,46 @@ import { type Indicador, type Lectura, dias as textoDias, indicadores, plural, p
 import { SECCIONES_POR_DEFECTO, type Opciones, type Seccion, tiene } from './opciones'
 import { etiquetaDia, nombreDia } from '../periodos'
 
-// La paleta de la aplicación, para que el PDF y la pantalla sean el mismo producto.
-const ACENTO = '#046A78'
-const INK = '#12171C'
-const INK2 = '#3C4A4E'
-const MUTED = '#5C6875'
-const LINE = '#D9DFE3'
-const HAIR = '#EAEEF0'
-const PAPEL = '#F7F7F5'
-const OK = '#137A47'
-const WARN = '#8A5A00'
-const CRIT = '#B02318'
+/*
+ * La paleta de la aplicación, para que el PDF y la pantalla sean el mismo
+ * producto, con el papel un punto más cálido que la pantalla.
+ *
+ * Los grises tiraban a azul de terminal y el rojo era de señal de tráfico. Un
+ * informe de mantenimiento no da malas noticias: cuenta cómo va el trabajo, y
+ * casi siempre va bien. Los tonos de estado siguen ahí —hacen falta para
+ * distinguir de un vistazo lo que urge—, solo que dichos en voz normal.
+ *
+ * Todos pasan 4,5:1 sobre el blanco Y sobre el crema del papel, que es donde de
+ * verdad se leen. El más justo es MUTED, que es además el que más letra pequeña
+ * lleva: 5,9 sobre blanco y 5,4 sobre crema.
+ */
+const ACENTO = '#0B6B70'
+/** El acento aguado, para fondos teñidos: números de hallazgo, píldoras. */
+const TINTE = '#E9F1F0'
+const INK = '#1A2226'
+const INK2 = '#42525A'
+const MUTED = '#57676E'
+const LINE = '#DEE2E0'
+const HAIR = '#EDEFEC'
+const PAPEL = '#F6F5F1'
+const OK = '#1B6E4B'
+const WARN = '#8A5B14'
+const CRIT = '#A33529'
 
-const TONOS: Record<string, string> = { neutro: INK, ok: OK, aviso: WARN, critico: CRIT }
-
+/*
+ * Cómo se llama cada informe, que es también cómo se llama el fichero PDF y lo
+ * primero que se lee de la portada.
+ *
+ * El de fechas elegidas a mano se llamaba «Informe a medida». Es lenguaje de
+ * folleto —lo «a medida» es el traje, no el documento— y encima no dice nada:
+ * quien lo abre seis meses después necesita saber DE QUÉ periodo es, y eso ya
+ * va al lado en todos los sitios donde aparece el título. «Informe del periodo»
+ * no promete nada y no estorba.
+ */
 const TITULO_TIPO: Record<string, string> = {
   diario: 'Parte diario',
   semanal: 'Informe semanal',
-  personalizado: 'Informe a medida',
+  personalizado: 'Informe del periodo',
 }
 
 /**
@@ -88,9 +110,40 @@ export function nombreEdificio(code: string, name: string): string {
     .join(' ')
 }
 
+/**
+ * Los días escritos enteros, para justificar y no para resumir.
+ *
+ * `dias()` de `analisis.ts` redondea porque va en una cifra de cabecera: allí,
+ * «3,5 días» es exactamente lo que hace falta. Aquí no. Cuando alguien pregunta
+ * por qué una incidencia concreta llevó lo que llevó, «3,5 días» invita a la
+ * siguiente pregunta y «3 días y 12 h» la cierra. Y por debajo de un día se
+ * cuenta en horas, que es como lo cuenta quien estuvo allí.
+ */
+export function diasLargo(dias: number): string {
+  const horasTotales = dias * 24
+  if (horasTotales < 1) return `${Math.max(1, Math.round(horasTotales * 60))} min`
+  if (horasTotales < 24) return `${Math.round(horasTotales)} h`
+  const enteros = Math.floor(dias)
+  const horas = Math.round((dias - enteros) * 24)
+  // 24 h de resto son un día más, no «3 días y 24 h».
+  if (horas === 24) return plural(enteros + 1, 'día')
+  if (horas === 0) return plural(enteros, 'día')
+  return `${plural(enteros, 'día')} y ${horas} h`
+}
+
 /** Igual con las salas: en muchas, el código ES el nombre. */
 function nombreSala(code: string, name: string): string {
   return name.trim().toUpperCase() === code.trim().toUpperCase() ? '' : name.trim()
+}
+
+/**
+ * La primera en mayúscula, para cuando el texto abre una línea.
+ *
+ * `periodoTexto` se escribe en minúscula porque casi siempre va detrás de algo
+ * —«Informe semanal · del 27 al 31»—, y en la portada abre el renglón él solo.
+ */
+function mayuscula(t: string): string {
+  return t.charAt(0).toUpperCase() + t.slice(1)
 }
 
 /** Corta por palabra entera y avisa con puntos suspensivos. */
@@ -150,10 +203,21 @@ function variacion(ind: Indicador): string {
  * altura, que es la razón por la que existe la retícula.
  */
 function panelIndicadores(inds: Indicador[], comparar: boolean, comparacion: string): string {
+  /*
+   * Solo se pinta de color lo que urge.
+   *
+   * Las cuatro cifras salían cada una del color de su tono, y el resultado era
+   * un semáforo: «18 revisiones» en ámbar porque se hicieron menos que la
+   * semana pasada, al lado de «23 pendientes» en rojo. Cuando todo está
+   * coloreado, el color deja de decir nada y el panel parece una alarma incluso
+   * en una semana buena. Ahora la cifra va en tinta y el rojo se reserva para
+   * lo crítico —lo que hay que mirar hoy—; lo demás lo cuentan el detalle de
+   * debajo y la flecha de la variación, que siguen con su color.
+   */
   const celda = (i: Indicador | undefined): string =>
     i
       ? `<div class="panel-et">${esc(i.etiqueta)}</div>
-      <div class="panel-val" style="color:${TONOS[i.tono] ?? INK}">${esc(i.valor)}</div>
+      <div class="panel-val" style="color:${i.tono === 'critico' ? CRIT : INK}">${esc(i.valor)}</div>
       <div class="panel-det">${esc(i.detalle)}</div>
       ${comparar && i.delta ? variacion(i) : ''}`
       : ''
@@ -222,19 +286,6 @@ function franja(partes: Array<{ nombre: string; valor: number; color: string }>)
 function medidor(parte: number, total: number, tono = ACENTO): string {
   const pct = total ? Math.min(100, Math.round((parte / total) * 100)) : 0
   return `<span class="med"><span style="width:${Math.max(pct === 0 ? 0 : 2, pct)}%;background:${tono}"></span></span>`
-}
-
-/**
- * Saca la primera letra a un elemento propio para poder hacerla capitular.
- *
- * Si el párrafo empieza por algo que no sea una letra —una cifra, un signo— se
- * deja como está: una capitular sobre un «3» parece una errata.
- */
-function capitular(texto: string): string {
-  const limpio = texto.trim()
-  const primera = limpio.charAt(0)
-  if (!/\p{L}/u.test(primera)) return esc(limpio)
-  return `<span class="capitular">${esc(primera)}</span>${esc(limpio.slice(1))}`
 }
 
 function vacio(texto: string): string {
@@ -389,9 +440,15 @@ function seccionEdificios(d: ReportData, conTendencia: boolean): string {
    * Solo los edificios con algo que contar. Con diecisiete filas, once de ellas
    * a cero, la tabla ocupaba dos páginas para decir que no se pasó por allí. Los
    * que se quedan fuera se cuentan al pie: quitar filas sin avisar es esconder.
+   *
+   * El criterio es LO QUE PASÓ, no si el edificio sigue en la lista de trabajo.
+   * Antes se pedía además `salas > 0` y eso borraba del informe un edificio
+   * archivado entero —el que se manda a la papelera cuando se reorganiza el
+   * campus— con todas sus revisiones y sus incidencias dentro. El total de
+   * arriba las seguía contando, así que el documento se contradecía solo.
    */
   const conDatos = d.porEdificio.filter(
-    (b) => b.salas > 0 && (b.revisadas > 0 || b.abiertas > 0 || b.pendientes > 0),
+    (b) => b.revisadas > 0 || b.abiertas > 0 || b.pendientes > 0,
   )
   const cobertura = conDatos.slice(0, 12)
   // Los dos recortes por separado, porque el pie los nombra y no son lo mismo:
@@ -399,7 +456,8 @@ function seccionEdificios(d: ReportData, conTendencia: boolean): string {
   // filas TENIENDO datos es mentirle al lector en la línea que existe para no
   // esconderle nada.
   const recortados = conDatos.length - cobertura.length
-  const sinActividad = d.porEdificio.filter((b) => b.salas > 0).length - conDatos.length
+  const sinActividad = d.porEdificio.length - conDatos.length
+  const archivados = cobertura.filter((b) => b.archivado).length
 
   return `
   <section class="bloque">
@@ -423,10 +481,16 @@ function seccionEdificios(d: ReportData, conTendencia: boolean): string {
           ancho: '30%',
           celda: (b) => {
             const n = nombreEdificio(b.code, b.name)
-            return `<span class="mono">${esc(b.code)}</span>${n ? ` <span class="tenue">${esc(n)}</span>` : ''}`
+            // La marca va pegada al nombre y no en una columna aparte: es lo
+            // que explica el guion de la columna «Salas» de esa misma fila.
+            const marca = b.archivado ? ' <span class="tenue">· archivado</span>' : ''
+            return `<span class="mono">${esc(b.code)}</span>${n ? ` <span class="tenue">${esc(n)}</span>` : ''}${marca}`
           },
         },
-        { cab: 'Salas', num: true, celda: (b) => String(b.salas) },
+        // Un edificio archivado no tiene salas en servicio, y un cero ahí se
+        // leería como «no tiene aulas». El guion dice lo que es: no hay
+        // denominador, no un denominador de cero.
+        { cab: 'Salas', num: true, celda: (b) => (b.salas > 0 ? String(b.salas) : '—') },
         {
           cab: 'Revisadas',
           ancho: '26%',
@@ -447,13 +511,18 @@ function seccionEdificios(d: ReportData, conTendencia: boolean): string {
         },
       ])}
       ${
-        recortados > 0 || sinActividad > 0
+        recortados > 0 || sinActividad > 0 || archivados > 0
           ? `<p class="apunte">${[
               recortados > 0
                 ? `${plural(recortados, 'edificio')} con actividad fuera de la tabla por sitio`
                 : '',
               sinActividad > 0
                 ? `${plural(sinActividad, 'edificio')} sin actividad en el periodo`
+                : '',
+              // Que se sepa por qué esa fila no tiene salas: el edificio está en
+              // la papelera y su trabajo del periodo se cuenta igual.
+              archivados > 0
+                ? `${plural(archivados, 'edificio')} archivado${archivados === 1 ? '' : 's'}: fuera de la lista de trabajo, con lo que pasó en el periodo`
                 : '',
             ]
               .filter(Boolean)
@@ -646,7 +715,7 @@ function seccionEventos(d: ReportData, conRevisiones: boolean): string {
         </tbody>
       </table>`
           : truncado && dia >= ultimoDiaListado
-            ? `<p class="vacio">Los movimientos de este día no caben en el listado recortado.</p>`
+            ? `<p class="vacio">Este día no cabe entero aquí. Está completo en el histórico de cada sala.</p>`
             : `<p class="vacio">Solo revisiones: ningún registro nuevo ni consumo de material.</p>`
       }
     </div>`
@@ -776,45 +845,206 @@ function seccionEstancadas(d: ReportData): string {
 }
 
 function seccionMateriales(d: ReportData): string {
-  const conCierres = d.resolucion.resueltas > 0
-  // Sin `evitar`: es un bloque alto, y prohibirle partirse lo empujaba entero a
-  // la página siguiente dejando media en blanco.
+  return `
+  <section class="bloque evitar">
+    ${rotulo('Material consumido', 'del almacén, en el periodo')}
+    ${
+      d.materiales.length
+        ? tabla(d.materiales, [
+            { cab: 'Artículo', ancho: '52%', celda: (m) => esc(m.name) },
+            { cab: 'Unidades', num: true, celda: (m) => `${m.consumido} ${esc(m.unidad)}` },
+            {
+              cab: 'Partes en los que se usó',
+              num: true,
+              celda: (m) => (m.incidencias ? String(m.incidencias) : '—'),
+            },
+          ])
+        : vacio('Sin consumo de almacén registrado en el periodo.')
+    }
+  </section>`
+}
+
+/**
+ * Cuánto se tarda en cerrar. Sección propia, y se puede quitar.
+ *
+ * Es una cifra que describe bien y justifica mal: «la mitad se cierra en 1,4
+ * días» no dice nada de la que llevó veinticuatro, y en una reunión donde hay
+ * que explicar UNA, el promedio se vuelve en contra de quien lo enseña. Por eso
+ * se desmarca sola, y por eso el desglose de al lado es otra sección: quien
+ * necesita justificar lleva los cierres uno a uno y deja fuera la media.
+ */
+function seccionTiempos(d: ReportData): string {
+  if (d.resolucion.resueltas === 0) {
+    return `
+  <section class="bloque evitar">
+    ${rotulo('Cuánto se tarda en cerrar')}
+    ${vacio('No se ha cerrado nada en el periodo.')}
+  </section>`
+  }
+
+  return `
+  <section class="bloque evitar">
+    ${rotulo('Cuánto se tarda en cerrar')}
+    <table class="cifras">
+      <tr><td>La mitad se cierra en</td><td class="num">${esc(textoDias(d.resolucion.medianaDias))}</td></tr>
+      ${
+        // Si la media dice lo mismo que la mediana, la fila solo repite.
+        textoDias(d.resolucion.mediaDias) !== textoDias(d.resolucion.medianaDias)
+          ? `<tr><td>Media, arrastrando las antiguas</td><td class="num">${esc(textoDias(d.resolucion.mediaDias))}</td></tr>`
+          : ''
+      }
+      <tr><td>Cerradas en menos de 48 h</td><td class="num">${d.resolucion.enMenosDe48h} de ${d.resolucion.resueltas}</td></tr>
+    </table>
+    <p class="apunte">La mediana va primero porque la media la mueve cualquier
+    parte antiguo que se cierre esta semana.</p>
+  </section>`
+}
+
+/**
+ * Cada cierre, con sus dos fechas y sus días escritos enteros.
+ *
+ * Esta es la sección que se lleva a una reunión donde hay que justificar un
+ * tiempo. Un promedio no justifica nada: lo que justifica es «se abrió el 27 de
+ * julio a las 09:12, se cerró el 20 de agosto a las 11:40, veinticuatro días y
+ * dos horas, y lo que se hizo fue cambiar la lámpara —que hubo que pedirla—».
+ * De ahí que estén las dos horas y el texto del cierre, y de ahí el orden: la
+ * que más tardó primero, que es por la que se pregunta.
+ */
+function seccionCierres(d: ReportData): string {
+  if (!d.cierres.length) {
+    return `
+  <section class="bloque evitar">
+    ${rotulo('Cada cierre, con sus días')}
+    ${vacio('No se ha cerrado ningún registro en el periodo.')}
+  </section>`
+  }
+
+  const conAutor = d.cierres.some((c) => c.quien)
+  const fuera = d.cierresTotal - d.cierres.length
+
   return `
   <section class="bloque">
-    ${rotulo('Material y tiempos')}
-    <table class="dos"><tr>
-      <td class="col-mitad">
-        <div class="sub-t">Más consumido en el periodo</div>
-        ${
-          d.materiales.length
-            ? tabla(d.materiales, [
-                { cab: 'Artículo', ancho: '58%', celda: (m) => esc(m.name) },
-                { cab: 'Unidades', num: true, celda: (m) => String(m.consumido) },
-                { cab: 'Partes', num: true, celda: (m) => (m.incidencias ? String(m.incidencias) : '—') },
-              ])
-            : vacio('Sin consumo de almacén registrado en el periodo.')
-        }
-      </td>
-      <td class="col-mitad">
-        <div class="sub-t">Cuánto se tarda en cerrar</div>
-        ${
-          conCierres
-            ? `<table class="cifras">
-          <tr><td>La mitad se cierra en</td><td class="num">${esc(textoDias(d.resolucion.medianaDias))}</td></tr>
-          ${
-            // Si la media dice lo mismo que la mediana, la fila solo repite.
-            textoDias(d.resolucion.mediaDias) !== textoDias(d.resolucion.medianaDias)
-              ? `<tr><td>Media, arrastrando las antiguas</td><td class="num">${esc(textoDias(d.resolucion.mediaDias))}</td></tr>`
-              : ''
-          }
-          <tr><td>Cerradas en menos de 48 h</td><td class="num">${d.resolucion.enMenosDe48h} de ${d.resolucion.resueltas}</td></tr>
-        </table>
-        <p class="apunte">La mediana va primero porque la media la mueve cualquier
-        parte antiguo que se cierre esta semana.</p>`
-            : vacio('No se ha cerrado nada en el periodo.')
-        }
-      </td>
-    </tr></table>
+    ${rotulo('Cada cierre, con sus días', plural(d.cierresTotal, 'cierre'))}
+    <table class="datos">
+      <thead><tr>
+        <th style="width:23%">Qué se cerró</th>
+        <th style="width:11%">Sala</th>
+        <th style="width:13%">Se abrió</th>
+        <th style="width:13%">Se cerró</th>
+        <th class="num" style="width:15%">Llevó</th>
+        <th>Qué se hizo${conAutor ? ' y quién' : ''}</th>
+      </tr></thead>
+      <tbody>
+        ${d.cierres
+          .map(
+            (c) => `<tr>
+        <td>${esc(recorta(c.titulo, 60))}${
+          c.ref ? `<span class="ev-det mono">${esc(c.ref)}</span>` : ''
+        }</td>
+        <td class="mono tenue">${esc(c.building)} ${esc(c.room)}</td>
+        <td class="mono tenue">${esc(etiquetaDia(c.abierta))} ${esc(c.horaAbierta)}</td>
+        <td class="mono tenue">${esc(etiquetaDia(c.cerrada))} ${esc(c.horaCerrada)}</td>
+        <td class="num"${c.dias >= 7 ? ` style="color:${WARN}"` : ''}>${esc(diasLargo(c.dias))}</td>
+        <td>${
+          c.resolucion
+            ? esc(recorta(c.resolucion, 120))
+            : '<span class="tenue">no se apuntó qué se hizo</span>'
+        }${c.quien ? `<span class="ev-det">${esc(c.quien)}</span>` : ''}</td>
+      </tr>`,
+          )
+          .join('')}
+      </tbody>
+    </table>
+    ${
+      fuera > 0
+        ? `<p class="apunte">Y ${plural(fuera, 'cierre')} más, fuera de la tabla por sitio.
+           Están todos en el histórico de cada sala.</p>`
+        : ''
+    }
+  </section>`
+}
+
+/**
+ * Las fotos, dentro del documento.
+ *
+ * Tres por fila y con su pie: sala, día y de qué incidencia es. Una foto sin
+ * saber de dónde salió no prueba nada — y este documento se archiva justamente
+ * para poder volver a él.
+ *
+ * `page-break-inside: avoid` en cada una: una foto partida entre dos páginas no
+ * se lee, y en un informe que alguien firma queda como un descuido.
+ */
+/**
+ * De qué momento es cada foto, escrito en el pie.
+ *
+ * Sin esto, tres fotos de la misma aula se leen como tres fotos de la misma
+ * aula. Con esto, la primera es el problema encontrado, la última es el aula
+ * arreglada, y entre las dos hay un trabajo hecho — que es exactamente lo que
+ * un informe tiene que poder demostrar.
+ */
+const MOMENTO: Record<ReportData['fotos'][number]['momento'], string> = {
+  revision: 'En la revisión',
+  apertura: 'Incidencia abierta',
+  cierre: 'Al resolverla',
+}
+
+function seccionFotos(d: ReportData): string {
+  if (!d.fotos.length) {
+    // Sin fotos no se imprime la sección: «no hay fotos» no informa de nada.
+    return ''
+  }
+
+  const filas: Array<ReportData['fotos']> = []
+  for (let i = 0; i < d.fotos.length; i += 3) filas.push(d.fotos.slice(i, i + 3))
+  const fuera = d.fotosTotal - d.fotos.length
+
+  const cuantas = (m: ReportData['fotos'][number]['momento']): number =>
+    d.fotos.filter((f) => f.momento === m).length
+  const reparto = (
+    [
+      [cuantas('revision'), 'de revisiones'],
+      [cuantas('apertura'), 'de incidencias abiertas'],
+      [cuantas('cierre'), 'de incidencias resueltas'],
+    ] as Array<[number, string]>
+  )
+    .filter(([n]) => n > 0)
+    .map(([n, que]) => `${n} ${que}`)
+    .join(', ')
+
+  return `
+  <section class="bloque">
+    ${rotulo('Fotos del periodo', plural(d.fotos.length, 'foto'))}
+    <p class="apunte">Cada foto dice de cuándo es: ${esc(reparto)}. Las de una misma
+    incidencia van seguidas, de cómo se encontró a cómo quedó.</p>
+    <table class="fotos">
+      ${filas
+        .map(
+          (fila) => `<tr>${[0, 1, 2]
+            .map((i) => {
+              const f = fila[i]
+              if (!f) return '<td class="col-foto"></td>'
+              return `<td class="col-foto">
+        <figure class="foto">
+          <img src="${f.datos}" alt="">
+          <figcaption>
+            <span class="momento">${esc(MOMENTO[f.momento])}</span>
+            <span class="mono">${esc(f.building)} ${esc(f.room)}</span>
+            <span class="tenue"> · ${esc(etiquetaDia(f.dia))} ${esc(f.hora)}</span>
+            <span class="foto-de">${esc(recorta(f.titulo, 54))}</span>
+          </figcaption>
+        </figure>
+      </td>`
+            })
+            .join('')}</tr>`,
+        )
+        .join('')}
+    </table>
+    ${
+      fuera > 0
+        ? `<p class="apunte">Hay ${plural(fuera, 'foto')} más del periodo que no caben en el
+           documento. Están en la ficha de cada aula y de cada incidencia.</p>`
+        : ''
+    }
   </section>`
 }
 
@@ -881,6 +1111,17 @@ function colofon(d: ReportData, o: Opciones, pie: Pie): string {
       `${plural(d.sinSala, 'registro')} del periodo no tienen sala asignada, así que cuentan en los totales y no en el desglose por edificio.`,
     )
   }
+  /*
+   * Esta frase es la que faltaba cuando un edificio entero se fue a la papelera
+   * y su trabajo pareció evaporarse. Ahora se cuenta, y además se dice: sin
+   * esta línea, el informe y la pantalla de revisar enseñan campus distintos y
+   * no hay forma de saber cuál de los dos está mal.
+   */
+  if (d.salasArchivadas > 0) {
+    partes.push(
+      `${plural(d.salasArchivadas, 'sala')} del periodo ya no están en la lista de trabajo —archivadas ellas o su edificio—: lo que se hizo en ellas se cuenta aquí igual.`,
+    )
+  }
   // Contra el conjunto por defecto, no contra un número escrito a mano: al
   // añadir dos secciones nuevas, el «< 10» de antes habría marcado como parcial
   // hasta el informe completo.
@@ -931,7 +1172,10 @@ export function renderReport(
     ['lamparas', seccionLamparas(d)],
     ['estancadas', seccionEstancadas(d)],
     ['materiales', seccionMateriales(d)],
+    ['tiempos', seccionTiempos(d)],
+    ['cierres', seccionCierres(d)],
     ['equipo', seccionEquipo(d)],
+    ['fotos', seccionFotos(d)],
     ['recomendaciones', seccionRecomendaciones(l)],
   ]
 
@@ -997,26 +1241,39 @@ export function renderReport(
     }
   }
 
-  /* ── Cabecera ── */
+  /* ── Cabecera ──
+     Sin versalitas y sin tracking de cartel. La línea de arriba dice de quién
+     es el documento y de qué tipo es, y para eso no hace falta levantar la voz:
+     el punto de color hace el trabajo que hacían las mayúsculas. */
   .masthead { string-set: cabecera "${esc(titulo)} · ${esc(d.periodoTexto)}"; }
   .kicker {
-    font-size: 7.5pt; letter-spacing: .14em; text-transform: uppercase;
-    color: ${ACENTO}; font-weight: 600;
+    font-size: 9pt; color: ${MUTED}; font-weight: 500; letter-spacing: 0;
   }
+  .kicker .punto {
+    display: inline-block; width: 2.2mm; height: 2.2mm; border-radius: 50%;
+    background: ${ACENTO}; margin-right: 1.8mm;
+  }
+  .kicker b { color: ${INK2}; font-weight: 600; }
   h1 {
     font-family: "IBM Plex Serif", Georgia, serif;
-    font-size: 21pt; line-height: 1.16; font-weight: 600;
-    letter-spacing: -0.01em; color: ${INK};
-    margin: 2.5mm 0 0; max-width: 150mm;
+    font-size: 22pt; line-height: 1.22; font-weight: 600;
+    letter-spacing: -0.005em; color: ${INK};
+    margin: 3mm 0 0; max-width: 152mm;
   }
   .sumario {
-    margin-top: 2mm; font-size: 8.5pt; color: ${MUTED};
+    margin-top: 2.4mm; font-size: 9pt; color: ${MUTED};
+    font-variant-numeric: tabular-nums;
   }
-  .sumario .mono { font-variant-numeric: tabular-nums; }
-  .filete { height: 2.4pt; width: 22mm; background: ${ACENTO}; margin: 4mm 0 0; }
+  /* El filete ya no corta: acompaña. Redondeado y corto, del ancho de una
+     palabra. */
+  .filete {
+    height: 1.8pt; width: 14mm; border-radius: 1pt; background: ${ACENTO};
+    margin: 4.5mm 0 0;
+  }
   .nota-pedido {
-    margin-top: 4mm; padding: 2.5mm 3mm; background: ${PAPEL};
-    border-left: 2pt solid ${LINE}; font-family: "IBM Plex Serif", Georgia, serif;
+    margin-top: 4.5mm; padding: 3mm 3.5mm; background: ${PAPEL};
+    border-radius: 1.8mm; border-left: 2pt solid ${ACENTO};
+    font-family: "IBM Plex Serif", Georgia, serif;
     font-size: 9pt; color: ${INK2};
   }
 
@@ -1028,39 +1285,35 @@ export function renderReport(
   .col-texto { width: 62%; padding-right: 10mm; vertical-align: top; }
   .col-panel { width: 38%; vertical-align: top; }
 
+  /*
+   * La entradilla, en bandera y sin partir palabras.
+   *
+   * Iba justificada con guiones, que es lo que se hace en un periódico porque
+   * allí la columna es estrecha y la mancha tiene que ser un rectángulo. Aquí
+   * no: justificar abre ríos entre palabras, y partir «acumu-lado» al final de
+   * la línea obliga a montar la palabra en la cabeza. En bandera se lee más
+   * rápido y suena a alguien contando algo, que es de lo que va este párrafo.
+   */
   .entradilla {
     font-family: "IBM Plex Serif", Georgia, serif;
-    font-size: 10.5pt; line-height: 1.62; color: ${INK2};
-    text-align: justify; hyphens: auto;
-  }
-  /*
-   * La capitular, en un span y no en ::first-letter.
-   *
-   * Con ::first-letter, WeasyPrint flota la letra pero NO retira su hueco del
-   * flujo: la primera línea empezaba por la segunda letra colocada debajo de la
-   * primera, y se leía «S han hecho» con la «e» tapada. Con un elemento propio
-   * se controlan alto de línea, ancho y sangría, y se comprueba mirando el PDF.
-   */
-  .capitular {
-    float: left; font-size: 25pt; line-height: 0.82; font-weight: 600;
-    color: ${ACENTO}; margin: 1.2mm 1.8mm 0 0;
+    font-size: 10.5pt; line-height: 1.68; color: ${INK2};
+    text-align: left; hyphens: none;
   }
 
-  .panel { background: ${PAPEL}; padding: 3mm; page-break-inside: avoid; }
+  .panel {
+    background: ${PAPEL}; padding: 4mm; border-radius: 2mm;
+    page-break-inside: avoid;
+  }
   .panel-t {
-    font-size: 7pt; font-weight: 600; text-transform: uppercase; letter-spacing: .1em;
-    color: ${MUTED}; margin-bottom: 2.5mm;
+    font-size: 8.5pt; font-weight: 600; color: ${INK2}; margin-bottom: 3mm;
   }
   .panel-rej { width: 100%; border-collapse: collapse; }
   .panel-c { width: 50%; vertical-align: top; padding: 0 3mm 0 0; }
   .panel-c2 { padding-top: 4mm; }
-  .panel-et {
-    font-size: 6.8pt; text-transform: uppercase; letter-spacing: .07em; color: ${MUTED};
-    line-height: 1.3;
-  }
+  .panel-et { font-size: 8pt; color: ${MUTED}; line-height: 1.3; }
   .panel-val {
-    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 17pt; font-weight: 600;
-    font-variant-numeric: tabular-nums; line-height: 1.05; margin: 0.8mm 0 0.6mm;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 16pt; font-weight: 600;
+    font-variant-numeric: tabular-nums; line-height: 1.05; margin: 1mm 0 0.8mm;
   }
   .panel-det { font-size: 7.5pt; color: ${MUTED}; line-height: 1.35; }
   .panel-nota {
@@ -1080,27 +1333,39 @@ export function renderReport(
   .var.mal { color: ${WARN}; }
   .var.neutra { color: ${MUTED}; }
 
-  /* ── Secciones ── */
-  .bloque { margin-top: 9mm; }
+  /* ── Secciones ──
+     El rótulo iba en versalitas con tracking y una raya negra debajo: catorce
+     de esos en un documento de veinte páginas son catorce veces que alguien te
+     habla en mayúsculas. En caja normal, con la serif del texto y una raya
+     clara, el ojo los encuentra igual —son lo único a ese tamaño— y el
+     documento baja el tono. */
+  .bloque { margin-top: 11mm; }
   .bloque.evitar { page-break-inside: avoid; }
   .rotulo {
     display: flex; align-items: baseline; gap: 3mm;
-    border-bottom: 0.75pt solid ${INK}; padding-bottom: 1.4mm; margin-bottom: 4mm;
+    border-bottom: 0.6pt solid ${LINE}; padding-bottom: 1.8mm; margin-bottom: 4.5mm;
     /* Un rótulo suelto al pie de una página, con su sección en la siguiente, es
        el fallo de maquetación que más delata a un documento generado. */
     page-break-after: avoid;
   }
   .rotulo > span:first-child {
-    font-size: 8pt; font-weight: 600; text-transform: uppercase; letter-spacing: .1em;
+    font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 12pt; font-weight: 600; letter-spacing: -0.005em; color: ${INK};
   }
-  .rotulo-apunte { font-size: 8pt; color: ${MUTED}; letter-spacing: 0; }
+  .rotulo-apunte { font-size: 8.5pt; color: ${MUTED}; letter-spacing: 0; }
   .sub { margin-top: 6mm; }
-  .sub-t { font-size: 9pt; font-weight: 600; margin-bottom: 2mm; page-break-after: avoid; }
+  .sub-t { font-size: 9.5pt; font-weight: 600; margin-bottom: 2.4mm; page-break-after: avoid; }
+  /* El apunte que explica una tabla va SOBRE ella, así que necesita aire por
+     abajo: sin él, la frase y la cabecera de la tabla se leían como un bloque
+     de texto con una línea en negrita en medio. */
   .apunte {
     font-family: "IBM Plex Serif", Georgia, serif;
-    font-size: 8.5pt; line-height: 1.5; color: ${MUTED}; margin: 2mm 0 0; max-width: 130mm;
+    font-size: 8.5pt; line-height: 1.5; color: ${MUTED}; margin: 2mm 0 3.5mm;
+    max-width: 130mm;
   }
-  .vacio { font-size: 9pt; color: ${MUTED}; font-style: italic; }
+  /* Sin cursiva: en un documento generado, la cursiva de «sin datos» se lee
+     como una disculpa del programa. Es una frase normal, y se dice normal. */
+  .vacio { font-size: 8.8pt; color: ${MUTED}; }
   .tenue { color: ${MUTED}; }
   .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
 
@@ -1123,9 +1388,12 @@ export function renderReport(
     page-break-inside: avoid;
   }
   .col-nota:last-child { padding-right: 0; }
+  /* El número del hallazgo, en una píldora teñida en vez de en cifras sueltas
+     de máquina de escribir. Ocupa lo mismo y se lee como una etiqueta. */
   .nota-n {
-    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 8pt; color: ${ACENTO};
-    letter-spacing: .05em; margin-bottom: 1.2mm;
+    display: inline-block; font-size: 7.5pt; font-weight: 600; color: ${ACENTO};
+    background: ${TINTE}; border-radius: 4mm; padding: 0.5mm 2.4mm;
+    margin-bottom: 1.8mm;
   }
   .nota-t { font-size: 9.5pt; font-weight: 600; line-height: 1.3; margin-bottom: 1.4mm; }
   .nota-c {
@@ -1136,10 +1404,13 @@ export function renderReport(
   /* ── Tablas ── */
   table.datos { width: 100%; border-collapse: collapse; font-size: 8.8pt; }
   table.datos thead { display: table-header-group; }
+  /* Las cabeceras, en caja normal: «Pendientes hoy» es más rápido de leer que
+     «PENDIENTES HOY», y la raya que las separa de los datos no necesita ser
+     negra para separar. */
   table.datos th {
-    text-align: left; font-weight: 500; color: ${MUTED}; font-size: 7pt;
-    text-transform: uppercase; letter-spacing: .07em; line-height: 1.25;
-    border-bottom: 0.5pt solid ${INK}; padding: 0 4mm 1.4mm 0;
+    text-align: left; font-weight: 600; color: ${MUTED}; font-size: 8pt;
+    letter-spacing: 0; line-height: 1.25;
+    border-bottom: 0.6pt solid ${LINE}; padding: 0 4mm 1.6mm 0;
   }
   /* Sin sangría por la izquierda, dos rótulos contiguos se leían como uno:
      «SALASREVISADAS». La calle va por la izquierda de la columna numérica, que
@@ -1159,6 +1430,7 @@ export function renderReport(
   table.datos th + th, table.datos td + td { padding-left: 3.5mm; }
   table.datos td.num {
     font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
   table.datos tr { page-break-inside: avoid; }
 
@@ -1185,24 +1457,55 @@ export function renderReport(
     border-bottom: 0.5pt solid ${LINE}; padding-bottom: 1.2mm; margin-bottom: 1.5mm;
     page-break-after: avoid;
   }
-  .dia-fecha { font-size: 9pt; font-weight: 600; }
+  .dia-fecha {
+    font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 9.5pt; font-weight: 600;
+  }
   .dia-res { font-size: 8pt; color: ${MUTED}; }
   table.diario td { padding-top: 1.4mm; padding-bottom: 1.4mm; border-bottom: 0; }
   table.diario tr:not(:last-child) td { border-bottom: 0.5pt solid ${HAIR}; }
   .tag {
-    display: inline-block; font-size: 6.8pt; text-transform: uppercase;
-    letter-spacing: .07em; color: ${MUTED}; border: 0.5pt solid ${LINE};
-    border-radius: 2px; padding: 0.3mm 1.2mm; white-space: nowrap;
+    display: inline-block; font-size: 7.5pt; letter-spacing: 0; color: ${MUTED};
+    background: ${PAPEL}; border: 0.5pt solid ${LINE};
+    border-radius: 3mm; padding: 0.4mm 1.8mm; white-space: nowrap;
   }
   .ev-det {
     display: block; font-family: "IBM Plex Serif", Georgia, serif;
     font-size: 8pt; color: ${MUTED}; line-height: 1.4; margin-top: 0.4mm;
   }
 
+  /* ── Fotos ──
+     Tres por fila, con su pie debajo. El salto se prohíbe en la CELDA y no en
+     la fila: prohibirlo en la fila entera empuja las tres a la página siguiente
+     y deja media en blanco. */
+  table.fotos { width: 100%; border-collapse: collapse; }
+  .col-foto {
+    width: 33.33%; vertical-align: top; padding: 0 4mm 5mm 0;
+    page-break-inside: avoid;
+  }
+  .col-foto:last-child { padding-right: 0; }
+  .foto { margin: 0; }
+  .foto img {
+    display: block; width: 100%; height: 42mm; object-fit: cover;
+    background: ${HAIR}; border: 0.5pt solid ${LINE}; border-radius: 1.5mm;
+  }
+  .foto figcaption { font-size: 7.5pt; color: ${MUTED}; margin-top: 1.2mm; line-height: 1.35; }
+  /* El momento, en versalitas y encima de todo: es lo primero que hay que leer
+     de una foto en un informe. En negro sobre el gris del resto del pie, para
+     que se distinga sin necesidad de color — estos documentos se imprimen. */
+  .momento {
+    display: block; font-size: 7.5pt; font-weight: 600; color: ${ACENTO};
+    letter-spacing: 0; margin-bottom: 0.4mm;
+  }
+  .foto-de {
+    display: block; font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 8pt; color: ${INK2}; line-height: 1.35; margin-top: 0.4mm;
+  }
+
   /* ── Medidor ── */
   .med {
-    display: inline-block; width: 14mm; height: 1.4mm; background: ${HAIR};
-    margin-right: 2mm; vertical-align: middle; overflow: hidden;
+    display: inline-block; width: 14mm; height: 1.6mm; background: ${HAIR};
+    border-radius: 0.8mm; margin-right: 2mm; vertical-align: middle; overflow: hidden;
   }
   .med > span { display: block; height: 100%; }
   .med-n {
@@ -1213,7 +1516,7 @@ export function renderReport(
   /* ── Franja de composición ── */
   .franja {
     height: 3.4mm; width: 100%; overflow: hidden; background: ${HAIR};
-    margin-bottom: 2mm;
+    border-radius: 1.7mm; margin-bottom: 2mm;
   }
   .franja > span {
     display: inline-block; height: 3.4mm; vertical-align: top;
@@ -1232,12 +1535,17 @@ export function renderReport(
   .acciones { margin: 0; padding: 0; list-style: none; counter-reset: acc; }
   .acciones li {
     counter-increment: acc; position: relative;
-    padding: 0 0 3.5mm 9mm; page-break-inside: avoid;
+    padding: 0 0 4mm 10mm; page-break-inside: avoid;
   }
+  /* El número dentro de un disco teñido: la lista de lo que hay que hacer es lo
+     único del documento que pide algo a alguien, y se agradece que no lo pida
+     con una cifra a palo seco. */
   .acciones li::before {
-    content: counter(acc, decimal-leading-zero);
-    position: absolute; left: 0; top: 0.2mm;
-    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 9pt; color: ${ACENTO};
+    content: counter(acc);
+    position: absolute; left: 0; top: -0.2mm;
+    width: 6.4mm; height: 6.4mm; border-radius: 50%;
+    background: ${TINTE}; color: ${ACENTO};
+    font-size: 8.5pt; font-weight: 600; text-align: center; line-height: 6.4mm;
   }
   .acc-t { font-size: 9.5pt; font-weight: 600; line-height: 1.35; }
   .acc-p {
@@ -1257,12 +1565,11 @@ export function renderReport(
 <body>
 
 <header class="masthead">
-  <div class="kicker">Mantenimiento de aulas · ${esc(titulo)}</div>
+  <div class="kicker"><span class="punto"></span><b>Mantenimiento de aulas</b> · ${esc(titulo)}</div>
   <h1>${esc(l.titular)}</h1>
   <div class="sumario">
-    <span class="mono">${esc(d.periodoTexto)}</span> · emitido el
-    <span class="mono">${esc(pie.emitido)}</span>${
-      pie.solicitante ? ` · a petición de ${esc(pie.solicitante)}` : ''
+    ${esc(mayuscula(d.periodoTexto))} · emitido el ${esc(pie.emitido)}${
+      pie.solicitante ? ` · lo pidió ${esc(pie.solicitante)}` : ''
     }
   </div>
   <div class="filete"></div>
@@ -1273,7 +1580,7 @@ ${
   tiene(o, 'resumen')
     ? `<table class="entrada"><tr>
   <td class="col-texto">
-    <p class="entradilla">${capitular(l.entradilla)}</p>
+    <p class="entradilla">${esc(l.entradilla.trim())}</p>
   </td>
   <td class="col-panel">
     ${panelIndicadores(inds, comparar, d.comparacionTexto)}

@@ -323,7 +323,7 @@ npm run informe:ia
 | Fotos con compresión | ✅ y se leen: tira de miniaturas y visor en la ficha del aula |
 | Panel con alertas y gráficos | ✅ paleta validada en claro y oscuro |
 | Incidencias, almacén y depuración de datos | ✅ la pestaña es la lista de trabajo; lo que se apuntó en cada revisión se lee en la ficha del aula |
-| Resolver una avería desde el aula | ✅ se elige cuál de las abiertas —proyector, pantalla 2—, la explicación es obligatoria y la foto opcional; se firma sin cobertura y sube por la cola |
+| Resolver una avería desde el aula | ✅ se elige cuál de las abiertas —proyector, pantalla 2—, la explicación es obligatoria, y la foto y el material gastado son opcionales; se firma sin cobertura y sube por la cola |
 | Panel de administración: validar equipos, agrupar el catálogo, equipamiento por defecto y alta/baja de salas y edificios | ✅ |
 | Retirada de equipo con autorización: baja o vuelta al almacén | ✅ |
 | Inventario de una sala o de un edificio en PDF | ✅ marca, modelo, serie y las fechas de alta, cambio y baja; se imprime desde el navegador y avisa —en el papel— cuando la hoja se ha hecho sin servidor |

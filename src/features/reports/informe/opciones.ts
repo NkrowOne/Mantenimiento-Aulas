@@ -24,7 +24,10 @@ export const SECCIONES = [
   'lamparas',
   'estancadas',
   'materiales',
+  'tiempos',
+  'cierres',
   'equipo',
+  'fotos',
   'recomendaciones',
 ] as const
 
@@ -37,6 +40,12 @@ export type Seccion = (typeof SECCIONES)[number]
  * nombres de personas con un recuento de trabajo al lado. Que aparezca tiene que
  * ser una decisión de quien pide el informe, no lo que pasa por no leer las
  * casillas.
+ *
+ * `tiempos` y `cierres` son las dos caras de la misma pregunta —cuánto se tarda
+ * en cerrar— y por eso son secciones separadas: `tiempos` da la mediana y la
+ * media, y se desmarca cuando ese número no ayuda; `cierres` pone cada cierre
+ * con sus fechas y sus días, que es lo que hace falta cuando hay que justificar
+ * por qué algo tardó lo que tardó. Se pueden llevar las dos, una, o ninguna.
  */
 export const SECCIONES_POR_DEFECTO: Seccion[] = SECCIONES.filter((s) => s !== 'equipo')
 

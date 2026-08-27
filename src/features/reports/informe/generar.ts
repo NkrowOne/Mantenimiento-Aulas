@@ -21,13 +21,14 @@
 
 import { supabase } from '@/lib/supabase'
 import { ZONA } from '@/domain/fechas'
+import { TOPE_CONSULTA_MS, conPlazo, señalConTope } from './espera'
 import { type Eleccion, construirPeticion } from '../peticion'
 import { type Rango, nombrePeriodo } from '../periodos'
 import { cargarDatos } from './datos'
 import { lecturaCalculada, senales } from './analisis'
 import { configurarIA, redactar } from './ia'
 import { claveDeGemini } from './clave'
-import { leerOpciones } from './opciones'
+import { leerOpciones, tiene } from './opciones'
 import { renderReport } from './plantilla'
 
 export interface InformeGenerado {
@@ -57,10 +58,21 @@ export interface InformeGenerado {
 /** Los pasos, para que la pantalla pueda decir en cuál va. */
 export type Paso = 'datos' | 'analisis' | 'documento' | 'archivo'
 
+/**
+ * Cómo se cuenta un paso mientras pasa.
+ *
+ * El `fallo` no es un error que interrumpa nada —si algo interrumpe, se lanza—
+ * sino un paso que no ha salido como se pidió y del que el informe se ha
+ * recuperado solo. La IA que no contesta es el caso: el documento sigue
+ * adelante con el análisis calculado, y quien mira la pantalla tiene que verlo
+ * en ese momento, no descubrirlo al abrir el PDF.
+ */
+export type Avisar = (paso: Paso, detalle?: string, fallo?: boolean) => void
+
 const TITULO: Record<string, string> = {
   diario: 'Parte diario',
   semanal: 'Informe semanal',
-  personalizado: 'Informe a medida',
+  personalizado: 'Informe del periodo',
 }
 
 /**
@@ -94,20 +106,43 @@ async function huellaDe(texto: string): Promise<string> {
   return `${fnv(0x811c9dc5)}${fnv(0x9dc5811c)}`.slice(0, 12)
 }
 
-/** Quién lo pide. El documento lo imprime en la portada. */
-async function solicitante(): Promise<{ id: string | null; nombre: string | undefined }> {
-  const { data } = await supabase.auth.getSession()
-  const id = data.session?.user.id ?? null
-  if (!id) return { id: null, nombre: undefined }
+/**
+ * Quién lo pide. El documento lo imprime en la portada.
+ *
+ * NADA de esto puede impedir que salga el informe, y por eso va entero dentro de
+ * un `try` con plazo. Es un adorno de la portada: un nombre. `getSession()`
+ * puede tener que renovar el token contra el servidor, y si ese servidor no
+ * contesta, sin plazo se lleva por delante el informe completo —esperando, sin
+ * error y sin final— por no saber cómo firmar la primera página.
+ *
+ * Sin nombre, la portada no dice «a petición de» y ya está. Sin id, el archivo
+ * guarda la fila sin `generated_by`, que es exactamente lo que ya pasaba con el
+ * informe automático del viernes.
+ */
+const TOPE_PORTADA_MS = 8_000
 
-  const { data: perfil } = await supabase.from('profiles').select('full_name').eq('id', id).maybeSingle()
-  const nombre = (perfil as { full_name?: string | null } | null)?.full_name
-  return { id, nombre: nombre ?? undefined }
+async function solicitante(): Promise<{ id: string | null; nombre: string | undefined }> {
+  try {
+    const { data } = await conPlazo('la sesión', TOPE_PORTADA_MS, supabase.auth.getSession())
+    const id = data.session?.user.id ?? null
+    if (!id) return { id: null, nombre: undefined }
+
+    const { data: perfil } = await supabase
+      .from('profiles')
+      .select('full_name')
+      .eq('id', id)
+      .abortSignal(señalConTope(TOPE_PORTADA_MS))
+      .maybeSingle()
+    const nombre = (perfil as { full_name?: string | null } | null)?.full_name
+    return { id, nombre: nombre ?? undefined }
+  } catch {
+    return { id: null, nombre: undefined }
+  }
 }
 
 export async function generarInforme(
   eleccion: Eleccion,
-  avisar: (paso: Paso) => void = () => undefined,
+  avisar: Avisar = () => undefined,
 ): Promise<InformeGenerado> {
   // Por `construirPeticion` y no leyendo la elección a pelo: es la pieza que
   // decide qué viaja y qué no —un enfoque en blanco no es una instrucción, una
@@ -116,7 +151,12 @@ export async function generarInforme(
 
   avisar('datos')
   const [datos, quienPide] = await Promise.all([
-    cargarDatos(eleccion.kind, eleccion.rango),
+    cargarDatos(
+      eleccion.kind,
+      eleccion.rango,
+      (leyendo) => avisar('datos', leyendo),
+      tiene(opciones, 'fotos'),
+    ),
     solicitante(),
   ])
 
@@ -139,13 +179,20 @@ export async function generarInforme(
 
     if (!cfg) {
       avisoIA = 'no hay ninguna clave de Gemini configurada'
+      avisar('analisis', 'sin clave de Gemini: sale el análisis calculado', true)
     } else {
+      avisar('analisis', `redactando con ${cfg.modelo}`)
       const { lectura: redactada, motivo } = await redactar(datos, se, cfg)
       if (redactada) {
         lectura = redactada
         conIA = true
+        avisar('analisis', 'redacción terminada')
       } else {
         avisoIA = motivo
+        // En cuanto se sabe, y no al final. Un fallo de la IA añade hasta seis
+        // segundos de reintentos, y quien mira la pantalla merece enterarse
+        // mientras pasa y no cuando ya no puede hacer nada.
+        avisar('analisis', `la IA no ha podido (${motivo}): sigue el análisis calculado`, true)
       }
     }
   }
@@ -165,7 +212,11 @@ export async function generarInforme(
   })
 
   avisar('archivo')
-  const archivo = await archivar(html, eleccion, opciones, lectura.origen, conIA, quienPide.id)
+  const archivo = await archivar(html, eleccion, opciones, quienPide.id, {
+    origen: lectura.origen,
+    conIA,
+    avisoIA,
+  })
 
   return {
     html,
@@ -190,7 +241,7 @@ export async function generarInforme(
  */
 async function ajustesGuardados(): Promise<{ modelo?: string; thinking?: string }> {
   try {
-    const { data, error } = await supabase.rpc('ia_estado')
+    const { data, error } = await supabase.rpc('ia_estado').abortSignal(señalConTope(TOPE_CONSULTA_MS))
     if (error) return {}
     const estado = data as { modelo?: string; thinking?: string } | null
     return {
@@ -216,19 +267,27 @@ async function archivar(
   html: string,
   eleccion: Eleccion,
   opciones: ReturnType<typeof leerOpciones>,
-  origen: string,
-  conIA: boolean,
   quienPide: string | null,
+  redaccion: { origen: string; conIA: boolean; avisoIA: string | null },
 ): Promise<{ path: string | null; motivo: string | null }> {
   const hash = await huellaDe(html)
   const path = `${eleccion.kind}/${eleccion.rango.start}_${eleccion.rango.end}_${hash}.html`
 
-  const subida = await supabase.storage
-    .from('reports')
-    .upload(path, new Blob([html], { type: 'text/html; charset=utf-8' }), {
-      contentType: 'text/html; charset=utf-8',
-      upsert: false,
-    })
+  let subida
+  try {
+    subida = await conPlazo(
+      'la subida del documento',
+      TOPE_CONSULTA_MS,
+      supabase.storage
+        .from('reports')
+        .upload(path, new Blob([html], { type: 'text/html; charset=utf-8' }), {
+          contentType: 'text/html; charset=utf-8',
+          upsert: false,
+        }),
+    )
+  } catch (err) {
+    return { path: null, motivo: err instanceof Error ? err.message : String(err) }
+  }
 
   // «Ya existe» no es un fallo: es el mismo documento, ya archivado. Cualquier
   // otra cosa sí lo es, y hay que decirla.
@@ -241,13 +300,22 @@ async function archivar(
    * de verdad salieron y quién redactó el análisis. Así el archivo puede decir
    * «este de marzo salió sin IA» sin abrir el documento, y la pantalla puede
    * marcarlo.
+   *
+   * Y con `ia` sola no basta, porque `false` tapa dos cosas que no se parecen
+   * en nada: un informe que se pidió sin IA a propósito y uno que la pidió y no
+   * la tuvo. El primero salió como se quería; el segundo salió a medias y nadie
+   * se enteró. De ahí `ia_pedida` y `aviso_ia`: el archivo guarda si se intentó
+   * y por qué no salió, que es lo que convierte «no fue con IA» en «la clave no
+   * tiene permiso, cámbiala y vuelve a emitirlo».
    */
   const huella = {
     secciones: opciones.secciones,
     comparar: opciones.comparar,
     audiencia: opciones.audiencia,
-    ia: conIA,
-    analisis: origen,
+    ia: redaccion.conIA,
+    ia_pedida: opciones.ia,
+    analisis: redaccion.origen,
+    ...(redaccion.avisoIA ? { aviso_ia: redaccion.avisoIA } : {}),
     ...(opciones.enfoque ? { enfoque: opciones.enfoque } : {}),
     ...(opciones.nota ? { nota: opciones.nota } : {}),
   }
@@ -260,7 +328,7 @@ async function archivar(
     content_hash: hash,
     params: huella,
     generated_by: quienPide,
-  })
+  }).abortSignal(señalConTope(TOPE_CONSULTA_MS))
 
   // Choque con el índice único: este informe ya estaba en el archivo, con el
   // mismo contenido. No hay nada que arreglar.

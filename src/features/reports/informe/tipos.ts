@@ -61,6 +61,12 @@ export interface ReportData {
     revisadas: number
     abiertas: number
     pendientes: number
+    /**
+     * El edificio ya no está en la lista de trabajo, pero en el periodo pasaron
+     * cosas en él. Sale con lo que pasó y marcado, porque un edificio archivado
+     * con cuatro revisiones no es un edificio sin revisar.
+     */
+    archivado: boolean
   }>
   porTipo: Array<{ tipo: string; total: number }>
   porGravedad: Array<{ gravedad: string; total: number }>
@@ -90,6 +96,62 @@ export interface ReportData {
     gravedad: string
   }>
   materiales: Array<{ name: string; unidad: string; consumido: number; incidencias: number }>
+
+  /**
+   * Cada cierre del periodo, con sus dos fechas y lo que llevó.
+   *
+   * Es el desglose del que sale la mediana, y existe por separado porque
+   * responde a otra pregunta. «La mitad se cierra en 1,4 días» describe; «esta
+   * se abrió el martes a las 09:12, se cerró el 19 de agosto y llevó 24 días,
+   * porque hubo que pedir la lámpara» justifica. Lo primero se lee en una
+   * reunión; lo segundo es lo que hace falta cuando alguien pregunta por una en
+   * concreto.
+   */
+  cierres: Array<{
+    ref: string | null
+    titulo: string
+    building: string
+    room: string
+    /** `AAAA-MM-DD`, en hora de Madrid. */
+    abierta: string
+    horaAbierta: string
+    cerrada: string
+    horaCerrada: string
+    /** Días con decimales: la plantilla decide cómo escribirlo. */
+    dias: number
+    resolucion: string | null
+    quien: string | null
+  }>
+  cierresTotal: number
+
+  /**
+   * Las fotos del periodo, ya dentro del documento como `data:`.
+   *
+   * No como enlace: el informe se archiva y se abre años después, y un enlace
+   * firmado caduca en un minuto. Si la foto no viaja dentro, el documento de
+   * mañana tiene un hueco donde hoy hay una prueba.
+   */
+  fotos: Array<{
+    dia: string
+    hora: string
+    building: string
+    room: string
+    titulo: string
+    ref: string | null
+    /**
+     * En qué momento se hizo, que es lo que la convierte en prueba.
+     *
+     * `revision` la hizo quien revisaba el aula —el problema recién
+     * encontrado—, `cierre` es la de la incidencia ya resuelta —el después— y
+     * `apertura` es la de una incidencia que sigue abierta. Una foto sin decir
+     * de cuándo es no demuestra nada: la misma imagen vale para «así estaba» y
+     * para «así lo dejamos».
+     */
+    momento: 'revision' | 'apertura' | 'cierre'
+    /** `data:image/jpeg;base64,…` */
+    datos: string
+  }>
+  fotosTotal: number
   reincidentes: Array<{ building: string; room: string; item: string; veces: number }>
   olvidadas: Array<{ building: string; room: string; dias: number | null }>
   equipo: Array<{ nombre: string; revisiones: number; registros: number }>
@@ -133,4 +195,15 @@ export interface ReportData {
 
   /** Registros del periodo cuya sala no se pudo identificar (el histórico importado los trae). */
   sinSala: number
+
+  /**
+   * Salas del periodo que ya no están en la lista de trabajo.
+   *
+   * Archivadas ellas, o archivado su edificio. Su trabajo se cuenta entero
+   * —archivar limpia la pantalla de revisar, no el pasado— pero el documento
+   * tiene que decirlo: si no, el mismo edificio sale en el informe y no sale en
+   * la aplicación, y quien compara las dos cosas concluye que una de las dos
+   * miente.
+   */
+  salasArchivadas: number
 }

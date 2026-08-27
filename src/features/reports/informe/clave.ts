@@ -23,6 +23,7 @@
  */
 
 import { supabase } from '@/lib/supabase'
+import { señalConTope } from './espera'
 
 const EN_ESTE_DISPOSITIVO = 'informes.clave-gemini'
 
@@ -64,11 +65,14 @@ export function guardarClaveDelDispositivo(clave: string): void {
  */
 export async function claveDeGemini(): Promise<ClaveEncontrada | null> {
   try {
-    const { data, error } = await supabase.rpc('ia_clave')
+    // Con plazo, como todo lo demás del informe: si `app_config` no contesta, se
+    // usa la del dispositivo o sale el análisis calculado. Lo que no puede es
+    // dejar el informe esperando por saber si hay clave.
+    const { data, error } = await supabase.rpc('ia_clave').abortSignal(señalConTope(8_000))
     const guardada = typeof data === 'string' ? data.trim() : ''
     if (!error && guardada) return { clave: guardada, origen: 'despliegue' }
   } catch {
-    // La función puede no estar: se sigue por el otro camino.
+    // La función puede no estar, o no contestar: se sigue por el otro camino.
   }
 
   const local = claveDelDispositivo()

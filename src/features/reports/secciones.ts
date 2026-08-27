@@ -71,14 +71,29 @@ export const SECCIONES: SeccionInfo[] = [
   },
   {
     clave: 'materiales',
-    etiqueta: 'Material y tiempos',
-    detalle: 'Consumo del periodo y cuánto se tarda en cerrar',
+    etiqueta: 'Material consumido',
+    detalle: 'Qué se ha gastado del almacén en el periodo',
+  },
+  {
+    clave: 'tiempos',
+    etiqueta: 'Cuánto se tarda en cerrar',
+    detalle: 'La mediana, la media y las cerradas en menos de 48 h. Desmárcala para que el informe no dé ese número',
+  },
+  {
+    clave: 'cierres',
+    etiqueta: 'Cada cierre, con sus días',
+    detalle: 'Uno por línea: cuándo se abrió, cuándo se cerró, cuánto llevó y qué se hizo. Es lo que sirve para justificar un tiempo',
   },
   {
     clave: 'equipo',
     etiqueta: 'Reparto del trabajo',
     detalle: 'Con nombres: revisiones y altas de cada persona',
     optativa: true,
+  },
+  {
+    clave: 'fotos',
+    etiqueta: 'Fotos del periodo',
+    detalle: 'Las de las revisiones y las de las incidencias, dentro del propio documento y diciendo de cuándo es cada una: cómo se encontró y cómo quedó',
   },
   {
     clave: 'recomendaciones',
