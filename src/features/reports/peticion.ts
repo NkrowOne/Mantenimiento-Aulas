@@ -23,6 +23,8 @@ export interface Eleccion {
   kind: Kind
   rango: Rango
   secciones: string[]
+  /** Las fotos que se han quitado de la rejilla, por id de adjunto. */
+  fotosFuera: string[]
   comparar: boolean
   ia: boolean
   audiencia: 'direccion' | 'equipo'
@@ -36,6 +38,7 @@ export interface Peticion {
   p_end: string
   p_params: {
     secciones: string[]
+    fotos_fuera?: string[]
     comparar: boolean
     ia: boolean
     audiencia: 'direccion' | 'equipo'
@@ -62,6 +65,15 @@ export function construirPeticion(e: Eleccion): Peticion {
       // con nada dentro en la portada.
       ...(e.enfoque.trim() ? { enfoque: e.enfoque.trim() } : {}),
       ...(e.nota.trim() ? { nota: e.nota.trim() } : {}),
+      /*
+       * Y las fotos quitadas solo si se quitó alguna. Por defecto van todas, y
+       * una lista vacía en el expediente del informe se lee como una decisión
+       * que nadie tomó. Tampoco viajan si el informe no lleva fotos: lo que se
+       * marcó en una rejilla que no va a salir no describe este documento.
+       */
+      ...(e.secciones.includes('fotos') && e.fotosFuera.length
+        ? { fotos_fuera: [...new Set(e.fotosFuera)] }
+        : {}),
     },
   }
 }

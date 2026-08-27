@@ -15,6 +15,7 @@ const base: Eleccion = {
   kind: 'semanal',
   rango: { start: '2026-07-27', end: '2026-07-31' },
   secciones: ['resumen', 'analisis'],
+  fotosFuera: [],
   comparar: true,
   ia: true,
   audiencia: 'direccion',
@@ -44,6 +45,25 @@ describe('construirPeticion', () => {
     const p = construirPeticion({ ...base, enfoque: '   ', nota: '' })
     expect(p.p_params).not.toHaveProperty('enfoque')
     expect(p.p_params).not.toHaveProperty('nota')
+  })
+
+  it('las fotos quitadas viajan, y solo si se quitó alguna', () => {
+    // Por defecto entran todas: una lista vacía en el expediente del informe se
+    // leería como una decisión que nadie tomó.
+    expect(construirPeticion(base).p_params).not.toHaveProperty('fotos_fuera')
+    const p = construirPeticion({
+      ...base,
+      secciones: ['resumen', 'fotos'],
+      fotosFuera: ['adj-1', 'adj-2', 'adj-1'],
+    })
+    expect(p.p_params.fotos_fuera).toEqual(['adj-1', 'adj-2'])
+  })
+
+  it('sin la sección de fotos no viajan, aunque queden marcadas de antes', () => {
+    // Lo que se marcó en una rejilla que no va a salir no describe el documento
+    // que se está pidiendo.
+    const p = construirPeticion({ ...base, secciones: ['resumen'], fotosFuera: ['adj-1'] })
+    expect(p.p_params).not.toHaveProperty('fotos_fuera')
   })
 
   it('y los que hay van recortados', () => {
