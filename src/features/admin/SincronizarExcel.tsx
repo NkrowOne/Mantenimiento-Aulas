@@ -64,7 +64,7 @@ export function SincronizarExcel(): React.ReactElement {
         timeStyle: 'short',
       }).format(new Date())
 
-      const bytes = await escribir(analisis, cuando)
+      const bytes = await escribir(analisis, cuando, r.parteId)
       descargarFichero(bytes, analisis.nombre)
       setDescargado(true)
       return r
@@ -122,6 +122,23 @@ export function SincronizarExcel(): React.ReactElement {
       {fallo && <p className="mt-3 rounded-ctl bg-crit-fill p-3 text-sm text-crit-ink">{fallo}</p>}
 
       {analisis?.bloqueada && <Bloqueada planes={analisis.planes} />}
+
+      {analisis && !analisis.bloqueada && analisis.libroDesconocido && (
+        <div className="card mt-4 border-warn p-4">
+          <h2 className="text-sm font-semibold text-warn-ink">
+            Este no es el libro que salió de la última sincronización
+          </h2>
+          <p className="mt-2 text-sm text-muted">
+            {analisis.ultimaSalida
+              ? `La última se hizo el ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(analisis.ultimaSalida))} y produjo un fichero distinto de éste.`
+              : 'La aplicación esperaba otro fichero.'}{' '}
+            Si es una copia de antes, lo que la hoja diga se tomará por una
+            corrección y entrará en la base: se revertiría lo que se haya hecho en
+            la aplicación desde entonces, y no daría ningún error. Mira lo que
+            entraría antes de aplicar.
+          </p>
+        </div>
+      )}
 
       {analisis && !analisis.bloqueada && total && (
         <>

@@ -76,6 +76,15 @@ export interface Analisis {
   columnaRef: string
   /** Si alguna hoja no tiene la forma declarada, la pasada no puede empezar. */
   bloqueada: boolean
+  /**
+   * `true` si este fichero **no es** el que salió de la última pasada. No
+   * prohíbe nada —puede haber un motivo— pero hay que decirlo antes de aplicar:
+   * un libro viejo se parece a un lado que cambió, y la fusión revertiría en la
+   * base el trabajo hecho desde entonces sin dar un solo error.
+   */
+  libroDesconocido: boolean
+  /** Cuándo se produjo el libro que la aplicación esperaba, si lo hubo. */
+  ultimaSalida: string | null
 }
 
 // -----------------------------------------------------------------------------
@@ -98,7 +107,12 @@ export async function analizar(fichero: File, hoy = new Date()): Promise<Analisi
     )
   }
 
-  const [catalogo, datos] = await Promise.all([catalogoDelMaestro(), datosDeLaPasada(anyo)])
+  const [catalogo, datos, salida] = await Promise.all([
+    catalogoDelMaestro(),
+    datosDeLaPasada(anyo),
+    ultimaSalida(),
+  ])
+  const sha256 = await sha256De(bytes)
   const indice = construirIndice(catalogo as Catalogo)
 
   const filasEstado = await leerHoja(libro, ESTADO.nombre)
@@ -162,7 +176,7 @@ export async function analizar(fichero: File, hoy = new Date()): Promise<Analisi
     libro,
     nombre: fichero.name,
     bytes,
-    sha256: await sha256De(bytes),
+    sha256,
     anyo,
     datos,
     planes,
@@ -170,7 +184,19 @@ export async function analizar(fichero: File, hoy = new Date()): Promise<Analisi
     hojasNuevas,
     columnaRef,
     bloqueada: planes.some((p) => p.desajustes.length > 0),
+    libroDesconocido: salida !== null && salida.sha256 !== sha256,
+    ultimaSalida: salida?.cuando ?? null,
   }
+}
+
+/** El libro que salió de la última pasada, para saber si es éste el que se sube. */
+async function ultimaSalida(): Promise<{ sha256: string; cuando: string } | null> {
+  const { data, error } = await supabase.rpc('sync_ultima_salida')
+  // Un servidor sin esta función es un servidor que todavía no ha sincronizado
+  // nunca: no hay con qué comparar, y parar aquí sería romper la pantalla.
+  if (error || !Array.isArray(data) || data.length === 0) return null
+  const fila = data[0] as { sha256: string | null; cuando: string }
+  return fila.sha256 ? { sha256: fila.sha256, cuando: fila.cuando } : null
 }
 
 /** El antepasado de cada celda de una hoja, de golpe. */
@@ -335,7 +361,7 @@ function claveDe(p: Plan, fila: number): string {
 // 5 — Escribir el libro
 // -----------------------------------------------------------------------------
 
-export async function escribir(a: Analisis, cuando: string): Promise<Uint8Array> {
+export async function escribir(a: Analisis, cuando: string, parteId?: number): Promise<Uint8Array> {
   const ediciones: EdicionDeHoja[] = a.planes
     .filter((p) => p.celdas.length > 0 || p.insertar.length > 0 || p.borrar.length > 0)
     .map((p) => ({
@@ -369,6 +395,18 @@ export async function escribir(a: Analisis, cuando: string): Promise<Uint8Array>
       aRehacer.map((h) => rehacer(h)),
       [],
     )
+  }
+
+  // Se apunta qué libro salió de aquí. Es lo único que permite avisar la vez
+  // siguiente de que se está subiendo otro.
+  if (parteId !== undefined) {
+    const { error } = await supabase.rpc('sync_apuntar_salida', {
+      p_parte_id: parteId,
+      p_sha256: await sha256De(bytes),
+    })
+    // Que no se pueda apuntar no invalida la pasada: el libro ya está bien y la
+    // base también. Se pierde el aviso de la vez siguiente, y nada más.
+    if (error) console.warn('No se pudo apuntar el libro de salida:', error.message)
   }
 
   return bytes
