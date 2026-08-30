@@ -3435,3 +3435,62 @@ begin;
     raise notice 'OK: y en uso en otra aula sigue chocando';
   end $$;
 rollback;
+
+\echo '=== 16. Las horas llegan a la sala en el orden en que sube la cola ==='
+begin;
+  do $$
+  declare
+    v_zona uuid;
+    v_aula uuid;
+    v_rev  uuid := gen_random_uuid();
+    v_vieja uuid := gen_random_uuid();
+    v_horas int;
+  begin
+    select id into v_zona from zones limit 1;
+    insert into rooms (id, zone_id, code, name, projector_hours)
+    values (gen_random_uuid(), v_zona, 'PRB-H', 'Prueba horas', 900)
+    returning id into v_aula;
+
+    -- El orden EXACTO de `outbox.ts`: la revisión sube en borrador porque le
+    -- faltan comprobaciones, luego las comprobaciones, y luego el cierre.
+    insert into inspections (id, room_id, by_user, occurred_at, status)
+    values (v_rev, v_aula, null, '2026-03-04T09:30:00Z', 'borrador');
+
+    insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
+    values (gen_random_uuid(), v_rev, 'proyector_horas', 'ok', 4200, 'h');
+
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 900 then
+      raise exception 'FALLO: un borrador no puede fechar nada y ya movió la sala a %', v_horas;
+    end if;
+
+    update inspections set status = 'completa' where id = v_rev;
+
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 4200 then
+      raise exception 'FALLO: al cerrar, la sala tendría que tener 4200 y tiene %', v_horas;
+    end if;
+    raise notice 'OK: al cerrar la revisión, las 4.200 horas llegan a la sala';
+
+    -- Una revisión ANTERIOR que entra tarde no puede hacer retroceder la sala.
+    insert into inspections (id, room_id, by_user, occurred_at, status)
+    values (v_vieja, v_aula, null, '2025-11-02T09:30:00Z', 'borrador');
+    insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
+    values (gen_random_uuid(), v_vieja, 'proyector_horas', 'ok', 3900, 'h');
+    update inspections set status = 'completa' where id = v_vieja;
+
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 4200 then
+      raise exception 'FALLO: una revisión vieja hizo retroceder la sala a %', v_horas;
+    end if;
+    raise notice 'OK: y una revisión vieja que entra tarde no la hace retroceder';
+
+    -- Corregir la lectura de la revisión ya cerrada sí la mueve.
+    update inspection_checks set measure = 4250 where inspection_id = v_rev and measure_unit = 'h';
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 4250 then
+      raise exception 'FALLO: corregir la lectura no llegó a la sala (%)', v_horas;
+    end if;
+    raise notice 'OK: y corregir la lectura de la más reciente sí llega';
+  end $$;
+rollback;

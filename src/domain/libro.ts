@@ -152,7 +152,7 @@ export async function escribirLibro(
     estructuraTocada = true
   }
 
-  if (estructuraTocada) entradas = quitarCalcChain(entradas)
+  if (estructuraTocada) entradas = await quitarCalcChain(entradas)
 
   const iw = entradas.findIndex((e) => e.nombre === 'xl/workbook.xml')
   if (iw >= 0) {
@@ -269,10 +269,38 @@ function normalizarRuta(base: string, relativa: string): string {
   return partes.join('/')
 }
 
-/** La caché de recálculo: sobra en cuanto se mueve una fila, y en tres sitios. */
-function quitarCalcChain(entradas: EntradaZip[]): EntradaZip[] {
+/**
+ * La caché de recálculo: sobra en cuanto se mueve una fila, y en tres sitios.
+ *
+ * Quitar solo el fichero del zip deja el `Override` de `[Content_Types].xml` y
+ * la relación de `workbook.xml.rels` apuntando a una parte que ya no está, que
+ * es justamente el error que se quería evitar tirándolo. Los tres, o ninguno.
+ */
+async function quitarCalcChain(entradas: EntradaZip[]): Promise<EntradaZip[]> {
   if (!entradas.some((e) => e.nombre === 'xl/calcChain.xml')) return entradas
-  return entradas.filter((e) => e.nombre !== 'xl/calcChain.xml')
+
+  const out = entradas.filter((e) => e.nombre !== 'xl/calcChain.xml')
+
+  const ic = out.findIndex((e) => e.nombre === '[Content_Types].xml')
+  if (ic >= 0) {
+    const ct = await texto(out[ic]!)
+    const sin = ct.replace(/<Override\b[^>]*PartName="\/xl\/calcChain\.xml"[^>]*\/>/g, '')
+    if (sin !== ct) out[ic] = await reemplazar(out[ic]!, bytes(sin))
+  }
+
+  const ir = out.findIndex((e) => e.nombre === 'xl/_rels/workbook.xml.rels')
+  if (ir >= 0) {
+    const rels = await texto(out[ir]!)
+    // Por el `Type`, no por el `Target`: el destino puede venir escrito de más de
+    // una forma y el tipo de relación es siempre el mismo.
+    const sin = rels.replace(
+      /<Relationship\b[^>]*Type="[^"]*\/calcChain"[^>]*\/>/g,
+      '',
+    )
+    if (sin !== rels) out[ir] = await reemplazar(out[ir]!, bytes(sin))
+  }
+
+  return out
 }
 
 // -----------------------------------------------------------------------------

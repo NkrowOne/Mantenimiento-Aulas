@@ -136,6 +136,46 @@ describe.skipIf(!bytes)('escribir el libro', () => {
   })
 })
 
+describe.skipIf(!bytes)('la caché de recálculo', () => {
+  it('el libro de partida la tiene en los tres sitios', async () => {
+    const libro = await abrir()
+    expect(libro.entradas.some((e) => e.nombre === 'xl/calcChain.xml')).toBe(true)
+    expect(await xmlDe(libro, '[Content_Types].xml')).toContain('/xl/calcChain.xml')
+    expect(await xmlDe(libro, 'xl/_rels/workbook.xml.rels')).toContain('calcChain')
+  })
+
+  it('mover una fila la quita de los tres, no solo del zip', async () => {
+    // Dejar el `Override` o la relación apuntando a una parte que ya no está es
+    // exactamente el error que se evitaba tirándola: Excel sí denuncia ése.
+    const salida = await escribirLibro(await abrir(), [
+      { hoja: ESTADO, filas: { insertar: [{ tras: 30, celdas: [{ celda: 'C31', valor: 'nueva' }] }] } },
+    ])
+    const otra = await abrirLibro(salida)
+    expect(otra.entradas.some((e) => e.nombre === 'xl/calcChain.xml')).toBe(false)
+    expect(await xmlDe(otra, '[Content_Types].xml')).not.toContain('calcChain')
+    expect(await xmlDe(otra, 'xl/_rels/workbook.xml.rels')).not.toContain('calcChain')
+  })
+
+  it('escribir solo celdas no la toca: la estructura no se ha movido', async () => {
+    const salida = await escribirLibro(await abrir(), [
+      { hoja: ESTADO, celdas: [{ celda: 'X2', valor: 'probado' }] },
+    ])
+    const otra = await abrirLibro(salida)
+    expect(otra.entradas.some((e) => e.nombre === 'xl/calcChain.xml')).toBe(true)
+    expect(await xmlDe(otra, '[Content_Types].xml')).toContain('calcChain')
+  })
+
+  it('y las demás relaciones del libro siguen enteras', async () => {
+    const antes = await xmlDe(await abrir(), 'xl/_rels/workbook.xml.rels')
+    const salida = await escribirLibro(await abrir(), [
+      { hoja: ESTADO, filas: { insertar: [{ tras: 30, celdas: [{ celda: 'C31', valor: 'nueva' }] }] } },
+    ])
+    const despues = await xmlDe(await abrirLibro(salida), 'xl/_rels/workbook.xml.rels')
+    const cuenta = (x: string) => (x.match(/<Relationship\b/g) ?? []).length
+    expect(cuenta(despues)).toBe(cuenta(antes) - 1)
+  })
+})
+
 describe.skipIf(!bytes)('añadir hojas', () => {
   it('la hoja nueva sale al final y se lee', async () => {
     const salida = await escribirLibro(
