@@ -52,6 +52,7 @@ import { comprobarCabeceras, mesDe } from './mapa'
 import type { Columna, Hoja } from './mapa'
 import { escribir, esVacio, leer, limpiar } from './valores'
 import type { FilaNueva } from './estructura'
+import { columnaANumero, numeroAColumna } from './xlsx'
 import type { Cambio, FilaLeida, ValorCelda } from './xlsx'
 import { filaDeArticulo, filaDeIncidencia, filaDeSala } from './volcado'
 import type { ArticuloVolcado, IncidenciaVolcada, SalaVolcada } from './volcado'
@@ -148,6 +149,15 @@ export type Instantanea = (clave: string, letra: string) => Valor | undefined
 /** La instantánea vacía: primera pasada, no hay antepasado de nada. */
 export const SIN_INSTANTANEA: Instantanea = () => undefined
 
+/**
+ * El título de la columna de matrículas.
+ *
+ * Es el mismo que busca `columnaParaLaRef`, y tiene que escribirse en la hoja:
+ * es lo único que permite que la pasada siguiente encuentre la columna en vez de
+ * estrenar una nueva.
+ */
+export const TITULO_DE_LA_REF = 'Ref'
+
 // -----------------------------------------------------------------------------
 // El motor, que es el mismo para las tres formas de hoja
 // -----------------------------------------------------------------------------
@@ -160,6 +170,17 @@ interface Emparejada<T> {
   clave: string
   /** Cómo se llama esto cuando lo lee una persona. */
   destino: string
+  /**
+   * Columnas de esta fila que **se comparan pero no se escriben**. Son dos
+   * casos, y los dos existen en este libro:
+   *
+   *  - El blanco de una **columna arrastrada**: no es un hueco, es «lo mismo que
+   *    arriba». Rellenarlo cambia cómo se lee la hoja.
+   *  - La mitad escondida de una **celda combinada**. El libro tiene 59 pares;
+   *    escribir en la celda de abajo de `E67:E68` guarda un valor que no se ve y
+   *    que reaparece el día que alguien deshaga la combinación.
+   */
+  noEscribir?: Set<string>
 }
 
 interface Opciones<T> {
@@ -214,7 +235,14 @@ function fusionarFilas<T>(
         medidaExcel: c.dueno === 'medida' ? op.fechaDeMedida?.(par.dato, 'excel', par.celdas) : undefined,
       })
 
-      repartir(plan, par, c, decision, lectura.valor, op.hoja.congelada === true)
+      repartir(
+        plan,
+        par,
+        c,
+        decision,
+        lectura.valor,
+        op.hoja.congelada === true || par.noEscribir?.has(c.letra) === true,
+      )
     }
   }
 }
@@ -225,7 +253,7 @@ function repartir<T>(
   c: Columna,
   decision: Decision,
   excel: Valor,
-  congelada: boolean,
+  soloLectura: boolean,
 ): void {
   switch (decision.tipo) {
     case 'sin_cambios':
@@ -234,12 +262,13 @@ function repartir<T>(
       return
 
     case 'hacia_el_excel': {
-      // Una hoja congelada no recibe ni una celda, y aquí es donde hay que
+      // Hay celdas que se comparan y no se escriben, y aquí es donde hay que
       // pararlo: la regla del hueco —gana quien tiene el dato— dispara antes que
-      // la del dueño, así que una columna `solo_excel` con la celda vacía y la
-      // aplicación con dato acaba proponiendo escribir en un cierre ya rendido.
-      // Es exactamente lo que pasaba: 137 celdas sobre «Bolsa 2025».
-      if (congelada) {
+      // la del dueño, así que una celda vacía con la aplicación teniendo dato
+      // acaba proponiendo una escritura. Pasa en tres sitios: un cierre ya
+      // rendido («Bolsa 2025», 137 celdas), el blanco de una columna arrastrada,
+      // y la mitad escondida de una celda combinada.
+      if (soloLectura) {
         plan.instantanea.push({ clave: par.clave, fila: par.fila, letra: c.letra, valor: excel })
         return
       }
@@ -299,6 +328,8 @@ export interface EntradaDeEstado {
   indice: Indice
   /** La columna donde vive la matrícula. La calcula `preparar.ts`. */
   columnaRef: string
+  /** Los rangos combinados de la hoja (`E67:E68`), de `celdasCombinadas`. */
+  combinadas?: string[]
   instantanea?: Instantanea
 }
 
@@ -315,6 +346,21 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
   const porMatricula = new Map(e.salas.map((s) => [norm(s.shortRef), s]))
   const emparejadas: Array<Emparejada<SalaVolcada>> = []
   const vistas = new Set<string>()
+  const tapadas = celdasTapadas(e.combinadas ?? [])
+
+  // La cabecera de la columna de matrículas, si no la lleva ya.
+  //
+  // Sin esto la pasada siguiente **no encuentra la columna**: `columnaParaLaRef`
+  // busca el título `Ref` en la fila de cabecera y, al no verlo, devuelve la
+  // primera columna libre. Resultado: cada pasada estrena una columna de
+  // matrículas —`Y`, `Z`, `AA`…— y, mucho peor, desde la segunda **ninguna fila
+  // tiene matrícula en la columna que se está leyendo**, así que todo vuelve a
+  // cruzarse por nombre. Que es justo lo que la matrícula existe para evitar:
+  // un aula renombrada deja de cruzar y se duplica.
+  const tituloActual = textoDe(cabecera?.celdas[e.columnaRef])
+  if (norm(tituloActual) !== norm(TITULO_DE_LA_REF)) {
+    plan.celdas.push({ celda: `${e.columnaRef}${e.hoja.cabecera}`, valor: TITULO_DE_LA_REF })
+  }
 
   // El edificio y la planta se arrastran hacia abajo: en la hoja solo se
   // escriben cuando cambian, y 10 filas los llevan en blanco a propósito.
@@ -379,12 +425,27 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
       plan.avisos.push(`Fila ${f.fila}: la matrícula escrita no es la que sale del cruce. No se pisa.`)
     }
 
+    // El edificio y la planta se comparan con lo que la fila **hereda**, no con
+    // su celda: en blanco no quiere decir «no hay dato». Y donde estaban en
+    // blanco se comparan y no se escriben, para que la hoja siga leyéndose como
+    // se lee — si el edificio se renombra, se corrige la fila que lo lleva
+    // escrito y las de debajo lo heredan solas.
+    const noEscribir = new Set<string>(tapadas.get(f.fila) ?? [])
+    const celdas = { ...f.celdas }
+    for (const c of e.hoja.columnas) {
+      if (!c.arrastrada) continue
+      if (!esVacio(celdas[c.letra] as Valor)) continue
+      noEscribir.add(c.letra)
+      celdas[c.letra] = c.campo === 'edificio' ? edificio : zona
+    }
+
     emparejadas.push({
       fila: f.fila,
-      celdas: f.celdas,
+      celdas,
       dato: sala,
       clave: sala.shortRef,
       destino: sala.code,
+      noEscribir,
     })
   }
 
@@ -402,6 +463,45 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
   plan.insertar = filasNuevasDeSalas(nuevas, e, plan)
 
   return plan
+}
+
+/**
+ * Qué celdas de cada fila están tapadas por una combinación.
+ *
+ * De `E67:E68` la que se ve es `E67`; `E68` existe, se lee vacía, y escribir en
+ * ella guarda un valor que no enseña nadie. Solo se marcan las de debajo: la
+ * primera fila del rango es la que manda y esa sí se escribe.
+ */
+function celdasTapadas(rangos: string[]): Map<number, Set<string>> {
+  const out = new Map<number, Set<string>>()
+  for (const rango of rangos) {
+    const m = /^([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(rango.toUpperCase())
+    if (!m) continue
+    const desde = Number(m[2])
+    const hasta = Number(m[4])
+    const columnas = letrasEntre(m[1]!, m[3]!)
+    for (let fila = desde + 1; fila <= hasta; fila++) {
+      const suyas = out.get(fila) ?? new Set<string>()
+      for (const c of columnas) suyas.add(c)
+      out.set(fila, suyas)
+    }
+    // Una combinación horizontal (`B44:C45`) tapa además las columnas de la
+    // derecha en su primera fila: de `B44:C45` solo se ve `B44`.
+    if (columnas.length > 1) {
+      const suyas = out.get(desde) ?? new Set<string>()
+      for (const c of columnas.slice(1)) suyas.add(c)
+      out.set(desde, suyas)
+    }
+  }
+  return out
+}
+
+function letrasEntre(a: string, b: string): string[] {
+  const desde = columnaANumero(a)
+  const hasta = columnaANumero(b)
+  const out: string[] = []
+  for (let n = Math.min(desde, hasta); n <= Math.max(desde, hasta); n++) out.push(numeroAColumna(n))
+  return out
 }
 
 /** El cruce por nombre, para la primera pasada y para las filas sin matrícula. */
@@ -696,10 +796,22 @@ function fechaDeCelda(v: ValorCelda | undefined): string | null {
   return l.ok && typeof l.valor === 'string' ? l.valor : null
 }
 
+/**
+ * La forma canónica de una clave de cruce.
+ *
+ * Colapsa los espacios de dentro además de los de los extremos, y eso no es
+ * cosmética: `textoDe` ya los colapsa al leer la celda, así que si aquí no se
+ * hiciera lo mismo los dos lados de la comparación no se normalizarían igual. En
+ * este libro pasa de verdad — la fila 101 de los partes de 2026 lleva
+ * `I260415_0029` y `I260414_0007` en la misma celda separados por 38 espacios—,
+ * y el efecto es que ese parte no se reconoce a sí mismo entre dos pasadas y se
+ * vuelve a añadir cada vez.
+ */
 function norm(s: string): string {
   return s
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
     .trim()
     .toUpperCase()
 }

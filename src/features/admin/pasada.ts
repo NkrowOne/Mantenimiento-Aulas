@@ -46,7 +46,7 @@ import {
   sincronizarPartes,
 } from '@/domain/sincronizar'
 import type { Instantanea, Plan, Resumen } from '@/domain/sincronizar'
-import { abrirLibro, leerHoja } from '@/domain/xlsx'
+import { abrirLibro, celdasCombinadas, leerHoja } from '@/domain/xlsx'
 import type { Libro } from '@/domain/xlsx'
 import { datosDeLaPasada } from './datosDeLaPasada'
 import type { DatosDeLaPasada } from './datosDeLaPasada'
@@ -104,6 +104,7 @@ export async function analizar(fichero: File, hoy = new Date()): Promise<Analisi
       salas: datos.salas,
       indice,
       columnaRef,
+      combinadas: await celdasCombinadas(libro, ESTADO.nombre),
       instantanea: await instantaneaDe(ESTADO.nombre),
     }),
   )

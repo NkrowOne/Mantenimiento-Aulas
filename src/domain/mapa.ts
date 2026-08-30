@@ -76,6 +76,19 @@ export interface Columna {
   fechaDe?: string
   /** La fórmula que le toca, con `{f}` en lugar del número de fila. */
   formula?: string
+  /**
+   * La columna **se arrastra**: una celda en blanco no significa «no hay dato»,
+   * significa «lo mismo que la de arriba». El edificio y la planta se escriben
+   * solo cuando cambian, y así es como se lee la hoja.
+   *
+   * Tiene dos consecuencias, y las dos hacen falta: al comparar hay que usar el
+   * valor heredado —si no, la aplicación cree que la celda está vacía y propone
+   * escribir en ella— y al escribir hay que **dejar el blanco en blanco**, porque
+   * rellenarlo cambia el aspecto de un libro que la gente lee todos los días. Si
+   * el edificio se renombra, se corrige la fila que lo lleva escrito y el resto
+   * lo hereda solo.
+   */
+  arrastrada?: boolean
   /** Por qué es de quien es, cuando no salta a la vista. */
   nota?: string
 }
@@ -127,8 +140,8 @@ export const ESTADO: Hoja = {
   cabecera: 1,
   identidad: { tipo: 'sala' },
   columnas: [
-    { letra: 'A', cabecera: 'EDIFICIO', campo: 'edificio', dueno: 'ambos', tipo: 'texto' },
-    { letra: 'B', cabecera: 'PLANTA/MÓDULO', campo: 'zona', dueno: 'ambos', tipo: 'texto' },
+    { letra: 'A', cabecera: 'EDIFICIO', campo: 'edificio', dueno: 'ambos', tipo: 'texto', arrastrada: true },
+    { letra: 'B', cabecera: 'PLANTA/MÓDULO', campo: 'zona', dueno: 'ambos', tipo: 'texto', arrastrada: true },
     { letra: 'C', cabecera: 'AULAS', campo: 'sala.code', dueno: 'ambos', tipo: 'texto' },
     {
       letra: 'D',

@@ -71,13 +71,19 @@ const catalogo: Catalogo = {
 }
 const indice = construirIndice(catalogo)
 
-function estado(filas: FilaLeida[], salas: SalaVolcada[], instantanea: Instantanea = SIN_INSTANTANEA) {
+function estado(
+  filas: FilaLeida[],
+  salas: SalaVolcada[],
+  instantanea: Instantanea = SIN_INSTANTANEA,
+  combinadas: string[] = [],
+) {
   return sincronizarEstado({
     hoja: ESTADO,
     filas: [CABECERA, ...filas],
     salas,
     indice,
     columnaRef: 'Y',
+    combinadas,
     instantanea,
   })
 }
@@ -103,6 +109,71 @@ describe('la hoja de estado', () => {
     expect(p.desajustes).toHaveLength(1)
     expect(p.celdas).toEqual([])
     expect(p.borrar).toEqual([])
+  })
+
+  it('escribe la cabecera de la columna de matrículas si no está', () => {
+    // Sin ella, la pasada siguiente no encuentra la columna y estrena otra: `Y`,
+    // `Z`, `AA`… y desde la segunda ninguna fila cruza ya por matrícula.
+    const p = estado([fila(2, { C: '0.1P', A: 'EDIFICIO P' })], [sala()])
+    expect(p.celdas).toContainEqual({ celda: 'Y1', valor: 'Ref' })
+  })
+
+  it('y no la reescribe si ya está', () => {
+    const conRef = fila(1, { ...CABECERA.celdas, Y: 'Ref' })
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [conRef, fila(2, { Y: 'SALA-000001' })],
+      salas: [sala()],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+    })
+    expect(p.celdas.some((c) => c.celda === 'Y1')).toBe(false)
+  })
+
+  it('el blanco de una columna arrastrada no se rellena', () => {
+    // En blanco no quiere decir «no hay dato»: quiere decir «lo mismo que
+    // arriba». Rellenarlo cambia cómo se lee un libro que la gente mira a diario.
+    const p = estado(
+      [
+        fila(2, { A: 'EDIFICIO P', B: 'PLANTA BAJA', C: 'otra', Y: 'SALA-000002' }),
+        fila(3, { C: '0.1P', Y: 'SALA-000001' }),
+      ],
+      [sala(), sala({ id: 'r2', shortRef: 'SALA-000002', code: 'otra' })],
+    )
+    expect(p.celdas.some((c) => c.celda === 'A3' || c.celda === 'B3')).toBe(false)
+  })
+
+  it('pero sí se corrige la fila que lleva el edificio escrito', () => {
+    const p = estado(
+      [fila(2, { A: 'EDIFICIO VIEJO', B: 'PLANTA BAJA', C: '0.1P', Y: 'SALA-000001' })],
+      [sala({ edificio: 'EDIFICIO P' })],
+    )
+    expect(p.celdas).toContainEqual({ celda: 'A2', valor: 'EDIFICIO P' })
+  })
+
+  it('la mitad tapada de una celda combinada no se escribe', () => {
+    // De `E67:E68` la que se ve es `E67`. Un valor en `E68` no lo enseña nadie y
+    // reaparece el día que alguien deshaga la combinación.
+    const p = estado(
+      [fila(2, { Y: 'SALA-000001' }), fila(3, { Y: 'SALA-000002' })],
+      [sala(), sala({ id: 'r2', shortRef: 'SALA-000002', code: 'otra' })],
+      SIN_INSTANTANEA,
+      ['D2:D3'],
+    )
+    expect(p.celdas.some((c) => c.celda === 'D3')).toBe(false)
+    // La de arriba sí: es la que se ve.
+    expect(p.celdas.some((c) => c.celda === 'D2')).toBe(true)
+  })
+
+  it('una combinación horizontal tapa las columnas de la derecha', () => {
+    const p = estado(
+      [fila(2, { Y: 'SALA-000001' })],
+      [sala()],
+      SIN_INSTANTANEA,
+      ['D2:E2'],
+    )
+    expect(p.celdas.some((c) => c.celda === 'E2')).toBe(false)
   })
 
   it('escribe la matrícula en la fila que no la lleva', () => {
@@ -372,6 +443,19 @@ describe('la hoja de partes', () => {
     expect(p.borrar).toEqual([])
   })
 
+  it('un número de incidencia con espacios de sobra se reconoce a sí mismo', () => {
+    // La fila 101 del libro real lleva dos números en la misma celda separados
+    // por 38 espacios. Si las dos caras no se normalizan igual, ese parte no se
+    // encuentra entre dos pasadas y se vuelve a añadir cada vez.
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES, fila(2, { D: 'I260415_0029   I260414_0007' })],
+      incidencias: [incidencia({ numero: 'I260415_0029                    I260414_0007' })],
+    })
+    expect(p.sinCruzar).toEqual([])
+    expect(p.insertar).toEqual([])
+  })
+
   it('los partes nuevos de la aplicación se añaden al final', () => {
     const p = sincronizarPartes({
       hoja: MATERIAL_2026,
@@ -569,7 +653,10 @@ describe.skipIf(!bytes)('una pasada entera contra el libro real', () => {
     // El invariante que importa: **ninguna sala se pierde**. O se le escribe la
     // matrícula en la fila que ya tenía, o se le abre una fila nueva. La suma de
     // las dos cosas son todas las salas, siempre.
-    const conMatricula = plan.celdas.filter((c) => c.celda.startsWith(colRef)).length
+    // Sin contar la cabecera de la columna, que también se escribe.
+    const conMatricula = plan.celdas.filter(
+      (c) => c.celda.startsWith(colRef) && c.celda !== `${colRef}1`,
+    ).length
     expect(conMatricula + plan.insertar.length).toBe(salas.length)
 
     // Y la que no cruza es una sola, la de la errata del edificio: la fila 86
@@ -581,6 +668,106 @@ describe.skipIf(!bytes)('una pasada entera contra el libro real', () => {
     expect(plan.sinCruzar.find((s) => !/no dice de qué aula/.test(s.motivo))!.motivo).toMatch(
       /no cruza con ninguna sala/,
     )
+  })
+
+  it('una segunda pasada sobre su propia salida no escribe NADA', async () => {
+    // Es la prueba que decide si el registro es perfecto. Si la segunda pasada
+    // escribe algo, el libro y la base nunca se quedan quietos: cada
+    // sincronización produce una versión nueva en SharePoint aunque no haya
+    // pasado nada, y el historial de versiones deja de servir para saber qué
+    // cambió de verdad.
+    const { escribirLibro } = await import('./libro')
+    const { celdasCombinadas } = await import('./xlsx')
+
+    // El maestro se construye UNA vez y no cambia entre pasadas, que es lo que
+    // hace la aplicación: las matrículas salen de la base, no de la hoja.
+    const l0 = await abrirLibro(new Uint8Array(bytes!))
+    const filas0 = await leerHoja(l0, ESTADO.nombre)
+    const salas: SalaVolcada[] = []
+    const conocidas: Catalogo['salas'] = []
+    const edificios = new Set<string>()
+    let ed = ''
+    let zona = ''
+    let n = 0
+    for (const f of filas0) {
+      if (f.fila === 1) continue
+      const t = (k: string): string => String(f.celdas[k] ?? '').trim()
+      if (t('A') !== '') ed = t('A')
+      if (t('B') !== '') zona = t('B')
+      if (t('C') === '' || ed === '') continue
+      n++
+      const shortRef = `SALA-${String(n).padStart(6, '0')}`
+      edificios.add(ed)
+      salas.push({
+        id: `r${n}`,
+        shortRef,
+        edificio: ed,
+        zona,
+        code: t('C'),
+        activa: true,
+        projectorHours: n <= 5 ? 4242 + n : null,
+        lampPct: null,
+        botoneraEstado: null,
+        capacidades: {},
+        revisiones: n <= 5 ? ['2026-07-15'] : [],
+        notas: null,
+        equipos: [],
+      })
+      conocidas.push({
+        id: `r${n}`,
+        shortRef,
+        code: t('C'),
+        name: t('C'),
+        active: true,
+        zona,
+        edificioCodigo: ed,
+        edificioNombre: ed,
+        edificioActivo: true,
+        alias: [],
+      })
+    }
+    const ix = construirIndice({
+      salas: conocidas,
+      edificios: [...edificios].map((c) => ({ codigo: c, nombre: c, activo: true })),
+      edificiosDesaparecidos: [],
+    })
+
+    const pasada = async (
+      entrada: Uint8Array,
+      antes: Instantanea,
+    ): Promise<{ plan: ReturnType<typeof sincronizarEstado>; salida: Uint8Array }> => {
+      const libro = await abrirLibro(entrada)
+      const filas = await leerHoja(libro, ESTADO.nombre)
+      const plan = sincronizarEstado({
+        hoja: ESTADO,
+        filas,
+        salas,
+        indice: ix,
+        columnaRef: columnaParaLaRef(filas, 1, 'Ref'),
+        combinadas: await celdasCombinadas(libro, ESTADO.nombre),
+        instantanea: antes,
+      })
+      const salida = await escribirLibro(libro, [
+        { hoja: ESTADO.nombre, celdas: plan.celdas, filas: { insertar: plan.insertar, borrar: plan.borrar } },
+      ])
+      return { plan, salida }
+    }
+
+    const uno = await pasada(new Uint8Array(bytes!), SIN_INSTANTANEA)
+    expect(uno.plan.celdas.length).toBeGreaterThan(100)
+
+    const guardado = new Map<string, unknown>()
+    for (const c of uno.plan.instantanea) guardado.set(`${c.clave}!${c.letra}`, c.valor)
+    const conInstantanea: Instantanea = (clave, letra) => {
+      const k = `${clave}!${letra}`
+      return guardado.has(k) ? (guardado.get(k) as never) : undefined
+    }
+
+    const dos = await pasada(uno.salida, conInstantanea)
+    const sobran = dos.plan.celdas.map((c) => `${c.celda}=${String(c.valor)}`)
+    expect(sobran, `celdas que sobran: ${sobran.slice(0, 10).join(', ')}`).toEqual([])
+    expect(dos.plan.insertar).toEqual([])
+    expect(dos.plan.borrar).toEqual([])
   })
 
   it('las celdas sucias del libro acaban en cuarentena, no en la base', async () => {

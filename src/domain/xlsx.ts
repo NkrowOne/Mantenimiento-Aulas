@@ -221,6 +221,21 @@ export async function leerHoja(libro: Libro, nombre: string): Promise<FilaLeida[
   return filas
 }
 
+/**
+ * Los rangos combinados de una hoja (`E67:E68`).
+ *
+ * Hacen falta fuera del parcheador porque **la mitad de abajo de una combinación
+ * se lee vacía**, y una celda que se lee vacía es una celda en la que la fusión
+ * propone escribir. El valor que se guardara ahí no lo vería nadie —lo tapa la
+ * celda de arriba— y reaparecería el día que alguien deshiciera la combinación.
+ */
+export async function celdasCombinadas(libro: Libro, nombre: string): Promise<string[]> {
+  const hoja = libro.hojas.find((h) => h.nombre === nombre)
+  if (!hoja) throw new Error(`El libro no tiene la hoja «${nombre}»`)
+  const xml = await leerTexto(libro, hoja.ruta)
+  return [...xml.matchAll(/<mergeCell\b[^>]*\bref="([^"]+)"/g)].map((m) => m[1]!)
+}
+
 // -----------------------------------------------------------------------------
 // Parchear
 // -----------------------------------------------------------------------------
