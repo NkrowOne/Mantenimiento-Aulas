@@ -268,6 +268,11 @@ export async function aplicar(a: Analisis): Promise<Aplicado> {
         // ni una.
         entidad: entidadDe(p.hoja),
         clave: claveDe(p, h.fila),
+        // La letra de la columna, para que la base pueda emparejar esta
+        // corrección con su celda de la instantánea: la que se rechaza no debe
+        // dejar antepasado, o la pasada siguiente creerá que la app la cambió y
+        // borrará del libro lo que alguien escribió a mano.
+        columna: h.letra,
         campo: h.campo,
         valor: h.valor === null ? null : String(h.valor),
         motivo: h.motivo,

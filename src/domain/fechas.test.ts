@@ -18,6 +18,32 @@ describe('diaEnMadrid', () => {
   })
 })
 
+describe('la fecha que va y vuelve del Excel', () => {
+  // La base está en `Europe/Madrid`, así que una fecha corregida en la hoja
+  // entra como `'2026-02-19'::date::timestamptz`, que es el instante de abajo.
+  // Si al leerla de vuelta se recorta la ISO —`slice(0, 10)`— sale el día de
+  // antes, y la pasada siguiente reescribe la celda con él: la fecha que alguien
+  // corrigió a mano se movía un día ella sola, una vez, en silencio.
+  it('la medianoche de Madrid vuelve como el mismo día, no como el anterior', () => {
+    const loQueGuardaLaBase = new Date('2026-02-18T23:00:00Z') // 2026-02-19 00:00 Madrid
+    expect(diaEnMadrid(loQueGuardaLaBase)).toBe('2026-02-19')
+    expect(loQueGuardaLaBase.toISOString().slice(0, 10)).toBe('2026-02-18')
+  })
+
+  it('y en verano, con dos horas de desfase, igual', () => {
+    expect(diaEnMadrid(new Date('2026-07-14T22:00:00Z'))).toBe('2026-07-15')
+  })
+
+  it('lo que sembró el importador a medianoche UTC no se mueve', () => {
+    // El importador escribe «2026-02-19T00:00:00.000Z». Madrid va por delante de
+    // UTC, así que el día en Madrid es el mismo o el siguiente, nunca el
+    // anterior: las fechas importadas se quedan donde están.
+    expect(diaEnMadrid(new Date('2026-02-19T00:00:00.000Z'))).toBe('2026-02-19')
+    expect(diaEnMadrid(new Date('2026-07-15T00:00:00.000Z'))).toBe('2026-07-15')
+    expect(diaEnMadrid(new Date('2026-01-01T00:00:00.000Z'))).toBe('2026-01-01')
+  })
+})
+
 describe('inicioDeMes', () => {
   it('en verano el mes empieza a las 22:00 UTC del último día del anterior', () => {
     // Medianoche del 1 de julio en Madrid = 22:00 del 30 de junio en UTC.

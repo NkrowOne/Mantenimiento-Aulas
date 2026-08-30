@@ -20,6 +20,7 @@
  */
 
 import { supabase } from '@/lib/supabase'
+import { diaEnMadrid } from '@/domain/fechas'
 import { descargaEntera } from '@/sync/paginada'
 import type { ArticuloVolcado, IncidenciaVolcada, MovimientoVolcado, SalaVolcada } from '@/domain/volcado'
 import { compradoEn, consumoPorMes } from '@/domain/volcado'
@@ -323,7 +324,13 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
       lampPct: s.lamp_pct,
       botoneraEstado: s.botonera_estado,
       capacidades: s.capabilities ?? {},
-      revisiones: misRevisiones.slice(0, 2).map((r) => r.occurred_at),
+      // El **día**, no el instante. `occurred_at` es un `timestamptz` y viene
+      // como «2025-06-23T09:30:00+00:00»; la celda de la hoja es una fecha y se
+      // lee como «2025-06-23». Comparar las dos cadenas nunca daba igual, así
+      // que la columna se reescribía en cada pasada, para siempre, con el mismo
+      // valor. Y en hora de Madrid, que es donde ocurrió la revisión: una de las
+      // 23:30 UTC del día 23 es del 24 aquí, y el técnico que la firmó lo sabe.
+      revisiones: misRevisiones.slice(0, 2).map((r) => diaEnMadrid(new Date(r.occurred_at))),
       notas: misRevisiones[0]?.notes ?? null,
       equipos: suyos.map((a) => ({
         id: a.id,
@@ -426,8 +433,13 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
       id: i.id,
       numero: i.external_ref,
       salaCode: i.room_id ? (salaPorId.get(i.room_id)?.code ?? '') : '',
-      abierta: i.opened_at.slice(0, 10),
-      resuelta: i.resolved_at ? i.resolved_at.slice(0, 10) : null,
+      // En Madrid, y no por gusto: la base está en `Europe/Madrid`, así que una
+      // corrección de la hoja entra como `'2026-02-19'::date::timestamptz`, o
+      // sea las 23:00 UTC del 18. Con `slice(0, 10)` la pasada siguiente leía
+      // «2026-02-18» y reescribía la celda con el día de antes: la fecha que
+      // alguien corrigió a mano se movía un día ella sola.
+      abierta: diaEnMadrid(new Date(i.opened_at)),
+      resuelta: i.resolved_at ? diaEnMadrid(new Date(i.resolved_at)) : null,
       problema: i.title,
       observacion: i.description,
       resolucion: i.resolution,
@@ -458,7 +470,9 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     ),
   )
   const movimientos: MovimientoParaHoja[] = (movimientosD.data ?? []).map((m) => ({
-    cuando: m.occurred_at.slice(0, 10),
+    // `slice(0, 10)` daba el día en UTC: un consumo de las 23:30 salía en la
+    // hoja con el día de antes. El resto de la aplicación cuenta en Madrid.
+    cuando: diaEnMadrid(new Date(m.occurred_at)),
     articulo: nombreDelArticulo.get(m.stock_item_id) ?? '—',
     cantidad: m.qty,
     tipo: m.kind,

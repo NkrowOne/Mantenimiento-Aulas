@@ -3256,3 +3256,61 @@ begin;
     raise notice 'OK: una compra no se deshace desde una celda (%)', left(v_motivo, 48);
   end $$;
 rollback;
+
+\echo '=== 13. Una corrección rechazada no deja antepasado ==='
+begin;
+  -- Si la deja, la pasada siguiente hace esta cuenta: el Excel no se movió
+  -- —coincide con el antepasado— y la base sí, luego manda la app… y escribe
+  -- encima de la celda lo que el usuario acababa de corregir. Sin aviso, y con
+  -- la entrada de cuarentena diciendo que no se hizo nada.
+  select test_as('44444444-4444-4444-4444-444444444444', 'admin');
+  do $$
+  declare
+    v_plan  jsonb;
+    v_out   jsonb;
+    v_anteps int;
+  begin
+    -- Una corrección que entra y otra que no: la clave de la segunda no existe.
+    v_plan := jsonb_build_object(
+      'origen', 'material_aulas',
+      'hacia_la_base', jsonb_build_array(
+        jsonb_build_object('entidad', 'articulo', 'hoja', 'Bolsa 2026',
+                           'clave', 'no-es-un-uuid', 'columna', 'A',
+                           'campo', 'articulo.nombre', 'valor', 'Lo que sea')
+      ),
+      'instantanea', jsonb_build_array(
+        jsonb_build_object('hoja', 'Bolsa 2026', 'clave', 'no-es-un-uuid',
+                           'columna', 'A', 'valor', 'Lo que sea'),
+        jsonb_build_object('hoja', 'Bolsa 2026', 'clave', 'no-es-un-uuid',
+                           'columna', 'B', 'valor', '3')
+      )
+    );
+
+    v_out := public.sync_aplicar(v_plan);
+    if (v_out->>'rechazadas')::int <> 1 then
+      raise exception 'FALLO: tendría que haberse rechazado una y se rechazaron %', v_out->>'rechazadas';
+    end if;
+
+    select count(*) into v_anteps from sync_celdas
+     where hoja = 'Bolsa 2026' and ref = 'no-es-un-uuid' and columna = 'A';
+    if v_anteps <> 0 then
+      raise exception 'FALLO: la celda rechazada dejó antepasado';
+    end if;
+    raise notice 'OK: la celda rechazada no dejó antepasado';
+
+    -- Y las demás de la misma fila sí: el rechazo es de una celda, no de la fila.
+    select count(*) into v_anteps from sync_celdas
+     where hoja = 'Bolsa 2026' and ref = 'no-es-un-uuid' and columna = 'B';
+    if v_anteps <> 1 then
+      raise exception 'FALLO: se perdió el antepasado de una celda que no se tocó';
+    end if;
+    raise notice 'OK: y las demás celdas de la fila sí lo dejaron';
+
+    -- Y la pasada no se cayó: quedó su parte con la cuenta hecha.
+    if not exists (select 1 from sync_partes where id = (v_out->>'parte_id')::bigint
+                     and termino_at is not null) then
+      raise exception 'FALLO: la pasada no llegó a terminar';
+    end if;
+    raise notice 'OK: y la pasada terminó igual';
+  end $$;
+rollback;
