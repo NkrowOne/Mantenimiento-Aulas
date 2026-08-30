@@ -152,6 +152,15 @@ export interface ReportData {
     datos: string
   }>
   fotosTotal: number
+  /**
+   * Cuántas se quitaron a mano al pedir el informe.
+   *
+   * Se cuenta aparte de las que no caben porque no es lo mismo: una es el tope
+   * del documento y la otra es una decisión de quien lo pide. El pie las dice
+   * por separado — un documento que se archiva tiene que poder explicar por qué
+   * no está la foto que alguien busca.
+   */
+  fotosDescartadas: number
   reincidentes: Array<{ building: string; room: string; item: string; veces: number }>
   olvidadas: Array<{ building: string; room: string; dias: number | null }>
   equipo: Array<{ nombre: string; revisiones: number; registros: number }>

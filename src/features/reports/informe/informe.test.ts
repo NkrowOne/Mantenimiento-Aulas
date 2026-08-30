@@ -163,6 +163,7 @@ function expedienteDePrueba(): ReportData {
       },
     ],
     fotosTotal: 5,
+    fotosDescartadas: 0,
     reincidentes: [{ building: 'H', room: 'H-102', item: 'Cable HDMI 3 m', veces: 4 }],
     olvidadas: [{ building: 'CRAI', room: 'CRAI-01', dias: 240 }],
     equipo: [{ nombre: 'Ana Pérez', revisiones: 11, registros: 6 }],
@@ -282,6 +283,7 @@ describe('el documento sale entero', () => {
       cierresTotal: 0,
       fotos: [],
       fotosTotal: 0,
+      fotosDescartadas: 0,
     }
     const lectura = lecturaCalculada(vacio)
     expect(lectura.titular).toBeTruthy()
@@ -457,6 +459,23 @@ describe('los días escritos para justificar', () => {
   })
 })
 
+describe('las fotos que se quitan, leídas del expediente del informe', () => {
+  it('sin lista, no se quita ninguna: por defecto entran todas', () => {
+    expect(leerOpciones({ secciones: ['fotos'] }).fotosFuera).toEqual([])
+    // Ni las de un informe de antes de que esto existiera, ni las del worker.
+    expect(leerOpciones({}).fotosFuera).toEqual([])
+  })
+
+  it('lee los identificadores, sin repetidos', () => {
+    expect(leerOpciones({ fotos_fuera: ['a', 'b', 'a'] }).fotosFuera).toEqual(['a', 'b'])
+  })
+
+  it('lo que no sea un identificador no puede quitar ninguna foto', () => {
+    expect(leerOpciones({ fotos_fuera: ['a', 42, null, { id: 'b' }] }).fotosFuera).toEqual(['a'])
+    expect(leerOpciones({ fotos_fuera: 'todas' }).fotosFuera).toEqual([])
+  })
+})
+
 describe('las secciones que se pueden quitar y las que se pueden añadir', () => {
   const d = expedienteDePrueba()
   const lectura = lecturaCalculada(d)
@@ -541,6 +560,38 @@ describe('las secciones que se pueden quitar y las que se pueden añadir', () =>
   it('el colofón dice que hubo salas fuera de la lista de trabajo', () => {
     const html = con(['edificios'])
     expect(html).toContain('3 salas del periodo ya no están en la lista de trabajo')
+  })
+
+  it('las fotos quitadas a mano se cuentan aparte de las que no caben', () => {
+    /*
+     * No es lo mismo el tope del documento que una decisión de quien lo pide, y
+     * el pie no puede confundirlos: un informe que enseña dos fotos de un
+     * periodo que tuvo veinte se lee como si eso fuera todo lo que hubo, y este
+     * documento se archiva y se cita.
+     */
+    const html = renderReport(
+      { ...d, fotosTotal: 3, fotosDescartadas: 2 },
+      lectura,
+      leerOpciones({ secciones: ['fotos'] }),
+      { emitido: '31/07/2026, 9:14' },
+    )
+    expect(html).toContain('dejaron 2 fotos fuera al pedir el informe')
+    // Y ninguna se ha quedado sin caber: esas tres son las que quedaban.
+    expect(html).not.toMatch(/fotos más del periodo/)
+  })
+
+  it('una sola quitada se dice en singular', () => {
+    const html = renderReport(
+      { ...d, fotosTotal: 3, fotosDescartadas: 1 },
+      lectura,
+      leerOpciones({ secciones: ['fotos'] }),
+      { emitido: '31/07/2026, 9:14' },
+    )
+    expect(html).toContain('dejó una foto fuera al pedir el informe')
+  })
+
+  it('sin quitar ninguna, el pie no menciona el asunto', () => {
+    expect(con(['fotos'])).not.toContain('al pedir el informe')
   })
 
   it('sin fotos no se imprime la sección: «no hay fotos» no informa', () => {

@@ -58,6 +58,7 @@ import {
   sumaDias,
 } from '../periodos'
 import type { Contadores, ReportData, Situacion } from './tipos'
+import { type Momento, candidatasDeFotos, sinLasDescartadas } from './fotos'
 
 /**
  * Tope de filas de las dos tablas largas.
@@ -77,7 +78,7 @@ const TOPE_FILAS = 150
  * informe de 20 MB no se imprime ni se manda por correo. Lo que se queda fuera
  * se cuenta al pie: una selección callada se lee como si fuera todo.
  */
-const TOPE_FOTOS = 40
+export const TOPE_FOTOS = 40
 const TOPE_BYTES_FOTOS = 8 * 1024 * 1024
 
 /**
@@ -102,6 +103,22 @@ const TOPE_BYTES_FOTOS = 8 * 1024 * 1024
  */
 const FOTO_LADO_LARGO = 700
 const FOTO_MB = 0.06
+
+/**
+ * Cuántas se enseñan al elegir, y cuánto dura la firma de cada miniatura.
+ *
+ * Se enseñan más de las que caben —el documento admite cuarenta— porque quitar
+ * unas cuantas hace sitio a las siguientes, y si la rejilla se cortara en el
+ * mismo número no habría forma de cambiar unas por otras. Pero tampoco todas:
+ * un trimestre son cientos, y trescientas miniaturas en un iPad son una
+ * pantalla que no responde. Lo que no se enseña se dice.
+ *
+ * La firma dura media hora: lo que dura elegir. No se guarda en ningún sitio, y
+ * el bucket es privado a propósito —las fotos enseñan instalaciones y a veces
+ * personas—, así que no hay enlaces permanentes por medio.
+ */
+const TOPE_ELEGIBLES = 120
+const VALIDEZ_MINIATURA_S = 1800
 
 const num = (v: unknown): number => Number(v ?? 0)
 
@@ -180,11 +197,27 @@ interface FilaEventoEquipo {
   asset_id: string
 }
 
-interface FilaAdjunto {
+export interface FilaAdjunto {
   id: string
   entity_id: string
   storage_path: string
   taken_at: string
+}
+
+/**
+ * Una foto del periodo como la enseña la pantalla antes de generar: la misma
+ * que va a ir al documento, pero con un enlace firmado en lugar de los bytes
+ * dentro.
+ */
+export interface FotoElegible {
+  id: string
+  url: string
+  dia: string
+  hora: string
+  building: string
+  room: string
+  titulo: string
+  momento: Momento
 }
 
 export interface FilaSala {
@@ -562,9 +595,24 @@ export function contadores(f: FilasDelPeriodo): Contadores {
  * que funcionar hoy, sin esperar a que el despliegue aplique una migración.
  */
 async function salasFueraDeLaLista(faltan: string[]): Promise<FilaSala[]> {
-  if (faltan.length === 0) return []
+  const salas = await salasPorId(faltan, 'las salas archivadas')
+  return salas.map((s) => ({ ...s, archivada: true }))
+}
 
-  const filas = await pidePorTrozos<FilaSalaCruda>('las salas archivadas', faltan, (trozo, señal) =>
+/**
+ * Unas salas por identificador, con su edificio, leídas de las tablas.
+ *
+ * De `rooms` y no de `room_overview` porque esa vista es **la lista de
+ * trabajo** —filtra por sala y edificio activos— y aquí se pregunta por salas
+ * concretas que el pasado menciona: una archivada tiene el mismo derecho a
+ * salir en un informe que cualquier otra. Lo usan las dos piezas que preguntan
+ * por salas sueltas: las que el periodo menciona y la lista de trabajo ya no
+ * tiene, y los pies de las fotos que se eligen antes de generar.
+ */
+async function salasPorId(ids: string[], que = 'las salas'): Promise<FilaSala[]> {
+  if (ids.length === 0) return []
+
+  const filas = await pidePorTrozos<FilaSalaCruda>(que, ids, (trozo, señal) =>
     supabase
       .from('rooms')
       .select('id,code,name,active,zones(name,buildings(code,name,active))')
@@ -582,7 +630,6 @@ async function salasFueraDeLaLista(faltan: string[]): Promise<FilaSala[]> {
       building_name: edificio?.name ?? 'Sin edificio',
       last_inspection_at: null,
       open_incidents: 0,
-      archivada: true,
     }
   })
 }
@@ -674,6 +721,9 @@ export async function cargarDatos(
   /* Las fotos solo se bajan si van a salir: son dos docenas de descargas y unos
      megabytes, y un informe que no las lleva no tiene por qué pagarlas. */
   conFotos = false,
+  /* Las que se quitaron al pedirlo, por id de adjunto. Vacío es «todas», que es
+     lo que sale si nadie abre la rejilla de fotos. */
+  fotosFuera: ReadonlySet<string> = new Set(),
 ): Promise<ReportData> {
   const anterior = periodoAnterior(rango)
 
@@ -755,6 +805,7 @@ export async function cargarDatos(
    */
   let fotos: ReportData['fotos'] = []
   let fotosTotal = 0
+  let fotosDescartadas = 0
   if (conFotos) {
     avisar('las fotos de las revisiones y las incidencias')
     const recogidas = await fotosDelPeriodo(
@@ -762,9 +813,11 @@ export async function cargarDatos(
       ahoraFilas.cerradas,
       visitas,
       deSala,
+      fotosFuera,
     )
     fotos = recogidas.fotos
     fotosTotal = recogidas.total
+    fotosDescartadas = recogidas.descartadas
   }
 
   return {
@@ -793,6 +846,7 @@ export async function cargarDatos(
     cierresTotal: cierres.length,
     fotos,
     fotosTotal,
+    fotosDescartadas,
     reincidentes,
     olvidadas,
     equipo: repartoDelTrabajo(ahoraFilas, quien),
@@ -1199,142 +1253,47 @@ export function cierresDelPeriodo(
  * caduca en un minuto. Un documento con huecos donde había pruebas no sirve
  * como registro de nada.
  *
- * **De dónde sale cada momento.** No hace falta adivinarlo, lo dice la propia
- * aplicación: una foto colgada de una REVISIÓN se hizo mientras se revisaba el
- * aula —es la que enseña el problema recién encontrado— y una colgada de una
- * INCIDENCIA solo puede venir de la hoja de resolver, que es el único sitio
- * desde el que se le añade una. Si esa incidencia ya está resuelta, la foto es
- * el «después»; si sigue abierta, es una prueba de cómo está mientras espera.
+ * Cuáles son y en qué orden lo decide `fotos.ts`, que es la misma pieza que
+ * usa la rejilla de la pantalla para poder quitar las que no tienen que salir:
+ * la casilla que se desmarca allí y la foto que falta aquí son la misma cosa
+ * porque la lista se arma una sola vez, en un sitio.
  *
- * Y por eso van emparejadas: la incidencia guarda de qué revisión salió
- * (`opened_from_inspection_id`), así que las fotos de aquella revisión y las
- * del cierre son el antes y el después de lo mismo, y salen juntas.
- *
- * El orden no es cronológico a secas, y es deliberado: primero cada incidencia
- * con lo suyo —lo que justifica—, y después las revisiones que no abrieron
- * ninguna. Con el tope por medio, un orden por hora dejaría fuera justo los
- * cierres, que son los que cierran el argumento.
+ * Lo de aquí es lo caro: bajar cada foto, reducirla y meterla dentro.
  */
-type Momento = 'revision' | 'apertura' | 'cierre'
-
-interface Candidata {
-  adjunto: FilaAdjunto
-  grupo: number
-  orden: number
-  momento: Momento
-  titulo: string
-  ref: string | null
-  sala: FilaSala | undefined
-}
-
 async function fotosDelPeriodo(
   aperturas: FilaApertura[],
   cierres: FilaCierre[],
   visitas: FilaRevision[],
   deSala: Map<string, FilaSala>,
-): Promise<{ fotos: ReportData['fotos']; total: number }> {
-  /*
-   * Una incidencia puede estar en las dos listas —abierta y cerrada dentro del
-   * mismo periodo— y entonces manda la cerrada: es la que sabe que ya se
-   * resolvió, y de eso depende si su foto es un «mientras espera» o un
-   * «después».
-   */
-  interface Ficha {
-    titulo: string
-    ref: string | null
-    sala: FilaSala | undefined
-    resuelta: boolean
-    inspeccion: string | null
-    cuando: string
+  fuera: ReadonlySet<string>,
+): Promise<{ fotos: ReportData['fotos']; total: number; descartadas: number }> {
+  const incidencias = new Set([...aperturas.map((i) => i.id), ...cierres.map((i) => i.id)])
+  if (incidencias.size === 0 && visitas.length === 0) {
+    return { fotos: [], total: 0, descartadas: 0 }
   }
-  const incidencias = new Map<string, Ficha>()
-  for (const i of aperturas) {
-    incidencias.set(i.id, {
-      titulo: i.title ?? '(sin describir)',
-      ref: i.external_ref,
-      sala: i.room_id ? deSala.get(i.room_id) : undefined,
-      resuelta: i.state === 'resuelta',
-      inspeccion: i.opened_from_inspection_id,
-      cuando: i.opened_at,
-    })
-  }
-  for (const i of cierres) {
-    const previa = incidencias.get(i.id)
-    incidencias.set(i.id, {
-      titulo: i.title ?? previa?.titulo ?? '(sin describir)',
-      ref: i.external_ref ?? previa?.ref ?? null,
-      sala: i.room_id ? deSala.get(i.room_id) : previa?.sala,
-      resuelta: true,
-      inspeccion: previa?.inspeccion ?? null,
-      cuando: previa?.cuando ?? i.opened_at,
-    })
-  }
-
-  const revisiones = new Map<string, FilaRevision>()
-  for (const v of visitas) revisiones.set(v.id, v)
-
-  if (incidencias.size === 0 && revisiones.size === 0) return { fotos: [], total: 0 }
 
   const [deIncidencias, deRevisiones] = await Promise.all([
-    adjuntosDe('incident', [...incidencias.keys()]),
-    adjuntosDe('inspection', [...revisiones.keys()]),
+    adjuntosDe('incident', [...incidencias]),
+    adjuntosDe('inspection', visitas.map((v) => v.id)),
   ])
 
-  // El grupo ordena; el número sale del orden de apertura para que el documento
-  // recorra las incidencias como pasaron.
-  const grupoDe = new Map<string, number>()
-  ;[...incidencias.entries()]
-    .sort((a, b) => a[1].cuando.localeCompare(b[1].cuando))
-    .forEach(([id], i) => grupoDe.set(id, i))
-
-  // De qué incidencia es cada revisión, si abrió alguna. Es lo que empareja el
-  // antes con el después.
-  const incidenciaDeRevision = new Map<string, string>()
-  for (const [id, ficha] of incidencias) {
-    if (ficha.inspeccion) incidenciaDeRevision.set(ficha.inspeccion, id)
-  }
-
-  const candidatas: Candidata[] = []
-
-  for (const a of deIncidencias) {
-    const ficha = incidencias.get(a.entity_id)
-    if (!ficha) continue
-    candidatas.push({
-      adjunto: a,
-      grupo: grupoDe.get(a.entity_id) ?? 0,
-      orden: ficha.resuelta ? 2 : 1,
-      momento: ficha.resuelta ? 'cierre' : 'apertura',
-      titulo: ficha.titulo,
-      ref: ficha.ref,
-      sala: ficha.sala,
-    })
-  }
-
-  const SUELTAS = incidencias.size
-  for (const a of deRevisiones) {
-    const visita = revisiones.get(a.entity_id)
-    if (!visita) continue
-    const deIncidencia = incidenciaDeRevision.get(a.entity_id)
-    const ficha = deIncidencia ? incidencias.get(deIncidencia) : undefined
-    candidatas.push({
-      adjunto: a,
-      // Sin incidencia detrás, la foto de revisión va después de todas las
-      // incidencias: cuenta cómo se encontró el aula, no qué se arregló.
-      grupo: ficha && deIncidencia ? (grupoDe.get(deIncidencia) ?? 0) : SUELTAS,
-      orden: 0,
-      momento: 'revision',
-      titulo: ficha?.titulo ?? 'Revisión del aula',
-      ref: ficha?.ref ?? null,
-      sala: ficha?.sala ?? (visita.room_id ? deSala.get(visita.room_id) : undefined),
-    })
-  }
-
-  candidatas.sort(
-    (a, b) =>
-      a.grupo - b.grupo ||
-      a.orden - b.orden ||
-      a.adjunto.taken_at.localeCompare(b.adjunto.taken_at),
-  )
+  const todasLasCandidatas = candidatasDeFotos({
+    aperturas,
+    cierres,
+    visitas,
+    deSala,
+    deIncidencias,
+    deRevisiones,
+  })
+  /*
+   * Las descartadas se quitan ANTES del tope, no después: si alguien quita
+   * cinco fotos de un periodo de sesenta, lo que espera es que entren otras
+   * cinco en su sitio, no que el documento salga con cinco huecos. Y por eso el
+   * total que se cuenta al pie es el de las que quedan: lo que se quitó a
+   * propósito no es «lo que no cupo».
+   */
+  const candidatas = sinLasDescartadas(todasLasCandidatas, fuera)
+  const descartadas = todasLasCandidatas.length - candidatas.length
 
   const fotos: ReportData['fotos'] = []
   let bytes = 0
@@ -1348,7 +1307,7 @@ async function fotosDelPeriodo(
      */
     let blob: Blob
     try {
-      const { data, error } = await supabase.storage.from('fotos').download(c.adjunto.storage_path)
+      const { data, error } = await supabase.storage.from('fotos').download(c.storagePath)
       if (error || !data) continue
       blob = data
     } catch {
@@ -1359,8 +1318,8 @@ async function fotosDelPeriodo(
     if (!dato) continue
     bytes += dato.length
     fotos.push({
-      dia: diaEnMadrid(new Date(c.adjunto.taken_at)),
-      hora: horaCorta(c.adjunto.taken_at),
+      dia: diaEnMadrid(new Date(c.takenAt)),
+      hora: horaCorta(c.takenAt),
       building: c.sala?.building_code ?? '—',
       room: c.sala?.room_code ?? '',
       titulo: c.titulo,
@@ -1370,7 +1329,138 @@ async function fotosDelPeriodo(
     })
   }
 
-  return { fotos, total: candidatas.length }
+  return { fotos, total: candidatas.length, descartadas }
+}
+
+/**
+ * Las fotos del periodo tal y como se enseñan ANTES de generar, para poder
+ * quitar las que no tienen que salir.
+ *
+ * Es la misma lista que va a llevar el documento —de ahí que las tres consultas
+ * del periodo sean las mismas de `filasDelPeriodo`— pero sin bajar ni un byte
+ * de imagen: aquí se firma una URL corta por foto, que es una sola petición
+ * para todas, y las miniaturas las pide el navegador según se van viendo. Bajar
+ * las fotos de verdad es lo que tarda del informe, y elegir cuáles van no puede
+ * costar lo mismo que hacerlo.
+ *
+ * Las salas se leen por identificador y no de `room_overview`: para el pie de
+ * una miniatura hace falta el código del aula y el del edificio, no la lista de
+ * trabajo entera. Y por la tabla `rooms` entran también las archivadas, que en
+ * un informe cuentan igual que las demás.
+ */
+export async function fotosParaElegir(
+  rango: Rango,
+): Promise<{ fotos: FotoElegible[]; total: number }> {
+  const { desde, hasta } = limites(rango)
+
+  const [revisionesFilas, aperturas, cierres] = await Promise.all([
+    todas<FilaRevision>('las revisiones', (d, h, señal) =>
+      supabase
+        .from('inspections_vigentes')
+        .select('id,corrects,room_id,occurred_at,corrected_at,by_user,overall')
+        .gte('occurred_at', desde)
+        .lt('occurred_at', hasta)
+        .order('occurred_at')
+        .order('id')
+        .abortSignal(señal).range(d, h),
+    ),
+    todas<FilaApertura>('los registros abiertos', (d, h, señal) =>
+      supabase
+        .from('incidents')
+        .select(
+          'id,kind,severity,state,title,description,external_ref,room_id,opened_at,opened_by,opened_from_inspection_id',
+        )
+        .neq('state', 'borrador')
+        .gte('opened_at', desde)
+        .lt('opened_at', hasta)
+        .order('opened_at')
+        .order('id')
+        .abortSignal(señal).range(d, h),
+    ),
+    todas<FilaCierre>('los registros cerrados', (d, h, señal) =>
+      supabase
+        .from('incidents')
+        .select('id,kind,title,resolution,external_ref,room_id,opened_at,resolved_at,resolved_by')
+        .eq('state', 'resuelta')
+        .gte('resolved_at', desde)
+        .lt('resolved_at', hasta)
+        .order('resolved_at')
+        .order('id')
+        .abortSignal(señal).range(d, h),
+    ),
+  ])
+
+  const visitas = porVisita(revisionesFilas)
+  const incidencias = new Set([...aperturas.map((i) => i.id), ...cierres.map((i) => i.id)])
+  if (incidencias.size === 0 && visitas.length === 0) return { fotos: [], total: 0 }
+
+  const [deIncidencias, deRevisiones] = await Promise.all([
+    adjuntosDe('incident', [...incidencias]),
+    adjuntosDe('inspection', visitas.map((v) => v.id)),
+  ])
+  if (deIncidencias.length === 0 && deRevisiones.length === 0) return { fotos: [], total: 0 }
+
+  /*
+   * Solo las salas que alguna de estas fotos menciona: esto es un pie de foto,
+   * no un inventario del campus. Y la de una revisión hace falta igual que la
+   * de una incidencia, porque una foto de revisión sin incidencia detrás se
+   * apoya en la suya para decir de qué aula es.
+   */
+  const conFoto = new Set([
+    ...deIncidencias.map((a) => a.entity_id),
+    ...deRevisiones.map((a) => a.entity_id),
+  ])
+  const salas = new Set<string>()
+  for (const fila of [...aperturas, ...cierres, ...visitas]) {
+    if (conFoto.has(fila.id) && fila.room_id) salas.add(fila.room_id)
+  }
+  /* Y la del aula que abrió la incidencia, aunque la foto cuelgue de la
+     revisión: es la que empareja el antes con el después. */
+  for (const i of aperturas) {
+    if (i.opened_from_inspection_id && conFoto.has(i.opened_from_inspection_id) && i.room_id) {
+      salas.add(i.room_id)
+    }
+  }
+  const deSala = new Map((await salasPorId([...salas])).map((s) => [s.room_id, s]))
+
+  const todasDelPeriodo = candidatasDeFotos({
+    aperturas,
+    cierres,
+    visitas,
+    deSala,
+    deIncidencias,
+    deRevisiones,
+  })
+  const candidatas = todasDelPeriodo.slice(0, TOPE_ELEGIBLES)
+
+  /*
+   * Una firma por foto, en una sola petición. Es corta a propósito —el bucket
+   * es privado porque las fotos enseñan instalaciones y a veces personas—, y no
+   * hace falta que dure: es para mirar la rejilla y decidir, no para guardarla
+   * en ningún sitio. La foto que no se pueda firmar no se enseña: una casilla
+   * sobre un hueco roto no dice qué se está quitando.
+   */
+  const { data: firmas } = await supabase.storage
+    .from('fotos')
+    .createSignedUrls(candidatas.map((c) => c.storagePath), VALIDEZ_MINIATURA_S)
+  const porRuta = new Map((firmas ?? []).map((f) => [f.path ?? '', f.signedUrl]))
+
+  const fotos = candidatas
+    .map((c) => ({
+      id: c.id,
+      url: porRuta.get(c.storagePath) ?? '',
+      dia: diaEnMadrid(new Date(c.takenAt)),
+      hora: horaCorta(c.takenAt),
+      building: c.sala?.building_code ?? '—',
+      room: c.sala?.room_code ?? '',
+      titulo: c.titulo,
+      momento: c.momento,
+    }))
+    .filter((f) => f.url !== '')
+
+  // El total es el de TODAS las del periodo, no el de las que se enseñan: la
+  // pantalla tiene que poder decir cuántas se han quedado fuera de la rejilla.
+  return { fotos, total: todasDelPeriodo.length }
 }
 
 /**

@@ -1045,6 +1045,22 @@ function seccionFotos(d: ReportData): string {
            documento. Están en la ficha de cada aula y de cada incidencia.</p>`
         : ''
     }
+    ${
+      /*
+       * Lo que se quitó a mano, dicho y contado aparte de lo que no cupo. Un
+       * informe que enseña seis fotos de un periodo que tuvo veinte se lee como
+       * si esas seis fueran todo lo que hubo, y este documento se archiva y se
+       * cita. Que sobre la mesa esté escrito «se dejaron catorce fuera» es la
+       * diferencia entre una selección y un recuento equivocado.
+       */
+      d.fotosDescartadas > 0
+        ? `<p class="apunte">Se ${
+            d.fotosDescartadas === 1 ? 'dejó una foto fuera' : `dejaron ${d.fotosDescartadas} fotos fuera`
+          } al pedir el informe. ${
+            d.fotosDescartadas === 1 ? 'Sigue' : 'Siguen'
+          } en la ficha de su aula y de su incidencia.</p>`
+        : ''
+    }
   </section>`
 }
 
