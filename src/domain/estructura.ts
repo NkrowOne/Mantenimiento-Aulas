@@ -45,7 +45,7 @@
  * una por el que llama es adivinar por él.
  */
 
-import { columnaANumero, escapar, numeroAColumna, partirCelda } from './xlsx'
+import { columnaANumero, escapar, numeroAColumna, partirCelda, xmlDeCelda } from './xlsx'
 import type { Cambio } from './xlsx'
 
 /** El último número de fila que admite una hoja de Excel. */
@@ -420,7 +420,7 @@ function insertarFilaXml(
     .map((c) => {
       const col = partirCelda(c.celda).columna
       const s = estilo.get(col) ?? respaldo?.get(col) ?? ''
-      return xmlDeCeldaNueva(`${col}${fila}`, s, c.valor as string | number | boolean)
+      return xmlDeCelda(`${col}${fila}`, s, c.valor as string | number | boolean)
     })
     .join('')
 
@@ -432,17 +432,6 @@ function insertarFilaXml(
   const cierre = xml.lastIndexOf('</sheetData>')
   if (cierre < 0) throw new Error('La hoja no tiene <sheetData>: no es una hoja de cálculo normal')
   return xml.slice(0, cierre) + nueva + xml.slice(cierre)
-}
-
-function xmlDeCeldaNueva(ref: string, estilo: string, valor: string | number | boolean): string {
-  const s = estilo ? ` s="${estilo}"` : ''
-  if (typeof valor === 'number') return `<c r="${ref}"${s}><v>${valor}</v></c>`
-  if (typeof valor === 'boolean') return `<c r="${ref}"${s} t="b"><v>${valor ? 1 : 0}</v></c>`
-  if (valor === '') return `<c r="${ref}"${s}/>`
-  if (valor.startsWith('=')) {
-    return `<c r="${ref}"${s}><f>${escapar(valor.slice(1))}</f></c>`
-  }
-  return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${escapar(valor)}</t></is></c>`
 }
 
 /**

@@ -136,6 +136,22 @@ export interface FilaLeida {
   fila: number
   /** Columna (`B`) → valor. Las celdas vacías no aparecen. */
   celdas: Record<string, ValorCelda>
+  /**
+   * Columna → la fórmula que lleva, sin el `=`.
+   *
+   * Hace falta porque `celdas` devuelve el **valor cacheado** de una celda de
+   * fórmula, no la fórmula: mirando solo ahí, `=P5-N5` y un `35` tecleado a mano
+   * son indistinguibles. Y la sincronización necesita distinguirlos justo para lo
+   * contrario de lo que parece — no para escribir la fórmula, sino para **no**
+   * dar por pisada una que está perfectamente.
+   *
+   * Una fórmula compartida (`<f t="shared" si="0"/>`) no trae texto: entra con
+   * cadena vacía, porque lo que importa es que la celda es una fórmula.
+   *
+   * Opcional porque una fila armada a mano —en una prueba, o por quien construye
+   * una hoja nueva— no tiene fórmulas que declarar. `leerHoja` siempre lo llena.
+   */
+  formulas?: Record<string, string>
 }
 
 function desescapar(s: string): string {
@@ -194,6 +210,7 @@ export async function leerHoja(libro: Libro, nombre: string): Promise<FilaLeida[
     const numero = Number(/\br="(\d+)"/.exec(attrs)?.[1] ?? 0)
     if (!numero) continue
     const celdas: Record<string, ValorCelda> = {}
+    const formulas: Record<string, string> = {}
 
     for (const mc of (mf[3] ?? '').matchAll(/<c\b([^>]*)\/>|<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
       const ca = mc[1] ?? mc[2] ?? ''
@@ -202,6 +219,9 @@ export async function leerHoja(libro: Libro, nombre: string): Promise<FilaLeida[
       const tipo = /\bt="([^"]+)"/.exec(ca)?.[1] ?? 'n'
       const cuerpo = mc[3] ?? ''
       const columna = partirCelda(ref).columna
+
+      const f = /<f\b[^>]*\/>|<f\b[^>]*>([\s\S]*?)<\/f>/.exec(cuerpo)
+      if (f) formulas[columna] = desescapar(f[1] ?? '')
 
       if (tipo === 'inlineStr') {
         celdas[columna] = textoDe(cuerpo)
@@ -215,7 +235,7 @@ export async function leerHoja(libro: Libro, nombre: string): Promise<FilaLeida[
       else celdas[columna] = Number(v)
     }
 
-    filas.push({ fila: numero, celdas })
+    filas.push({ fila: numero, celdas, formulas })
   }
 
   return filas
@@ -259,11 +279,22 @@ export interface Cambio {
   valor: ValorCelda
 }
 
-function xmlDeCelda(ref: string, estilo: string, valor: Exclude<ValorCelda, null>): string {
+/**
+ * El XML de una celda. **La única**: había tres copias de esto —aquí, en
+ * `estructura.ts` y en `libro.ts`— y las otras dos tenían la rama de fórmula que
+ * a ésta le faltaba. El resultado fue el peor fallo de todo el sincronizador:
+ * las 86 fórmulas de `Bolsa 2026` se escribían como **texto**, la columna dejaba
+ * de calcular, y el libro seguía abriendo tan tranquilo enseñando `=P5-N5` en
+ * una celda. Tres copias de una función es una invitación a que una se quede
+ * atrás; ahora es una y la usan las tres.
+ */
+export function xmlDeCelda(ref: string, estilo: string, valor: Exclude<ValorCelda, null>): string {
   const s = estilo ? ` s="${estilo}"` : ''
   if (typeof valor === 'number') return `<c r="${ref}"${s}><v>${valor}</v></c>`
   if (typeof valor === 'boolean') return `<c r="${ref}"${s} t="b"><v>${valor ? 1 : 0}</v></c>`
   if (valor === '') return `<c r="${ref}"${s}/>`
+  // Una fórmula va en `<f>`, sin el `=`: escribirla como texto la mata.
+  if (valor.startsWith('=')) return `<c r="${ref}"${s}><f>${escapar(valor.slice(1))}</f></c>`
   // `xml:space="preserve"` o los espacios de los extremos desaparecen al leer.
   return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${escapar(valor)}</t></is></c>`
 }

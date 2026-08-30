@@ -40,7 +40,7 @@ import {
   planificar,
 } from './estructura'
 import type { EdicionDeFilas, MapaDeFilas } from './estructura'
-import { escapar, marcarRecalculo, parchearHojaXml } from './xlsx'
+import { escapar, marcarRecalculo, parchearHojaXml, xmlDeCelda } from './xlsx'
 import type { Cambio, Libro, ResolverEstilo, ValorCelda } from './xlsx'
 import { estiloQuePinta, estilosDeLaColumna, leerEstilos } from './estilos'
 import { crearEntrada, descomprimir, escribirZip, reemplazar } from '../lib/zip'
@@ -423,7 +423,7 @@ function xmlDeHoja(hoja: HojaNueva, paleta: Paleta): string {
         .map((v, c) => {
           if (v === null) return ''
           const s = i === 0 ? paleta.cabecera : estiloDe(paleta, hoja.formatos?.[c])
-          return celdaXml(letra(c + 1) + numero, s, v)
+          return xmlDeCelda(letra(c + 1) + numero, s, v)
         })
         .join('')
       return `<row r="${numero}">${celdas}</row>`
@@ -448,15 +448,6 @@ function estiloDe(paleta: Paleta, formato: Formato | undefined): string {
   if (formato === 'fecha') return paleta.fecha || paleta.cuerpo
   if (formato === 'porcentaje') return paleta.porcentaje || paleta.cuerpo
   return paleta.cuerpo
-}
-
-function celdaXml(ref: string, estilo: string, valor: Exclude<ValorCelda, null>): string {
-  const s = estilo ? ` s="${estilo}"` : ''
-  if (typeof valor === 'number') return `<c r="${ref}"${s}><v>${valor}</v></c>`
-  if (typeof valor === 'boolean') return `<c r="${ref}"${s} t="b"><v>${valor ? 1 : 0}</v></c>`
-  if (valor === '') return ''
-  if (valor.startsWith('=')) return `<c r="${ref}"${s}><f>${escapar(valor.slice(1))}</f></c>`
-  return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${escapar(valor)}</t></is></c>`
 }
 
 function letra(n: number): string {

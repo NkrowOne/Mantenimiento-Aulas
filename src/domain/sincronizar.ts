@@ -165,6 +165,8 @@ export const TITULO_DE_LA_REF = 'Ref'
 interface Emparejada<T> {
   fila: number
   celdas: Record<string, ValorCelda>
+  /** La fila tal y como vino del libro, para poder preguntar por sus fórmulas. */
+  leida: FilaLeida
   dato: T
   /** La clave estable: la matrícula, el nº de parte, el id del artículo. */
   clave: string
@@ -442,6 +444,7 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
     emparejadas.push({
       fila: f.fila,
       celdas,
+      leida: f,
       dato: sala,
       clave: sala.shortRef,
       destino: sala.code,
@@ -620,7 +623,14 @@ export function sincronizarPartes(e: EntradaDePartes): Plan {
       continue
     }
     vistas.add(inc.id)
-    emparejadas.push({ fila: f.fila, celdas: f.celdas, dato: inc, clave: inc.numero, destino: numero })
+    emparejadas.push({
+      fila: f.fila,
+      celdas: f.celdas,
+      leida: f,
+      dato: inc,
+      clave: inc.numero,
+      destino: numero,
+    })
   }
 
   fusionarFilas(plan, emparejadas, (i) => filaDeIncidencia(i, e.hoja), {
@@ -703,7 +713,14 @@ export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
       continue
     }
     vistas.add(id)
-    emparejadas.push({ fila: f.fila, celdas: f.celdas, dato: porId.get(id)!, clave: id, destino: nombre })
+    emparejadas.push({
+      fila: f.fila,
+      celdas: f.celdas,
+      leida: f,
+      dato: porId.get(id)!,
+      clave: id,
+      destino: nombre,
+    })
   }
 
   fusionarFilas(plan, emparejadas, (a) => filaDeArticulo(a, e.hoja), {
@@ -720,7 +737,7 @@ export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
   for (const par of emparejadas) {
     for (const c of e.hoja.columnas) {
       if (c.dueno !== 'formula' || !c.formula) continue
-      if (tieneFormula(par.celdas, c.letra)) continue
+      if (tieneFormula(par.leida, c.letra)) continue
       plan.celdas.push({ celda: `${c.letra}${par.fila}`, valor: c.formula.replace(/\{f\}/g, String(par.fila)) })
       plan.avisos.push(
         `${c.letra}${par.fila} (${c.cabecera}) llevaba un número escrito a mano encima de la fórmula: se le devuelve la fórmula.`,
@@ -770,9 +787,21 @@ function formatoDe(c: Columna): { formato?: 'fecha' | 'porcentaje' } {
   return {}
 }
 
-/** `true` si la celda del libro trae una fórmula y no un número tecleado. */
-function tieneFormula(celdas: Record<string, ValorCelda>, letra: string): boolean {
-  const v = celdas[letra]
+/**
+ * `true` si la celda del libro trae una fórmula y no un número tecleado.
+ *
+ * Se pregunta a `fila.formulas`, no al valor: una celda de fórmula **se lee como
+ * su valor cacheado**, así que mirando ahí `=P5-N5` y un `35` escrito a mano son
+ * exactamente lo mismo. Con esa confusión, el bucle que devuelve las fórmulas
+ * pisadas creía que las 43 filas de la bolsa estaban pisadas y las reescribía
+ * todas — y como la serialización de celda no tenía rama para `=`, las
+ * reescribía **como texto**. Las 86 fórmulas de la hoja se perdían en la primera
+ * pasada, la columna dejaba de calcular, y el libro abría sin decir nada.
+ */
+function tieneFormula(fila: FilaLeida, letra: string): boolean {
+  if (fila.formulas && letra in fila.formulas) return true
+  // Una fila armada a mano puede traer la fórmula como texto en el valor.
+  const v = fila.celdas[letra]
   return typeof v === 'string' && v.startsWith('=')
 }
 

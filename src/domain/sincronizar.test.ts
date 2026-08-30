@@ -770,6 +770,75 @@ describe.skipIf(!bytes)('una pasada entera contra el libro real', () => {
     expect(dos.plan.borrar).toEqual([])
   })
 
+  it('las 88 fórmulas de «Bolsa 2026» siguen siendo fórmulas después de la pasada', async () => {
+    // Era el peor fallo de todo el sincronizador y sobrevivía a la prueba de
+    // idempotencia porque el destrozo es estable: la primera pasada convertía
+    // las 86 celdas de fórmula en su propio texto, y la segunda ya las veía como
+    // texto y no las tocaba. Cero diferencias, y la columna sin calcular.
+    const { escribirLibro } = await import('./libro')
+    const { descomprimir } = await import('../lib/zip')
+
+    const libro = await abrirLibro(new Uint8Array(bytes!))
+    const filas = await leerHoja(libro, BOLSA_2026.nombre)
+    const articulos: ArticuloVolcado[] = filas
+      .filter((f) => f.fila > 1 && f.celdas.A)
+      .map((f, i) => ({
+        id: `s${i}`,
+        nombre: String(f.celdas.A),
+        meses: [1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        comprado: typeof f.celdas.P === 'number' ? f.celdas.P : 0,
+      }))
+    const porNombre = new Map(articulos.map((a) => [a.nombre.toLowerCase(), a.id]))
+
+    const plan = sincronizarBolsa({
+      hoja: BOLSA_2026,
+      filas,
+      articulos,
+      resolver: (n) => porNombre.get(n.toLowerCase()) ?? null,
+      instantanea: SIN_INSTANTANEA,
+    })
+
+    const salida = await escribirLibro(libro, [
+      { hoja: BOLSA_2026.nombre, celdas: plan.celdas, filas: { insertar: plan.insertar, borrar: plan.borrar } },
+    ])
+
+    const otra = await abrirLibro(salida)
+    const ruta = otra.hojas.find((h) => h.nombre === BOLSA_2026.nombre)!.ruta
+    const xml = new TextDecoder().decode(
+      await descomprimir(otra.entradas.find((e) => e.nombre === ruta)!),
+    )
+
+    // Ni una sola celda con el texto de una fórmula dentro.
+    expect(xml).not.toMatch(/<is><t[^>]*>=/)
+    // Y las que había siguen estando, más las tres que se recuperan.
+    const antes = new TextDecoder().decode(
+      await descomprimir(libro.entradas.find((e) => e.nombre === ruta)!),
+    )
+    expect(xml.split('<f').length - 1).toBeGreaterThanOrEqual(antes.split('<f').length - 1)
+  })
+
+  it('a una fórmula de verdad no se le dice que está «escrita a mano»', async () => {
+    const libro = await abrirLibro(new Uint8Array(bytes!))
+    const filas = await leerHoja(libro, BOLSA_2026.nombre)
+    const articulos: ArticuloVolcado[] = filas
+      .filter((f) => f.fila > 1 && f.celdas.A)
+      .map((f, i) => ({ id: `s${i}`, nombre: String(f.celdas.A), meses: new Array(12).fill(0), comprado: 0 }))
+    const porNombre = new Map(articulos.map((a) => [a.nombre.toLowerCase(), a.id]))
+
+    const plan = sincronizarBolsa({
+      hoja: BOLSA_2026,
+      filas,
+      articulos,
+      resolver: (n) => porNombre.get(n.toLowerCase()) ?? null,
+      instantanea: SIN_INSTANTANEA,
+    })
+
+    // El libro real tiene exactamente tres celdas con un número tecleado encima
+    // de la fórmula: N5, N8 y N9. Ni una más.
+    const recuperadas = plan.avisos.filter((a) => a.includes('encima de la fórmula'))
+    expect(recuperadas).toHaveLength(3)
+  })
+
   it('las celdas sucias del libro acaban en cuarentena, no en la base', async () => {
     const l = await abrirLibro(new Uint8Array(bytes!))
     const filas = await leerHoja(l, ESTADO.nombre)
