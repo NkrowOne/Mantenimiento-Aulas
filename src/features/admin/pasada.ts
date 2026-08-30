@@ -36,7 +36,15 @@ import { hojaDeInventario, hojaDeMovimientos, hojaDeRevisiones, hojaDelParte } f
 import type { LineaDelParte } from '@/domain/hojasNuevas'
 import { escribirLibro } from '@/domain/libro'
 import type { EdicionDeHoja, HojaNueva } from '@/domain/libro'
-import { BOLSA_2025, BOLSA_2026, ESTADO, MATERIAL_2025, MATERIAL_2026, hojasDelAnyo } from '@/domain/mapa'
+import {
+  BOLSA_2025,
+  BOLSA_2026,
+  ESTADO,
+  MATERIAL_2025,
+  MATERIAL_2026,
+  hojaPorNombre,
+  hojasDelAnyo,
+} from '@/domain/mapa'
 import type { Hoja } from '@/domain/mapa'
 import { columnaParaLaRef } from '@/domain/preparar'
 import {
@@ -46,6 +54,7 @@ import {
   sincronizarPartes,
 } from '@/domain/sincronizar'
 import type { Instantanea, Plan, Resumen } from '@/domain/sincronizar'
+import { leerMaterial } from '@/domain/valores'
 import { abrirLibro, celdasCombinadas, leerHoja } from '@/domain/xlsx'
 import type { Libro } from '@/domain/xlsx'
 import { datosDeLaPasada } from './datosDeLaPasada'
@@ -220,21 +229,35 @@ export async function aplicar(a: Analisis): Promise<Aplicado> {
           ),
         })),
     ),
-    hacia_la_base: a.planes.flatMap((p) =>
+    hacia_la_base: ordenarParaElAlmacen(a.planes.flatMap((p) =>
       p.haciaLaBase.map((h) => ({
         hoja: p.hoja,
         fila: h.fila,
+        // De qué habla la fila. Sin esto, la base tiene que adivinarlo por el
+        // nombre del campo, y `sala.code` significa dos cosas distintas según la
+        // hoja: el código del aula en la de estado y el aula de un parte en la
+        // de material. Adivinándolo, las correcciones de los partes se
+        // rechazaban con un motivo falso —«la matrícula no existe»— y no entraba
+        // ni una.
+        entidad: entidadDe(p.hoja),
         clave: claveDe(p, h.fila),
         campo: h.campo,
         valor: h.valor === null ? null : String(h.valor),
         motivo: h.motivo,
+        // El material de un parte va ya partido y resuelto: el catálogo de alias
+        // vive aquí, y partir «1Pantalla 240X240» en un 1 y una pantalla es
+        // exactamente el tipo de cosa que en SQL sale mal.
+        ...(h.campo === 'incidencia.material'
+          ? { detalle: detalleDelMaterial(String(h.valor ?? ''), a.datos.resolverArticulo) }
+          : {}),
       })),
-    ),
+    )),
     instantanea: a.planes.flatMap((p) =>
       p.instantanea.map((c) => ({
         hoja: p.hoja,
         clave: c.clave,
         columna: c.letra,
+        entidad: entidadDe(p.hoja),
         valor: c.valor === null ? null : String(c.valor),
       })),
     ),
@@ -263,6 +286,44 @@ export async function aplicar(a: Analisis): Promise<Aplicado> {
 
   const r = data as { parte_id: number; aplicadas: number; rechazadas: number }
   return { parteId: r.parte_id, aplicadas: r.aplicadas, rechazadas: r.rechazadas }
+}
+
+/**
+ * Las compras antes que los consumos.
+ *
+ * La base tiene un disparador que se niega a dejar el almacén en negativo, y
+ * hace bien. Pero el orden natural de las hojas pone los partes —que consumen—
+ * antes que la bolsa —que compra—, así que el material de un parte que la
+ * aplicación no conocía se rechazaba por no haber existencias que en la misma
+ * pasada, cuatro celdas más abajo, se iban a registrar. Con las compras delante,
+ * el saldo ya está cuando llega el consumo.
+ */
+function ordenarParaElAlmacen<T extends { campo: string }>(celdas: T[]): T[] {
+  const peso = (campo: string): number => {
+    if (campo === 'articulo.comprado') return 0
+    if (campo === 'incidencia.material') return 2
+    return 1
+  }
+  return [...celdas].sort((a, b) => peso(a.campo) - peso(b.campo))
+}
+
+/** El material de un parte, partido y con cada artículo resuelto al catálogo. */
+function detalleDelMaterial(
+  texto: string,
+  resolver: (nombre: string) => string | null,
+): Array<{ articulo_id: string | null; cantidad: number; texto: string }> {
+  return leerMaterial(texto).map((m) => ({
+    articulo_id: resolver(m.articulo),
+    cantidad: m.cantidad,
+    texto: m.crudo,
+  }))
+}
+
+/** De qué habla cada fila de una hoja: una sala, un parte o un artículo. */
+function entidadDe(hoja: string): string {
+  const h = hojaPorNombre(hoja)
+  if (!h) return 'sala'
+  return h.identidad.tipo === 'incidencia' ? 'incidencia' : h.identidad.tipo === 'articulo' ? 'articulo' : 'sala'
 }
 
 /** La clave estable de una fila, buscada por su número dentro de un plan. */
