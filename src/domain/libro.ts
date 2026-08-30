@@ -61,6 +61,16 @@ export interface EdicionDeHoja {
   filas?: EdicionDeFilas
 }
 
+/**
+ * El formato de una columna de una hoja nueva.
+ *
+ * No son estilos propios: son los estilos **que el libro ya usa**, buscados en
+ * las hojas de siempre. Una fecha escrita sin el estilo de una columna de fecha
+ * se ve como `45831`, y a nadie le sirve una hoja de revisiones que enseña cinco
+ * cifras donde debería poner el día.
+ */
+export type Formato = 'texto' | 'fecha' | 'porcentaje'
+
 export interface HojaNueva {
   nombre: string
   /** La primera fila es la cabecera y se pinta como tal. */
@@ -71,8 +81,16 @@ export interface HojaNueva {
   inmovilizar?: boolean
   /** Pone autofiltro sobre la cabecera. Por defecto sí. */
   autofiltro?: boolean
-  /** Índice de formato de número por columna (0 = general). */
-  formatos?: Array<number | undefined>
+  /** El formato de cada columna, para que las fechas se vean como fechas. */
+  formatos?: Array<Formato | undefined>
+}
+
+/** Los índices de estilo que las hojas nuevas toman prestados del libro. */
+interface Paleta {
+  cabecera: string
+  cuerpo: string
+  fecha: string
+  porcentaje: string
 }
 
 // -----------------------------------------------------------------------------
@@ -257,8 +275,8 @@ async function anadirHoja(
   const ruta = `xl/worksheets/sheet${n}.xml`
 
   const modelo = out.find((e) => e.nombre === 'xl/workbook.xml')!
-  const estilos = await estilosDeCabecera(out, hojas)
-  out.push(await crearEntrada(ruta, bytes(xmlDeHoja(nueva, estilos)), modelo))
+  const paleta = await paletaDelLibro(out, hojas)
+  out.push(await crearEntrada(ruta, bytes(xmlDeHoja(nueva, paleta)), modelo))
 
   // 1 — la relación del libro
   const ir = indice(out, 'xl/_rels/workbook.xml.rels')
@@ -308,24 +326,31 @@ function idLibre(rels: string): string {
 }
 
 /**
- * Los índices de estilo de la cabecera y del cuerpo, sacados del propio libro.
+ * Los índices de estilo que las hojas nuevas toman prestados.
  *
- * Se leen de la hoja de estado: su fila 1 es la banda de cabecera que la gente
- * reconoce, y su fila 2 el cuerpo normal. Si no estuviera, las hojas nuevas
- * salen sin formato, que es feo pero no roto.
+ * Se leen de la primera hoja, que en este libro es la de estado: su fila 1 es la
+ * banda de cabecera que la gente reconoce, su fila 2 el cuerpo normal, su
+ * columna `D` una fecha y su columna `G` un porcentaje. Tomarlos prestados en
+ * vez de inventarlos es lo que evita tocar `styles.xml`, que es una tabla que
+ * todas las celdas del libro están usando por su número.
+ *
+ * Si algo no se encuentra, esa columna sale sin formato: feo, no roto.
  */
-async function estilosDeCabecera(
+async function paletaDelLibro(
   entradas: EntradaZip[],
   hojas: Array<{ nombre: string; ruta: string }>,
-): Promise<{ cabecera: string; cuerpo: string }> {
+): Promise<Paleta> {
+  const vacia: Paleta = { cabecera: '', cuerpo: '', fecha: '', porcentaje: '' }
   const hoja = hojas[0]
-  if (!hoja) return { cabecera: '', cuerpo: '' }
+  if (!hoja) return vacia
   const i = entradas.findIndex((e) => e.nombre === hoja.ruta)
-  if (i < 0) return { cabecera: '', cuerpo: '' }
+  if (i < 0) return vacia
   const xml = await texto(entradas[i]!)
   return {
     cabecera: estiloDeLaFila(xml, 1),
     cuerpo: estiloDeLaFila(xml, 2),
+    fecha: estiloDeCelda(xml, 'E', 2) || estiloDeCelda(xml, 'D', 3),
+    porcentaje: estiloDeCelda(xml, 'G', 2),
   }
 }
 
@@ -335,7 +360,13 @@ function estiloDeLaFila(xml: string, fila: number): string {
   return /<c\b[^>]*\bs="(\d+)"/.exec(m[1]!)?.[1] ?? ''
 }
 
-function xmlDeHoja(hoja: HojaNueva, estilos: { cabecera: string; cuerpo: string }): string {
+function estiloDeCelda(xml: string, columna: string, fila: number): string {
+  const m = new RegExp(`<row\\b[^>]*\\br="${fila}"[^>]*>([\\s\\S]*?)</row>`).exec(xml)
+  if (!m) return ''
+  return new RegExp(`<c\\b[^>]*\\br="${columna}${fila}"[^>]*\\bs="(\\d+)"`).exec(m[1]!)?.[1] ?? ''
+}
+
+function xmlDeHoja(hoja: HojaNueva, paleta: Paleta): string {
   const columnas = Math.max(1, ...hoja.filas.map((f) => f.length))
   const inmovilizar = hoja.inmovilizar ?? true
   const autofiltro = hoja.autofiltro ?? true
@@ -353,9 +384,12 @@ function xmlDeHoja(hoja: HojaNueva, estilos: { cabecera: string; cuerpo: string 
   const filas = hoja.filas
     .map((valores, i) => {
       const numero = i + 1
-      const s = i === 0 ? estilos.cabecera : estilos.cuerpo
       const celdas = valores
-        .map((v, c) => (v === null ? '' : celdaXml(letra(c + 1) + numero, s, v)))
+        .map((v, c) => {
+          if (v === null) return ''
+          const s = i === 0 ? paleta.cabecera : estiloDe(paleta, hoja.formatos?.[c])
+          return celdaXml(letra(c + 1) + numero, s, v)
+        })
         .join('')
       return `<row r="${numero}">${celdas}</row>`
     })
@@ -373,6 +407,12 @@ function xmlDeHoja(hoja: HojaNueva, estilos: { cabecera: string; cuerpo: string 
     `<sheetFormatPr defaultRowHeight="15"/>${cols}` +
     `<sheetData>${filas}</sheetData>${filtro}</worksheet>`
   )
+}
+
+function estiloDe(paleta: Paleta, formato: Formato | undefined): string {
+  if (formato === 'fecha') return paleta.fecha || paleta.cuerpo
+  if (formato === 'porcentaje') return paleta.porcentaje || paleta.cuerpo
+  return paleta.cuerpo
 }
 
 function celdaXml(ref: string, estilo: string, valor: Exclude<ValorCelda, null>): string {
