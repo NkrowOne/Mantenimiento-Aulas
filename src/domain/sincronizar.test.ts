@@ -215,7 +215,7 @@ describe('la hoja de estado', () => {
 
   it('la fecha de revisión anterior es de la app y baja siempre', () => {
     const p = estado([fila(2, { Y: 'SALA-000001', E: fechaAExcel('2020-01-01') })], [sala()])
-    expect(p.celdas).toContainEqual({ celda: 'E2', valor: fechaAExcel('2024-06-03') })
+    expect(p.celdas).toContainEqual({ celda: 'E2', valor: fechaAExcel('2024-06-03'), formato: 'fecha' })
   })
 
   it('en las horas gana la medición más reciente, no el último en escribir', () => {
@@ -381,6 +381,20 @@ describe('la hoja de partes', () => {
     expect(p.insertar).toHaveLength(1)
     expect(p.insertar[0]!.tras).toBe(2)
     expect(p.insertar[0]!.celdas).toContainEqual({ celda: 'D3', valor: 'I260315_0011' })
+  })
+
+  it('una hoja congelada no recibe ni una celda ni siquiera por un hueco', () => {
+    // La regla del hueco —gana quien tiene el dato— dispara antes que la del
+    // dueño. Sin la guarda, una columna `solo_excel` vacía con dato en la app
+    // acaba escribiendo sobre un cierre ya rendido.
+    const cab = fila(1, Object.fromEntries(MATERIAL_2025.columnas.map((c) => [c.letra, c.cabecera])))
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2025,
+      // Fila con su número de incidencia y todo lo demás vacío.
+      filas: [cab, fila(2, { D: 'I260102_0002' })],
+      incidencias: [incidencia()],
+    })
+    expect(p.celdas).toEqual([])
   })
 
   it('la hoja de 2025 está congelada: se lee y no se escribe', () => {

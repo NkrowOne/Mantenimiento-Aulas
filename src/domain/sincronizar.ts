@@ -187,7 +187,8 @@ function fusionarFilas<T>(
     const base = valoresDeLaApp(par.dato)
 
     for (const c of op.hoja.columnas) {
-      // Una hoja congelada se lee entera y no se escribe ni una celda.
+      // De una hoja congelada solo interesa lo que puede venir de ella hacia la
+      // base. El resto de columnas ni se miran.
       if (op.hoja.congelada && c.dueno !== 'solo_excel') continue
 
       const crudo = par.celdas[c.letra] ?? null
@@ -213,7 +214,7 @@ function fusionarFilas<T>(
         medidaExcel: c.dueno === 'medida' ? op.fechaDeMedida?.(par.dato, 'excel', par.celdas) : undefined,
       })
 
-      repartir(plan, par, c, decision, lectura.valor)
+      repartir(plan, par, c, decision, lectura.valor, op.hoja.congelada === true)
     }
   }
 }
@@ -224,6 +225,7 @@ function repartir<T>(
   c: Columna,
   decision: Decision,
   excel: Valor,
+  congelada: boolean,
 ): void {
   switch (decision.tipo) {
     case 'sin_cambios':
@@ -232,9 +234,18 @@ function repartir<T>(
       return
 
     case 'hacia_el_excel': {
+      // Una hoja congelada no recibe ni una celda, y aquí es donde hay que
+      // pararlo: la regla del hueco —gana quien tiene el dato— dispara antes que
+      // la del dueño, así que una columna `solo_excel` con la celda vacía y la
+      // aplicación con dato acaba proponiendo escribir en un cierre ya rendido.
+      // Es exactamente lo que pasaba: 137 celdas sobre «Bolsa 2025».
+      if (congelada) {
+        plan.instantanea.push({ clave: par.clave, fila: par.fila, letra: c.letra, valor: excel })
+        return
+      }
       const valor = escribir(decision.valor, c.tipo)
       if (valor === null && decision.valor !== null) return
-      plan.celdas.push({ celda: `${c.letra}${par.fila}`, valor: valor as ValorCelda })
+      plan.celdas.push({ celda: `${c.letra}${par.fila}`, valor: valor as ValorCelda, ...formatoDe(c) })
       plan.instantanea.push({ clave: par.clave, fila: par.fila, letra: c.letra, valor: decision.valor })
       return
     }
@@ -449,7 +460,7 @@ function filasNuevasDeSalas(nuevas: SalaVolcada[], e: EntradaDeEstado, plan: Pla
       if (c.campo === 'edificio' && !abreBloque) continue
       const valor = escribir(filaDeSala(sala, e.hoja)[c.letra] ?? null, c.tipo)
       if (valor === null) continue
-      celdas.push({ celda: `${c.letra}${destino + 1}`, valor: valor as ValorCelda })
+      celdas.push({ celda: `${c.letra}${destino + 1}`, valor: valor as ValorCelda, ...formatoDe(c) })
     }
     celdas.push({ celda: `${e.columnaRef}${destino + 1}`, valor: sala.shortRef })
 
@@ -533,6 +544,7 @@ export function sincronizarPartes(e: EntradaDePartes): Plan {
       .map((c) => ({
         celda: `${c.letra}${ultima + 1}`,
         valor: escribir(filaDeIncidencia(inc, e.hoja)[c.letra] ?? null, c.tipo) as ValorCelda,
+        ...formatoDe(c),
       }))
       .filter((c) => c.valor !== null),
     estiloDe: ultima,
@@ -632,7 +644,7 @@ export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
       }
       const valor = escribir(valores[c.letra] ?? null, c.tipo)
       if (valor === null) continue
-      celdas.push({ celda: `${c.letra}${destino + 1}`, valor: valor as ValorCelda })
+      celdas.push({ celda: `${c.letra}${destino + 1}`, valor: valor as ValorCelda, ...formatoDe(c) })
     }
     return { tras: destino, celdas, estiloDe: destino }
   })
@@ -644,6 +656,19 @@ export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
 }
 
 // -----------------------------------------------------------------------------
+
+/**
+ * El formato que hay que asegurarle a la celda.
+ *
+ * Solo para fechas y porcentajes: en la hoja los dos son números y lo que los
+ * convierte en lo que son es el formato de la celda, no el valor. El resto de
+ * columnas conservan el estilo que ya tuvieran.
+ */
+function formatoDe(c: Columna): { formato?: 'fecha' | 'porcentaje' } {
+  if (c.tipo === 'fecha') return { formato: 'fecha' }
+  if (c.tipo === 'porcentaje') return { formato: 'porcentaje' }
+  return {}
+}
 
 /** `true` si la celda del libro trae una fórmula y no un número tecleado. */
 function tieneFormula(celdas: Record<string, ValorCelda>, letra: string): boolean {

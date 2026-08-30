@@ -39,7 +39,8 @@ import {
 } from './estructura'
 import type { EdicionDeFilas, MapaDeFilas } from './estructura'
 import { escapar, marcarRecalculo, parchearHojaXml } from './xlsx'
-import type { Cambio, Libro, ValorCelda } from './xlsx'
+import type { Cambio, Libro, ResolverEstilo, ValorCelda } from './xlsx'
+import { estiloQuePinta, estilosDeLaColumna, leerEstilos } from './estilos'
 import { crearEntrada, descomprimir, escribirZip, reemplazar } from '../lib/zip'
 import type { EntradaZip } from '../lib/zip'
 
@@ -129,7 +130,11 @@ export async function escribirLibro(
       xml = editarHojaXml(xml, ed.filas ?? {}, mapa)
     }
     if (celdas.length > 0) {
-      xml = parchearHojaXml(xml, celdas.map((c) => traducir(c, mapa)).filter((c) => c !== null))
+      xml = parchearHojaXml(
+        xml,
+        celdas.map((c) => traducir(c, mapa)).filter((c) => c !== null),
+        await resolverEstiloDe(entradas, xml),
+      )
     }
     entradas[i] = await reemplazar(entradas[i]!, bytes(xml))
 
@@ -155,6 +160,34 @@ export async function escribirLibro(
   }
 
   return escribirZip(entradas)
+}
+
+/**
+ * Cómo elegir el estilo de una celda que va a pintar una fecha o un porcentaje.
+ *
+ * La hoja de estado tiene la columna «Fecha Revisión» a medias: las celdas con
+ * fecha llevan formato de fecha y las que estaban vacías se quedaron en
+ * «General». Mientras nadie escribiera en ellas daba igual; en cuanto la
+ * sincronización rellena las revisiones que faltaban, media columna sale en
+ * números de cinco cifras. Se reutiliza un estilo que el libro ya usa —el de
+ * otra celda de la misma columna— y nunca se crea uno nuevo.
+ */
+async function resolverEstiloDe(entradas: EntradaZip[], xmlHoja: string): Promise<ResolverEstilo> {
+  const i = entradas.findIndex((e) => e.nombre === 'xl/styles.xml')
+  if (i < 0) return () => null
+  const estilos = leerEstilos(await texto(entradas[i]!))
+  const porColumna = new Map<string, number[]>()
+
+  return (columna, formato, actual) => {
+    if (!porColumna.has(columna)) porColumna.set(columna, estilosDeLaColumna(xmlHoja, columna))
+    const nuevo = estiloQuePinta(
+      estilos,
+      formato,
+      actual === '' ? null : Number(actual),
+      porColumna.get(columna)!,
+    )
+    return nuevo === null ? null : String(nuevo)
+  }
 }
 
 /** Una celda escrita contra la hoja de antes, apuntando a la de después. */
