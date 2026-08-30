@@ -60,6 +60,28 @@ interface Datos {
 const norm = (s: string) =>
   s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toUpperCase()
 
+/**
+ * Un código corto y **distinto** por edificio, como los de la base.
+ *
+ * Truncar el nombre a seis letras parecía suficiente y no lo era: «EDIFICIO M» y
+ * «EDIFICIO E» se convierten los dos en `EDIFIC`, y como el índice del cruce se
+ * teclea por `edificioCodigo|code` (cruce.ts), el aula `1.1` de uno y la `1.1`
+ * del otro pasaban a ser la misma clave. Resultado: 103 aulas no se reconocían,
+ * se daban por nuevas y se insertaban duplicadas, y 329 filas salían «sin
+ * cruzar». Nada de eso pasa en producción —las 23 aulas del maestro tienen 23
+ * códigos distintos: M, E, H, CRAI…— así que la prueba estaba corriendo contra
+ * un escenario roto que no existe, y de paso tapaba lo que sí tenía que ver.
+ *
+ * Se numeran por orden de aparición, que es lo único que garantiza que dos
+ * edificios distintos no compartan código.
+ */
+const codigosDeEdificio = new Map<string, string>()
+function codigoDeEdificio(nombre: string): string {
+  const k = norm(nombre)
+  if (!codigosDeEdificio.has(k)) codigosDeEdificio.set(k, `ED${codigosDeEdificio.size + 1}`)
+  return codigosDeEdificio.get(k)!
+}
+
 /** Construye el lado «aplicación» espejo del Excel: nada que discutir. */
 function datosDelLibro(estado: FilaLeida[], mat: FilaLeida[], bolsa: FilaLeida[]): Datos {
   let maxCol = 0
@@ -187,7 +209,7 @@ function datosDelLibro(estado: FilaLeida[], mat: FilaLeida[], bolsa: FilaLeida[]
       name: s.code,
       active: true,
       zona: s.zona,
-      edificioCodigo: norm(s.edificio).replace(/[^A-Z0-9]/g, '').slice(0, 6) || 'X',
+      edificioCodigo: codigoDeEdificio(s.edificio),
       edificioNombre: s.edificio,
       edificioActivo: true,
       alias: [],

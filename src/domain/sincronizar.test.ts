@@ -634,14 +634,26 @@ describe('la hoja de bolsa', () => {
     expect(p.celdas).toContainEqual({ celda: 'B2', valor: 1 })
   })
 
-  it('devuelve la fórmula a una celda con el número escrito a mano encima', () => {
-    // Es lo que pasa hoy en N5, N8 y N9 del libro real.
-    const p = bolsa([fila(2, { A: 'Cable HDMI fibra 10 m', N: 3 })], [articulo()])
-    expect(p.celdas).toContainEqual({
-      celda: 'N2',
-      valor: '=B2+C2+D2+E2+F2+G2+H2+I2+J2+K2+L2+M2',
-    })
-    expect(p.avisos.join(' ')).toMatch(/encima de la fórmula/)
+  it('no le devuelve la fórmula a una celda si la fórmula daría otra cosa', () => {
+    // Las tres del libro real: N5=3, N8=2 y N9=1 con los doce meses en blanco.
+    // Son seis unidades de consumo que alguien apuntó como total sin desglosar y
+    // que no están en ninguna otra celda ni en la base. Poner ahí `=B5+…+M5`,
+    // con la aplicación escribiendo ceros porque no tiene movimientos, convierte
+    // el 3 en un 0 sin dejar rastro. Eso no es devolver una fórmula: es borrar.
+    const art = articulo({ nombre: 'Cable HDMI 3 mts', meses: new Array(12).fill(0), comprado: 10 })
+    const p = bolsa([fila(2, { A: 'Cable HDMI 3 mts', N: 3 })], [art])
+
+    // Ni el total ni los meses: rellenar los meses con ceros al lado de un total
+    // escrito a mano afirma que no hubo consumo, que es lo contrario del total.
+    expect(p.celdas.filter((c) => /^[B-N]2$/.test(c.celda))).toEqual([])
+    expect(p.avisos.join(' ')).toContain('no está en ningún otro sitio')
+  })
+
+  it('pero sí se la devuelve cuando la fórmula da lo mismo', () => {
+    const meses = [1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    const art = articulo({ nombre: 'Cable HDMI 3 mts', meses, comprado: 10 })
+    const p = bolsa([fila(2, { A: 'Cable HDMI 3 mts', N: 3 })], [art])
+    expect(p.celdas).toContainEqual({ celda: 'N2', valor: '=B2+C2+D2+E2+F2+G2+H2+I2+J2+K2+L2+M2' })
   })
 
   it('una celda que ya trae su fórmula no se toca', () => {
@@ -943,8 +955,22 @@ describe.skipIf(!bytes)('una pasada entera contra el libro real', () => {
 
     // El libro real tiene exactamente tres celdas con un número tecleado encima
     // de la fórmula: N5, N8 y N9. Ni una más.
-    const recuperadas = plan.avisos.filter((a) => a.includes('encima de la fórmula'))
-    expect(recuperadas).toHaveLength(3)
+    //
+    // Y las tres llevan un total que la aplicación no sabe explicar —los doce
+    // meses en blanco, cero movimientos en la base—, así que **no se tocan**:
+    // devolverles la fórmula convertiría el 3, el 2 y el 1 en ceros, y esas seis
+    // unidades no están en ninguna otra celda del libro ni en la base.
+    const protegidas = plan.avisos.filter((a) => a.includes('no está en ningún otro sitio'))
+    expect(protegidas).toHaveLength(3)
+    expect(protegidas.join(' ')).toContain('N5')
+
+    // Ni el total ni los meses de esas tres filas.
+    for (const f of [5, 8, 9]) {
+      expect(plan.celdas.filter((c) => new RegExp(`^[B-N]${f}$`).test(c.celda))).toEqual([])
+    }
+    // Y no se escribe ni una celda más de la columna N: las otras 40 filas ya
+    // traen su fórmula del original y a una fórmula viva no se la toca.
+    expect(plan.celdas.filter((c) => /^N\d+$/.test(c.celda))).toEqual([])
   })
 
   it('las celdas sucias del libro acaban en cuarentena, no en la base', async () => {

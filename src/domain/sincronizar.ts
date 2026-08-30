@@ -775,6 +775,22 @@ export interface EntradaDeBolsa {
   instantanea?: Instantanea
 }
 
+/**
+ * Lo que daría la fórmula de una columna, con los datos que trae la aplicación.
+ *
+ * Solo para poder comparar antes de devolverle la fórmula a una celda que lleva
+ * un número escrito a mano. Si no se sabe calcular, devuelve `null` y la fórmula
+ * se restaura como siempre: la duda no puede parar el arreglo de las celdas que
+ * sí cuadran.
+ */
+function valorDeLaFormula(c: Columna, art: ArticuloVolcado, hoja: Hoja): number | null {
+  const consumido = art.meses.reduce((n, m) => n + m, 0)
+  if (c.campo === 'articulo.consumido') return consumido
+  if (c.campo === 'articulo.disponible') return (art.comprado ?? 0) - consumido
+  void hoja
+  return null
+}
+
 export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
   const plan = planVacio(e.hoja.nombre)
   const cabecera = e.filas.find((f) => f.fila === e.hoja.cabecera)
@@ -830,15 +846,49 @@ export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
   // Las fórmulas pisadas se devuelven a su sitio. Es lo único que se escribe en
   // una columna de fórmula, y no es una excepción a la regla: la regla dice que
   // no se escribe un **número** encima de una fórmula, y esto es lo contrario.
+  //
+  // Pero **solo si la fórmula da lo mismo que el número que hay escrito**. Si no,
+  // eso no es devolver una fórmula: es borrar un dato. En este libro pasa tres
+  // veces —N5=3, N8=2 y N9=1, con los doce meses en blanco— y son seis unidades
+  // de consumo que no están en ninguna otra celda ni en la base: alguien apuntó
+  // el total sin desglosarlo por meses. Poner ahí `=B5+…+M5`, con la aplicación
+  // escribiendo ceros en los meses porque no tiene movimientos, convierte el 3
+  // en un 0 y no queda rastro.
+  //
+  // Cuando no cuadra no se toca **nada de esa fila**: ni el total ni los meses.
+  // La fila se queda como la escribió quien la escribió y se dice en el parte,
+  // que es lo único honesto: el libro sabe algo que la aplicación no sabe.
+  const filasQueNoSeTocan = new Set<number>()
   for (const par of emparejadas) {
     for (const c of e.hoja.columnas) {
       if (c.dueno !== 'formula' || !c.formula) continue
       if (tieneFormula(par.leida, c.letra)) continue
+
+      const escrito = leer(par.celdas[c.letra] ?? null, 'numero')
+      const calculado = valorDeLaFormula(c, par.dato, e.hoja)
+      if (escrito.ok && escrito.valor !== null && calculado !== null && !iguales(escrito.valor, calculado)) {
+        filasQueNoSeTocan.add(par.fila)
+        plan.avisos.push(
+          `${c.letra}${par.fila} (${c.cabecera}): la hoja dice ${escrito.valor} escrito a mano y la fórmula daría ${calculado}. No se toca la fila: devolverle la fórmula convertiría ${escrito.valor} en ${calculado} y ese dato no está en ningún otro sitio.`,
+        )
+        continue
+      }
+
       plan.celdas.push({ celda: `${c.letra}${par.fila}`, valor: c.formula.replace(/\{f\}/g, String(par.fila)) })
       plan.avisos.push(
-        `${c.letra}${par.fila} (${c.cabecera}) llevaba un número escrito a mano encima de la fórmula: se le devuelve la fórmula.`,
+        `${c.letra}${par.fila} (${c.cabecera}) llevaba un número escrito a mano encima de la fórmula: se le devuelve la fórmula, que da lo mismo.`,
       )
     }
+  }
+
+  // Y de esas filas no se escribe ninguna celda, ni los meses: rellenar los doce
+  // meses con ceros al lado de un total escrito a mano es afirmar que no hubo
+  // consumo ningún mes, que es justo lo contrario de lo que dice el total.
+  if (filasQueNoSeTocan.size > 0) {
+    plan.celdas = plan.celdas.filter((cambio) => {
+      const fila = Number(/\d+$/.exec(cambio.celda)?.[0] ?? 0)
+      return !filasQueNoSeTocan.has(fila)
+    })
   }
 
   const enLaHoja = new Set(emparejadas.map((p) => p.dato.id))
