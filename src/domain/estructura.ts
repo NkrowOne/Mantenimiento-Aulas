@@ -583,3 +583,81 @@ export function columnaDe(ref: string): number {
 export function celda(columna: number, fila: number): string {
   return `${numeroAColumna(columna)}${fila}`
 }
+
+// -----------------------------------------------------------------------------
+// Columnas escondidas
+// -----------------------------------------------------------------------------
+
+/**
+ * Enseña las columnas en las que se acaba de escribir.
+ *
+ * En la hoja `Bolsa 2026` las columnas `B` y `C` —enero y febrero— están
+ * **ocultas**. Mientras estuvieron vacías daba igual; en cuanto la
+ * sincronización reparte ahí el consumo del año, el resultado es peor que no
+ * escribirlo: `Total Instalado` es `=B+C+D+…+M`, así que los meses escondidos
+ * **suman** y quien abra la hoja ve un total que no cuadra con ninguno de los
+ * números que tiene delante. Un descuadre invisible es exactamente lo que esta
+ * sincronización existe para quitar.
+ *
+ * Así que si hay dato, se enseña. Solo las columnas que reciben algo: las que
+ * alguien escondió y siguen vacías se quedan como estaban.
+ */
+export function mostrarColumnas(xml: string, columnas: Set<string>): string {
+  if (columnas.size === 0) return xml
+  const numeros = new Set([...columnas].map((c) => columnaANumero(c)))
+
+  return xml.replace(/<cols\b[^>]*>([\s\S]*?)<\/cols>/, (todo, interior: string) => {
+    let tocado = false
+    const salida: string[] = []
+
+    for (const m of interior.matchAll(/<col\b([^>]*?)\/>/g)) {
+      const attrs = m[1] ?? ''
+      const min = Number(/\bmin="(\d+)"/.exec(attrs)?.[1] ?? 0)
+      const max = Number(/\bmax="(\d+)"/.exec(attrs)?.[1] ?? 0)
+      const oculta = /\bhidden="(1|true)"/.test(attrs)
+
+      if (!oculta || !min || !max) {
+        salida.push(m[0])
+        continue
+      }
+
+      // Qué trozos de este rango hay que enseñar y cuáles se quedan.
+      const tramos: Array<{ desde: number; hasta: number; ver: boolean }> = []
+      for (let n = min; n <= max; n++) {
+        const ver = numeros.has(n)
+        const ultimo = tramos[tramos.length - 1]
+        if (ultimo && ultimo.ver === ver && ultimo.hasta === n - 1) ultimo.hasta = n
+        else tramos.push({ desde: n, hasta: n, ver })
+      }
+
+      if (tramos.every((t) => !t.ver)) {
+        salida.push(m[0])
+        continue
+      }
+      tocado = true
+
+      // Un rango que se parte conserva el resto de atributos —ancho, estilo— en
+      // los dos trozos: perderlos cambiaria el aspecto de columnas que nadie ha
+      // tocado.
+      for (const t of tramos) {
+        const base = attrs
+          .replace(/\bmin="\d+"/, `min="${t.desde}"`)
+          .replace(/\bmax="\d+"/, `max="${t.hasta}"`)
+        salida.push(`<col${t.ver ? base.replace(/\s*\bhidden="(?:1|true)"/, '') : base}/>`)
+      }
+    }
+
+    return tocado ? todo.replace(interior, salida.join('')) : todo
+  })
+}
+
+/** Las columnas en las que un lote de cambios escribe de verdad. */
+export function columnasEscritas(cambios: Cambio[]): Set<string> {
+  const out = new Set<string>()
+  for (const c of cambios) {
+    if (c.valor === null) continue
+    const m = /^([A-Z]+)\d+$/.exec(c.celda.toUpperCase())
+    if (m) out.add(m[1]!)
+  }
+  return out
+}

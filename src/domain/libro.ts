@@ -31,10 +31,12 @@
  */
 
 import {
+  columnasEscritas,
   corregirComentarios,
   corregirReferenciasExternas,
   corregirVml,
   editarHojaXml,
+  mostrarColumnas,
   planificar,
 } from './estructura'
 import type { EdicionDeFilas, MapaDeFilas } from './estructura'
@@ -130,11 +132,11 @@ export async function escribirLibro(
       xml = editarHojaXml(xml, ed.filas ?? {}, mapa)
     }
     if (celdas.length > 0) {
-      xml = parchearHojaXml(
-        xml,
-        celdas.map((c) => traducir(c, mapa)).filter((c) => c !== null),
-        await resolverEstiloDe(entradas, xml),
-      )
+      const traducidas = celdas.map((c) => traducir(c, mapa)).filter((c) => c !== null)
+      xml = parchearHojaXml(xml, traducidas, await resolverEstiloDe(entradas, xml))
+      // Si se escribe en una columna escondida, se enseña: un dato que suma en
+      // una fórmula y no se ve es un descuadre invisible.
+      xml = mostrarColumnas(xml, columnasEscritas(traducidas))
     }
     entradas[i] = await reemplazar(entradas[i]!, bytes(xml))
 

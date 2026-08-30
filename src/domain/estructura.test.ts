@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import {
+  columnasEscritas,
+  mostrarColumnas,
   corregirComentarios,
   corregirReferenciasExternas,
   corregirVml,
@@ -310,5 +312,49 @@ describe.skipIf(!libro)('sobre el libro real', () => {
     const declarada = Number(/<mergeCells\b[^>]*count="(\d+)"/.exec(out)![1])
     expect(declarada).toBe(cuantas)
     expect(out).toContain('<mergeCell ref="E68:E69"/>') // era E67:E68
+  })
+})
+
+describe('las columnas escondidas', () => {
+  const COLS =
+    '<worksheet><cols>' +
+    '<col min="1" max="1" width="60" customWidth="1"/>' +
+    '<col min="2" max="3" width="15" hidden="1" customWidth="1"/>' +
+    '<col min="8" max="8" width="15" hidden="1"/>' +
+    '</cols><sheetData/></worksheet>'
+
+  it('se enseñan las que reciben dato', () => {
+    // En «Bolsa 2026» enero y febrero están ocultas, y «Total Instalado» las
+    // suma: un dato ahí es un descuadre que no se ve.
+    const out = mostrarColumnas(COLS, new Set(['B', 'C']))
+    expect(out).toContain('<col min="2" max="3" width="15" customWidth="1"/>')
+    expect(out).toContain('<col min="8" max="8" width="15" hidden="1"/>')
+  })
+
+  it('un rango a medias se parte y cada mitad conserva su ancho', () => {
+    const out = mostrarColumnas(COLS, new Set(['B']))
+    expect(out).toContain('<col min="2" max="2" width="15" customWidth="1"/>')
+    expect(out).toContain('<col min="3" max="3" width="15" hidden="1" customWidth="1"/>')
+  })
+
+  it('las que nadie toca se quedan escondidas', () => {
+    expect(mostrarColumnas(COLS, new Set(['A']))).toBe(COLS)
+    expect(mostrarColumnas(COLS, new Set())).toBe(COLS)
+  })
+
+  it('una hoja sin bloque de columnas no cambia', () => {
+    const sinCols = '<worksheet><sheetData/></worksheet>'
+    expect(mostrarColumnas(sinCols, new Set(['B']))).toBe(sinCols)
+  })
+
+  it('solo cuentan las columnas donde se escribe de verdad', () => {
+    // `null` no toca la celda, así que tampoco destapa su columna.
+    expect(
+      columnasEscritas([
+        { celda: 'B2', valor: 3 },
+        { celda: 'C2', valor: null },
+        { celda: 'AA9', valor: 'x' },
+      ]),
+    ).toEqual(new Set(['B', 'AA']))
   })
 })
