@@ -179,14 +179,45 @@ export function fusionarCelda(c: Celda): Decision {
   // A partir de aquí los dos lados dicen cosas distintas.
 
   // Un lado vacío y el otro con dato no es un desacuerdo: es un hueco. Gana
-  // quien tiene el dato, siempre, y en los dos sentidos. Esto es lo que mete en
-  // la base los 190 números de serie del libro de revisión que nunca entraron, y
-  // lo que impide que la app borre una celda del Excel escribiendo un `null`
-  // encima —que además se llevaría el formato por delante.
+  // quien tiene el dato —nunca el vacío—, y eso es lo que mete en la base los
+  // 190 números de serie del libro de revisión que nunca entraron, y lo que
+  // impide que la app borre una celda del Excel escribiendo un `null` encima
+  // —que además se llevaría el formato por delante.
+  //
+  // Pero rellenar un hueco **hacia la base** es escribir en la base, y hay
+  // columnas donde eso no se puede hacer aunque la base esté vacía. Que la regla
+  // del hueco se mirara antes que el dueño no era un detalle: sobre este libro
+  // son 42 celdas mandando a la base, cada pasada, lo mismo que la anterior.
   if (vacio(c.base) !== vacio(c.excel)) {
-    return vacio(c.base)
-      ? { tipo: 'hacia_la_base', valor: c.excel, motivo: 'la base no tenía este dato' }
-      : { tipo: 'hacia_el_excel', valor: c.base, motivo: 'la celda estaba vacía' }
+    if (!vacio(c.base)) {
+      return { tipo: 'hacia_el_excel', valor: c.base, motivo: 'la celda estaba vacía' }
+    }
+
+    // La penúltima fecha de revisión de un aula, o el consumo de marzo. La base
+    // no los tiene porque **no puede** tenerlos escritos a mano: son el segundo
+    // elemento de un historial y la suma de unos movimientos. Mandarlos a la
+    // base los rechaza —22 aulas de este libro, en cada pasada, para siempre— y
+    // vaciar la celda perdería la única fecha que hay de esas revisiones. Así
+    // que se quedan como están, que es la respuesta honesta.
+    if (c.dueno === 'solo_app') {
+      return { tipo: 'sin_cambios' }
+    }
+
+    // Y en una columna que la app no edita, si ya se mandó una vez y la base
+    // sigue vacía, es que la base no lo guarda donde el volcado pueda
+    // devolverlo: el nombre alternativo de un artículo entra como alias y no
+    // vuelve. Mandarlo otra vez no lo guarda mejor; solo apunta una corrección
+    // más en `import_fixes`, veinte por pasada, hasta el fin de los tiempos.
+    //
+    // La guarda es solo para `solo_excel` a propósito. En una columna de las dos
+    // —un número de serie— que la base se haya quedado vacía sin que el Excel se
+    // moviera significa que alguien lo borró **en la app**, y eso no es lo mismo
+    // ni se decide aquí.
+    if (c.dueno === 'solo_excel' && c.antepasado !== undefined && iguales(c.excel, c.antepasado)) {
+      return { tipo: 'sin_cambios' }
+    }
+
+    return { tipo: 'hacia_la_base', valor: c.excel, motivo: 'la base no tenía este dato' }
   }
 
   // Columnas con un solo dueño: la dirección no se discute ni se mira el

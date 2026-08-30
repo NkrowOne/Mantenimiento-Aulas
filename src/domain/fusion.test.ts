@@ -57,6 +57,27 @@ describe('un hueco no es un desacuerdo', () => {
     expect(r).toMatchObject({ tipo: 'hacia_la_base' })
   })
 
+  it('la penúltima revisión no entra en la base aunque la base no la tenga', () => {
+    // Columna `solo_app`: la base no la tiene escrita a mano porque no puede
+    // —es el segundo elemento de un historial—, así que mandársela la rechaza.
+    // Y vaciar la celda perdería la única fecha que hay de esa revisión: 22
+    // aulas de este libro tienen la revisión en la columna de la anterior.
+    const r = fusionarCelda(celda({ dueno: 'solo_app', base: null, excel: '2024-09-02' }))
+    expect(r.tipo).toBe('sin_cambios')
+  })
+
+  it('una columna del Excel que ya se mandó y la base sigue sin devolver no se manda otra vez', () => {
+    // El nombre alternativo de un artículo entra como alias, y el volcado no
+    // trae los alias de vuelta: la base se ve vacía para siempre. Sin esto son
+    // veinte correcciones en `import_fixes` por pasada, todas iguales.
+    const c = { dueno: 'solo_excel' as const, base: null, excel: 'Cable Hdmi 3 metros' }
+    expect(fusionarCelda(celda(c)).tipo).toBe('hacia_la_base')
+    expect(fusionarCelda(celda({ ...c, antepasado: 'Cable Hdmi 3 metros' })).tipo).toBe('sin_cambios')
+    // Pero si alguien la corrige en la hoja, esa sí es nueva y sí va.
+    expect(fusionarCelda(celda({ ...c, excel: 'Cable HDMI 3 m', antepasado: 'Cable Hdmi 3 metros' })))
+      .toMatchObject({ tipo: 'hacia_la_base', valor: 'Cable HDMI 3 m' })
+  })
+
   it('la celda estaba vacía y la app sí sabe: se rellena', () => {
     const r = fusionarCelda(celda({ base: 'BENQ', excel: '   ', antepasado: '' }))
     expect(r).toMatchObject({ tipo: 'hacia_el_excel', valor: 'BENQ' })

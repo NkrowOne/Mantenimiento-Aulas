@@ -152,13 +152,21 @@ create trigger incidents_ref
   before insert on incidents
   for each row execute function public.poner_ref_incidencia();
 
--- Un número repetido rompería el cruce con la hoja en silencio: dos filas del
--- libro apuntando a la misma incidencia, o al revés. Se cierra con un índice.
-create unique index if not exists incidents_external_ref_idx
+-- Un índice para buscar por número, y **no único**: el histórico repite refs a
+-- propósito. Lo dice el propio importador —«el id sale de la clave de
+-- deduplicación completa, no del nº de incidencia: el histórico repite refs»— y
+-- el libro lo confirma con `I260203_0051` dos veces en la hoja de 2026. Son una
+-- incidencia que afectó a dos aulas y se apuntó en dos renglones.
+--
+-- Un índice único aquí no protege de nada: falla al aplicarse sobre la base de
+-- verdad y deja el despliegue a medias. Lo que sí hace falta —que una ref
+-- ambigua no se aplique a ciegas— se resuelve donde se puede explicar, en
+-- `sync_celda_de_incidencia`.
+create index if not exists incidents_external_ref_idx
   on incidents (external_ref) where external_ref is not null;
 
 comment on index incidents_external_ref_idx is
-  'El número de incidencia es la identidad de fila de las hojas «Material Instalado»: repetido, el cruce falla sin avisar.';
+  'Para buscar por número de incidencia. NO es único: el histórico repite refs y el importador lo da por bueno desde el principio.';
 
 -- Las que ya están sin número: se les pone uno con la fecha en que se abrieron,
 -- que es lo que las coloca en la hoja del año que les toca.

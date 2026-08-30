@@ -1,4 +1,26 @@
-/* Harness de ida y vuelta / idempotencia. Temporal. */
+/**
+ * Ida y vuelta: la segunda pasada seguida no escribe nada.
+ *
+ * Es la única prueba que corre sobre el libro de verdad, y por eso hace falta
+ * darle uno: `LIBRO_XLSX=…/Material_Aulas.xlsx npm test`. Sin esa variable se
+ * salta, porque el libro no está en el repositorio —lleva dentro el parque
+ * entero con nombres y números de serie— y una prueba que exige un fichero que
+ * nadie tiene es una prueba roja para todo el mundo.
+ *
+ * Lo que comprueba es lo que más cuesta ver a ojo: sincronizar dos veces
+ * seguidas contra los mismos datos tiene que dejar el libro quieto la segunda.
+ * Si la segunda pasada escribe una sola celda, hay un valor que va y vuelve
+ * —una fecha que se lee distinta de como se escribe, un blanco arrastrado que
+ * se confunde con un hueco— y a la décima pasada el libro es otro. Encontró
+ * cuatro así, y son cuatro que ninguna prueba de unidad iba a encontrar: las
+ * cuatro necesitaban las 276 filas reales.
+ *
+ * `SALIDA=…/algo` guarda los dos ficheros para mirarlos con Excel cuando falla.
+ *
+ * Ojo con lo que NO dice: idempotente no quiere decir correcto. Un destrozo
+ * estable pasa esta prueba tan campante —las fórmulas escritas como texto la
+ * pasaban—, así que esto descarta el vaivén, no el estropicio.
+ */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
@@ -14,8 +36,8 @@ import type { ArticuloVolcado, IncidenciaVolcada, SalaVolcada, EquipoVolcado } f
 import { escribir as escribirPasada } from '@/features/admin/pasada'
 import { construirIndice } from '@/domain/cruce'
 
-const RUTA = process.env.LIBRO_XLSX!
-const SALIDA = process.env.SALIDA ?? '/tmp/salida'
+const RUTA = process.env.LIBRO_XLSX
+const SALIDA = process.env.SALIDA
 
 function txt(v: ValorCelda | undefined): string {
   if (v === null || v === undefined) return ''
@@ -236,7 +258,7 @@ function instantaneaDe(planes: Plan[], comoTexto: boolean): Instantanea {
   }
 }
 
-const datosPasada = (planes: Plan[]) => ({
+const datosPasada = (_planes: Plan[]) => ({
   revisiones: [
     {
       shortRef: 'SALA-000001',
@@ -282,64 +304,41 @@ const datosPasada = (planes: Plan[]) => ({
   ],
 })
 
-describe('ida y vuelta', () => {
-  it('segunda pasada sobre el fichero que salió de la primera', async () => {
-    const bytes0 = new Uint8Array(readFileSync(RUTA))
+describe.skipIf(!RUTA)('ida y vuelta', () => {
+  it('la segunda pasada seguida no escribe nada', async () => {
+    const bytes0 = new Uint8Array(readFileSync(RUTA!))
     const libro0 = await abrirLibro(bytes0)
     const datos = datosDelLibro(
       await leerHoja(libro0, ESTADO.nombre),
       await leerHoja(libro0, MATERIAL_2026.nombre),
       await leerHoja(libro0, BOLSA_2026.nombre),
     )
-    console.log('columnaRef =', datos.columnaRef, 'salas', datos.salas.length, 'inc', datos.incidencias.length, 'art', datos.articulos.length)
 
-    // ---- Pasada 1
+    // ---- Pasada 1: la que pone el libro al día. Escribe, y tiene que escribir.
     const p1 = await pasada(bytes0, datos, () => undefined)
-    for (const p of p1.planes) {
-      const pc = new Map<string, number>()
-      for (const c of p.celdas) { const l=/^([A-Z]+)/.exec(c.celda)![1]!; pc.set(l,(pc.get(l)??0)+1) }
-      if (p.celdas.length) console.log('   P1 por columna:', JSON.stringify(Object.fromEntries(pc)))
-      console.log(`P1 ${p.hoja}: celdas=${p.celdas.length} ins=${p.insertar.length} bor=${p.borrar.length} base=${p.haciaLaBase.length} conf=${p.conflictos.length} cuar=${p.cuarentena.length} sinCruzar=${p.sinCruzar.length} desaj=${p.desajustes.length}`)
-      if (p.desajustes.length) console.log('   desajustes', p.desajustes)
-    }
-    const a1: any = {
-      libro: p1.libro,
-      planes: p1.planes,
-      hojasNuevas: [],
-      datos: datosPasada(p1.planes),
-    }
+    const a1: any = { libro: p1.libro, planes: p1.planes, hojasNuevas: [], datos: datosPasada(p1.planes) }
     const bytes1 = await escribirPasada(a1, '2026-08-30 10:00')
-    writeFileSync(`${SALIDA}-1.xlsx`, bytes1)
-    console.log('escrito 1:', bytes1.length)
+    if (SALIDA) writeFileSync(`${SALIDA}-1.xlsx`, bytes1)
 
-    // ---- Pasada 2 sobre el resultado, mismos datos, instantánea de la 1
-    const inst = instantaneaDe(p1.planes, true)
-    const p2 = await pasada(bytes1, datos, inst)
+    // ---- Pasada 2 sobre lo que salió de la 1, con los mismos datos y la
+    // instantánea que dejó. Aquí no queda nada que hacer.
+    const p2 = await pasada(bytes1, datos, instantaneaDe(p1.planes, true))
+
+    // Lo que se escribiría en la segunda, celda a celda y con su porqué: si
+    // esto falla, lo primero que hace falta es saber QUÉ va y vuelve.
+    const vaivenes: string[] = []
     for (const p of p2.planes) {
-      console.log(`P2 ${p.hoja}: celdas=${p.celdas.length} ins=${p.insertar.length} bor=${p.borrar.length} base=${p.haciaLaBase.length} conf=${p.conflictos.length} cuar=${p.cuarentena.length} sinCruzar=${p.sinCruzar.length}`)
-      const porCol = new Map<string, number>()
-      for (const c of p.celdas) {
-        const l = /^([A-Z]+)/.exec(c.celda)![1]!
-        porCol.set(l, (porCol.get(l) ?? 0) + 1)
-      }
-      if (p.celdas.length) console.log('   por columna:', JSON.stringify(Object.fromEntries(porCol)))
-      for (const c of p.celdas.slice(0, 6)) console.log('   ej escribe', c.celda, JSON.stringify(c.valor))
-      for (const c of p.conflictos.slice(0, 15)) console.log('   CONFLICTO', c.letra + c.fila, c.campo, 'base=', JSON.stringify(c.base), 'excel=', JSON.stringify(c.excel), 'ant=', JSON.stringify(c.antepasado))
-      const porCampo = new Map<string, number>()
-      for (const c of p.haciaLaBase) porCampo.set(c.campo, (porCampo.get(c.campo) ?? 0) + 1)
-      if (p.haciaLaBase.length) console.log('   a la base por campo:', JSON.stringify(Object.fromEntries(porCampo)))
+      for (const c of p.celdas) vaivenes.push(`${p.hoja}!${c.celda} ← ${JSON.stringify(c.valor)}`)
+      for (const c of p.insertar) vaivenes.push(`${p.hoja} inserta una fila tras la ${c.tras}`)
+      for (const f of p.borrar) vaivenes.push(`${p.hoja} borra la fila ${f}`)
+      for (const c of p.haciaLaBase) vaivenes.push(`${p.hoja} a la base: ${c.destino} ${c.campo} = ${JSON.stringify(c.valor)}`)
     }
+    expect(vaivenes.slice(0, 400)).toEqual([])
 
-    // ---- El fichero de la segunda pasada
-    const a2: any = {
-      libro: p2.libro,
-      planes: p2.planes,
-      hojasNuevas: [],
-      datos: datosPasada(p2.planes),
+    // Y el fichero de la segunda, para poder compararlos cuando haga falta.
+    if (SALIDA) {
+      const a2: any = { libro: p2.libro, planes: p2.planes, hojasNuevas: [], datos: datosPasada(p2.planes) }
+      writeFileSync(`${SALIDA}-2.xlsx`, await escribirPasada(a2, '2026-08-30 11:00'))
     }
-    const bytes2 = await escribirPasada(a2, '2026-08-30 11:00')
-    writeFileSync(`${SALIDA}-2.xlsx`, bytes2)
-    console.log('escrito 2:', bytes2.length)
-    expect(true).toBe(true)
   }, 300_000)
 })

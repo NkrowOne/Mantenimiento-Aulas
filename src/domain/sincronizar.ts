@@ -210,9 +210,26 @@ function fusionarFilas<T>(
     const base = valoresDeLaApp(par.dato)
 
     for (const c of op.hoja.columnas) {
-      // De una hoja congelada solo interesa lo que puede venir de ella hacia la
-      // base. El resto de columnas ni se miran.
-      if (op.hoja.congelada && c.dueno !== 'solo_excel') continue
+      // Una hoja congelada no escribe en la base. Ni una celda.
+      //
+      // Aquí antes se dejaban pasar las columnas `solo_excel`, con la idea de
+      // sembrar en la base lo que 2025 sabía y la aplicación no. La idea era
+      // buena y el sitio, el peor posible, porque una celda no lleva fecha:
+      //
+      //  - `Comprado` entra como un movimiento de compra fechado **hoy**. Las
+      //    compras de 2025 aparecían en 2026, y el cuadre del año vivo las
+      //    volvía a restar. Dos hojas peleándose por el mismo saldo.
+      //  - Los meses (`mes:3`) no tienen dónde entrar: el consumo son
+      //    movimientos, no un número por casilla. Iban a cuarentena.
+      //  - Y ninguna de las dos se calla nunca: la base no las devuelve como
+      //    están escritas, así que la pasada siguiente vuelve a mandarlas. Sobre
+      //    este libro son 65 celdas por pasada, para siempre.
+      //
+      // Un cierre ya rendido entra por donde entran las cosas con fecha, que es
+      // `scripts/import-excel.ts`, y una vez. Aquí se lee —para los alias, para
+      // el saldo de apertura de 2026 y para saber qué artículos existían— y no
+      // se toca nada.
+      if (op.hoja.congelada) continue
 
       const crudo = par.celdas[c.letra] ?? null
       const lectura = leer(crudo, c.tipo)
@@ -243,7 +260,7 @@ function fusionarFilas<T>(
         c,
         decision,
         lectura.valor,
-        op.hoja.congelada === true || par.noEscribir?.has(c.letra) === true,
+        par.noEscribir?.has(c.letra) === true,
       )
     }
   }
@@ -265,11 +282,12 @@ function repartir<T>(
 
     case 'hacia_el_excel': {
       // Hay celdas que se comparan y no se escriben, y aquí es donde hay que
-      // pararlo: la regla del hueco —gana quien tiene el dato— dispara antes que
-      // la del dueño, así que una celda vacía con la aplicación teniendo dato
-      // acaba proponiendo una escritura. Pasa en tres sitios: un cierre ya
-      // rendido («Bolsa 2025», 137 celdas), el blanco de una columna arrastrada,
-      // y la mitad escondida de una celda combinada.
+      // pararlo: la regla del hueco —gana quien tiene el dato— dispara antes
+      // que la del dueño en la dirección que rellena, así que una celda vacía
+      // con la aplicación teniendo dato acaba proponiendo una escritura. Pasa
+      // en dos sitios: el blanco de una columna arrastrada (el edificio no se
+      // repite en cada fila, y ese hueco es tipografía, no un dato que falte) y
+      // la mitad escondida de una celda combinada.
       if (soloLectura) {
         plan.instantanea.push({ clave: par.clave, fila: par.fila, letra: c.letra, valor: excel })
         return

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { BOLSA_2026, ESTADO, MATERIAL_2026, MATERIAL_2025 } from './mapa'
+import { BOLSA_2025, BOLSA_2026, ESTADO, MATERIAL_2026, MATERIAL_2025 } from './mapa'
 import { construirIndice } from './cruce'
 import type { Catalogo } from './cruce'
 import {
@@ -479,6 +479,27 @@ describe('la hoja de partes', () => {
       incidencias: [incidencia()],
     })
     expect(p.celdas).toEqual([])
+  })
+
+  it('una hoja congelada tampoco escribe en la base: ni comprado, ni meses', () => {
+    // Es la dirección que faltaba. «Bolsa 2025» tiene sus columnas en
+    // `solo_excel` y se dejaban pasar hacia la base para sembrar lo que 2025
+    // sabía y la aplicación no. Pero una celda no lleva fecha: `Comprado` de
+    // 2025 entraba como una compra fechada hoy, los meses no tienen dónde
+    // entrar, y ninguno de los dos se calla nunca porque la base no los
+    // devuelve como están escritos. Sobre el libro real eran 65 celdas por
+    // pasada, para siempre.
+    const cab = fila(1, Object.fromEntries(BOLSA_2025.columnas.map((c) => [c.letra, c.cabecera])))
+    const art = articulo({ nombre: 'Cable HDMI fibra 10 m', meses: [9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], comprado: 4 })
+    const p = sincronizarBolsa({
+      hoja: BOLSA_2025,
+      filas: [cab, fila(2, { A: 'Cable HDMI fibra 10 m', B: 3, W: 40 })],
+      articulos: [art],
+      resolver: () => art.id,
+    })
+    expect(p.haciaLaBase).toEqual([])
+    expect(p.celdas).toEqual([])
+    expect(p.cuarentena).toEqual([])
   })
 
   it('la hoja de 2025 está congelada: se lee y no se escribe', () => {
