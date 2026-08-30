@@ -336,6 +336,24 @@ function repartir<T>(
   }
 }
 
+/**
+ * El antepasado de una celda que se acaba de escribir en una fila nueva.
+ *
+ * Sin esto, una fila insertada llegaba a la pasada siguiente **sin antepasado**,
+ * y sin antepasado manda la app: si alguien corrigió a mano una celda de esa
+ * fila entre las dos pasadas, su corrección se sobrescribía sin decir nada. Con
+ * el antepasado puesto, la pasada siguiente ve que el Excel se movió y la base
+ * no, que es exactamente lo que pasó, y la corrección entra.
+ *
+ * La fila va a `0` a propósito: esta celda no estaba en ninguna fila del libro
+ * que se leyó, y `claveDe` —que busca por número de fila para resolver a qué
+ * habla una corrección— solo pregunta por filas de verdad, de la 2 en adelante.
+ * Con el número que va a ocupar chocaría con la fila que hoy está ahí.
+ */
+function anotarCeldaNueva(plan: Plan, clave: string, letra: string, valor: Valor): void {
+  plan.instantanea.push({ clave, fila: 0, letra, valor })
+}
+
 // -----------------------------------------------------------------------------
 // Hoja de estado — una fila por sala
 // -----------------------------------------------------------------------------
@@ -574,14 +592,20 @@ function filasNuevasDeSalas(nuevas: SalaVolcada[], e: EntradaDeEstado, plan: Pla
     const destino = tras ?? ultima
     const celdas: Cambio[] = []
 
+    const valores = filaDeSala(sala, e.hoja)
     for (const c of e.hoja.columnas) {
       // Dentro de un bloque, el edificio y la planta van en blanco como en el
       // resto de la hoja: escribirlos en todas las filas cambiaría el aspecto
       // de un libro que la gente lee todos los días.
       if (c.campo === 'edificio' && !abreBloque) continue
-      const valor = escribir(filaDeSala(sala, e.hoja)[c.letra] ?? null, c.tipo)
+      const dato = valores[c.letra] ?? null
+      const valor = escribir(dato, c.tipo)
       if (valor === null) continue
       celdas.push({ celda: `${c.letra}${destino + 1}`, valor: valor as ValorCelda, ...formatoDe(c) })
+      // Solo de lo que se escribe: la columna del edificio que se deja en
+      // blanco dentro de un bloque no vale como antepasado, porque en la pasada
+      // siguiente esa celda se lee arrastrada del bloque y no vacía.
+      anotarCeldaNueva(plan, sala.shortRef, c.letra, dato)
     }
     celdas.push({ celda: `${e.columnaRef}${destino + 1}`, valor: sala.shortRef })
 
@@ -666,17 +690,18 @@ export function sincronizarPartes(e: EntradaDePartes): Plan {
     .filter((i) => !enLaHoja.has(i.id))
     .sort((a, b) => (a.abierta ?? '').localeCompare(b.abierta ?? '') || a.numero.localeCompare(b.numero))
 
-  plan.insertar = nuevos.map((inc) => ({
-    tras: ultima,
-    celdas: e.hoja.columnas
-      .map((c) => ({
-        celda: `${c.letra}${ultima + 1}`,
-        valor: escribir(filaDeIncidencia(inc, e.hoja)[c.letra] ?? null, c.tipo) as ValorCelda,
-        ...formatoDe(c),
-      }))
-      .filter((c) => c.valor !== null),
-    estiloDe: ultima,
-  }))
+  plan.insertar = nuevos.map((inc) => {
+    const valores = filaDeIncidencia(inc, e.hoja)
+    const celdas: Cambio[] = []
+    for (const c of e.hoja.columnas) {
+      const dato = valores[c.letra] ?? null
+      const valor = escribir(dato, c.tipo)
+      if (valor === null) continue
+      celdas.push({ celda: `${c.letra}${ultima + 1}`, valor: valor as ValorCelda, ...formatoDe(c) })
+      anotarCeldaNueva(plan, inc.numero, c.letra, dato)
+    }
+    return { tras: ultima, celdas, estiloDe: ultima }
+  })
   if (nuevos.length > 0) {
     plan.avisos.push(`${nuevos.length} partes de la aplicación que el libro no tenía se añaden al final.`)
   }
@@ -777,9 +802,11 @@ export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
         celdas.push({ celda: `${c.letra}${destino + 1}`, valor: c.formula.replace(/\{f\}/g, String(destino + 1)) })
         continue
       }
-      const valor = escribir(valores[c.letra] ?? null, c.tipo)
+      const dato = valores[c.letra] ?? null
+      const valor = escribir(dato, c.tipo)
       if (valor === null) continue
       celdas.push({ celda: `${c.letra}${destino + 1}`, valor: valor as ValorCelda, ...formatoDe(c) })
+      anotarCeldaNueva(plan, art.id, c.letra, dato)
     }
     return { tras: destino, celdas, estiloDe: destino }
   })

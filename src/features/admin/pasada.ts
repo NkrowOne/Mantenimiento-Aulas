@@ -55,6 +55,7 @@ import {
 } from '@/domain/sincronizar'
 import type { Instantanea, Plan, Resumen } from '@/domain/sincronizar'
 import { leerMaterial } from '@/domain/valores'
+import type { Valor } from '@/domain/valores'
 import { abrirLibro, celdasCombinadas, leerHoja } from '@/domain/xlsx'
 import type { Libro } from '@/domain/xlsx'
 import { datosDeLaPasada } from './datosDeLaPasada'
@@ -289,7 +290,7 @@ export async function aplicar(a: Analisis): Promise<Aplicado> {
         clave: c.clave,
         columna: c.letra,
         entidad: entidadDe(p.hoja),
-        valor: c.valor === null ? null : String(c.valor),
+        valor: paraLaInstantanea(c.valor),
       })),
     ),
     cuarentena: a.planes.flatMap((p) =>
@@ -357,6 +358,25 @@ function entidadDe(hoja: string): string {
   return h.identidad.tipo === 'incidencia' ? 'incidencia' : h.identidad.tipo === 'articulo' ? 'articulo' : 'sala'
 }
 
+/**
+ * Cómo se guarda un valor en la instantánea.
+ *
+ * `sync_celdas.valor_base` es `text`, así que todo pasa por una cadena. Y lo
+ * que vuelva de ahí se compara con `canonizar`, que de un booleano saca «SI»:
+ * guardar `String(true)` —«true»— hacía que el antepasado no coincidiera jamás
+ * con la celda, y entonces toda columna de sí/no donde la app y la hoja
+ * discreparan quedaba en **choque permanente**, porque los dos lados «habían
+ * cambiado» respecto a un antepasado que no era ninguno de los dos.
+ *
+ * Lo demás se guarda tal cual, sin canonizar: la bandeja de choques enseña este
+ * valor, y «CAMARA AVER» se lee peor que «Cámara Aver».
+ */
+export function paraLaInstantanea(valor: Valor): string | null {
+  if (valor === null) return null
+  if (typeof valor === 'boolean') return valor ? 'SI' : 'NO'
+  return String(valor)
+}
+
 /** La clave estable de una fila, buscada por su número dentro de un plan. */
 function claveDe(p: Plan, fila: number): string {
   return p.instantanea.find((c) => c.fila === fila)?.clave ?? ''
@@ -397,7 +417,9 @@ export async function escribir(a: Analisis, cuando: string, parteId?: number): P
     const otra = await abrirLibro(bytes)
     bytes = await escribirLibro(
       otra,
-      aRehacer.map((h) => rehacer(h)),
+      await Promise.all(
+        aRehacer.map(async (h) => rehacer(h, await ultimaFilaDe(otra, h.nombre))),
+      ),
       [],
     )
   }
@@ -417,6 +439,12 @@ export async function escribir(a: Analisis, cuando: string, parteId?: number): P
   return bytes
 }
 
+/** La última fila que existe en el XML de una hoja. Cero si solo hay cabecera. */
+async function ultimaFilaDe(libro: Libro, nombre: string): Promise<number> {
+  const filas = await leerHoja(libro, nombre)
+  return filas.reduce((max, f) => Math.max(max, f.fila), 0)
+}
+
 /**
  * Vaciar una hoja de detalle y volver a escribirla.
  *
@@ -425,13 +453,30 @@ export async function escribir(a: Analisis, cuando: string, parteId?: number): P
  * identidad de fila —un movimiento de almacén no tiene matrícula— así que
  * «cuál cambió» no es una pregunta que se pueda contestar. Y como nadie las
  * edita a mano, no hay nada que perder.
+ *
+ * El borrado es la mitad que faltaba, y sin él esto no vaciaba nada: insertaba.
+ * «Sincronización» pasaba de 336 filas a 671 en la segunda pasada y a 1.006 en
+ * la tercera, con el mismo contenido repetido, y el libro engordaba sin techo.
+ *
+ * `estiloDe: 2` es la otra mitad: una fila que entra detrás de la 1 hereda el
+ * estilo de la 1, que es la cabecera. Sin decirlo, la hoja entera salía en
+ * negrita y con el fondo del encabezado.
  */
-function rehacer(hoja: HojaNueva): EdicionDeHoja {
+function rehacer(hoja: HojaNueva, ultima: number): EdicionDeHoja {
+  const borrar: number[] = []
+  for (let f = 2; f <= ultima; f++) borrar.push(f)
+
   return {
     hoja: hoja.nombre,
     filas: {
+      borrar,
       insertar: hoja.filas.slice(1).map((valores) => ({
         tras: 1,
+        // La 2 de la hoja de antes: se lee de la copia original de estilos, que
+        // se saca antes de borrar nada, así que sigue estando aunque se borre.
+        // Si la hoja venía solo con cabecera no hay de dónde copiar y se queda
+        // con el de la 1, que es lo que hacía siempre.
+        ...(ultima >= 2 ? { estiloDe: 2 } : {}),
         celdas: valores
           .map((v, i) => ({ celda: `${letra(i + 1)}2`, valor: v }))
           .filter((c) => c.valor !== null),

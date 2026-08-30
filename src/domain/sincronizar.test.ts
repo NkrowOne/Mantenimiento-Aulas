@@ -481,6 +481,27 @@ describe('la hoja de partes', () => {
     expect(p.celdas).toEqual([])
   })
 
+  it('una fila insertada deja antepasado, para que mañana no se pise una corrección', () => {
+    // Sin antepasado manda la app, así que si alguien corrige a mano una celda
+    // de la fila recién insertada, la pasada siguiente se la comía sin decir
+    // nada. Con el antepasado puesto, esa pasada ve que el Excel se movió y la
+    // base no, y la corrección entra.
+    const cab = fila(1, Object.fromEntries(MATERIAL_2026.columnas.map((c) => [c.letra, c.cabecera])))
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [cab],
+      incidencias: [incidencia({ numero: 'I260315_0011', problema: 'No enciende' })],
+    })
+    expect(p.insertar).toHaveLength(1)
+
+    const suyas = p.instantanea.filter((c) => c.clave === 'I260315_0011')
+    expect(suyas.length).toBeGreaterThan(0)
+    expect(suyas).toContainEqual({ clave: 'I260315_0011', fila: 0, letra: 'E', valor: 'No enciende' })
+    // La fila va a cero: no estaba en ninguna del libro que se leyó, y `claveDe`
+    // busca por número de fila para resolver a qué habla una corrección.
+    expect(suyas.every((c) => c.fila === 0)).toBe(true)
+  })
+
   it('una hoja congelada tampoco escribe en la base: ni comprado, ni meses', () => {
     // Es la dirección que faltaba. «Bolsa 2025» tiene sus columnas en
     // `solo_excel` y se dejaban pasar hacia la base para sembrar lo que 2025

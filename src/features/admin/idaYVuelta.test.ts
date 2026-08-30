@@ -33,7 +33,7 @@ import type { Valor } from '@/domain/valores'
 import { sincronizarBolsa, sincronizarEstado, sincronizarPartes } from '@/domain/sincronizar'
 import type { Instantanea, Plan } from '@/domain/sincronizar'
 import type { ArticuloVolcado, IncidenciaVolcada, SalaVolcada, EquipoVolcado } from '@/domain/volcado'
-import { escribir as escribirPasada } from '@/features/admin/pasada'
+import { escribir as escribirPasada, paraLaInstantanea } from '@/features/admin/pasada'
 import { construirIndice } from '@/domain/cruce'
 
 const RUTA = process.env.LIBRO_XLSX
@@ -238,12 +238,15 @@ async function pasada(bytes: Uint8Array, datos: Datos, inst: Instantanea): Promi
   return { planes, libro }
 }
 
-function instantaneaDe(planes: Plan[], comoTexto: boolean): Instantanea {
+function instantaneaDe(planes: Plan[]): Instantanea {
   const mapa = new Map<string, Valor>()
   for (const p of planes) {
     for (const c of p.instantanea) {
-      const v = comoTexto ? (c.valor === null ? null : String(c.valor)) : c.valor
-      mapa.set(`${p.hoja}!${c.clave}!${c.letra}`, v)
+      // Por la misma función que la de verdad, y no por una copia: la
+      // instantánea de producción va y vuelve por una columna `text`, y toda la
+      // gracia de esta prueba es pasar por donde se pasa. Una copia aquí es una
+      // copia que mañana no se entera de que la otra cambió.
+      mapa.set(`${p.hoja}!${c.clave}!${c.letra}`, paraLaInstantanea(c.valor))
     }
   }
   // La instantánea de producción NO lleva la hoja en la clave (sync_instantanea
@@ -322,7 +325,7 @@ describe.skipIf(!RUTA)('ida y vuelta', () => {
 
     // ---- Pasada 2 sobre lo que salió de la 1, con los mismos datos y la
     // instantánea que dejó. Aquí no queda nada que hacer.
-    const p2 = await pasada(bytes1, datos, instantaneaDe(p1.planes, true))
+    const p2 = await pasada(bytes1, datos, instantaneaDe(p1.planes))
 
     // Lo que se escribiría en la segunda, celda a celda y con su porqué: si
     // esto falla, lo primero que hace falta es saber QUÉ va y vuelve.
@@ -335,10 +338,24 @@ describe.skipIf(!RUTA)('ida y vuelta', () => {
     }
     expect(vaivenes.slice(0, 40)).toEqual([])
 
-    // Y el fichero de la segunda, para poder compararlos cuando haga falta.
-    if (SALIDA) {
-      const a2: any = { libro: p2.libro, planes: p2.planes, hojasNuevas: [], datos: datosPasada(p2.planes) }
-      writeFileSync(`${SALIDA}-2.xlsx`, await escribirPasada(a2, '2026-08-30 11:00'))
-    }
+    // Y el libro que sale de la segunda tiene que tener la misma forma que el
+    // de la primera. No basta con que el plan esté vacío: las cuatro hojas de
+    // detalle no van por el plan —se rehacen enteras cada pasada— así que un
+    // fallo ahí no aparece en ninguna celda propuesta. Y hubo uno: se
+    // insertaban las filas nuevas sin borrar las viejas, y «Sincronización»
+    // pasaba de 336 filas a 671 y a 1.006, con el mismo contenido repetido.
+    const a2: any = { libro: p2.libro, planes: p2.planes, hojasNuevas: [], datos: datosPasada(p2.planes) }
+    const bytes2 = await escribirPasada(a2, '2026-08-30 11:00')
+    if (SALIDA) writeFileSync(`${SALIDA}-2.xlsx`, bytes2)
+
+    expect(await formaDe(bytes2)).toEqual(await formaDe(bytes1))
   }, 300_000)
 })
+
+/** Cuántas filas tiene cada hoja del libro. La forma, no el contenido. */
+async function formaDe(bytes: Uint8Array): Promise<Record<string, number>> {
+  const libro = await abrirLibro(bytes)
+  const out: Record<string, number> = {}
+  for (const h of libro.hojas) out[h.nombre] = (await leerHoja(libro, h.nombre)).length
+  return out
+}
