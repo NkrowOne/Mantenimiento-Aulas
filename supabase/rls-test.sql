@@ -3112,3 +3112,78 @@ begin;
     end;
   end $$;
 rollback;
+
+\echo ''
+\echo '=== 11. La sincronización no la ejecuta un anónimo ==='
+-- `alter default privileges … to anon, authenticated` del bootstrap hace que
+-- toda función nazca ejecutable por anónimos, y `revoke … from public` no se lo
+-- quita: ese permiso está a nombre de `anon`, no de `PUBLIC`. Con las funciones
+-- de la sincronización eso significaba escritura completa sin sesión, porque son
+-- `security definer` y se saltan la RLS entera.
+--
+-- Esto no comprueba que el SQL compile: comprueba que **deniega**. Si alguien
+-- añade una función hermana y se olvida del `revoke`, salta aquí.
+begin;
+  do $$
+  declare
+    f text;
+    quien text;
+    fallos int := 0;
+  begin
+    -- Ninguna de las de dentro puede tener permiso para nadie salvo el dueño.
+    for f, quien in
+      select p.proname, a.grantee::regrole::text
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join lateral aclexplode(p.proacl) a
+       where n.nspname = 'public'
+         and p.proname in (
+           'sync_aplicar_celda', 'sync_celda_de_sala', 'sync_celda_de_articulo',
+           'sync_celda_de_incidencia', 'sync_material_del_parte', 'sync_aplicar_equipo',
+           'sync_mover_sala', 'sync_revision_desde_el_excel', 'cuarentena_apuntar',
+           'sync_solo_admin')
+         and a.grantee::regrole::text in ('anon', 'authenticated', 'public', '-')
+    loop
+      raise warning 'FALLO: % la puede ejecutar %', f, quien;
+      fallos := fallos + 1;
+    end loop;
+
+    -- Y ninguna de las de fuera puede ser ejecutable por un anónimo.
+    for f, quien in
+      select p.proname, a.grantee::regrole::text
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join lateral aclexplode(p.proacl) a
+       where n.nspname = 'public'
+         and p.proname in (
+           'sync_aplicar', 'sync_registrar_fichero', 'sync_instantanea',
+           'sync_ultima_salida', 'sync_apuntar_salida')
+         and a.grantee::regrole::text in ('anon', 'public', '-')
+    loop
+      raise warning 'FALLO: % la puede ejecutar %', f, quien;
+      fallos := fallos + 1;
+    end loop;
+
+    if fallos > 0 then
+      raise exception 'FALLO: % permisos de sincronización abiertos de más', fallos;
+    end if;
+    raise notice 'OK: las funciones de la sincronización no las alcanza un anónimo';
+  end $$;
+
+  -- Y que un técnico no pase, por el camino que sea. Las dos barreras valen: si
+  -- el permiso está bien puesto salta el «permission denied», y si algún día se
+  -- pierde salta la comprobación de dentro. Lo que no vale es que pase.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.sync_solo_admin();
+    raise exception 'FALLO: un técnico pasó la comprobación de administrador';
+  exception when others then
+    if sqlerrm like '%administrador%' or sqlerrm like '%permission denied%'
+       or sqlerrm like '%permiso denegado%' then
+      raise notice 'OK: a un técnico se le deniega (%)', left(sqlerrm, 40);
+    else
+      raise;
+    end if;
+  end $$;
+rollback;
