@@ -1,0 +1,314 @@
+import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import {
+  corregirComentarios,
+  corregirReferenciasExternas,
+  corregirVml,
+  editarHojaXml,
+  planificar,
+  remapearFormula,
+  remapearRango,
+  remapearSqref,
+} from './estructura'
+import { abrirLibro, leerHoja } from './xlsx'
+import { descomprimir } from '../lib/zip'
+
+const LIBRO = process.env.LIBRO_XLSX
+const libro = LIBRO ? readFileSync(LIBRO) : null
+
+describe('el plan de filas', () => {
+  it('sin nada que hacer no mueve nada', () => {
+    const m = planificar({})
+    expect(m.vacio).toBe(true)
+    expect(m.nuevo(87)).toBe(87)
+  })
+
+  it('insertar empuja hacia abajo lo que viene después', () => {
+    const m = planificar({ insertar: [{ tras: 10, celdas: [] }] })
+    expect(m.nuevo(10)).toBe(10)
+    expect(m.nuevo(11)).toBe(12)
+    expect(m.insertadas).toEqual([11])
+  })
+
+  it('borrar sube lo que venía después', () => {
+    const m = planificar({ borrar: [10] })
+    expect(m.nuevo(9)).toBe(9)
+    expect(m.nuevo(10)).toBeNull()
+    expect(m.nuevo(11)).toBe(10)
+  })
+
+  it('varias filas detrás de la misma quedan seguidas y en orden', () => {
+    const m = planificar({
+      insertar: [
+        { tras: 5, celdas: [] },
+        { tras: 5, celdas: [] },
+        { tras: 5, celdas: [] },
+      ],
+    })
+    expect(m.insertadas).toEqual([6, 7, 8])
+    expect(m.nuevo(6)).toBe(9)
+  })
+
+  it('insertar y borrar a la vez se compensan', () => {
+    const m = planificar({ borrar: [3], insertar: [{ tras: 10, celdas: [] }] })
+    expect(m.nuevo(2)).toBe(2)
+    expect(m.nuevo(4)).toBe(3)
+    expect(m.nuevo(10)).toBe(9)
+    expect(m.nuevo(11)).toBe(11)
+    expect(m.insertadas).toEqual([10])
+  })
+
+  it('las filas que no están en el fichero también se mueven', () => {
+    // Una hoja llega hasta la 1.048.576 aunque el XML solo traiga 400 filas.
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    expect(m.nuevo(1_000_000)).toBe(1_000_001)
+  })
+
+  it('insertar detrás de una fila que se borra no significa nada', () => {
+    expect(() => planificar({ borrar: [7], insertar: [{ tras: 7, celdas: [] }] })).toThrow(
+      /no se puede saber dónde va/,
+    )
+  })
+
+  it('hacia abajo y hacia arriba saltan los huecos', () => {
+    const m = planificar({ borrar: [5, 6, 7] })
+    expect(m.haciaAbajo(5)).toBe(5) // la 8, que ahora es la 5
+    expect(m.haciaArriba(7)).toBe(4)
+  })
+})
+
+describe('los rangos', () => {
+  it('mueven los dos extremos', () => {
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    expect(remapearRango('A1:X416', m)).toBe('A1:X417')
+  })
+
+  it('el principio busca hacia abajo y el final hacia arriba', () => {
+    const m = planificar({ borrar: [10, 20] })
+    expect(remapearRango('A10:X20', m)).toBe('A10:X18')
+  })
+
+  it('un rango que se queda sin filas desaparece', () => {
+    const m = planificar({ borrar: [5] })
+    expect(remapearRango('G5:G5', m)).toBeNull()
+    expect(remapearRango('G5', m)).toBeNull()
+  })
+
+  it('las columnas enteras no tienen filas que mover', () => {
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    expect(remapearRango('G:G', m)).toBe('G:G')
+  })
+
+  it('respeta el dólar al escribirlo de vuelta', () => {
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    expect(remapearRango('$A$5:$A$9', m)).toBe('$A$5:$A$9'.replace(/5/, '6').replace(/9/, '10'))
+  })
+
+  it('un sqref con huecos mantiene los huecos', () => {
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    expect(remapearSqref('G1:G106 G111:G114 G310:G1048576', m)).toBe(
+      'G1:G107 G112:G115 G311:G1048576',
+    )
+  })
+
+  it('no se pasa del final de la hoja', () => {
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    expect(remapearSqref('G310:G1048576', m)).toBe('G311:G1048576')
+  })
+})
+
+describe('las fórmulas', () => {
+  it('mueven las referencias', () => {
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    expect(remapearFormula('P5-N5', m)).toBe('P6-N6')
+    expect(remapearFormula('SUM(B2:M2)', m)).toBe('SUM(B3:M3)')
+  })
+
+  it('el dólar no protege de una inserción, igual que en Excel', () => {
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    expect(remapearFormula('$P$5-$N$5', m)).toBe('$P$6-$N$6')
+  })
+
+  it('una referencia a una fila borrada se convierte en #REF!', () => {
+    const m = planificar({ borrar: [5] })
+    expect(remapearFormula('P5-N4', m)).toBe('#REF!-N4')
+  })
+
+  it('no toca lo que va entre comillas', () => {
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    expect(remapearFormula('IF(A2="B2",A2,"")', m)).toBe('IF(A3="B2",A3,"")')
+  })
+
+  it('no confunde un nombre de función con una referencia', () => {
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    expect(remapearFormula('LOG10(A2)', m)).toBe('LOG10(A3)')
+    expect(remapearFormula('SUM(A2)', m)).toBe('SUM(A3)')
+  })
+
+  it('deja en paz el nombre de otra hoja entre apóstrofos', () => {
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    expect(remapearFormula("'Bolsa 2026'!N5", m)).toBe("'Bolsa 2026'!N6")
+  })
+})
+
+// Una hoja con las formas que de verdad trae este libro: fusiones, autofiltro,
+// formato condicional con huecos, panel inmovilizado y una fórmula.
+const HOJA =
+  `<?xml version="1.0"?><worksheet><dimension ref="A1:Q10"/>` +
+  `<sheetViews><sheetView><pane ySplit="1" topLeftCell="A2" state="frozen"/>` +
+  `<selection pane="bottomLeft" activeCell="A5" sqref="A5"/></sheetView></sheetViews>` +
+  `<sheetData>` +
+  `<row r="1"><c r="A1" s="3" t="inlineStr"><is><t>Cabecera</t></is></c></row>` +
+  `<row r="2" ht="15"><c r="A2" s="7" t="inlineStr"><is><t>uno</t></is></c><c r="N2" s="9"><f>SUM(B2:M2)</f><v>0</v></c></row>` +
+  `<row r="3"><c r="A3" s="7" t="inlineStr"><is><t>dos</t></is></c><c r="N3" s="9"><f>SUM(B3:M3)</f><v>0</v></c></row>` +
+  `<row r="4"/>` +
+  `</sheetData>` +
+  `<autoFilter ref="A1:Q10"/>` +
+  `<mergeCells count="2"><mergeCell ref="A2:A3"/><mergeCell ref="B2:B3"/></mergeCells>` +
+  `<conditionalFormatting sqref="G1:G2 G4:G10"><cfRule type="colorScale" priority="1"/></conditionalFormatting>` +
+  `</worksheet>`
+
+describe('editar una hoja', () => {
+  it('inserta una fila con el estilo de su vecina y empuja el resto', () => {
+    const edicion = {
+      insertar: [{ tras: 2, celdas: [{ celda: 'A3', valor: 'nueva' }] }],
+    }
+    const mapa = planificar(edicion)
+    const out = editarHojaXml(HOJA, edicion, mapa)
+
+    expect(out).toContain('<row r="3" ht="15">')
+    expect(out).toContain('<c r="A3" s="7" t="inlineStr"><is><t xml:space="preserve">nueva</t></is></c>')
+    // La que era la 3 ahora es la 4, y su fórmula la sigue.
+    expect(out).toContain('<c r="N4" s="9"><f>SUM(B4:M4)</f>')
+    expect(out).toContain('<autoFilter ref="A1:Q11"/>')
+    expect(out).toContain('<mergeCell ref="A2:A4"/>')
+    expect(out).toContain('sqref="G1:G2 G5:G11"')
+  })
+
+  it('borrar una fila se lleva su fusión y sube lo de debajo', () => {
+    const edicion = { borrar: [2, 3] }
+    const mapa = planificar(edicion)
+    const out = editarHojaXml(HOJA, edicion, mapa)
+
+    expect(out).not.toContain('<row r="2" ht="15">')
+    expect(out).not.toContain('mergeCell')
+    expect(out).toContain('<row r="2"/>') // la que era la 4
+    expect(out).toContain('<autoFilter ref="A1:Q8"/>')
+  })
+
+  it('la cuenta de fusiones se rehace', () => {
+    const edicion = { borrar: [3] }
+    const mapa = planificar(edicion)
+    const out = editarHojaXml(HOJA, edicion, mapa)
+    // A2:A3 y B2:B3 pierden su segunda fila: dejan de ser fusiones.
+    expect(out).not.toContain('mergeCell')
+  })
+
+  it('el panel inmovilizado y la celda activa se mueven', () => {
+    const edicion = { insertar: [{ tras: 2, celdas: [{ celda: 'A3', valor: 'x' }] }] }
+    const mapa = planificar(edicion)
+    const out = editarHojaXml(HOJA, edicion, mapa)
+    expect(out).toContain('activeCell="A6"')
+    expect(out).toContain('sqref="A6"')
+  })
+
+  it('una fila nueva puede llevar una fórmula', () => {
+    const edicion = { insertar: [{ tras: 3, celdas: [{ celda: 'N4', valor: '=SUM(B4:M4)' }] }] }
+    const mapa = planificar(edicion)
+    const out = editarHojaXml(HOJA, edicion, mapa)
+    expect(out).toContain('<c r="N4" s="9"><f>SUM(B4:M4)</f></c>')
+  })
+
+  it('sin plan devuelve exactamente el mismo XML', () => {
+    expect(editarHojaXml(HOJA, {}, planificar({}))).toBe(HOJA)
+  })
+})
+
+describe('lo que vive fuera de la hoja', () => {
+  it('los comentarios siguen a su celda', () => {
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    const xml = '<comments><commentList><comment ref="Q205" authorId="0"><text>x</text></comment></commentList></comments>'
+    expect(corregirComentarios(xml, m)).toContain('ref="Q206"')
+  })
+
+  it('un comentario cuya celda se borra se va con ella', () => {
+    const m = planificar({ borrar: [205] })
+    const xml = '<comments><commentList><comment ref="Q205" authorId="0"><text>x</text></comment></commentList></comments>'
+    expect(corregirComentarios(xml, m)).not.toContain('comment ref')
+  })
+
+  it('el ancla del vml va en base 0', () => {
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    // La fila 205 de la hoja se escribe 204 en el vml.
+    expect(corregirVml('<x:Row>204</x:Row>', m)).toBe('<x:Row>205</x:Row>')
+  })
+
+  it('solo se tocan las referencias que nombran la hoja', () => {
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    const xml = `<f>'Bolsa 2026'!N5+N5</f>`
+    expect(corregirReferenciasExternas(xml, 'Bolsa 2026', m)).toBe(`<f>'Bolsa 2026'!N6+N5</f>`)
+  })
+})
+
+describe.skipIf(!libro)('sobre el libro real', () => {
+  it('insertar un aula en su edificio no descoloca las de abajo', async () => {
+    const l = await abrirLibro(new Uint8Array(libro!))
+    const hoja = l.hojas.find((h) => h.nombre === 'Estado Aulas y Salas de reunion')!
+    const xml = new TextDecoder().decode(
+      await descomprimir(l.entradas.find((e) => e.nombre === hoja.ruta)!),
+    )
+    const antes = await leerHoja(l, 'Estado Aulas y Salas de reunion')
+
+    // Detrás de la última fila del EDIFICIO P.
+    const edicion = {
+      insertar: [
+        {
+          tras: 30,
+          celdas: [
+            { celda: 'A31', valor: 'EDIFICIO P' },
+            { celda: 'C31', valor: '0.99P' },
+          ],
+        },
+      ],
+    }
+    const mapa = planificar(edicion)
+    const out = editarHojaXml(xml, edicion, mapa)
+
+    // Ni una sola fila se queda con su número viejo por debajo del corte.
+    const numeros = [...out.matchAll(/<row\b[^>]*\br="(\d+)"/g)].map((m) => Number(m[1]))
+    expect(new Set(numeros).size).toBe(numeros.length)
+    expect(numeros).toEqual([...numeros].sort((a, b) => a - b))
+
+    // La fila que era la 31 sigue diciendo lo mismo, una más abajo.
+    const eran31 = antes.find((f) => f.fila === 31)!
+    const filaNueva = /<row\b[^>]*\br="32"[^>]*>([\s\S]*?)<\/row>/.exec(out)
+    expect(filaNueva).not.toBeNull()
+    for (const [col, valor] of Object.entries(eran31.celdas)) {
+      if (typeof valor !== 'string' || valor === '') continue
+      expect(filaNueva![1]).toContain(`r="${col}32"`)
+    }
+
+    expect(out).toContain('<c r="A31"')
+    // El autofiltro crece con la hoja.
+    expect(out).toMatch(/<autoFilter ref="A1:X417"/)
+  })
+
+  it('las fusiones del libro real sobreviven al desplazamiento', async () => {
+    const l = await abrirLibro(new Uint8Array(libro!))
+    const hoja = l.hojas.find((h) => h.nombre === 'Estado Aulas y Salas de reunion')!
+    const xml = new TextDecoder().decode(
+      await descomprimir(l.entradas.find((e) => e.nombre === hoja.ruta)!),
+    )
+    const cuantas = [...xml.matchAll(/<mergeCell\b/g)].length
+    expect(cuantas).toBeGreaterThan(0)
+
+    const edicion = { insertar: [{ tras: 1, celdas: [{ celda: 'A2', valor: 'x' }] }] }
+    const out = editarHojaXml(xml, edicion, planificar(edicion))
+
+    // Todas siguen ahí, una fila más abajo, y la cuenta cuadra.
+    expect([...out.matchAll(/<mergeCell\b/g)].length).toBe(cuantas)
+    const declarada = Number(/<mergeCells\b[^>]*count="(\d+)"/.exec(out)![1])
+    expect(declarada).toBe(cuantas)
+    expect(out).toContain('<mergeCell ref="E68:E69"/>') // era E67:E68
+  })
+})
