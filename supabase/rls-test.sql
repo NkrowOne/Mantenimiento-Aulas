@@ -3314,3 +3314,124 @@ begin;
     raise notice 'OK: y la pasada terminó igual';
   end $$;
 rollback;
+
+\echo '=== 14. Bajar una cantidad o quitar una línea devuelve el material ==='
+begin;
+  -- Antes: `3 → 2` intentaba insertar un consumo POSITIVO, lo paraba el signo y
+  -- la celda se rechazaba en cada pasada; y quitar la línea entera no devolvía
+  -- nada, así que el descuento se quedaba en el almacén para siempre.
+  do $$
+  declare
+    v_item uuid := gen_random_uuid();
+    v_inc  uuid := gen_random_uuid();
+    v_neto int;
+    v_msg  text;
+    v_det  jsonb;
+  begin
+    insert into stock_items (id, name, unit) values (v_item, 'Cable de prueba', 'ud');
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, source)
+    values (gen_random_uuid(), v_item, 50, 'compra', '2026-01-05T10:00:00Z', 'import');
+    insert into incidents (id, external_ref, title, severity, state, opened_at, source)
+    values (v_inc, 'I260210_0099', 'Prueba', 'media', 'abierta', '2026-02-10T09:00:00Z', 'import');
+
+    v_det := jsonb_build_array(jsonb_build_object(
+      'articulo_id', v_item::text, 'cantidad', 3, 'texto', '3 Cable de prueba'));
+    v_msg := public.sync_material_del_parte(v_inc, v_det);
+    if v_msg is not null then raise exception 'FALLO: no entró el material: %', v_msg; end if;
+
+    select coalesce(-sum(qty), 0)::int into v_neto from stock_movements
+     where incident_id = v_inc and kind in ('consumo', 'devolucion');
+    if v_neto <> 3 then raise exception 'FALLO: tendría que haber 3 descontadas y hay %', v_neto; end if;
+    raise notice 'OK: tres unidades descontadas del parte';
+
+    -- Repetir la misma cantidad no descuenta otra vez.
+    v_msg := public.sync_material_del_parte(v_inc, v_det);
+    select coalesce(-sum(qty), 0)::int into v_neto from stock_movements
+     where incident_id = v_inc and kind in ('consumo', 'devolucion');
+    if v_neto <> 3 then raise exception 'FALLO: la segunda pasada volvió a descontar (neto %)', v_neto; end if;
+    raise notice 'OK: y la pasada siguiente no vuelve a descontarlas';
+
+    -- 3 → 2: una vuelve al almacén, y esto es lo que antes ni siquiera entraba.
+    v_msg := public.sync_material_del_parte(v_inc, jsonb_build_array(jsonb_build_object(
+      'articulo_id', v_item::text, 'cantidad', 2, 'texto', '2 Cable de prueba')));
+    if v_msg is not null then raise exception 'FALLO: bajar la cantidad se rechazó: %', v_msg; end if;
+    select coalesce(-sum(qty), 0)::int into v_neto from stock_movements
+     where incident_id = v_inc and kind in ('consumo', 'devolucion');
+    if v_neto <> 2 then raise exception 'FALLO: tendrían que quedar 2 descontadas y quedan %', v_neto; end if;
+    raise notice 'OK: bajar de 3 a 2 devuelve una al almacén';
+
+    -- Y quitar la línea entera devuelve las dos que quedaban.
+    v_msg := public.sync_material_del_parte(v_inc, '[]'::jsonb);
+    select coalesce(-sum(qty), 0)::int into v_neto from stock_movements
+     where incident_id = v_inc and kind in ('consumo', 'devolucion');
+    if v_neto <> 0 then raise exception 'FALLO: quitar la línea dejó % descontadas', v_neto; end if;
+    if exists (select 1 from incident_materials where incident_id = v_inc) then
+      raise exception 'FALLO: la lista del parte no se vació';
+    end if;
+    raise notice 'OK: y quitar la línea devuelve lo que quedaba';
+
+    -- El almacén vuelve a las 50 de la compra: nada se ha perdido por el camino.
+    select coalesce(sum(qty), 0)::int into v_neto from stock_movements where stock_item_id = v_item;
+    if v_neto <> 50 then raise exception 'FALLO: el almacén se quedó en % y no en 50', v_neto; end if;
+    raise notice 'OK: el almacén cuadra al final';
+  end $$;
+rollback;
+
+\echo '=== 15. Un equipo de baja no es «un equipo de otra aula» ==='
+begin;
+  do $$
+  declare
+    v_tipo  uuid;
+    v_aula1 uuid;
+    v_aula2 uuid;
+    v_zona  uuid;
+    v_eq    uuid := gen_random_uuid();
+    v_msg   text;
+    v_est   asset_status;
+    v_donde uuid;
+    v_cuantos int;
+  begin
+    select id into v_zona from zones limit 1;
+    select id into v_tipo from asset_types limit 1;
+    insert into rooms (id, zone_id, code, name) values (gen_random_uuid(), v_zona, 'PRB-1', 'Prueba 1')
+      returning id into v_aula1;
+    insert into rooms (id, zone_id, code, name) values (gen_random_uuid(), v_zona, 'PRB-2', 'Prueba 2')
+      returning id into v_aula2;
+
+    -- Un proyector que se retiró y sigue apuntado en la hoja de SU aula.
+    insert into assets (id, asset_type_id, room_id, serial, status)
+    values (v_eq, v_tipo, v_aula1, 'SN-PRUEBA-1', 'retirado');
+
+    v_msg := public.sync_aplicar_equipo(v_aula1, v_tipo, 'serial', 'SN-PRUEBA-1');
+    if v_msg is not null then
+      raise exception 'FALLO: la hoja no pudo decir que sigue puesto: %', v_msg;
+    end if;
+    select status into v_est from assets where id = v_eq;
+    if v_est <> 'instalado' then raise exception 'FALLO: no se reactivó (está %)', v_est; end if;
+    select count(*) into v_cuantos from assets where serial = 'SN-PRUEBA-1';
+    if v_cuantos <> 1 then raise exception 'FALLO: se duplicó el equipo (% con ese número)', v_cuantos; end if;
+    if not exists (select 1 from asset_events where asset_id = v_eq and meta->>'source' = 'sharepoint') then
+      raise exception 'FALLO: la reactivación no dejó apunte en el historial';
+    end if;
+    raise notice 'OK: de baja en su aula, la hoja lo reactiva y no lo duplica';
+
+    -- Pero de baja en OTRA aula no se mueve desde una celda, y se dice por qué.
+    update assets set status = 'retirado' where id = v_eq;
+    v_msg := public.sync_aplicar_equipo(v_aula2, v_tipo, 'serial', 'SN-PRUEBA-1');
+    if v_msg is null then raise exception 'FALLO: se llevó a otra aula un equipo de baja'; end if;
+    if v_msg not like '%dado de baja%' then
+      raise exception 'FALLO: el motivo no dice lo que pasa: %', v_msg;
+    end if;
+    select room_id into v_donde from assets where id = v_eq;
+    if v_donde <> v_aula1 then raise exception 'FALLO: rechazó y aun así lo movió'; end if;
+    raise notice 'OK: de baja en otra aula se rechaza diciendo la verdad';
+
+    -- Y el caso de siempre: en uso en otra aula, sigue siendo un choque.
+    update assets set status = 'instalado' where id = v_eq;
+    v_msg := public.sync_aplicar_equipo(v_aula2, v_tipo, 'serial', 'SN-PRUEBA-1');
+    if v_msg not like '%ya está en otra aula%' then
+      raise exception 'FALLO: un equipo en uso en otra aula tendría que chocar: %', v_msg;
+    end if;
+    raise notice 'OK: y en uso en otra aula sigue chocando';
+  end $$;
+rollback;
