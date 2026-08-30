@@ -481,6 +481,53 @@ describe('la hoja de partes', () => {
     expect(p.celdas).toEqual([])
   })
 
+  it('una celda en cuarentena deja antepasado, para que el arreglo no se pise', () => {
+    // Sin antepasado, una celda que ya vino sucia en la primera pasada se queda
+    // sin él para siempre; el día que alguien la arregla, la fusión cae en
+    // «primera pasada: manda la app» y le escribe encima. El arreglo se pierde
+    // sin salir ni como choque ni como aviso.
+    const cab = fila(1, Object.fromEntries(MATERIAL_2026.columnas.map((c) => [c.letra, c.cabecera])))
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [cab, fila(2, { D: 'I260102_0002', B: '19/0672025' })],
+      incidencias: [incidencia({ numero: 'I260102_0002' })],
+    })
+    expect(p.cuarentena.map((c) => c.letra)).toContain('B')
+    expect(p.instantanea).toContainEqual({
+      clave: 'I260102_0002',
+      fila: 2,
+      letra: 'B',
+      valor: '19/0672025',
+    })
+  })
+
+  it('lo que no se vuelve a leer igual no se escribe: si no, es un bucle', () => {
+    // `leer` trata «-», «***» y «?» como vacíos escritos a mano —lo son— y
+    // `escribir` los metía tal cual. Si la base guarda uno de esos en una
+    // columna de texto: se escribe «-», la pasada siguiente lo lee como vacío,
+    // la regla del hueco dice «la celda estaba vacía» y lo vuelve a escribir.
+    // Sin fin, y sin que el antepasado lo pare, porque guardaba «-» y lo leído
+    // es null.
+    const cab = fila(1, Object.fromEntries(MATERIAL_2026.columnas.map((c) => [c.letra, c.cabecera])))
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [cab, fila(2, { D: 'I260102_0002' })],
+      incidencias: [incidencia({ numero: 'I260102_0002', problema: '-' })],
+    })
+    expect(p.celdas.filter((c) => c.celda.startsWith('E'))).toEqual([])
+    expect(p.avisos.join(' ')).toContain('deje de leerse igual')
+  })
+
+  it('pero un texto normal se sigue escribiendo', () => {
+    const cab = fila(1, Object.fromEntries(MATERIAL_2026.columnas.map((c) => [c.letra, c.cabecera])))
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [cab, fila(2, { D: 'I260102_0002' })],
+      incidencias: [incidencia({ numero: 'I260102_0002', problema: 'No enciende' })],
+    })
+    expect(p.celdas).toContainEqual({ celda: 'E2', valor: 'No enciende' })
+  })
+
   it('una fila insertada deja antepasado, para que mañana no se pise una corrección', () => {
     // Sin antepasado manda la app, así que si alguien corrige a mano una celda
     // de la fila recién insertada, la pasada siguiente se la comía sin decir

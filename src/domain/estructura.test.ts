@@ -226,6 +226,45 @@ describe('editar una hoja', () => {
   })
 })
 
+describe('el final de la hoja', () => {
+  // Las dos hojas de partes del libro real traen 1.960 filas con estilo que
+  // llegan hasta la 1048559: alguien pintó la hoja entera hace años y Excel
+  // guardó un `<row>` por cada una. Con la última de Excel en la 1048576, hacen
+  // falta dieciocho partes nuevos para pasarse — y pasarse en silencio dejaba un
+  // libro que no abre.
+  const CASI = [
+    '<worksheet><sheetData>',
+    '<row r="1"><c r="A1" t="inlineStr"><is><t>Aula</t></is></c></row>',
+    '<row r="2"><c r="A2" t="inlineStr"><is><t>1.7</t></is></c></row>',
+    '<row r="1048574" s="7" customFormat="1"/>',
+    '<row r="1048575" s="7" customFormat="1"/>',
+    '<row r="1048576" s="7" customFormat="1"/>',
+    '</sheetData></worksheet>',
+  ].join('')
+
+  it('las filas vacías del final se caen para hacer sitio, como en Excel', () => {
+    const edicion = { insertar: [{ tras: 2, celdas: [{ celda: 'A3', valor: 'parte nuevo' }] }] }
+    const out = editarHojaXml(CASI, edicion, planificar(edicion))
+
+    expect(out).toContain('<t xml:space="preserve">parte nuevo</t>')
+    // La 1048575 pasa a la 1048576 y la que estaba ahí se cae: no hay sitio.
+    expect(out).toContain('<row r="1048576"')
+    expect(out).not.toMatch(/r="10485(7[7-9]|8\d)"/)
+    // Y no quedan dos filas con el mismo número, que tampoco sería un libro.
+    const numeros = [...out.matchAll(/<row[^>]*\br="(\d+)"/g)].map((m) => m[1])
+    expect(new Set(numeros).size).toBe(numeros.length)
+  })
+
+  it('pero si lo que se cae lleva datos, no se inserta y se dice por qué', () => {
+    const conDatos = CASI.replace(
+      '<row r="1048576" s="7" customFormat="1"/>',
+      '<row r="1048576" s="7"><c r="A1048576" t="inlineStr"><is><t>algo</t></is></c></row>',
+    )
+    const edicion = { insertar: [{ tras: 2, celdas: [{ celda: 'A3', valor: 'parte nuevo' }] }] }
+    expect(() => editarHojaXml(conDatos, edicion, planificar(edicion))).toThrow(/No caben más filas/)
+  })
+})
+
 describe('lo que vive fuera de la hoja', () => {
   it('los comentarios siguen a su celda', () => {
     const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })

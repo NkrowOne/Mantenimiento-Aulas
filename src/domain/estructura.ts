@@ -229,6 +229,21 @@ function limitar(fila: number): number {
   return Math.min(fila, FILA_MAXIMA)
 }
 
+/**
+ * Si una fila no lleva nada dentro.
+ *
+ * Las 1.500 filas del final de las hojas de partes existen solo por su estilo:
+ * alguien pintó la hoja entera hace años y Excel guardó un `<row>` por cada una.
+ * Vacías se pueden tirar sin perder nada, que es lo que hace Excel cuando lo que
+ * se cae por abajo al insertar está vacío.
+ */
+function filaSinDatos(interior: string | undefined): boolean {
+  if (!interior) return true
+  // Una celda cuenta si tiene valor, texto o fórmula. Una `<c r="A9" s="3"/>`
+  // es formato, no dato.
+  return !/<(v|is|f)\b/.test(interior)
+}
+
 /** Un `sqref` es una lista de rangos separados por espacios. Los vacíos caen. */
 export function remapearSqref(sqref: string, mapa: MapaDeFilas): string | null {
   const vivos = sqref
@@ -314,6 +329,20 @@ export function editarHojaXml(xml: string, edicion: EdicionDeFilas, mapa: MapaDe
       if (!vieja) return todo
       const nueva = mapa.nuevo(vieja)
       if (nueva === null) return ''
+
+      // Empujar una fila más allá de la última de Excel deja un libro inválido,
+      // y este libro está a un palmo: las dos hojas de partes traen 1.960 filas
+      // con estilo que llegan hasta la 1048559, así que **dieciocho** partes
+      // nuevos bastan para pasarse. No se puede recortar el número —dos filas
+      // con la misma `r` tampoco es un libro— así que se hace lo que hace Excel
+      // al insertar: la fila que se cae por abajo desaparece si está vacía, y si
+      // lleva algo, no se inserta y se dice por qué.
+      if (nueva > FILA_MAXIMA) {
+        if (filaSinDatos(interior)) return ''
+        throw new Error(
+          `No caben más filas: la ${vieja} pasaría a la ${nueva} y la última de Excel es la ${FILA_MAXIMA}. Hay datos en la parte de abajo de la hoja que habría que quitar antes.`,
+        )
+      }
 
       const nuevosAttrs = attrs.replace(/\br="\d+"/, `r="${nueva}"`)
       // Una fila sin `spans` es válida; una con `spans` viejo también, porque es

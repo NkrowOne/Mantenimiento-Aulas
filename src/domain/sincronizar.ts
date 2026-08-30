@@ -46,7 +46,7 @@
 
 import { resolverSala } from './cruce'
 import type { Indice } from './cruce'
-import { canonizarFila, fusionarCelda } from './fusion'
+import { canonizarFila, fusionarCelda, iguales } from './fusion'
 import type { Decision, Dueno, Valor } from './fusion'
 import { comprobarCabeceras, mesDe } from './mapa'
 import type { Columna, Hoja } from './mapa'
@@ -242,6 +242,22 @@ function fusionarFilas<T>(
           crudo,
           motivo: lectura.motivo,
         })
+        // El antepasado es lo que había, ilegible y todo. No es un capricho: sin
+        // él, una celda que ya vino sucia en la primera pasada se queda **sin
+        // antepasado para siempre**, y el día que alguien la arregla en la hoja
+        // la fusión cae en «primera pasada: manda la app» y le escribe encima el
+        // valor de la aplicación. El arreglo se pierde y no sale ni como choque
+        // ni como aviso.
+        //
+        // Con esto, arreglarla a lo mismo que dice la base no da trabajo, y
+        // arreglarla a otra cosa sale como choque, que es lo que es: la celda
+        // decía una cosa, alguien escribió otra, y la base tiene una tercera.
+        plan.instantanea.push({
+          clave: par.clave,
+          fila: par.fila,
+          letra: c.letra,
+          valor: crudo as Valor,
+        })
         continue
       }
 
@@ -295,6 +311,21 @@ function repartir<T>(
       }
       const valor = escribir(decision.valor, c.tipo)
       if (valor === null && decision.valor !== null) return
+
+      // Y lo que se escribe tiene que volver a leerse igual. Si no, escribirlo
+      // es empezar un bucle: la pasada siguiente lee otra cosa, la compara con
+      // la base, ve un hueco y lo vuelve a escribir, y así para siempre. Pasa
+      // con los rellenos —un `-`, un `***`, un `?`—, que `leer` trata como
+      // vacíos escritos a mano y `escribir` mete tal cual: la celda quedaría
+      // reescribiéndose en cada pasada sin que nadie note nada.
+      const vuelta = leer(valor, c.tipo)
+      if (!vuelta.ok || !iguales(vuelta.valor, decision.valor, c.tipo)) {
+        plan.avisos.push(
+          `${c.letra}${par.fila} (${c.cabecera}): la aplicación dice «${decision.valor ?? ''}» y eso no se puede escribir en la hoja sin que deje de leerse igual. Se queda como está.`,
+        )
+        return
+      }
+
       plan.celdas.push({ celda: `${c.letra}${par.fila}`, valor: valor as ValorCelda, ...formatoDe(c) })
       plan.instantanea.push({ clave: par.clave, fila: par.fila, letra: c.letra, valor: decision.valor })
       return
