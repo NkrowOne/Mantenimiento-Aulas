@@ -113,6 +113,13 @@ export interface Hoja {
    * por bueno, y corregirlo a posteriori cambia cuentas ya rendidas.
    */
   congelada?: boolean
+  /**
+   * El año del que habla la hoja, cuando habla de uno. `Comprado` no es «lo
+   * comprado»: es lo comprado **en 2026**, y cuadrarlo contra la compra de
+   * todos los tiempos mete en la base la diferencia con 2025 como si fuera una
+   * compra de hoy.
+   */
+  anyo?: number
   /** Filas por debajo de la cabecera que no son datos (totales, IVA). */
   filasDeTotales?: number
   nota?: string
@@ -274,6 +281,7 @@ function materialInstalado(anyo: number, conObservacion: boolean): Hoja {
 
   return {
     nombre: `Material Instalado ${anyo}`,
+    anyo,
     cabecera: 1,
     identidad: { tipo: 'incidencia', columna: columnas[3]!.letra },
     columnas,
@@ -323,6 +331,7 @@ function columnasDeMes(desde: number): Columna[] {
 
 export const BOLSA_2026: Hoja = {
   nombre: 'Bolsa 2026',
+  anyo: 2026,
   cabecera: 1,
   identidad: { tipo: 'articulo', columna: 'A' },
   columnas: [
@@ -367,6 +376,7 @@ export const BOLSA_2026: Hoja = {
 
 export const BOLSA_2025: Hoja = {
   nombre: 'Bolsa 2025',
+  anyo: 2025,
   cabecera: 1,
   congelada: true,
   // Las tres últimas filas son la suma, el 21 % de IVA y el total con IVA.

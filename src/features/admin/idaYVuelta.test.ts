@@ -333,7 +333,7 @@ describe.skipIf(!RUTA)('ida y vuelta', () => {
       for (const f of p.borrar) vaivenes.push(`${p.hoja} borra la fila ${f}`)
       for (const c of p.haciaLaBase) vaivenes.push(`${p.hoja} a la base: ${c.destino} ${c.campo} = ${JSON.stringify(c.valor)}`)
     }
-    expect(vaivenes.slice(0, 400)).toEqual([])
+    expect(vaivenes.slice(0, 40)).toEqual([])
 
     // Y el fichero de la segunda, para poder compararlos cuando haga falta.
     if (SALIDA) {

@@ -3187,3 +3187,72 @@ begin;
     end if;
   end $$;
 rollback;
+
+\echo '=== 12. «Comprado» se cuadra contra las compras de SU año ==='
+begin;
+  -- El fallo: la hoja suma solo las compras de su año y la base las sumaba
+  -- todas, así que un artículo con compras de 2025 salía a negativo y el cuadre
+  -- no entraba nunca —lo paraba el signo, que exige que una compra sea positiva.
+  -- Sin `test_as`: el montaje escribe movimientos con `source = 'import'`, que
+  -- es cosa del importador y no de un administrador con sesión, y la función que
+  -- se prueba es `security definer` —se salta la RLS a propósito, que para eso
+  -- la llama `sync_aplicar` como dueña—. Lo que se comprueba aquí es la cuenta,
+  -- no el permiso; el permiso es el bloque 11.
+  do $$
+  declare
+    v_item   uuid := gen_random_uuid();
+    v_motivo text;
+    v_2026   numeric;
+    v_total  numeric;
+  begin
+    insert into stock_items (id, name, unit) values (v_item, 'Cable de prueba', 'ud');
+    -- 40 compradas en 2025 y 12 en 2026. La hoja de 2026 dice 32.
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, source)
+    values (gen_random_uuid(), v_item, 40, 'compra', '2025-06-01T10:00:00Z', 'import'),
+           (gen_random_uuid(), v_item, 12, 'compra', '2026-03-01T10:00:00Z', 'import');
+
+    v_motivo := public.sync_celda_de_articulo(jsonb_build_object(
+      'campo', 'articulo.comprado', 'clave', v_item::text, 'valor', '32', 'anyo', 2026));
+
+    if v_motivo is not null then
+      raise exception 'FALLO: el cuadre de 2026 se rechazó: %', v_motivo;
+    end if;
+
+    select coalesce(sum(qty), 0) into v_2026 from stock_movements
+     where stock_item_id = v_item and kind = 'compra'
+       and extract(year from (occurred_at at time zone 'Europe/Madrid')) = 2026;
+    if v_2026 <> 32 then
+      raise exception 'FALLO: 2026 tendría que quedarse en 32 y tiene %', v_2026;
+    end if;
+
+    select coalesce(sum(qty), 0) into v_total from stock_movements
+     where stock_item_id = v_item and kind = 'compra';
+    if v_total <> 72 then
+      raise exception 'FALLO: 2025 no se toca: el total tendría que ser 72 y es %', v_total;
+    end if;
+    raise notice 'OK: el cuadre de 2026 no arrastra las compras de 2025';
+
+    -- Y repetirlo no vuelve a mover nada: ya cuadra.
+    v_motivo := public.sync_celda_de_articulo(jsonb_build_object(
+      'campo', 'articulo.comprado', 'clave', v_item::text, 'valor', '32', 'anyo', 2026));
+    select coalesce(sum(qty), 0) into v_total from stock_movements
+     where stock_item_id = v_item and kind = 'compra';
+    if v_motivo is not null or v_total <> 72 then
+      raise exception 'FALLO: la segunda pasada movió algo (% / %)', v_motivo, v_total;
+    end if;
+    raise notice 'OK: y la pasada siguiente no vuelve a moverlo';
+
+    -- Si la hoja dice MENOS que la base, no se inventa una compra negativa.
+    v_motivo := public.sync_celda_de_articulo(jsonb_build_object(
+      'campo', 'articulo.comprado', 'clave', v_item::text, 'valor', '5', 'anyo', 2026));
+    if v_motivo is null then
+      raise exception 'FALLO: 5 < 32 y lo dio por bueno';
+    end if;
+    select coalesce(sum(qty), 0) into v_total from stock_movements
+     where stock_item_id = v_item and kind = 'compra';
+    if v_total <> 72 then
+      raise exception 'FALLO: rechazó y aun así tocó el almacén (%)', v_total;
+    end if;
+    raise notice 'OK: una compra no se deshace desde una celda (%)', left(v_motivo, 48);
+  end $$;
+rollback;

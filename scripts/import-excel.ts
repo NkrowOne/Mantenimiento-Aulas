@@ -80,6 +80,20 @@ interface Quarantined {
   reason: string
 }
 
+/**
+ * De qué fila habla una entrada de cuarentena.
+ *
+ * Lleva el número de fila **siempre**, aunque haya número de incidencia, y no es
+ * redundante: el número de incidencia se repite —`I241111_0040` sale dos veces
+ * en la hoja de 2025— y las dos filas tienen su propio material que arreglar.
+ * Con la ref sola las dos entradas eran la misma y la segunda se perdía, contra
+ * el índice de `import_quarantine_abierta_idx`, que existe justo para que el
+ * mismo problema no se apunte dos veces. Un problema por celda, y la celda es la
+ * fila.
+ */
+const refDeFila = (ref: string, r: number): string =>
+  ref ? `${ref} (fila ${r + 1})` : `fila ${r + 1}`
+
 const statements: string[] = []
 const fixes: Fix[] = []
 const quarantine: Quarantined[] = []
@@ -509,7 +523,7 @@ function importIncidents(rows: unknown[][], sheet: string, hasObservacion: boole
     const roomId = resolveRoom(aula)
     if (!roomId && aula) {
       quarantine.push({
-        source: sheet, rowRef: ref || `fila ${r + 1}`,
+        source: sheet, rowRef: refDeFila(ref, r),
         raw: { aula, ref, problema },
         reason: 'No se pudo identificar la sala',
       })
@@ -551,7 +565,7 @@ function importIncidents(rows: unknown[][], sheet: string, hasObservacion: boole
           incidentId: id, itemName: '', qty: 0, serial: null, raw: leftover,
         })
         quarantine.push({
-          source: sheet, rowRef: ref || `fila ${r + 1}`,
+          source: sheet, rowRef: refDeFila(ref, r),
           raw: { material: materialRaw },
           reason: 'Material usado no interpretable automáticamente',
         })
@@ -832,11 +846,16 @@ function emit(): void {
     )
   }
 
+  // Por la función y no con un `insert`: `import_quarantine` tiene desde la
+  // migración 600 una entrada por problema, y meterlas a pelo choca contra el
+  // índice en cuanto dos filas comparten motivo. La función es la que sabe qué
+  // hacer entonces —sumar una vez, no duplicar—, y es la misma que usa la
+  // sincronización, así que el seed no puede quedarse con otra idea.
   out.push('')
   out.push('-- Cuarentena: lo que NO se interpretó, para resolver a mano')
   for (const q of quarantine) {
     out.push(
-      `insert into import_quarantine (source, row_ref, raw, reason) values (${sql(q.source)}, ${sql(q.rowRef)}, ${jsonb(q.raw)}, ${sql(q.reason)});`,
+      `select public.cuarentena_apuntar(${sql(q.source)}, ${sql(q.rowRef)}, ${jsonb(q.raw)}, ${sql(q.reason)});`,
     )
   }
 

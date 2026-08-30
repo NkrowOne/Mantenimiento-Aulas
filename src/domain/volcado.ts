@@ -30,6 +30,7 @@
  * `********` en la columna de horas no dice nada de las horas.
  */
 
+import { ZONA } from './fechas'
 import { EQUIPOS_EN_COLUMNAS, capacidadDe, equipoDe, mesDe } from './mapa'
 import type { Columna, Hoja } from './mapa'
 import { escribirMicrofono } from './valores'
@@ -252,15 +253,35 @@ export interface MovimientoVolcado {
  * sincroniza en enero es consumo de diciembre. Es la misma razón por la que las
  * dos fechas existen por separado en toda la base.
  */
+/**
+ * El año y el mes de un instante **en Madrid**.
+ *
+ * `getFullYear()` usa el huso del aparato que pregunta, y aquí eso no vale: la
+ * base cuadra `Comprado` filtrando por `extract(year from occurred_at at time
+ * zone 'Europe/Madrid')`, así que una compra del 31 de diciembre a las 23:30
+ * UTC sería de 2025 para la base y de 2026 para el navegador de quien
+ * sincronice desde otro huso. Dos años distintos para el mismo movimiento son
+ * una celda que no cuadra nunca.
+ */
+function enMadrid(iso: string): { anyo: number; mes: number } | null {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  const [anyo, mes] = new Intl.DateTimeFormat('sv-SE', { timeZone: ZONA, dateStyle: 'short' })
+    .format(d)
+    .split('-')
+    .map(Number)
+  return { anyo: anyo!, mes: mes! }
+}
+
 export function consumoPorMes(movimientos: MovimientoVolcado[], anyo: number): number[] {
   const meses = new Array<number>(12).fill(0)
   for (const m of movimientos) {
     if (m.kind !== 'consumo' && m.kind !== 'devolucion') continue
-    const d = new Date(m.occurredAt)
-    if (Number.isNaN(d.getTime()) || d.getFullYear() !== anyo) continue
+    const cuando = enMadrid(m.occurredAt)
+    if (cuando === null || cuando.anyo !== anyo) continue
     // El consumo se guarda en negativo —sale del almacén—: en la hoja se enseña
     // cuánto salió, así que se le da la vuelta.
-    meses[d.getMonth()] = (meses[d.getMonth()] ?? 0) - m.qty
+    meses[cuando.mes - 1] = (meses[cuando.mes - 1] ?? 0) - m.qty
   }
   return meses.map((n) => Math.max(0, n))
 }
@@ -270,8 +291,8 @@ export function compradoEn(movimientos: MovimientoVolcado[], anyo: number): numb
   let total = 0
   for (const m of movimientos) {
     if (m.kind !== 'compra') continue
-    const d = new Date(m.occurredAt)
-    if (Number.isNaN(d.getTime()) || d.getFullYear() !== anyo) continue
+    const cuando = enMadrid(m.occurredAt)
+    if (cuando === null || cuando.anyo !== anyo) continue
     total += m.qty
   }
   return total

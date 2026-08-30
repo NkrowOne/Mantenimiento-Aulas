@@ -270,6 +270,11 @@ export async function aplicar(a: Analisis): Promise<Aplicado> {
         campo: h.campo,
         valor: h.valor === null ? null : String(h.valor),
         motivo: h.motivo,
+        // De qué año habla la hoja. `Comprado` no es «lo comprado»: es lo
+        // comprado **en 2026**, y sin el año la base lo cuadra contra la compra
+        // de todos los tiempos y mete la diferencia con 2025 como una compra de
+        // hoy —negativa, además, que el signo no la deja pasar.
+        ...(hojaPorNombre(p.hoja)?.anyo ? { anyo: hojaPorNombre(p.hoja)!.anyo } : {}),
         // El material de un parte va ya partido y resuelto: el catálogo de alias
         // vive aquí, y partir «1Pantalla 240X240» en un 1 y una pantalla es
         // exactamente el tipo de cosa que en SQL sale mal.
