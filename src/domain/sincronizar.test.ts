@@ -219,7 +219,7 @@ describe('la hoja de estado', () => {
   })
 
   it('en las horas gana la medición más reciente, no el último en escribir', () => {
-    const antes: Instantanea = (f, l) => (f === 2 && l === 'F' ? 100 : undefined)
+    const antes: Instantanea = (ref, l) => (ref === 'SALA-000001' && l === 'F' ? 100 : undefined)
     // El Excel dice 5000 con fecha vieja; la app 921 con fecha de 2025.
     const p = estado(
       [fila(2, { Y: 'SALA-000001', F: 5000, D: fechaAExcel('2020-01-01') })],
@@ -230,7 +230,7 @@ describe('la hoja de estado', () => {
   })
 
   it('y si la lectura del Excel es la más nueva, entra en la base', () => {
-    const antes: Instantanea = (f, l) => (f === 2 && l === 'F' ? 100 : undefined)
+    const antes: Instantanea = (ref, l) => (ref === 'SALA-000001' && l === 'F' ? 100 : undefined)
     const p = estado(
       [fila(2, { Y: 'SALA-000001', F: 5000, D: fechaAExcel('2030-01-01') })],
       [sala()],
@@ -240,13 +240,28 @@ describe('la hoja de estado', () => {
   })
 
   it('los dos lados cambiados a cosas distintas no tocan ninguno', () => {
-    const antes: Instantanea = (f, l) => (f === 2 && l === 'K' ? 'Actualizada' : undefined)
+    const antes: Instantanea = (ref, l) => (ref === 'SALA-000001' && l === 'K' ? 'Actualizada' : undefined)
     const p = estado([fila(2, { Y: 'SALA-000001', K: 'No tiene' })], [sala()], antes)
     expect(p.conflictos).toHaveLength(1)
     expect(p.celdas.some((c) => c.celda === 'K2')).toBe(false)
     // Y el conflicto no deja rastro en la instantánea: si lo dejara, la pasada
     // siguiente creería que se resolvió solo.
-    expect(p.instantanea.some((c) => c.letra === 'K' && c.fila === 2)).toBe(false)
+    expect(p.instantanea.some((c) => c.letra === 'K' && c.clave === 'SALA-000001')).toBe(false)
+  })
+
+  it('la instantánea se guarda por matrícula, no por fila', () => {
+    // Entre dos pasadas alguien ordena la hoja por edificio y la 2 pasa a ser la
+    // 9. Un antepasado buscado por número de fila sería el de otra aula.
+    const antes: Instantanea = (ref, l) =>
+      ref === 'SALA-000001' && l === 'K' ? 'Actualizada' : undefined
+
+    const enLa2 = estado([fila(2, { Y: 'SALA-000001', K: 'Actualizada' })], [sala()], antes)
+    const enLa9 = estado([fila(9, { Y: 'SALA-000001', K: 'Actualizada' })], [sala()], antes)
+
+    // La misma sala en otra fila da la misma decisión y la misma clave.
+    expect(enLa2.instantanea.find((c) => c.letra === 'K')!.clave).toBe('SALA-000001')
+    expect(enLa9.instantanea.find((c) => c.letra === 'K')!.clave).toBe('SALA-000001')
+    expect(enLa2.conflictos).toEqual(enLa9.conflictos)
   })
 
   it('el número de serie del proyector baja del equipo de la sala', () => {

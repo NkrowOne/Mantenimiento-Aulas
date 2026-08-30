@@ -92,6 +92,9 @@ export interface EnCuarentena {
 }
 
 export interface CeldaDeInstantanea {
+  /** La clave estable de la fila: la matrícula, el nº de parte, el id del artículo. */
+  clave: string
+  /** Dónde estaba en esta pasada. Solo para contarlo: la fila de mañana es otra. */
   fila: number
   letra: string
   valor: Valor
@@ -130,8 +133,17 @@ function planVacio(hoja: string): Plan {
   }
 }
 
-/** El valor de cada celda en la última pasada correcta (`sync_celdas`). */
-export type Instantanea = (fila: number, letra: string) => Valor | undefined
+/**
+ * El valor de cada celda en la última pasada correcta (`sync_celdas`).
+ *
+ * Se pregunta por **la clave estable de la fila**, no por su número. Es la misma
+ * razón por la que la tabla se indexa por `(hoja, ref, columna)`: entre dos
+ * pasadas alguien ordena la hoja por edificio y la fila 87 pasa a ser la 214.
+ * Un antepasado buscado por número de fila sería el de otra aula, y con él la
+ * fusión daría por cambiado lo que nadie tocó — o peor, por sin cambios lo que
+ * sí.
+ */
+export type Instantanea = (clave: string, letra: string) => Valor | undefined
 
 /** La instantánea vacía: primera pasada, no hay antepasado de nada. */
 export const SIN_INSTANTANEA: Instantanea = () => undefined
@@ -144,7 +156,9 @@ interface Emparejada<T> {
   fila: number
   celdas: Record<string, ValorCelda>
   dato: T
-  /** Cómo se llama esto en el parte: la matrícula, el nº de parte, el artículo. */
+  /** La clave estable: la matrícula, el nº de parte, el id del artículo. */
+  clave: string
+  /** Cómo se llama esto cuando lo lee una persona. */
   destino: string
 }
 
@@ -193,7 +207,7 @@ function fusionarFilas<T>(
       const decision = fusionarCelda({
         base: base[c.letra] ?? null,
         excel: lectura.valor,
-        antepasado: op.instantanea(par.fila, c.letra),
+        antepasado: op.instantanea(par.clave, c.letra),
         dueno: c.dueno,
         medidaBase: c.dueno === 'medida' ? op.fechaDeMedida?.(par.dato, 'base', par.celdas) : undefined,
         medidaExcel: c.dueno === 'medida' ? op.fechaDeMedida?.(par.dato, 'excel', par.celdas) : undefined,
@@ -214,14 +228,14 @@ function repartir<T>(
   switch (decision.tipo) {
     case 'sin_cambios':
     case 'ya_coinciden':
-      plan.instantanea.push({ fila: par.fila, letra: c.letra, valor: excel })
+      plan.instantanea.push({ clave: par.clave, fila: par.fila, letra: c.letra, valor: excel })
       return
 
     case 'hacia_el_excel': {
       const valor = escribir(decision.valor, c.tipo)
       if (valor === null && decision.valor !== null) return
       plan.celdas.push({ celda: `${c.letra}${par.fila}`, valor: valor as ValorCelda })
-      plan.instantanea.push({ fila: par.fila, letra: c.letra, valor: decision.valor })
+      plan.instantanea.push({ clave: par.clave, fila: par.fila, letra: c.letra, valor: decision.valor })
       return
     }
 
@@ -234,7 +248,7 @@ function repartir<T>(
         valor: decision.valor,
         motivo: decision.motivo,
       })
-      plan.instantanea.push({ fila: par.fila, letra: c.letra, valor: decision.valor })
+      plan.instantanea.push({ clave: par.clave, fila: par.fila, letra: c.letra, valor: decision.valor })
       return
 
     case 'conflicto':
@@ -354,7 +368,13 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
       plan.avisos.push(`Fila ${f.fila}: la matrícula escrita no es la que sale del cruce. No se pisa.`)
     }
 
-    emparejadas.push({ fila: f.fila, celdas: f.celdas, dato: sala, destino: sala.shortRef })
+    emparejadas.push({
+      fila: f.fila,
+      celdas: f.celdas,
+      dato: sala,
+      clave: sala.shortRef,
+      destino: sala.code,
+    })
   }
 
   fusionarFilas(plan, emparejadas, (s) => filaDeSala(s, e.hoja), {
@@ -489,7 +509,7 @@ export function sincronizarPartes(e: EntradaDePartes): Plan {
       continue
     }
     vistas.add(inc.id)
-    emparejadas.push({ fila: f.fila, celdas: f.celdas, dato: inc, destino: numero })
+    emparejadas.push({ fila: f.fila, celdas: f.celdas, dato: inc, clave: inc.numero, destino: numero })
   }
 
   fusionarFilas(plan, emparejadas, (i) => filaDeIncidencia(i, e.hoja), {
@@ -571,7 +591,7 @@ export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
       continue
     }
     vistas.add(id)
-    emparejadas.push({ fila: f.fila, celdas: f.celdas, dato: porId.get(id)!, destino: nombre })
+    emparejadas.push({ fila: f.fila, celdas: f.celdas, dato: porId.get(id)!, clave: id, destino: nombre })
   }
 
   fusionarFilas(plan, emparejadas, (a) => filaDeArticulo(a, e.hoja), {
@@ -700,7 +720,7 @@ export function huellaDelPlan(planes: Plan[]): string {
   return planes
     .map((p) =>
       canonizarFila(
-        Object.fromEntries(p.instantanea.map((c) => [`${p.hoja}!${c.letra}${c.fila}`, c.valor])),
+        Object.fromEntries(p.instantanea.map((c) => [`${p.hoja}!${c.clave}!${c.letra}`, c.valor])),
       ),
     )
     .join('|')
