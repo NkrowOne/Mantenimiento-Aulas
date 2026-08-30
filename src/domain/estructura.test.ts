@@ -278,10 +278,45 @@ describe('lo que vive fuera de la hoja', () => {
     expect(corregirComentarios(xml, m)).not.toContain('comment ref')
   })
 
+  // El `.vml` del libro real: cinco `<v:shape>`, cuatro con comentario, y cada
+  // uno con su `<x:Row>` en base 0 y un `<x:Anchor>` de ocho números donde el
+  // 3.º y el 7.º son también filas, también en base 0.
+  const forma = (fila: number, arriba: number, abajo: number, id: string): string =>
+    `<v:shape id="${id}" type="#_x0000_t202"><x:ClientData ObjectType="Note">` +
+    `<x:Anchor>17,15,${arriba},17,18,35,${abajo},15</x:Anchor>` +
+    `<x:Row>${fila}</x:Row><x:Column>16</x:Column>` +
+    `</x:ClientData></v:shape>`
+
   it('el ancla del vml va en base 0', () => {
     const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
     // La fila 205 de la hoja se escribe 204 en el vml.
-    expect(corregirVml('<x:Row>204</x:Row>', m)).toBe('<x:Row>205</x:Row>')
+    expect(corregirVml(forma(204, 203, 206, 'a'), m)).toContain('<x:Row>205</x:Row>')
+  })
+
+  it('el <x:Anchor> también lleva filas, y son las que dibujan el recuadro', () => {
+    // Moviendo solo `<x:Row>`, el comentario apunta a la celda buena y se pinta
+    // donde estaba: encima de otra fila.
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    expect(corregirVml(forma(204, 203, 206, 'a'), m)).toContain('<x:Anchor>17,15,204,17,18,35,207,15</x:Anchor>')
+  })
+
+  it('la forma de un comentario borrado se va con él', () => {
+    // `corregirComentarios` quita el `<comment>` de la fila borrada. Si la forma
+    // se quedara, los dos ficheros dejarían de tener el mismo número de
+    // elementos, y Excel los empareja **por orden**: a partir del que falta,
+    // cada comentario cuelga del recuadro del siguiente.
+    const m = planificar({ borrar: [205] })
+    const vml = forma(204, 203, 206, 'a') + forma(300, 299, 302, 'b')
+    const out = corregirVml(vml, m)
+    expect(out).not.toContain('id="a"')
+    expect(out).toContain('id="b"')
+    expect((out.match(/<v:shape/g) ?? []).length).toBe(1)
+  })
+
+  it('una forma sin comentario no se toca', () => {
+    const m = planificar({ insertar: [{ tras: 1, celdas: [] }] })
+    const suelta = '<v:shape id="fondo" type="#_x0000_t202"><v:fill/></v:shape>'
+    expect(corregirVml(suelta, m)).toBe(suelta)
   })
 
   it('solo se tocan las referencias que nombran la hoja', () => {

@@ -99,6 +99,21 @@ export interface CeldaDeInstantanea {
   fila: number
   letra: string
   valor: Valor
+  /**
+   * `true` si este antepasado describe el libro **que va a salir**, no el que se
+   * acaba de leer.
+   *
+   * Solo lo llevan las celdas que se escriben. Y hay que distinguirlas porque no
+   * valen lo mismo: el resto son hechos sobre el libro que ya está —lo que
+   * decía— y éstas son una promesa sobre uno que todavía no existe. Si la pasada
+   * se cae al generar los bytes, o el navegador se cierra antes de la descarga,
+   * el antepasado diría que el Excel vale lo que la app quería y el Excel
+   * seguiría valiendo lo de antes: la pasada siguiente vería que «solo cambió el
+   * Excel» y **metería en la base el valor viejo**, deshaciendo lo de la app.
+   *
+   * Así que estos se guardan aparte y solo cuando el fichero está hecho.
+   */
+  trasEscribir?: boolean
 }
 
 export interface Plan {
@@ -327,7 +342,13 @@ function repartir<T>(
       }
 
       plan.celdas.push({ celda: `${c.letra}${par.fila}`, valor: valor as ValorCelda, ...formatoDe(c) })
-      plan.instantanea.push({ clave: par.clave, fila: par.fila, letra: c.letra, valor: decision.valor })
+      plan.instantanea.push({
+        clave: par.clave,
+        fila: par.fila,
+        letra: c.letra,
+        valor: decision.valor,
+        trasEscribir: true,
+      })
       return
     }
 

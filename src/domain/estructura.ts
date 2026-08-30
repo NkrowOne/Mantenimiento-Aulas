@@ -562,11 +562,44 @@ export function corregirComentarios(xml: string, mapa: MapaDeFilas): string {
 /**
  * El `.vml` del cuadrito amarillo: fila y columna van **en base 0** y en
  * elementos aparte (`<x:Row>204</x:Row>` es la fila 205 de la hoja).
+ *
+ * Se trabaja forma a forma, y no elemento a elemento, por dos cosas que solo se
+ * ven desde la forma entera:
+ *
+ * **La forma de un comentario borrado se va con él.** `corregirComentarios` quita
+ * el `<comment>` cuya fila desapareció; si aquí se dejara su `<v:shape>`, los dos
+ * ficheros dejarían de tener el mismo número de elementos. Y Excel **los empareja
+ * por orden**, así que a partir del que falta cada comentario cuelga del recuadro
+ * del siguiente: «La TV está estropeada» aparecería en el aula de al lado.
+ *
+ * **El `<x:Anchor>` también lleva filas.** Son ocho números —columna, desfase,
+ * fila, desfase, y otra vez para la esquina de abajo— y las dos filas, la 3.ª y
+ * la 7.ª, son las que de verdad colocan el recuadro. Moviendo solo `<x:Row>` el
+ * comentario apunta a la celda buena y se dibuja donde estaba.
  */
 export function corregirVml(xml: string, mapa: MapaDeFilas): string {
-  return xml.replace(/<x:Row>(\d+)<\/x:Row>/g, (todo, n: string) => {
-    const nuevo = mapa.nuevo(Number(n) + 1)
-    return nuevo === null ? todo : `<x:Row>${nuevo - 1}</x:Row>`
+  return xml.replace(/<v:shape\b[\s\S]*?<\/v:shape>/g, (forma) => {
+    const m = /<x:Row>(\d+)<\/x:Row>/.exec(forma)
+    if (!m) return forma
+
+    const anclada = mapa.nuevo(Number(m[1]) + 1)
+    // Su fila ya no está: el comentario tampoco, y la forma se va con él.
+    if (anclada === null) return ''
+
+    return forma
+      .replace(/<x:Row>\d+<\/x:Row>/, `<x:Row>${anclada - 1}</x:Row>`)
+      .replace(/<x:Anchor>([^<]*)<\/x:Anchor>/, (todo, lista: string) => {
+        const n = lista.split(',').map((x) => x.trim())
+        if (n.length !== 8) return todo
+        // La de arriba busca hacia abajo y la de abajo hacia arriba, igual que
+        // los extremos de un rango: es lo que mantiene el recuadro dentro de lo
+        // que queda cuando se borra justo uno de sus bordes.
+        const arriba = mapa.haciaAbajo(Number(n[2]) + 1)
+        const abajo = mapa.haciaArriba(Number(n[6]) + 1)
+        n[2] = String((arriba ?? anclada) - 1)
+        n[6] = String((abajo ?? anclada) - 1)
+        return `<x:Anchor>${n.join(',')}</x:Anchor>`
+      })
   })
 }
 

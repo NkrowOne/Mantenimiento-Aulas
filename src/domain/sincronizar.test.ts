@@ -481,6 +481,25 @@ describe('la hoja de partes', () => {
     expect(p.celdas).toEqual([])
   })
 
+  it('el antepasado de una celda que se escribe va marcado: describe el libro que saldrá', () => {
+    // No es lo mismo «el Excel decía X» que «el Excel va a decir X cuando
+    // alguien suba el fichero». Lo segundo, guardado antes de tiempo, hace que
+    // una pasada que no llega a terminar deje la base creyendo que el Excel vale
+    // A cuando vale V — y la siguiente mete la V en la base.
+    const cab = fila(1, Object.fromEntries(MATERIAL_2026.columnas.map((c) => [c.letra, c.cabecera])))
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [cab, fila(2, { D: 'I260102_0002' })],
+      incidencias: [incidencia({ numero: 'I260102_0002', problema: 'No enciende' })],
+    })
+    const escrita = p.instantanea.find((c) => c.letra === 'E')
+    const leida = p.instantanea.find((c) => c.letra === 'D')
+    expect(p.celdas).toContainEqual({ celda: 'E2', valor: 'No enciende' })
+    expect(escrita?.trasEscribir).toBe(true)
+    // Y la que solo se leyó, no: ésa es un hecho y se puede guardar ya.
+    expect(leida?.trasEscribir).toBeUndefined()
+  })
+
   it('una celda en cuarentena deja antepasado, para que el arreglo no se pise', () => {
     // Sin antepasado, una celda que ya vino sucia en la primera pasada se queda
     // sin él para siempre; el día que alguien la arregla, la fusión cae en

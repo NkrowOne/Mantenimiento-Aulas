@@ -3599,3 +3599,52 @@ begin;
     raise notice 'OK: y la lectura de verdad sí llega';
   end $$;
 rollback;
+
+\echo '=== 18. El antepasado de una celda escrita espera al fichero ==='
+begin;
+  -- Guardarlo dentro de `sync_aplicar` era guardar una promesa sobre un libro
+  -- que todavía no existe: si la pasada no llega a generar el fichero, la
+  -- instantánea dice que el Excel vale A cuando vale V, y la pasada siguiente
+  -- mete la V en la base deshaciendo el trabajo de la aplicación.
+  select test_as('44444444-4444-4444-4444-444444444444', 'admin');
+  do $$
+  declare
+    v_out    jsonb;
+    v_parte  bigint;
+    v_cuantas int;
+  begin
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      -- Lo que dice el libro que se acaba de leer: se guarda ya.
+      'instantanea', jsonb_build_array(
+        jsonb_build_object('hoja', 'Bolsa 2026', 'clave', 'K1', 'columna', 'A', 'valor', 'lo que ya decía')
+      )
+    ));
+    v_parte := (v_out->>'parte_id')::bigint;
+
+    select count(*) into v_cuantas from sync_celdas where hoja = 'Bolsa 2026' and ref = 'K1';
+    if v_cuantas <> 1 then
+      raise exception 'FALLO: lo que el libro ya decía tendría que guardarse (hay %)', v_cuantas;
+    end if;
+    select count(*) into v_cuantas from sync_celdas where hoja = 'Bolsa 2026' and ref = 'K2';
+    if v_cuantas <> 0 then
+      raise exception 'FALLO: se guardó un antepasado que nadie mandó';
+    end if;
+    raise notice 'OK: lo que el libro ya decía se guarda al aplicar';
+
+    -- Y lo que el libro VA a decir, solo cuando el fichero existe.
+    perform public.sync_apuntar_salida(v_parte, repeat('a', 64), jsonb_build_array(
+      jsonb_build_object('hoja', 'Bolsa 2026', 'clave', 'K2', 'columna', 'A', 'valor', 'lo que dirá')
+    ));
+
+    select count(*) into v_cuantas from sync_celdas
+     where hoja = 'Bolsa 2026' and ref = 'K2' and valor_base = 'lo que dirá';
+    if v_cuantas <> 1 then
+      raise exception 'FALLO: al cerrar la pasada tendría que guardarse (hay %)', v_cuantas;
+    end if;
+    if (select salida_sha256 from sync_partes where id = v_parte) <> repeat('a', 64) then
+      raise exception 'FALLO: no se apuntó el hash del libro que salió';
+    end if;
+    raise notice 'OK: y lo que va a decir, solo cuando el fichero ya existe';
+  end $$;
+rollback;

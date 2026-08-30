@@ -289,15 +289,9 @@ export async function aplicar(a: Analisis): Promise<Aplicado> {
           : {}),
       })),
     )),
-    instantanea: a.planes.flatMap((p) =>
-      p.instantanea.map((c) => ({
-        hoja: p.hoja,
-        clave: c.clave,
-        columna: c.letra,
-        entidad: entidadDe(p.hoja),
-        valor: paraLaInstantanea(c.valor),
-      })),
-    ),
+    // Solo las que hablan del libro que ya está. Las que describen el que va a
+    // salir esperan a que salga: ver `instantaneaDeLaSalida`.
+    instantanea: celdasDeLaInstantanea(a, false),
     cuarentena: a.planes.flatMap((p) =>
       p.cuarentena.map((q) => ({
         hoja: p.hoja,
@@ -382,6 +376,30 @@ export function paraLaInstantanea(valor: Valor): string | null {
   return String(valor)
 }
 
+/**
+ * Las celdas de la instantánea de una pasada, de un lado o del otro.
+ *
+ * `trasEscribir` separa dos cosas que no valen lo mismo: lo que el libro **dice**
+ * —un hecho, se puede guardar ya— y lo que el libro **va a decir** cuando alguien
+ * suba el fichero que sale de aquí. Guardar lo segundo antes de tiempo es lo que
+ * hacía que una pasada que no llega a terminar dejara la base creyendo que el
+ * Excel vale A cuando vale V, y la siguiente metiera la V en la base deshaciendo
+ * el trabajo de la aplicación.
+ */
+function celdasDeLaInstantanea(a: Analisis, trasEscribir: boolean): unknown[] {
+  return a.planes.flatMap((p) =>
+    p.instantanea
+      .filter((c) => (c.trasEscribir === true) === trasEscribir)
+      .map((c) => ({
+        hoja: p.hoja,
+        clave: c.clave,
+        columna: c.letra,
+        entidad: entidadDe(p.hoja),
+        valor: paraLaInstantanea(c.valor),
+      })),
+  )
+}
+
 /** La clave estable de una fila, buscada por su número dentro de un plan. */
 function claveDe(p: Plan, fila: number): string {
   return p.instantanea.find((c) => c.fila === fila)?.clave ?? ''
@@ -435,6 +453,11 @@ export async function escribir(a: Analisis, cuando: string, parteId?: number): P
     const { error } = await supabase.rpc('sync_apuntar_salida', {
       p_parte_id: parteId,
       p_sha256: await sha256De(bytes),
+      // Y aquí, y no antes, los antepasados de las celdas que se han escrito: el
+      // fichero ya existe, así que la promesa se puede guardar. Si esto falla,
+      // lo que se pierde es que la pasada siguiente vuelva a proponer las mismas
+      // escrituras, que es lo seguro.
+      p_instantanea: celdasDeLaInstantanea(a, true),
     })
     // Que no se pueda apuntar no invalida la pasada: el libro ya está bien y la
     // base también. Se pierde el aviso de la vez siguiente, y nada más.
