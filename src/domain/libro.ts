@@ -126,14 +126,19 @@ export async function escribirLibro(
 
     const i = indice(entradas, hoja.ruta)
     let xml = await texto(entradas[i]!)
+    // El mismo resolvedor para las dos rutas: una fecha escrita en una celda que
+    // ya existe y una fecha escrita en una fila que se acaba de insertar tienen
+    // que verse igual. Se saca del XML de antes de mover nada, que es donde
+    // están los estilos que el libro ya usa en esa columna.
+    const resolver = await resolverEstiloDe(entradas, xml)
 
     if (!mapa.vacio) {
       estructuraTocada = true
-      xml = editarHojaXml(xml, ed.filas ?? {}, mapa)
+      xml = editarHojaXml(xml, ed.filas ?? {}, mapa, resolver)
     }
     if (celdas.length > 0) {
       const traducidas = celdas.map((c) => traducir(c, mapa)).filter((c) => c !== null)
-      xml = parchearHojaXml(xml, traducidas, await resolverEstiloDe(entradas, xml))
+      xml = parchearHojaXml(xml, traducidas, resolver)
       // Si se escribe en una columna escondida, se enseña: un dato que suma en
       // una fórmula y no se ve es un descuadre invisible.
       xml = mostrarColumnas(xml, columnasEscritas(traducidas))

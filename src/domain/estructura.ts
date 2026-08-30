@@ -46,7 +46,7 @@
  */
 
 import { columnaANumero, escapar, numeroAColumna, partirCelda, xmlDeCelda } from './xlsx'
-import type { Cambio } from './xlsx'
+import type { Cambio, ResolverEstilo } from './xlsx'
 
 /** El último número de fila que admite una hoja de Excel. */
 export const FILA_MAXIMA = 1_048_576
@@ -313,7 +313,12 @@ export function remapearFormula(formula: string, mapa: MapaDeFilas): string {
  * Lo de fuera —comentarios, dibujos, nombres definidos, las fórmulas de las
  * otras hojas— lo hace `editarLibro`, que es quien tiene acceso a esos ficheros.
  */
-export function editarHojaXml(xml: string, edicion: EdicionDeFilas, mapa: MapaDeFilas): string {
+export function editarHojaXml(
+  xml: string,
+  edicion: EdicionDeFilas,
+  mapa: MapaDeFilas,
+  resolver?: ResolverEstilo,
+): string {
   if (mapa.vacio) return xml
 
   const insertar = edicion.insertar ?? []
@@ -356,7 +361,14 @@ export function editarHojaXml(xml: string, edicion: EdicionDeFilas, mapa: MapaDe
   for (const [i, ins] of insertar.entries()) {
     const destino = mapa.insertadas[i]!
     const modelo = ins.estiloDe ?? ins.tras
-    cuerpo = insertarFilaXml(cuerpo, destino, ins.celdas, estilos.get(modelo) ?? new Map(), estilos.get(modelo + 1))
+    cuerpo = insertarFilaXml(
+      cuerpo,
+      destino,
+      ins.celdas,
+      estilos.get(modelo) ?? new Map(),
+      estilos.get(modelo + 1),
+      resolver,
+    )
   }
 
   // 3 — Todo lo que dentro de la hoja apunta a una posición.
@@ -437,6 +449,7 @@ function insertarFilaXml(
   celdas: Cambio[],
   estilo: Map<string, string>,
   respaldo: Map<string, string> | undefined,
+  resolver?: ResolverEstilo,
 ): string {
   const conValor = celdas.filter((c) => c.valor !== null)
   const attrsFila = estilo.get('#row') ?? respaldo?.get('#row') ?? ''
@@ -448,7 +461,14 @@ function insertarFilaXml(
   const cuerpo = ordenadas
     .map((c) => {
       const col = partirCelda(c.celda).columna
-      const s = estilo.get(col) ?? respaldo?.get(col) ?? ''
+      const heredado = estilo.get(col) ?? respaldo?.get(col) ?? ''
+      // Una fila nueva hereda el estilo de la fila detrás de la que cae, y en la
+      // columna «Fecha Revisión» eso es una lotería: media columna del libro se
+      // quedó en «General» porque nunca tuvo fecha. Si la celda dice de qué es
+      // —`formato: 'fecha'`— se le pide al mismo resolvedor que ya usa la
+      // escritura normal un estilo que de verdad la pinte. Sin él, un aula nueva
+      // estrena su revisión enseñando `46218`.
+      const s = (c.formato && resolver ? resolver(col, c.formato, heredado) : null) ?? heredado
       return xmlDeCelda(`${col}${fila}`, s, c.valor as string | number | boolean)
     })
     .join('')

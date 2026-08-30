@@ -226,6 +226,42 @@ describe('editar una hoja', () => {
   })
 })
 
+describe('el formato de una fila insertada', () => {
+  // Una fila nueva hereda el estilo de la fila detrás de la que cae. En la
+  // columna «Fecha Revisión» eso es una lotería: media columna del libro se
+  // quedó en «General» porque nunca tuvo fecha, así que un aula nueva podía
+  // estrenar su revisión enseñando 46218.
+  const HOJA_MIXTA = [
+    '<worksheet><sheetData>',
+    '<row r="1"><c r="A1" t="inlineStr"><is><t>Aula</t></is></c></row>',
+    '<row r="2"><c r="A2" s="9"/></row>',   // la vecina: sin formato de fecha
+    '</sheetData></worksheet>',
+  ].join('')
+
+  it('si la celda dice que es una fecha, se le pide un estilo que la pinte', () => {
+    const edicion = {
+      insertar: [{ tras: 2, celdas: [{ celda: 'A3', valor: 46218, formato: 'fecha' as const }] }],
+    }
+    const resolver = (col: string, formato: string) => (col === 'A' && formato === 'fecha' ? '77' : null)
+    const out = editarHojaXml(HOJA_MIXTA, edicion, planificar(edicion), resolver)
+    expect(out).toContain('<c r="A3" s="77"><v>46218</v></c>')
+  })
+
+  it('y si el resolvedor no encuentra ninguno, se queda con el de su vecina', () => {
+    const edicion = {
+      insertar: [{ tras: 2, celdas: [{ celda: 'A3', valor: 46218, formato: 'fecha' as const }] }],
+    }
+    const out = editarHojaXml(HOJA_MIXTA, edicion, planificar(edicion), () => null)
+    expect(out).toContain('<c r="A3" s="9"><v>46218</v></c>')
+  })
+
+  it('una celda sin formato declarado no molesta al resolvedor', () => {
+    const edicion = { insertar: [{ tras: 2, celdas: [{ celda: 'A3', valor: 'texto' }] }] }
+    const out = editarHojaXml(HOJA_MIXTA, edicion, planificar(edicion), () => '77')
+    expect(out).toContain('<c r="A3" s="9"')
+  })
+})
+
 describe('el final de la hoja', () => {
   // Las dos hojas de partes del libro real traen 1.960 filas con estilo que
   // llegan hasta la 1048559: alguien pintó la hoja entera hace años y Excel
