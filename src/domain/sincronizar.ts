@@ -250,6 +250,7 @@ function fusionarFilas<T>(
         excel: lectura.valor,
         antepasado: op.instantanea(par.clave, c.letra),
         dueno: c.dueno,
+        tipo: c.tipo,
         medidaBase: c.dueno === 'medida' ? op.fechaDeMedida?.(par.dato, 'base', par.celdas) : undefined,
         medidaExcel: c.dueno === 'medida' ? op.fechaDeMedida?.(par.dato, 'excel', par.celdas) : undefined,
       })

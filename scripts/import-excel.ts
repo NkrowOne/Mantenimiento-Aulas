@@ -94,6 +94,22 @@ interface Quarantined {
 const refDeFila = (ref: string, r: number): string =>
   ref ? `${ref} (fila ${r + 1})` : `fila ${r + 1}`
 
+/**
+ * Los números de incidencia que trae una celda.
+ *
+ * Casi siempre es uno, `I260203_0051`. Pero seis filas del libro traen dos —a
+ * veces separados por cuarenta espacios— porque una misma intervención se apuntó
+ * como dos incidencias y se contó en un renglón. Y `incidents.external_ref`
+ * lleva desde la migración 1400 un `check` de forma, que existe para que «el
+ * mayor del día» siga siendo una cuenta: una celda con dos números dentro no
+ * pasa por ahí, y con razón.
+ *
+ * Devuelve los que haya, en orden. Cero si lo que hay no es un número de
+ * incidencia, que también pasa.
+ */
+const numerosDeIncidencia = (celda: string): string[] =>
+  celda.toUpperCase().match(/[A-Z]\d{6}_\d{4}/g) ?? []
+
 const statements: string[] = []
 const fixes: Fix[] = []
 const quarantine: Quarantined[] = []
@@ -444,8 +460,36 @@ function importIncidents(rows: unknown[][], sheet: string, hasObservacion: boole
 
     const aula = text(row, cAula)
     const problema = text(row, cProblema)
-    const ref = text(row, cRef)
+    const crudo = text(row, cRef)
+    const numeros = numerosDeIncidencia(crudo)
+    const ref = numeros[0] ?? ''
     if (!aula && !problema) continue
+
+    // Seis filas del libro traen DOS números en la misma celda —«I250324_0002
+    // S250324_0004»—: son una intervención que el técnico apuntó como dos
+    // incidencias y contó en un renglón. Se queda el primero, que es el de esta
+    // fila, y el segundo se apunta para que alguien pueda separarlas: perder el
+    // número entero dejaría la fila sin poder cruzarse nunca con el Excel.
+    if (numeros.length > 1) {
+      fixes.push({
+        source: sheet, rowRef: refDeFila(ref, r), field: 'N.º Incidencia',
+        original: crudo, corrected: ref,
+        reason: 'La celda traía más de un número: se queda el primero',
+      })
+      quarantine.push({
+        source: sheet,
+        rowRef: refDeFila(ref, r),
+        raw: { crudo, numeros },
+        reason: 'La fila cuenta más de una incidencia en un solo renglón',
+      })
+    } else if (crudo !== '' && numeros.length === 0) {
+      quarantine.push({
+        source: sheet,
+        rowRef: `fila ${r + 1}`,
+        raw: { crudo },
+        reason: 'El número de incidencia no tiene la forma <letra><AAMMDD>_<NNNN>',
+      })
+    }
 
     const opened = parseLooseDate(cell(row, cFecha))
     if (!opened.date) {

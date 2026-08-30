@@ -3442,6 +3442,8 @@ begin;
   declare
     v_zona uuid;
     v_aula uuid;
+    v_tipo uuid;
+    v_proy uuid := gen_random_uuid();
     v_rev  uuid := gen_random_uuid();
     v_vieja uuid := gen_random_uuid();
     v_horas int;
@@ -3451,13 +3453,20 @@ begin;
     values (gen_random_uuid(), v_zona, 'PRB-H', 'Prueba horas', 900)
     returning id into v_aula;
 
+    -- Una lectura de horas de verdad es la de un proyector instalado en el aula
+    -- que se revisa, y su clave es `asset:<id>`. Cualquier otra fila que diga
+    -- «h» no es una lectura: ver el bloque 17.
+    select id into v_tipo from asset_types where tracks_lamp_hours limit 1;
+    insert into assets (id, asset_type_id, room_id, status)
+    values (v_proy, v_tipo, v_aula, 'instalado');
+
     -- El orden EXACTO de `outbox.ts`: la revisión sube en borrador porque le
     -- faltan comprobaciones, luego las comprobaciones, y luego el cierre.
     insert into inspections (id, room_id, by_user, occurred_at, status)
     values (v_rev, v_aula, null, '2026-03-04T09:30:00Z', 'borrador');
 
     insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
-    values (gen_random_uuid(), v_rev, 'proyector_horas', 'ok', 4200, 'h');
+    values (gen_random_uuid(), v_rev, 'asset:' || v_proy::text, 'ok', 4200, 'h');
 
     select projector_hours into v_horas from rooms where id = v_aula;
     if v_horas <> 900 then
@@ -3476,7 +3485,7 @@ begin;
     insert into inspections (id, room_id, by_user, occurred_at, status)
     values (v_vieja, v_aula, null, '2025-11-02T09:30:00Z', 'borrador');
     insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
-    values (gen_random_uuid(), v_vieja, 'proyector_horas', 'ok', 3900, 'h');
+    values (gen_random_uuid(), v_vieja, 'asset:' || v_proy::text, 'ok', 3900, 'h');
     update inspections set status = 'completa' where id = v_vieja;
 
     select projector_hours into v_horas from rooms where id = v_aula;
@@ -3492,5 +3501,101 @@ begin;
       raise exception 'FALLO: corregir la lectura no llegó a la sala (%)', v_horas;
     end if;
     raise notice 'OK: y corregir la lectura de la más reciente sí llega';
+  end $$;
+rollback;
+
+\echo '=== 17. Ni el número de incidencia ni las horas los escribe un técnico ==='
+begin;
+  -- Dos escrituras que un técnico podía hacer rodeando la RLS, no rompiéndola.
+  do $$
+  declare
+    v_zona uuid;
+    v_aula uuid;
+    v_tipo uuid;
+    v_proy uuid := gen_random_uuid();
+    v_rev  uuid := gen_random_uuid();
+    v_rev2 uuid := gen_random_uuid();
+    v_inc  uuid := gen_random_uuid();
+    v_ref  text;
+    v_horas int;
+  begin
+    select id into v_zona from zones limit 1;
+    insert into rooms (id, zone_id, code, name, projector_hours)
+    values (gen_random_uuid(), v_zona, 'PRB-S', 'Prueba seguridad', 900)
+    returning id into v_aula;
+    select id into v_tipo from asset_types where tracks_lamp_hours limit 1;
+    insert into assets (id, asset_type_id, room_id, status)
+    values (v_proy, v_tipo, v_aula, 'instalado');
+
+    -- (1) El número escrito a mano se descarta: con `_9999` puesto por una
+    --     sesión, ese día se quedaba sin números que dar.
+    perform test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+    insert into incidents (id, room_id, title, description, severity, state, opened_at, opened_by, external_ref)
+    values (v_inc, v_aula, 'Prueba', 'Prueba', 'media', 'abierta',
+            '2026-12-31T09:00:00Z', '11111111-1111-4111-8111-111111111111', 'I261231_9999')
+    returning external_ref into v_ref;
+    if v_ref = 'I261231_9999' then
+      raise exception 'FALLO: un técnico fijó el número a mano y se quedó';
+    end if;
+    if v_ref <> 'I261231_0001' then
+      raise exception 'FALLO: el número que puso la base es «%» y esperábamos I261231_0001', v_ref;
+    end if;
+    raise notice 'OK: el número que escribe un técnico se descarta (quedó %)', v_ref;
+
+    -- (2) Una comprobación inventada con «h» no escribe en rooms.
+    insert into inspections (id, room_id, by_user, occurred_at, status)
+    values (v_rev, v_aula, '11111111-1111-4111-8111-111111111111',
+            '2026-12-31T10:00:00Z', 'borrador');
+    insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
+    values (gen_random_uuid(), v_rev, 'me-lo-invento', 'ok', 123456, 'h');
+    update inspections set status = 'completa' where id = v_rev;
+
+    reset role;
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 900 then
+      raise exception 'FALLO: una comprobación inventada escribió % en rooms', v_horas;
+    end if;
+    raise notice 'OK: una comprobación que no es de un proyector no toca rooms';
+
+    -- (3) Y una comprobación de un proyector de OTRA aula, tampoco.
+    perform test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+    insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
+    values (gen_random_uuid(), v_rev,
+            'asset:' || (select id from assets where room_id <> v_aula and status = 'instalado' limit 1)::text,
+            'ok', 654321, 'h');
+    reset role;
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 900 then
+      raise exception 'FALLO: el proyector de otra aula escribió % en esta', v_horas;
+    end if;
+    raise notice 'OK: ni el proyector de otra aula';
+
+    -- (4) Y una medida absurda tampoco, que además reventaba el ::int.
+    perform test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+    insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
+    values (gen_random_uuid(), v_rev, 'asset:' || v_proy::text, 'ok', 99999999999, 'h');
+    reset role;
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 900 then
+      raise exception 'FALLO: entraron % horas de lámpara', v_horas;
+    end if;
+    raise notice 'OK: ni cien mil millones de horas de lámpara';
+
+    -- (5) Pero la lectura de verdad sí entra: esto es la función, no el candado.
+    --     En una revisión nueva, que una cerrada ya no se toca —y hay una sola
+    --     comprobación por elemento, así que la de arriba está ocupada.
+    perform test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+    insert into inspections (id, room_id, by_user, occurred_at, status)
+    values (v_rev2, v_aula, '11111111-1111-4111-8111-111111111111',
+            '2026-12-31T12:00:00Z', 'borrador');
+    insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
+    values (gen_random_uuid(), v_rev2, 'asset:' || v_proy::text, 'ok', 4200, 'h');
+    update inspections set status = 'completa' where id = v_rev2;
+    reset role;
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 4200 then
+      raise exception 'FALLO: la lectura buena no llegó (%)', v_horas;
+    end if;
+    raise notice 'OK: y la lectura de verdad sí llega';
   end $$;
 rollback;

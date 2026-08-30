@@ -44,6 +44,33 @@ describe('la tabla de decisión del apartado 4', () => {
   })
 })
 
+describe('canonizar no puede juntar dos aulas distintas', () => {
+  it('«1.10» no es «1.1» en una columna de texto', () => {
+    // En este libro son dos aulas del mismo edificio, y hay siete pares así:
+    // 0.1/0.10 en el CRAI, 1.1/1.10 en E, H, O y el CRAI, 2.1/2.10 en M y O.
+    expect(canonizar('1.10', 'texto')).not.toBe(canonizar('1.1', 'texto'))
+    expect(iguales('1.10', '1.1', 'texto')).toBe(false)
+  })
+
+  it('y una medida sigue comparándose como medida', () => {
+    // El antepasado va y vuelve por una columna `text`: sin esto, el 12,5 de la
+    // base no coincidiría nunca con el «12.5» que sale de la instantánea.
+    expect(iguales(12.5, '12,50', 'numero')).toBe(true)
+    expect(iguales(4200, '4200', 'numero')).toBe(true)
+  })
+
+  it('un número de serie con ceros delante tampoco se toca', () => {
+    expect(iguales('0012', '12', 'texto')).toBe(false)
+    expect(iguales('0012', '12')).toBe(false)
+  })
+
+  it('una fila de aula renombrada a la de al lado no pasa por sin_cambios', () => {
+    const r = fusionarCelda(celda({ tipo: 'texto', base: '1.10', excel: '1.1', antepasado: '1.10' }))
+    expect(r.tipo).not.toBe('sin_cambios')
+    expect(r).toMatchObject({ tipo: 'hacia_la_base', valor: '1.1' })
+  })
+})
+
 describe('un hueco no es un desacuerdo', () => {
   it('la base no tenía el número de serie: entra el del Excel', () => {
     const r = fusionarCelda(celda({ base: null, excel: 'X4KM9900123', antepasado: null }))
