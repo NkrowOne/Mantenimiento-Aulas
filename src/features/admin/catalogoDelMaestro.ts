@@ -27,6 +27,15 @@
  *    hechos desde la aplicación están apuntados en `audit_log`, y son la
  *    traducción exacta de la nomenclatura vieja. Sin ellas, las filas de un
  *    edificio renombrado no cruzan.
+ *  - Los **códigos anteriores de cada sala**, de la vista
+ *    `historial_de_nomenclatura`. Es la red de rescate del renombrado de sala,
+ *    y va aparte —y tolerando que falte— a propósito: la vista es nueva, y una
+ *    base a la que todavía no se le ha aplicado la migración tiene que seguir
+ *    traduciendo edificios exactamente como hoy en vez de quedarse sin nada.
+ *  - Los **edificios desaparecidos**. Los tenía el informe en seco y no los
+ *    tenía la pantalla, así que ante un edificio fusionado la una decía «ya no
+ *    existe (fusionado)» y la otra «no está en el maestro ni consta que lo haya
+ *    estado», del mismo libro y el mismo día.
  *  - Los **nombres anteriores**, de la misma auditoría. Cambiarle el nombre a
  *    un edificio desde la aplicación no le cambia el código ni le mueve una
  *    sala, pero el libro sigue escrito con el nombre viejo: sin esto, renombrar
@@ -35,8 +44,12 @@
  */
 
 import { supabase } from '@/lib/supabase'
-import { equivalenciasDesdeAuditoria, nombresAnterioresDesdeAuditoria } from '@/domain/cruce'
-import type { Catalogo, SalaConocida } from '@/domain/cruce'
+import {
+  codigosAnterioresDeSalaDesdeAuditoria,
+  equivalenciasDesdeAuditoria,
+  nombresAnterioresDesdeAuditoria,
+} from '@/domain/cruce'
+import type { Catalogo, EdificioDesaparecido, SalaConocida } from '@/domain/cruce'
 import { OLD_BUILDING_CODES } from '@/domain/normalize'
 import { descargaEntera } from '@/sync/paginada'
 
@@ -74,6 +87,17 @@ interface FilaAuditoria {
   op: string
   old_data: Record<string, unknown> | null
   new_data: Record<string, unknown> | null
+}
+
+/** Una fila de `historial_de_nomenclatura`: un cambio de nomenclatura, ya filtrado. */
+interface FilaHistorial {
+  que: string
+  id: string
+  codigo_viejo: string | null
+  codigo_nuevo: string | null
+  nombre_viejo: string | null
+  nombre_nuevo: string | null
+  destino: string | null
 }
 
 export async function catalogoDelMaestro(): Promise<Catalogo> {
@@ -157,7 +181,47 @@ export async function catalogoDelMaestro(): Promise<Catalogo> {
     // códigos que ya eran viejos antes de cargar la base.
     equivalencias: { ...historia.equivalencias, ...OLD_BUILDING_CODES },
     nombresViejos: historia.nombresViejos,
+    edificiosDesaparecidos: historia.desaparecidos,
+    codigosViejosDeSala: await codigosViejosDeSala(),
   }
+}
+
+/**
+ * Los códigos que las salas tuvieron antes, de `historial_de_nomenclatura`.
+ *
+ * Va por la vista y no por `audit_log` en crudo por una razón de peso, literal:
+ * `rooms` es la tabla más escrita del maestro —cada lectura de horas de
+ * proyector deja una fila de auditoría, y cada celda que vuelve del libro deja
+ * otra, con `to_jsonb` de las quince columnas dentro— y de todas ellas las que
+ * interesan son las poquísimas donde cambió el código. PostgREST no sabe
+ * comparar dos columnas entre sí, así que ese filtro no se puede escribir desde
+ * aquí: se escribe en la vista, y baja una fila por renombrado en vez de megas
+ * por pasada.
+ *
+ * Si la vista no está —una base sin la migración— se sigue sin ella. Es una red
+ * de rescate: sin ella se cruza como se cruzaba ayer, que es peor pero no es
+ * falso.
+ */
+async function codigosViejosDeSala(): Promise<Array<{ salaId: string; codigo: string }>> {
+  const d = await descargaEntera<FilaHistorial>((desde, hasta) =>
+    supabase
+      .from('historial_de_nomenclatura')
+      .select('que, id, codigo_viejo, codigo_nuevo, nombre_viejo, nombre_nuevo, destino')
+      .eq('que', 'sala')
+      .order('id')
+      .range(desde, hasta),
+  )
+  if (d.error || !d.completa || !d.data) return []
+
+  return codigosAnterioresDeSalaDesdeAuditoria({
+    vivos: [],
+    renombrados: [],
+    fusiones: [],
+    borrados: [],
+    salasRenombradas: d.data
+      .filter((r) => r.codigo_viejo)
+      .map((r) => ({ rowId: r.id, codigoViejo: r.codigo_viejo! })),
+  })
 }
 
 /**
@@ -175,7 +239,11 @@ export async function catalogoDelMaestro(): Promise<Catalogo> {
  */
 async function historiaDeLaAuditoria(
   edificios: FilaEdificio[],
-): Promise<{ equivalencias: Record<string, string>; nombresViejos: Array<{ codigo: string; nombre: string }> }> {
+): Promise<{
+  equivalencias: Record<string, string>
+  nombresViejos: Array<{ codigo: string; nombre: string }>
+  desaparecidos: EdificioDesaparecido[]
+}> {
   const d = await descargaEntera<FilaAuditoria>((desde, hasta) =>
     supabase
       .from('audit_log')
@@ -185,7 +253,9 @@ async function historiaDeLaAuditoria(
       .range(desde, hasta),
   )
 
-  if (d.error || !d.completa || !d.data) return { equivalencias: {}, nombresViejos: [] }
+  if (d.error || !d.completa || !d.data) {
+    return { equivalencias: {}, nombresViejos: [], desaparecidos: [] }
+  }
 
   const dato = (x: Record<string, unknown> | null, k: string): string | undefined => {
     const v = x?.[k]
@@ -203,16 +273,28 @@ async function historiaDeLaAuditoria(
           dato(r.old_data, 'code') !== dato(r.new_data, 'code'),
       )
       .map((r) => ({ rowId: r.row_id, codigoViejo: dato(r.old_data, 'code')! })),
-    fusiones: d.data
-      .filter(
-        (r) =>
-          r.table_name === 'zones' &&
-          r.op === 'UPDATE' &&
-          dato(r.old_data, 'building_id') !== undefined &&
-          dato(r.new_data, 'building_id') !== undefined &&
-          dato(r.old_data, 'building_id') !== dato(r.new_data, 'building_id'),
-      )
-      .map((r) => ({ deId: dato(r.old_data, 'building_id')!, aId: dato(r.new_data, 'building_id')! })),
+    fusiones: [
+      ...d.data
+        .filter(
+          (r) =>
+            r.table_name === 'zones' &&
+            r.op === 'UPDATE' &&
+            dato(r.old_data, 'building_id') !== undefined &&
+            dato(r.new_data, 'building_id') !== undefined &&
+            dato(r.old_data, 'building_id') !== dato(r.new_data, 'building_id'),
+        )
+        .map((r) => ({ deId: dato(r.old_data, 'building_id')!, aId: dato(r.new_data, 'building_id')! })),
+      // La otra rama de `merge_building`: cuando la planta de origen choca de
+      // nombre con una del destino, se mueven las aulas y se borra la planta, y
+      // ningún `building_id` cambia. La fusión no dejaba entonces ni un rastro y
+      // el edificio entero se quedaba sin traducir. Desde la migración de la
+      // lápida, el `DELETE` del edificio lleva dentro a dónde fue.
+      ...d.data
+        .filter(
+          (r) => r.table_name === 'buildings' && r.op === 'DELETE' && dato(r.old_data, 'merged_into'),
+        )
+        .map((r) => ({ deId: r.row_id, aId: dato(r.old_data, 'merged_into')! })),
+    ],
     borrados: d.data
       .filter((r) => r.table_name === 'buildings' && r.op === 'DELETE' && dato(r.old_data, 'code'))
       .map((r) => ({ rowId: r.row_id, codigo: dato(r.old_data, 'code')! })),
@@ -228,8 +310,21 @@ async function historiaDeLaAuditoria(
       .map((r) => ({ rowId: r.row_id, nombreViejo: dato(r.old_data, 'name')! })),
   }
 
+  const vivos = new Set(edificios.map((b) => b.code))
+
   return {
     equivalencias: equivalenciasDesdeAuditoria(rastro),
     nombresViejos: nombresAnterioresDesdeAuditoria(rastro),
+    // Los que se borraron y no han vuelto. Sirven para que el cruce diga «ese
+    // edificio ya no existe (fusionado)» —que es verdad y dice qué hacer— en vez
+    // de «no está en el maestro ni consta que lo haya estado», que es falso.
+    desaparecidos: d.data
+      .filter((r) => r.table_name === 'buildings' && r.op === 'DELETE' && dato(r.old_data, 'code'))
+      .map((r) => ({
+        codigo: dato(r.old_data, 'code')!,
+        nombre: dato(r.old_data, 'name') ?? dato(r.old_data, 'code')!,
+        motivo: dato(r.old_data, 'merged_into') ? 'fusionado' : 'borrado o fusionado',
+      }))
+      .filter((e) => !vivos.has(e.codigo)),
   }
 }

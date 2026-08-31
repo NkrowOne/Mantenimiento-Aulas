@@ -3648,3 +3648,107 @@ begin;
     raise notice 'OK: y lo que va a decir, solo cuando el fichero ya existe';
   end $$;
 rollback;
+
+-- -----------------------------------------------------------------------------
+begin;
+\echo '=== 19. Renombrar una sala deja rastro, y la fusión no lo borra ==='
+-- Es el caso de las nueve aulas de sótano del CRAI: el libro las escribe `1.1-`,
+-- alguien las renombró a `-1.1` en la aplicación y después fusionó el edificio.
+-- El alias seguía apuntando a la sala correcta pero con el código del edificio
+-- de aquel día, así que el cruce —que lo recompone con el de hoy— no lo
+-- encontraba nunca. Aquí se comprueban las tres piezas del arreglo.
+  select test_as('44444444-4444-4444-4444-444444444444', 'admin');
+  do $$
+  declare
+    v_origen  uuid;
+    v_destino uuid;
+    v_zona    uuid;
+    v_sala    uuid;
+    v_n       int;
+  begin
+    -- Por los RPC y no con `insert` a pelo: es como los crea la aplicación, y
+    -- el alta de una sala dispara `materializar_defaults`, que solo se puede
+    -- llamar desde dentro de `create_room`.
+    v_origen  := public.create_building('ZZO', 'EDIFICIO DE ORIGEN');
+    v_destino := public.create_building('ZZD', 'EDIFICIO DE DESTINO');
+    v_sala    := public.create_room(v_origen, 'PLANTA -1', '1.1-', '1.1-', 'aula');
+    select zone_id into v_zona from rooms where id = v_sala;
+
+    -- 1) El disparador: un `update rooms set code` a pelo —el camino que usa la
+    --    vuelta del Excel, que no llamaba a `rename_room` y no dejaba nada—
+    --    tiene que dejar el alias igual.
+    update rooms set code = '-1.1', name = '-1.1' where id = v_sala;
+
+    select count(*) into v_n from room_aliases
+     where room_id = v_sala and alias_norm = public.norm_text('1.1- ZZO');
+    if v_n <> 1 then
+      raise exception 'FALLO: renombrar por fuera de rename_room no dejó alias (hay %)', v_n;
+    end if;
+    raise notice 'OK: renombrar la sala deja alias venga el renombrado de donde venga';
+
+    -- 2) La fusión recualifica ese alias con el código del edificio de hoy. El
+    --    viejo se queda: sigue siendo verdad que la sala se llamó así.
+    perform public.merge_building(v_origen, v_destino);
+
+    select count(*) into v_n from room_aliases
+     where room_id = v_sala and alias_norm = public.norm_text('1.1- ZZD');
+    if v_n <> 1 then
+      raise exception 'FALLO: la fusión no recualificó el alias (hay %)', v_n;
+    end if;
+    select count(*) into v_n from room_aliases
+     where room_id = v_sala and alias_norm = public.norm_text('1.1- ZZO');
+    if v_n <> 1 then
+      raise exception 'FALLO: la fusión borró el alias viejo, y eso era historia';
+    end if;
+    raise notice 'OK: la fusión recualifica los alias de las salas que se lleva';
+
+    -- 3) La lápida: `merged_into` deja escrito a dónde fue el edificio, para que
+    --    no haya que deducirlo del salto de las plantas —que no ocurre cuando
+    --    las plantas chocan de nombre y la fusión se vuelve invisible.
+    select count(*) into v_n from audit_log
+     where table_name = 'buildings' and op = 'DELETE' and row_id = v_origen::text
+       and old_data->>'merged_into' = v_destino::text;
+    if v_n <> 1 then
+      raise exception 'FALLO: la fusión no dejó apuntado a dónde fue el edificio (hay %)', v_n;
+    end if;
+    raise notice 'OK: la fusión deja escrito a dónde fue, en vez de que se deduzca';
+
+    -- 4) Y la vista lo cuenta ya filtrado, que es lo que lee el cruce sin tener
+    --    que bajarse la auditoría entera de `rooms` a un iPad.
+    select count(*) into v_n from historial_de_nomenclatura
+     where que = 'sala' and id = v_sala::text and codigo_viejo = '1.1-';
+    if v_n <> 1 then
+      raise exception 'FALLO: el historial no trae el código anterior de la sala (hay %)', v_n;
+    end if;
+    select count(*) into v_n from historial_de_nomenclatura
+     where que = 'edificio_borrado' and id = v_origen::text and destino = v_destino::text;
+    if v_n <> 1 then
+      raise exception 'FALLO: el historial no trae la fusión (hay %)', v_n;
+    end if;
+    raise notice 'OK: el historial de nomenclatura trae el renombrado y la fusión';
+  end $$;
+
+  -- 5) Y la fusión que chocaría de códigos se rechaza diciendo qué choca, en vez
+  --    de reventar a mitad con el error crudo del índice.
+  do $$
+  declare
+    v_a uuid; v_b uuid;
+  begin
+    v_a := public.create_building('ZZA', 'EDIFICIO A');
+    v_b := public.create_building('ZZB', 'EDIFICIO B');
+    -- «PLANTA BAJA» y «planta baja» son la misma planta para `norm_text`, que es
+    -- justo lo que la fusión tiene que ver y antes no veía.
+    perform public.create_room(v_a, 'PLANTA BAJA', '0.1', '0.1', 'aula');
+    perform public.create_room(v_b, 'planta baja', '0.1', '0.1', 'aula');
+
+    begin
+      perform public.merge_building(v_a, v_b);
+      raise exception 'FALLO: fusionar con dos aulas «0.1» en la misma planta tendría que rechazarse';
+    exception when others then
+      if sqlerrm not like '%no se puede fusionar%' and sqlerrm not like '%No se puede fusionar%' then
+        raise exception 'FALLO: el rechazo no explica el choque: %', sqlerrm;
+      end if;
+    end;
+    raise notice 'OK: la fusión que chocaría de códigos se rechaza diciendo qué choca';
+  end $$;
+rollback;
