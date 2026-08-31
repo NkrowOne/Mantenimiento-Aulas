@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  codigosAnterioresDeSalaDesdeAuditoria,
   construirIndice,
   contar,
   equivalenciasDesdeAuditoria,
@@ -71,6 +72,54 @@ describe('los alias son donde viven los renombrados', () => {
     const r = resolverSala(IX, { tipo: 'parte', ref: '0.1 P' })
     expect(r).toMatchObject({ estado: 'resuelta' })
     if (r.estado === 'resuelta') expect(r.sala.shortRef).toBe('SALA-000001')
+  })
+})
+
+describe('un alias caducado no puede ganarle al maestro de hoy', () => {
+  // La sala A se llamaba `1.1` y pasó a `2.1`, dejando el alias `1.1 CRAI`.
+  // Después la sala B pasó a llamarse `1.1`. Nada lo impide: ni `rename_room`
+  // ni `create_room` comprueban el código contra `room_aliases`, y de esa tabla
+  // no se borra nunca nada.
+  const CADUCADO = construirIndice({
+    edificios: [{ codigo: 'CRAI', nombre: 'EDIFICIO CRAI', activo: true }],
+    salas: [
+      sala({ code: '2.1', edificioCodigo: 'CRAI', edificioNombre: 'EDIFICIO CRAI', shortRef: 'SALA-000101', alias: ['1.1 CRAI'] }),
+      sala({ code: '1.1', edificioCodigo: 'CRAI', edificioNombre: 'EDIFICIO CRAI', shortRef: 'SALA-000102' }),
+    ],
+  })
+
+  it('el parte no resuelve la sala que YA NO se llama así: lo declara ambiguo', () => {
+    const r = resolverSala(CADUCADO, { tipo: 'parte', ref: '1.1 CRAI' })
+    expect(r.estado).toBe('ambigua')
+    if (r.estado === 'ambigua') {
+      expect(r.candidatas.map((c) => c.shortRef).sort()).toEqual(['SALA-000101', 'SALA-000102'])
+    }
+  })
+
+  it('la hoja de estado sigue dando la sala que hoy se llama así', () => {
+    const r = resolverSala(CADUCADO, { tipo: 'estado', edificio: 'EDIFICIO CRAI', aula: '1.1' })
+    expect(r).toMatchObject({ estado: 'resuelta' })
+    if (r.estado === 'resuelta') expect(r.sala.shortRef).toBe('SALA-000102')
+  })
+
+  it('un alias que apunta a la sala de siempre sigue cruzando por alias', () => {
+    const r = resolverSala(CADUCADO, { tipo: 'parte', ref: '2.1 CRAI' })
+    expect(r).toMatchObject({ estado: 'resuelta', via: 'edificio+codigo' })
+  })
+
+  it('dos alias que la base distingue y `norm()` junta: gana el primero, como el servidor', () => {
+    // `alias_norm` se escribe con `norm_text`, que NO pasa las comas a puntos;
+    // el índice usa `norm()`, que sí. En la base son dos filas distintas y aquí
+    // colapsan en la misma clave.
+    const ix = construirIndice({
+      salas: [
+        sala({ code: '9.1', edificioCodigo: 'H', shortRef: 'SALA-000103', alias: ['1,7 H'] }),
+        sala({ code: '9.2', edificioCodigo: 'H', shortRef: 'SALA-000104', alias: ['1.7 H'] }),
+      ],
+    })
+    const r = resolverSala(ix, { tipo: 'parte', ref: '1.7 H' })
+    expect(r).toMatchObject({ estado: 'resuelta', via: 'alias' })
+    if (r.estado === 'resuelta') expect(r.sala.shortRef).toBe('SALA-000103')
   })
 })
 
@@ -554,5 +603,118 @@ describe('los nombres anteriores salen de la auditoría, no de una tabla a mano'
         borrados: [],
       }),
     ).toEqual([])
+  })
+})
+
+describe('las nueve aulas de sótano del CRAI', () => {
+  // El caso real, y las tres cosas que le pasaron encima:
+  //
+  //  1. el libro las escribe con el menos DETRÁS —`1.1-`—, que es como el
+  //     importador las creó y como quedó su alias: `1.1- CRAI`;
+  //  2. alguien las renombró en la aplicación a `-1.1` … `-1.9`;
+  //  3. y después fusionó el CRAI con el T. Moro.
+  //
+  // El alias siguió en la base y siguió apuntando a la sala correcta. Lo que
+  // dejó de servir fue su forma: lleva pegado el código del edificio de aquel
+  // día, y el cruce lo recomponía con el de hoy.
+  //
+  // Se arma desde el rastro de la auditoría a propósito, y no escribiendo la
+  // equivalencia a mano: así la prueba cubre también que la fusión se reconoce.
+  const RASTRO = {
+    vivos: [{ id: 'tm', codigo: 'TM' }],
+    renombrados: [],
+    fusiones: [{ deId: 'crai', aId: 'tm' }],
+    borrados: [{ rowId: 'crai', codigo: 'CRAI' }],
+  }
+
+  const NUEVE = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+  const CATALOGO_CRAI: Catalogo = {
+    edificios: [{ codigo: 'TM', nombre: 'Edificio TM', activo: true }],
+    salas: NUEVE.map((n) =>
+      sala({
+        code: `-1.${n}`,
+        edificioCodigo: 'TM',
+        edificioNombre: 'Edificio TM',
+        shortRef: `SALA-00020${n}`,
+        alias: [`1.${n}- CRAI`],
+      }),
+    ),
+    equivalencias: equivalenciasDesdeAuditoria(RASTRO),
+  }
+
+  const IXC = construirIndice(CATALOGO_CRAI)
+
+  it('la auditoría reconoce la fusión sin que nadie la declare', () => {
+    expect(equivalenciasDesdeAuditoria(RASTRO)).toEqual({ CRAI: 'TM' })
+  })
+
+  it.each(NUEVE)('la fila «1.%i-» de «EDIFICIO CRAI» encuentra su sala', (n) => {
+    const r = resolverSala(IXC, { tipo: 'estado', edificio: 'EDIFICIO CRAI', zona: 'PLANTA -1', aula: `1.${n}-` })
+    expect(r).toMatchObject({ estado: 'resuelta', via: 'alias' })
+    if (r.estado === 'resuelta') expect(r.sala.code).toBe(`-1.${n}`)
+  })
+
+  it('y dice que el alias se guardó con el código de antes', () => {
+    const r = resolverSala(IXC, { tipo: 'estado', edificio: 'EDIFICIO CRAI', aula: '1.1-' })
+    if (r.estado !== 'resuelta') throw new Error('tenía que cruzar')
+    expect(r.aviso).toContain('1.1- CRAI')
+  })
+
+  it('sin la equivalencia de la fusión no cruza, y por eso hace falta la lápida', () => {
+    const ix = construirIndice({ ...CATALOGO_CRAI, equivalencias: {} })
+    const r = resolverSala(ix, { tipo: 'estado', edificio: 'EDIFICIO CRAI', aula: '1.1-' })
+    expect(r.estado).not.toBe('resuelta')
+  })
+
+  it('sin el alias, el código anterior de la auditoría la rescata igual', () => {
+    const ix = construirIndice({
+      ...CATALOGO_CRAI,
+      salas: CATALOGO_CRAI.salas.map((s) => ({ ...s, alias: [] })),
+      codigosViejosDeSala: codigosAnterioresDeSalaDesdeAuditoria({
+        ...RASTRO,
+        salasRenombradas: NUEVE.map((n) => ({ rowId: `id-TM--1.${n}`, codigoViejo: `1.${n}-` })),
+      }),
+    })
+    const r = resolverSala(ix, { tipo: 'estado', edificio: 'EDIFICIO CRAI', aula: '1.4-' })
+    expect(r).toMatchObject({ estado: 'resuelta', via: 'codigo-anterior-de-sala' })
+    if (r.estado === 'resuelta') expect(r.sala.code).toBe('-1.4')
+  })
+
+  it('el código de hoy manda sobre el de ayer: no se secuestra una sala viva', () => {
+    // La sala A se llamaba `-1.1` y pasó a `-1.9`; después la sala B pasó a
+    // llamarse `-1.1`. La fila que dice `-1.1` es de B, que es como se llama hoy.
+    const ix = construirIndice({
+      edificios: [{ codigo: 'TM', nombre: 'Edificio TM', activo: true }],
+      salas: [
+        sala({ code: '-1.9', edificioCodigo: 'TM', shortRef: 'SALA-A', id: 'sala-a' }),
+        sala({ code: '-1.1', edificioCodigo: 'TM', shortRef: 'SALA-B', id: 'sala-b' }),
+      ],
+      codigosViejosDeSala: [{ salaId: 'sala-a', codigo: '-1.1' }],
+    })
+    const r = resolverSala(ix, { tipo: 'estado', edificio: 'TM', aula: '-1.1' })
+    if (r.estado !== 'resuelta') throw new Error('tenía que cruzar')
+    expect(r.sala.shortRef).toBe('SALA-B')
+  })
+
+  it('un código anterior nunca sale a buscar por todo el campus', () => {
+    // Es la trampa que hay que evitar: `1.1-` del CRAI y `-1.1` del EDIFICIO H
+    // son aulas de sótano distintas, de edificios distintos. El código anterior
+    // vive dentro de su edificio y no entra en `porCodigoSuelto`.
+    const ix = construirIndice({
+      edificios: [
+        { codigo: 'TM', nombre: 'Edificio TM', activo: true },
+        { codigo: 'H', nombre: 'EDIFICIO H', activo: true },
+      ],
+      salas: [
+        sala({ code: '-1.1', edificioCodigo: 'TM', shortRef: 'SALA-TM', id: 'sala-tm' }),
+        sala({ code: '-1.1', edificioCodigo: 'H', shortRef: 'SALA-H', id: 'sala-h' }),
+      ],
+      codigosViejosDeSala: [{ salaId: 'sala-tm', codigo: '1.1-' }],
+    })
+    expect(ix.porCodigoSuelto.get('1.1-')).toBeUndefined()
+    // Y con un edificio que ya no está, tampoco lo encuentra por ahí.
+    const r = resolverSala(ix, { tipo: 'estado', edificio: 'EDIFICIO QUE NO EXISTE', aula: '1.1-' })
+    expect(r.estado).not.toBe('resuelta')
   })
 })

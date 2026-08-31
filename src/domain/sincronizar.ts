@@ -476,21 +476,24 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
       continue
     }
 
-    const sala =
+    const porRef = matricula !== '' ? porMatricula.get(norm(matricula)) : undefined
+    const cruce: ResultadoDelCruce =
       matricula !== ''
-        ? porMatricula.get(norm(matricula))
+        ? porRef
+          ? { sala: porRef }
+          : { motivo: `la matrícula «${matricula}» no existe en el maestro` }
         : salaPorCruce(e.indice, porMatricula, edificio, zona, aula)
 
-    if (!sala) {
+    if (!cruce.sala) {
       plan.sinCruzar.push({
         fila: f.fila,
-        motivo:
-          matricula !== ''
-            ? `la matrícula «${matricula}» no existe en el maestro`
-            : `«${aula}» de «${edificio}» no cruza con ninguna sala`,
+        // El «qué» delante y el «por qué» detrás: el qué es lo que se busca en
+        // el libro y el porqué es lo que dice qué hacer con ello.
+        motivo: matricula !== '' ? cruce.motivo : `«${aula}» de «${edificio}»: ${cruce.motivo}`,
       })
       continue
     }
+    const sala = cruce.sala
 
     if (vistas.has(sala.id)) {
       plan.sinCruzar.push({
@@ -596,17 +599,45 @@ function letrasEntre(a: string, b: string): string[] {
   return out
 }
 
-/** El cruce por nombre, para la primera pasada y para las filas sin matrícula. */
+/** O la sala, o el motivo por el que no la hay. Nunca las dos ni ninguna. */
+type ResultadoDelCruce =
+  | { sala: SalaVolcada; motivo?: undefined }
+  | { sala?: undefined; motivo: string }
+
+/**
+ * El cruce por nombre, para la primera pasada y para las filas sin matrícula.
+ *
+ * Devuelve también el **motivo** cuando no cruza, y no solo `undefined`.
+ * `resolverSala` redacta uno preciso para cada fallo —«el edificio ya no existe
+ * (fusionado)», «el código existe en tres edificios»— y tirarlo era lo que
+ * dejaba la pantalla repitiendo «no cruza con ninguna sala» once veces seguidas
+ * sin decir nada: con ese texto, un edificio fusionado, una sala renombrada y un
+ * código ambiguo se leen exactamente igual, y ninguno de los tres se arregla del
+ * mismo modo.
+ */
 function salaPorCruce(
   indice: Indice,
   porMatricula: Map<string, SalaVolcada>,
   edificio: string,
   zona: string,
   aula: string,
-): SalaVolcada | undefined {
+): ResultadoDelCruce {
   const r = resolverSala(indice, { tipo: 'estado', edificio, zona, aula })
-  if (r.estado !== 'resuelta') return undefined
-  return porMatricula.get(norm(r.sala.shortRef))
+  if (r.estado === 'ambigua') {
+    return {
+      motivo: `${r.motivo}. Candidatas: ${r.candidatas.map((c) => `«${c.code}» (${c.shortRef})`).join(', ')}`,
+    }
+  }
+  if (r.estado === 'sin_cruce') return { motivo: r.motivo }
+  const sala = porMatricula.get(norm(r.sala.shortRef))
+  // Cruzó contra el maestro pero esa sala no está en el volcado del año: es un
+  // desajuste entre las dos lecturas, y decir «no cruza» lo escondería.
+  if (!sala) {
+    return {
+      motivo: `cruza con «${r.sala.code}» (${r.sala.shortRef}), pero esa sala no está en los datos de la pasada`,
+    }
+  }
+  return { sala }
 }
 
 /**

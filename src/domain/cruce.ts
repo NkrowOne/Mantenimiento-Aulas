@@ -106,6 +106,24 @@ export interface Catalogo {
    * haya tocado ni el libro ni las salas.
    */
   nombresViejos?: Array<{ codigo: string; nombre: string }>
+  /**
+   * Códigos que una sala **de hoy** tuvo antes, reconstruidos desde la
+   * auditoría. Es la red de rescate del renombrado de sala, y hace falta porque
+   * `room_aliases` —el único canal que había— tiene tres fugas conocidas:
+   *
+   *  - el alias se guarda como «`<código viejo> <CÓDIGO DEL EDIFICIO>`», con el
+   *    código que el edificio tenía **aquel día**. Una fusión posterior lo deja
+   *    inalcanzable;
+   *  - `rename_room` inserta con `on conflict (alias_norm) do nothing`, así que
+   *    un alias que ya existiera se traga el nuevo en silencio;
+   *  - `sync_celda_de_sala` —la vuelta del libro— renombra la sala con un
+   *    `update rooms set code` a secas y no deja alias ninguno.
+   *
+   * Esto no depende de ningún texto cualificado: va anclado al `id` de la sala,
+   * que no cambia ni al renombrarla, ni al moverla de planta, ni al fusionar su
+   * edificio.
+   */
+  codigosViejosDeSala?: Array<{ salaId: string; codigo: string }>
   salas: SalaConocida[]
   edificiosDesaparecidos?: EdificioDesaparecido[]
 }
@@ -129,6 +147,12 @@ export type ViaDeCruce =
   | 'nomenclatura-vieja'
   | 'matricula'
   | 'alias'
+  /**
+   * El código que la sala tuvo antes, según la auditoría. No es `alias`: `alias`
+   * quiere decir «hay una fila en `room_aliases`», y la gracia de esta vía es
+   * justamente que no la hay.
+   */
+  | 'codigo-anterior-de-sala'
   | 'edificio+codigo'
   | 'edificio+nombre'
   | 'codigo-unico-en-el-maestro'
@@ -157,8 +181,20 @@ export interface Indice {
   edificioVacio: Map<string, EdificioConocido>
   /** Código viejo declarado → código del edificio de hoy. */
   equivalencias: Map<string, string>
+  /**
+   * El camino inverso de `equivalencias`: código de hoy → los códigos que ese
+   * edificio tuvo antes. Hace falta para componer la clave de un alias, que se
+   * guardó con el código **de aquel día** y no con el de hoy.
+   */
+  codigosAnteriores: Map<string, string[]>
   /** Nombre anterior de un edificio que sigue vivo → su código de hoy. */
   nombreAnterior: Map<string, string>
+  /**
+   * `TM|1.1-` → la sala que hoy se llama `-1.1`. Mapa aparte, y nunca dentro de
+   * `porEdificioYCodigo` ni de `porCodigoSuelto`: un código de ayer no puede
+   * competir con el maestro de hoy ni salir a buscar por todo el campus.
+   */
+  porCodigoAnteriorDeSala: Map<string, SalaConocida>
   desaparecidos: Map<string, EdificioDesaparecido>
 }
 
@@ -228,7 +264,9 @@ export function construirIndice(catalogo: Catalogo): Indice {
     edificioVivo: new Map(),
     edificioVacio: new Map(),
     equivalencias: new Map(),
+    codigosAnteriores: new Map(),
     nombreAnterior: new Map(),
+    porCodigoAnteriorDeSala: new Map(),
     desaparecidos: new Map(),
   }
 
@@ -247,7 +285,17 @@ export function construirIndice(catalogo: Catalogo): Indice {
     ix.porMatricula.set(norm(sala.shortRef), sala)
     // Tiene salas: ya no está vacío.
     ix.edificioVacio.delete(norm(sala.edificioCodigo))
-    for (const a of sala.alias) ix.porAlias.set(norm(a), sala)
+    // El primero gana, igual que en `porEdificioYCodigo` y además por fidelidad
+    // al servidor: allí `alias_norm` es unique y todos los `insert` llevan `on
+    // conflict do nothing`, así que la clave se queda con el primero que la
+    // pidió. Dos alias que la base sí distingue pueden colapsar aquí al
+    // re-normalizar —`norm()` pasa las comas a puntos y `norm_text()` no, ver
+    // `nomenclatura.ts`—, y sin la guarda ganaba el último en orden de `id`: en
+    // silencio y justo al revés que la base.
+    for (const a of sala.alias) {
+      const clave = norm(a)
+      if (!ix.porAlias.has(clave)) ix.porAlias.set(clave, sala)
+    }
 
     for (const v of variantesDeCodigo(sala)) {
       const clave = `${sala.edificioCodigo}|${v}`
@@ -287,6 +335,12 @@ export function construirIndice(catalogo: Catalogo): Indice {
       ix.equivalencias.set(forma, codigo)
       ix.edificioPorNombre.set(forma, codigo)
     }
+    // Solo el código pelado en el camino inverso: la clave de un alias es
+    // `«<sala> <CÓDIGO>»` —`1.1- CRAI`—, nunca `«<sala> EDIFICIO CRAI»`.
+    const v = norm(viejo)
+    const previos = ix.codigosAnteriores.get(codigo)
+    if (!previos) ix.codigosAnteriores.set(codigo, [v])
+    else if (!previos.includes(v)) previos.push(v)
   }
 
   for (const e of catalogo.edificiosDesaparecidos ?? []) {
@@ -310,6 +364,23 @@ export function construirIndice(catalogo: Catalogo): Indice {
     if (ix.edificioPorNombre.has(n) || ix.desaparecidos.has(n)) continue
     ix.edificioPorNombre.set(n, c)
     ix.nombreAnterior.set(n, c)
+  }
+
+  // Y los códigos que las salas tuvieron antes, todavía más al final, con la
+  // misma regla y por el mismo motivo: si el maestro de hoy ya contesta a esa
+  // clave, no se toca. La sala A se llamaba `-1.1` y pasó a `-1.2`; si después
+  // la sala B pasó a llamarse `-1.1`, la fila del libro que dice `-1.1` es de B,
+  // que es como se llama hoy, y no de A, que es como se llamaba.
+  const salaPorId = new Map(catalogo.salas.map((s) => [s.id, s]))
+  for (const { salaId, codigo } of catalogo.codigosViejosDeSala ?? []) {
+    const sala = salaPorId.get(salaId)
+    if (!sala) continue
+    for (const v of formasDeEscribir(codigo, sala.edificioCodigo)) {
+      const clave = `${sala.edificioCodigo}|${v}`
+      if (ix.porEdificioYCodigo.has(clave)) continue
+      if (ix.porCodigoAnteriorDeSala.has(clave)) continue
+      ix.porCodigoAnteriorDeSala.set(clave, sala)
+    }
   }
 
   return ix
@@ -383,15 +454,43 @@ export function resolverSala(ix: Indice, ref: ReferenciaDeSala): Resolucion {
   // 2 — Un parte (`1.7 H`): alias primero, que es donde viven los renombrados.
   if (ref.tipo === 'parte') {
     const limpio = cleanRoomRef(ref.ref)
-    const porAlias = ix.porAlias.get(limpio)
-    if (porAlias) return conAviso(porAlias, 'alias')
-
     const partes = splitIncidentKey(ref.ref)
+    const delMaestro = partes
+      ? ix.porEdificioYCodigo.get(`${partes.buildingCode}|${norm(partes.roomCode)}`)
+      : undefined
+
+    const porAlias = ix.porAlias.get(limpio)
+    if (porAlias) {
+      // Un alias dice cómo se llamó una sala, no cómo se llama. Si el maestro de
+      // hoy tiene esa misma referencia en OTRA sala, el alias está caducado y
+      // preferirlo resuelve la sala que ya no se llama así: la sala A se
+      // llamaba `1.1`, pasó a `2.1` y dejó el alias `1.1 CRAI`; después la sala
+      // B pasó a llamarse `1.1`. Nada lo impide —`rename_room` y `create_room`
+      // miran el choque contra `rooms` y nunca contra `room_aliases`, y de esa
+      // tabla no se borra nunca nada—, así que las dos salas contestan a la
+      // misma referencia y cada camino contestaba una distinta: el parte por el
+      // alias y la hoja de estado por el maestro.
+      //
+      // Aquí no se elige. Es la regla que `rename_room` ya aplica al no pisar un
+      // alias ajeno: un alias ambiguo es peor que ninguno, porque resuelve mal y
+      // en silencio, mientras que declararlo ambiguo lo deja en la cuarentena,
+      // donde se ve y donde alguien puede borrar el alias caducado.
+      if (delMaestro && delMaestro.id !== porAlias.id) {
+        return {
+          estado: 'ambigua',
+          candidatas: [delMaestro, porAlias],
+          motivo:
+            `«${ref.ref}» es hoy el código de «${delMaestro.code}» y a la vez un alias de ` +
+            `«${porAlias.code}», que se llamaba así antes: hay que borrar el alias caducado`,
+        }
+      }
+      return conAviso(porAlias, 'alias')
+    }
+
     if (!partes) {
       return { estado: 'sin_cruce', motivo: `«${ref.ref}» no tiene la forma «sala EDIFICIO»` }
     }
-    const sala = ix.porEdificioYCodigo.get(`${partes.buildingCode}|${norm(partes.roomCode)}`)
-    if (sala) return conAviso(sala, 'edificio+codigo')
+    if (delMaestro) return conAviso(delMaestro, 'edificio+codigo')
 
     // El código de edificio puede ser de los de antes. Si hay equivalencia
     // declarada se traduce, y se dice: haber cruzado por una tabla escrita a
@@ -496,8 +595,50 @@ export function resolverSala(ix: Indice, ref: ReferenciaDeSala): Resolucion {
   }
 
   // Antes de rendirse: un alias puede llevar la referencia vieja de esta sala.
-  const porAlias = ix.porAlias.get(norm(`${aula} ${edificio.codigo}`))
-  if (porAlias) return conAviso(porAlias, 'alias')
+  //
+  // La clave del alias es `«<sala> <CÓDIGO DE EDIFICIO>»`, y `rename_room` la
+  // guardó con el código que el edificio tenía **aquel día**. Componerla solo
+  // con `edificio.codigo` pregunta por una clave que nadie escribió en cuanto
+  // el edificio cambió de código después: las aulas de sótano del CRAI se
+  // renombraron de `1.1-` a `-1.1` y dejaron `1.1- CRAI`, luego el CRAI se
+  // fusionó con el T. Moro, y aquí se buscaba `1.1- TM`. La fila del libro
+  // seguía diciendo `1.1-` de «EDIFICIO CRAI» y no cruzaba — mientras el mismo
+  // alias resolvía sin problema por el camino de los partes, que busca con el
+  // texto crudo y no recompone nada. Los códigos anteriores son los mismos que
+  // la auditoría ya dio para traducir el edificio: aquí solo se usan al revés.
+  //
+  // Y con todas las formas de escribir el aula, no solo la literal: el libro
+  // dice `AULA 1.1-` donde el alias guardó `1.1-`, y esa misma diferencia ya la
+  // resuelve la vía del código unas líneas más arriba.
+  for (const codigo of [edificio.codigo, ...(ix.codigosAnteriores.get(edificio.codigo) ?? [])]) {
+    for (const c of formasDeEscribir(aula, codigo)) {
+      const porAlias = ix.porAlias.get(norm(`${c} ${codigo}`))
+      if (!porAlias) continue
+      // Que se haya encontrado por un código de edificio que ya no existe tiene
+      // que verse: la fila cruza, pero no por el maestro de hoy, y quien lea el
+      // informe no puede tener que adivinar de dónde salió.
+      return codigo === edificio.codigo
+        ? conAviso(porAlias, 'alias')
+        : conAviso(
+            porAlias,
+            'alias',
+            `el alias quedó guardado como «${c} ${codigo}», con el código que el edificio tenía cuando se renombró la sala`,
+          )
+    }
+  }
+
+  // Y si tampoco hay alias: lo que la auditoría vio. Es el último recurso antes
+  // de rendirse, y el único que no depende de que alguien escribiera un texto.
+  for (const c of formasDeEscribir(aula, edificio.codigo)) {
+    const sala = ix.porCodigoAnteriorDeSala.get(`${edificio.codigo}|${c}`)
+    if (sala) {
+      return conAviso(
+        sala,
+        'codigo-anterior-de-sala',
+        `«${aula}» es el código que «${sala.code}» tenía antes`,
+      )
+    }
+  }
 
   const vacio = ix.edificioVacio.get(edificio.codigo)
   if (vacio) {
@@ -734,6 +875,11 @@ export interface RastroDeAuditoria {
    * Un edificio renombrado tres veces deja aquí sus tres nombres anteriores.
    */
   nombresCambiados?: Array<{ rowId: string; nombreViejo: string }>
+  /**
+   * Cada `update rooms set code = …`: la fila es la misma (`rowId` es el `id` de
+   * la sala, que no cambia nunca), así que el código viejo es de esa sala.
+   */
+  salasRenombradas?: Array<{ rowId: string; codigoViejo: string }>
 }
 
 /**
@@ -830,6 +976,36 @@ export function nombresAnterioresDesdeAuditoria(
     if (vistos.has(clave)) continue
     vistos.add(clave)
     out.push({ codigo, nombre })
+  }
+  return out
+}
+
+/**
+ * Los códigos que tuvieron antes las salas que siguen vivas.
+ *
+ * Es la tercera hermana de `equivalenciasDesdeAuditoria` y
+ * `nombresAnterioresDesdeAuditoria`, y es la más simple de las tres a propósito:
+ * aquí no hay ninguna cadena que seguir. Un edificio se fusiona con otro y hay
+ * que caminar el grafo hasta el que quedó vivo; una sala no se fusiona con
+ * ninguna, así que su `id` de hoy es el mismo que tenía cuando se llamaba de
+ * otra forma y no hay nada que resolver.
+ *
+ * Tampoco decide nada: quién gana si un código de ayer choca con el maestro de
+ * hoy lo decide `construirIndice`, que es el único sitio que ve el maestro
+ * entero. Aquí solo se junta y se quita lo repetido.
+ */
+export function codigosAnterioresDeSalaDesdeAuditoria(
+  r: RastroDeAuditoria,
+): Array<{ salaId: string; codigo: string }> {
+  const vistos = new Set<string>()
+  const out: Array<{ salaId: string; codigo: string }> = []
+  for (const x of r.salasRenombradas ?? []) {
+    const codigo = norm(x.codigoViejo)
+    if (!x.rowId || !codigo) continue
+    const clave = `${x.rowId}|${codigo}`
+    if (vistos.has(clave)) continue
+    vistos.add(clave)
+    out.push({ salaId: x.rowId, codigo })
   }
   return out
 }

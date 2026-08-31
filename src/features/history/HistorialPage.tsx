@@ -249,7 +249,7 @@ export function HistorialPage(): React.ReactElement {
                 onChange={(e) => setTexto(e.target.value)}
                 placeholder="Buscar por descripción, material o aula"
                 enterKeyHint="search"
-                className="h-touch w-full rounded-ctl border border-line bg-sunken px-3 text-sm"
+                className="h-touch w-full rounded-ctl border border-line bg-sunken px-3 text-base"
               />
             </label>
 
@@ -262,7 +262,7 @@ export function HistorialPage(): React.ReactElement {
                     setBuildingId(e.target.value)
                     setRoomId('')
                   }}
-                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
                 >
                   <option value="">Todos</option>
                   {buildings.map((b) => (
@@ -279,7 +279,7 @@ export function HistorialPage(): React.ReactElement {
                   value={roomId}
                   onChange={(e) => setRoomId(e.target.value)}
                   disabled={!buildingId}
-                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink disabled:opacity-40"
+                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink disabled:opacity-40"
                 >
                   <option value="">{buildingId ? 'Todas' : 'Elige edificio'}</option>
                   {salas.map((r) => (
@@ -318,7 +318,7 @@ export function HistorialPage(): React.ReactElement {
                   type="date"
                   value={desde}
                   onChange={(e) => setDesde(e.target.value)}
-                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
                 />
               </label>
               <label className="text-xs text-muted">
@@ -327,7 +327,7 @@ export function HistorialPage(): React.ReactElement {
                   type="date"
                   value={hasta}
                   onChange={(e) => setHasta(e.target.value)}
-                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
                 />
               </label>
             </div>

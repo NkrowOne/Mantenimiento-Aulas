@@ -110,7 +110,7 @@ export function SincronizarExcel(): React.ReactElement {
             const f = e.target.files?.[0]
             if (f) leer.mutate(f)
           }}
-          className="block w-full text-sm file:mr-3 file:h-10 file:rounded-ctl file:border-0 file:bg-accent-fill file:px-4 file:font-semibold file:text-accent-ink"
+          className="block w-full text-base file:mr-3 file:h-10 file:rounded-ctl file:border-0 file:bg-accent-fill file:px-4 file:font-semibold file:text-accent-ink"
         />
         <p className="mt-2 text-xs text-muted">
           {leer.isPending

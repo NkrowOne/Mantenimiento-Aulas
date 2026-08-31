@@ -388,7 +388,7 @@ export function ReportsPage(): React.ReactElement {
                   maxLength={400}
                   onChange={(e) => setEnfoque(e.target.value)}
                   placeholder="Céntrate en el edificio H y en el consumo de cable"
-                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-sm"
+                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-base"
                 />
                 <span className="mt-1 block text-xs text-muted">
                   Va a la redacción del análisis. No cambia ninguna cifra.
@@ -403,7 +403,7 @@ export function ReportsPage(): React.ReactElement {
                   maxLength={300}
                   onChange={(e) => setNota(e.target.value)}
                   placeholder="Para la reunión de dirección del lunes"
-                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-sm"
+                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-base"
                 />
                 <span className="mt-1 block text-xs text-muted">
                   Se imprime tal cual, bajo el título. No pasa por la IA.
