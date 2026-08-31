@@ -287,3 +287,39 @@ async function leerFilasDe(hojaXml: string) {
   ])
   return leerHoja(await abrirLibro(zip), 'Hoja')
 }
+
+describe('las fórmulas no se pueden confundir con texto', () => {
+  it('leerHoja dice qué celdas llevan fórmula, no solo su valor cacheado', async () => {
+    const xml =
+      `<?xml version="1.0"?><worksheet><sheetData>` +
+      `<row r="2"><c r="N2"><f>B2+C2</f><v>35</v></c>` +
+      `<c r="O2"><f t="shared" si="0"/><v>7</v></c>` +
+      `<c r="P2"><v>3</v></c></row></sheetData></worksheet>`
+    const filas = await leerFilasDe(xml)
+    const f = filas.find((x) => x.fila === 2)!
+    // El valor sigue siendo el cacheado: eso es lo que Excel guarda.
+    expect(f.celdas).toEqual({ N: 35, O: 7, P: 3 })
+    // Y por eso hace falta lo otro: sin esto, `35` y `=B2+C2` son lo mismo.
+    expect(f.formulas).toEqual({ N: 'B2+C2', O: '' })
+  })
+
+  it('un valor que empieza por «=» se escribe como fórmula, no como texto', () => {
+    // Era el peor fallo del sincronizador: las 86 fórmulas de la bolsa se
+    // escribían como texto, la columna dejaba de calcular, y el libro abría sin
+    // decir nada.
+    const out = parchearHojaXml(
+      `<worksheet><sheetData><row r="5"><c r="O5" s="613"><f>P5-N5</f><v>35</v></c></row></sheetData></worksheet>`,
+      [{ celda: 'O5', valor: '=P5-N5' }],
+    )
+    expect(out).toContain('<c r="O5" s="613"><f>P5-N5</f></c>')
+    expect(out).not.toContain('inlineStr')
+  })
+
+  it('un texto que solo empieza por «=» tras un espacio sigue siendo texto', () => {
+    const out = parchearHojaXml(
+      `<worksheet><sheetData><row r="5"><c r="A5"/></row></sheetData></worksheet>`,
+      [{ celda: 'A5', valor: ' =esto no es una fórmula' }],
+    )
+    expect(out).toContain('inlineStr')
+  })
+})

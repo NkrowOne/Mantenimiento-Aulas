@@ -80,6 +80,36 @@ interface Quarantined {
   reason: string
 }
 
+/**
+ * De qué fila habla una entrada de cuarentena.
+ *
+ * Lleva el número de fila **siempre**, aunque haya número de incidencia, y no es
+ * redundante: el número de incidencia se repite —`I241111_0040` sale dos veces
+ * en la hoja de 2025— y las dos filas tienen su propio material que arreglar.
+ * Con la ref sola las dos entradas eran la misma y la segunda se perdía, contra
+ * el índice de `import_quarantine_abierta_idx`, que existe justo para que el
+ * mismo problema no se apunte dos veces. Un problema por celda, y la celda es la
+ * fila.
+ */
+const refDeFila = (ref: string, r: number): string =>
+  ref ? `${ref} (fila ${r + 1})` : `fila ${r + 1}`
+
+/**
+ * Los números de incidencia que trae una celda.
+ *
+ * Casi siempre es uno, `I260203_0051`. Pero seis filas del libro traen dos —a
+ * veces separados por cuarenta espacios— porque una misma intervención se apuntó
+ * como dos incidencias y se contó en un renglón. Y `incidents.external_ref`
+ * lleva desde la migración 1400 un `check` de forma, que existe para que «el
+ * mayor del día» siga siendo una cuenta: una celda con dos números dentro no
+ * pasa por ahí, y con razón.
+ *
+ * Devuelve los que haya, en orden. Cero si lo que hay no es un número de
+ * incidencia, que también pasa.
+ */
+const numerosDeIncidencia = (celda: string): string[] =>
+  celda.toUpperCase().match(/[A-Z]\d{6}_\d{4}/g) ?? []
+
 const statements: string[] = []
 const fixes: Fix[] = []
 const quarantine: Quarantined[] = []
@@ -430,8 +460,36 @@ function importIncidents(rows: unknown[][], sheet: string, hasObservacion: boole
 
     const aula = text(row, cAula)
     const problema = text(row, cProblema)
-    const ref = text(row, cRef)
+    const crudo = text(row, cRef)
+    const numeros = numerosDeIncidencia(crudo)
+    const ref = numeros[0] ?? ''
     if (!aula && !problema) continue
+
+    // Seis filas del libro traen DOS números en la misma celda —«I250324_0002
+    // S250324_0004»—: son una intervención que el técnico apuntó como dos
+    // incidencias y contó en un renglón. Se queda el primero, que es el de esta
+    // fila, y el segundo se apunta para que alguien pueda separarlas: perder el
+    // número entero dejaría la fila sin poder cruzarse nunca con el Excel.
+    if (numeros.length > 1) {
+      fixes.push({
+        source: sheet, rowRef: refDeFila(ref, r), field: 'N.º Incidencia',
+        original: crudo, corrected: ref,
+        reason: 'La celda traía más de un número: se queda el primero',
+      })
+      quarantine.push({
+        source: sheet,
+        rowRef: refDeFila(ref, r),
+        raw: { crudo, numeros },
+        reason: 'La fila cuenta más de una incidencia en un solo renglón',
+      })
+    } else if (crudo !== '' && numeros.length === 0) {
+      quarantine.push({
+        source: sheet,
+        rowRef: `fila ${r + 1}`,
+        raw: { crudo },
+        reason: 'El número de incidencia no tiene la forma <letra><AAMMDD>_<NNNN>',
+      })
+    }
 
     const opened = parseLooseDate(cell(row, cFecha))
     if (!opened.date) {
@@ -509,7 +567,7 @@ function importIncidents(rows: unknown[][], sheet: string, hasObservacion: boole
     const roomId = resolveRoom(aula)
     if (!roomId && aula) {
       quarantine.push({
-        source: sheet, rowRef: ref || `fila ${r + 1}`,
+        source: sheet, rowRef: refDeFila(ref, r),
         raw: { aula, ref, problema },
         reason: 'No se pudo identificar la sala',
       })
@@ -551,7 +609,7 @@ function importIncidents(rows: unknown[][], sheet: string, hasObservacion: boole
           incidentId: id, itemName: '', qty: 0, serial: null, raw: leftover,
         })
         quarantine.push({
-          source: sheet, rowRef: ref || `fila ${r + 1}`,
+          source: sheet, rowRef: refDeFila(ref, r),
           raw: { material: materialRaw },
           reason: 'Material usado no interpretable automáticamente',
         })
@@ -832,11 +890,16 @@ function emit(): void {
     )
   }
 
+  // Por la función y no con un `insert`: `import_quarantine` tiene desde la
+  // migración 600 una entrada por problema, y meterlas a pelo choca contra el
+  // índice en cuanto dos filas comparten motivo. La función es la que sabe qué
+  // hacer entonces —sumar una vez, no duplicar—, y es la misma que usa la
+  // sincronización, así que el seed no puede quedarse con otra idea.
   out.push('')
   out.push('-- Cuarentena: lo que NO se interpretó, para resolver a mano')
   for (const q of quarantine) {
     out.push(
-      `insert into import_quarantine (source, row_ref, raw, reason) values (${sql(q.source)}, ${sql(q.rowRef)}, ${jsonb(q.raw)}, ${sql(q.reason)});`,
+      `select public.cuarentena_apuntar(${sql(q.source)}, ${sql(q.rowRef)}, ${jsonb(q.raw)}, ${sql(q.reason)});`,
     )
   }
 

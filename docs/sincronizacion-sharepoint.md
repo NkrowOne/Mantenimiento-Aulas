@@ -629,10 +629,12 @@ el informe del viernes.
 | 1 | **Hecho.** Lector de los dos libros + cruce contra el maestro, en seco: `npm run cruce:excel`. Resuelve por matrícula, alias, edificio+código y auditoría de edificios desaparecidos; cuenta y explica cada fila que no cruza. No escribe nada | ✅ con los ficheros de hoy |
 | 2 | **Hecho.** Migración del apartado 10 + las cuatro tablas de sincronización + la instantánea + la fusión a tres bandas (`src/domain/fusion.ts`, 30 pruebas) + los choques a `import_quarantine`. Sigue sin escribir nada: devuelve decisiones | ✅ |
 | 3 | **Hecho** (la columna `Ref`; las hojas como tablas de Excel, no: no hace falta para identificar filas). La columna va **al final**, no la primera — insertarla a la izquierda obliga a reescribir cada fórmula, el rango del autofiltro y los cuatro formatos condicionales | ✅ |
-| **3b** | **Hecho a medias**: la pantalla existe (`Preparar el Excel de SharePoint`, en administración) y hace el viaje entero de subir → previsualizar → descargar parcheado, **en el sentido app → Excel**. Falta el sentido contrario: que las correcciones del Excel entren en la base, que necesita la instantánea de la fase 2 aplicándose de verdad | ✅ |
+| **3b** | **Hecho.** La pantalla (`Sincronizar el Excel de SharePoint`, en administración) hace el viaje entero **en los dos sentidos**: subir → previsualizar hoja por hoja → aplicar a la base → descargar el libro sincronizado. La instantánea se guarda de verdad (`sync_celdas`, por matrícula y no por número de fila) y la vuelta entra en una transacción con `sync_aplicar` | ✅ |
+| **3c** | **Hecho.** Las cinco hojas, no solo la de estado: partes con su material, bolsa con el consumo repartido mes a mes y las fórmulas pisadas devueltas a su sitio. Filas nuevas insertadas en el bloque de su edificio, filas de salas archivadas fuera, y el corte de año creando `Material Instalado <año>` y `Bolsa <año>` con el saldo de apertura | ✅ |
+| **3d** | **Hecho.** Cuatro hojas nuevas para lo que no cabe en una celda: `Revisiones` (una fila por revisión con hora, autor y comprobaciones), `Movimientos de Almacén` (con el saldo detrás), `Inventario por Sala` (que sí puede enseñar un aula con dos proyectores) y `Sincronización` (los choques y la cuarentena, dentro del propio libro) | ✅ |
 | 4 | Cliente de Graph: sondeo por `cTag`, descarga, y escritura por la API de libro con las reglas del apartado 6 | ❌ necesita el registro de aplicación |
 | 5 | Endpoint del worker + `cron.schedule` + botón «sincronizar ahora» | ✅ |
-| 6 | Bandeja de choques en administración + hoja `Sincronización` en el libro | ✅ |
+| 6 | **Hecho a medias**: la hoja `Sincronización` se escribe en el libro y la pantalla lista los choques y la cuarentena de la pasada. Falta la bandeja que los guarda entre pasadas y deja marcarlos resueltos: hoy quedan en `import_quarantine` sin pantalla propia | ✅ |
 
 La fase 1 es la que conviene hacer ya, y no por orden: es la que dice, **con los
 ficheros reales y antes de gastar nada en integración**, cuántas de las 194 aulas
@@ -643,6 +645,37 @@ sobre una copia del libro antes de tocar el que usa la gente.
 La fase 0 es barata —cinco llamadas— y va delante de cualquier petición formal a
 IT. Pero ya no tumba el plan: si sale que no, se queda la fase 3b y la
 sincronización funciona igual, con una persona moviendo el fichero.
+
+---
+
+## 11 bis. Lo que decide cada columna, hoy
+
+El mapa vive en `src/domain/mapa.ts` y es la única declaración: ni el cruce, ni
+la fusión, ni el volcado mencionan una letra de columna. Cada entrada lleva la
+cabecera que espera encontrar, y **si no cuadra la pasada no empieza** — una
+columna insertada mueve todas las de su derecha, y los dos lados de `M` son
+texto corto en mayúsculas, así que a ojo no se distingue de nada.
+
+Tres decisiones de dueño que salen de este libro y no de la teoría:
+
+- **`Fecha Revisión Anterior` es de la app.** No es un dato: es la penúltima
+  fecha de un historial, y escrita a mano deja de ser verdad en cuanto haya una
+  revisión más.
+- **`% Lámparas` es del Excel, a la fuerza.** La aplicación no lo mide en
+  ninguna pantalla —de un proyector solo se apuntan las horas—, así que si se
+  tratara como medida la app «ganaría» con el valor congelado de la importación
+  y borraría lo que alguien acabara de apuntar en la hoja. Vuelve a ser de las
+  dos partes el día que el formulario de revisión pida el porcentaje.
+- **`Microfono Jabra` son tres columnas en una.** 32 filas dicen `SÍ` o `NO`, 37
+  llevan el número de serie del aparato y 4 un modelo escrito a mano. Se parten
+  por la forma del valor: escribir una encima de la otra pierde 37 series o 32
+  respuestas, y no hay manera de elegir cuál de las dos pérdidas es la buena.
+
+Y una regla que atraviesa todo: **lo que no se puede leer no se interpreta**. Un
+`********` en la columna de horas es un vacío escrito a mano; un `19/0672025` en
+la de fecha no es una fecha y no se adivina. Va a cuarentena con su celda y su
+motivo, y no entra en la base ni se pisa en la hoja. Un cero inventado en la
+columna de lámparas manda a alguien a un aula que está perfectamente.
 
 ---
 

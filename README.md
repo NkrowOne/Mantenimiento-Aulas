@@ -346,6 +346,19 @@ npm run informe:ia
   cómo mantener el inventario de revisiones y el stock al día en los dos sentidos:
   identidad de fila, fusión a tres bandas, y cómo escribir en el libro sin
   llevarse por delante sus fórmulas ni su formato.
+
+  Funciona ya, desde **Datos → Sincronizar el Excel de SharePoint**: se sube el
+  `.xlsx`, se ve hoja por hoja qué entraría y qué saldría, se aplica y se baja el
+  libro con todo lo que la aplicación sabe. Las cinco hojas de siempre —con las
+  revisiones, las horas, los partes y su material, y el consumo del almacén
+  repartido mes a mes— más cuatro nuevas para lo que no cabe en una celda:
+  `Revisiones`, `Movimientos de Almacén`, `Inventario por Sala` y
+  `Sincronización`. Las salas nuevas entran en el bloque de su edificio, las
+  archivadas salen, y en enero se crean solas las dos hojas del año.
+
+  Lo que no se puede leer no se interpreta: un `********` en la columna de horas
+  o un `19/0672025` en la de fecha van a cuarentena con su motivo, y no entran en
+  la base ni se pisan en la hoja. El fichero no sale del navegador.
 - **[Permisos de SharePoint, y qué pedirle a IT](docs/sincronizacion-sharepoint-permisos.md)** —
   el acceso mínimo (`Sites.Selected` sobre un solo sitio), el correo redactado, lo
   que no se pide, y la prueba que hay que hacer antes de pedir nada.

@@ -68,9 +68,21 @@ export type Dueno = 'ambos' | 'solo_excel' | 'solo_app' | 'medida' | 'formula'
 /** Lo que cabe en una celda una vez leída. */
 export type Valor = string | number | boolean | null
 
+/**
+ * De qué es la columna, para comparar como toca.
+ *
+ * Solo hace falta distinguir `texto` del resto: es donde un valor que parece un
+ * número no lo es —el código de un aula, un número de serie— y normalizarlo
+ * junta dos cosas distintas. Se escribe con el mismo vocabulario que `Tipo` en
+ * `mapa.ts`, y a propósito sin importarlo: `fusion.ts` no sabe del mapa.
+ */
+export type TipoDeCelda = 'texto' | 'numero' | 'fecha' | 'porcentaje' | 'si_no' | 'formula'
+
 export interface Celda {
   base: Valor
   excel: Valor
+  /** De qué es la columna. Sin él se compara como hasta ahora. */
+  tipo?: TipoDeCelda
   /**
    * El valor de la última pasada correcta (`sync_celdas.valor_base`).
    * `undefined` —no `null`— cuando la celda nunca se ha sincronizado: `null` es
@@ -119,26 +131,34 @@ export type Decision =
  * inútiles —y, peor, en conflictos inventados que mandan a cuarentena filas que
  * nadie tocó. Vacío es vacío: `null`, `''` y `'  '` son la misma cosa.
  */
-export function canonizar(v: Valor): string {
+export function canonizar(v: Valor, tipo?: TipoDeCelda): string {
   if (v === null || v === undefined) return ''
   if (typeof v === 'boolean') return v ? 'SI' : 'NO'
   if (typeof v === 'number') return Number.isFinite(v) ? String(v) : ''
   const t = norm(v)
   if (t === '') return ''
   // `12,50` en la hoja y `12.5` en la base son la misma medición: `norm` ya pasó
-  // la coma a punto, y aquí se van los ceros de cola.
+  // la coma a punto, y aquí se van los ceros de cola. Hace falta porque el
+  // antepasado va y vuelve por una columna `text`: el `12.5` de la base sale de
+  // ahí como `'12.5'`, y sin esto no coincidirían nunca.
   //
-  // Pero solo para números escritos sin ceros por delante, y eso no es
-  // quisquillosería: un número de serie `0012` y otro `12` son dos equipos
-  // distintos, y unificarlos aquí los daría por el mismo — contra un índice
-  // único, además. Con la guarda, `0012` sigue siendo una cadena y no se toca.
+  // Pero **solo donde el valor es un número**. En una columna de texto esto no
+  // normaliza: destruye. El aula `1.10` se convertía en `1.1`, que en este libro
+  // es **otra aula del mismo edificio** —siete pares así: 0.1/0.10 en el CRAI,
+  // 1.1/1.10 en E, H, O y el CRAI, 2.1/2.10 en M y O—, así que las dos filas se
+  // daban por la misma y un renombrado entre ellas pasaba desapercibido.
+  //
+  // Ya se había visto la mitad del problema por delante —`0012` y `12` son dos
+  // números de serie distintos y por eso hay guarda de ceros a la izquierda— y
+  // los de la derecha hacen exactamente lo mismo por el otro lado.
+  if (tipo === 'texto') return t
   if (/^-?(0|[1-9]\d*)(\.\d+)?$/.test(t)) return String(Number(t))
   return t
 }
 
 /** `true` si los dos valores dicen lo mismo. */
-export function iguales(a: Valor, b: Valor): boolean {
-  return canonizar(a) === canonizar(b)
+export function iguales(a: Valor, b: Valor, tipo?: TipoDeCelda): boolean {
+  return canonizar(a, tipo) === canonizar(b, tipo)
 }
 
 function vacio(v: Valor): boolean {
@@ -164,29 +184,60 @@ export function fusionarCelda(c: Celda): Decision {
   // Escribir el número encima se lleva la fórmula, y a partir de ahí la columna
   // miente en silencio para siempre.
   if (c.dueno === 'formula') {
-    return iguales(c.base, c.excel)
+    return iguales(c.base, c.excel, c.tipo)
       ? { tipo: 'sin_cambios' }
       : { tipo: 'descuadre', base: c.base, excel: c.excel }
   }
 
-  if (iguales(c.base, c.excel)) {
+  if (iguales(c.base, c.excel, c.tipo)) {
     // Coinciden. Si además coinciden con el antepasado no ha pasado nada; si no,
     // es que los dos se movieron a lo mismo, que tampoco da trabajo.
-    const seMovieron = c.antepasado !== undefined && !iguales(c.base, c.antepasado)
+    const seMovieron = c.antepasado !== undefined && !iguales(c.base, c.antepasado, c.tipo)
     return seMovieron ? { tipo: 'ya_coinciden' } : { tipo: 'sin_cambios' }
   }
 
   // A partir de aquí los dos lados dicen cosas distintas.
 
   // Un lado vacío y el otro con dato no es un desacuerdo: es un hueco. Gana
-  // quien tiene el dato, siempre, y en los dos sentidos. Esto es lo que mete en
-  // la base los 190 números de serie del libro de revisión que nunca entraron, y
-  // lo que impide que la app borre una celda del Excel escribiendo un `null`
-  // encima —que además se llevaría el formato por delante.
+  // quien tiene el dato —nunca el vacío—, y eso es lo que mete en la base los
+  // 190 números de serie del libro de revisión que nunca entraron, y lo que
+  // impide que la app borre una celda del Excel escribiendo un `null` encima
+  // —que además se llevaría el formato por delante.
+  //
+  // Pero rellenar un hueco **hacia la base** es escribir en la base, y hay
+  // columnas donde eso no se puede hacer aunque la base esté vacía. Que la regla
+  // del hueco se mirara antes que el dueño no era un detalle: sobre este libro
+  // son 42 celdas mandando a la base, cada pasada, lo mismo que la anterior.
   if (vacio(c.base) !== vacio(c.excel)) {
-    return vacio(c.base)
-      ? { tipo: 'hacia_la_base', valor: c.excel, motivo: 'la base no tenía este dato' }
-      : { tipo: 'hacia_el_excel', valor: c.base, motivo: 'la celda estaba vacía' }
+    if (!vacio(c.base)) {
+      return { tipo: 'hacia_el_excel', valor: c.base, motivo: 'la celda estaba vacía' }
+    }
+
+    // La penúltima fecha de revisión de un aula, o el consumo de marzo. La base
+    // no los tiene porque **no puede** tenerlos escritos a mano: son el segundo
+    // elemento de un historial y la suma de unos movimientos. Mandarlos a la
+    // base los rechaza —22 aulas de este libro, en cada pasada, para siempre— y
+    // vaciar la celda perdería la única fecha que hay de esas revisiones. Así
+    // que se quedan como están, que es la respuesta honesta.
+    if (c.dueno === 'solo_app') {
+      return { tipo: 'sin_cambios' }
+    }
+
+    // Y en una columna que la app no edita, si ya se mandó una vez y la base
+    // sigue vacía, es que la base no lo guarda donde el volcado pueda
+    // devolverlo: el nombre alternativo de un artículo entra como alias y no
+    // vuelve. Mandarlo otra vez no lo guarda mejor; solo apunta una corrección
+    // más en `import_fixes`, veinte por pasada, hasta el fin de los tiempos.
+    //
+    // La guarda es solo para `solo_excel` a propósito. En una columna de las dos
+    // —un número de serie— que la base se haya quedado vacía sin que el Excel se
+    // moviera significa que alguien lo borró **en la app**, y eso no es lo mismo
+    // ni se decide aquí.
+    if (c.dueno === 'solo_excel' && c.antepasado !== undefined && iguales(c.excel, c.antepasado, c.tipo)) {
+      return { tipo: 'sin_cambios' }
+    }
+
+    return { tipo: 'hacia_la_base', valor: c.excel, motivo: 'la base no tenía este dato' }
   }
 
   // Columnas con un solo dueño: la dirección no se discute ni se mira el
@@ -233,8 +284,8 @@ export function fusionarCelda(c: Celda): Decision {
     }
   }
 
-  const baseCambio = !iguales(c.base, c.antepasado)
-  const excelCambio = !iguales(c.excel, c.antepasado)
+  const baseCambio = !iguales(c.base, c.antepasado, c.tipo)
+  const excelCambio = !iguales(c.excel, c.antepasado, c.tipo)
 
   if (baseCambio && !excelCambio) {
     return { tipo: 'hacia_el_excel', valor: c.base, motivo: 'solo cambió en la app' }
