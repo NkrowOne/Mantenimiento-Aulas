@@ -93,6 +93,19 @@ export interface Catalogo {
    * declaradas en `OLD_BUILDING_CODES`; se puede pasar otra cosa para probar.
    */
   equivalencias?: Record<string, string>
+  /**
+   * Nombres que un edificio **de hoy** tuvo antes, reconstruidos desde la
+   * auditoría. No es lo mismo que `equivalencias`: ahí el que cambió fue el
+   * *código*, y aquí el edificio es el mismo, con el mismo código, y lo único
+   * que cambió fue cómo se llama.
+   *
+   * Hace falta porque el libro lleva el nombre con el que se escribió. Si en la
+   * aplicación se renombra «EDIFICIO CENTRAL» a «ED. CENTRAL», el maestro deja
+   * de conocer el nombre viejo y las filas del libro —que siguen diciendo
+   * «EDIFICIO CENTRAL»— dejan de cruzar de golpe, todas a la vez, sin que nadie
+   * haya tocado ni el libro ni las salas.
+   */
+  nombresViejos?: Array<{ codigo: string; nombre: string }>
   salas: SalaConocida[]
   edificiosDesaparecidos?: EdificioDesaparecido[]
 }
@@ -144,6 +157,8 @@ export interface Indice {
   edificioVacio: Map<string, EdificioConocido>
   /** Código viejo declarado → código del edificio de hoy. */
   equivalencias: Map<string, string>
+  /** Nombre anterior de un edificio que sigue vivo → su código de hoy. */
+  nombreAnterior: Map<string, string>
   desaparecidos: Map<string, EdificioDesaparecido>
 }
 
@@ -213,6 +228,7 @@ export function construirIndice(catalogo: Catalogo): Indice {
     edificioVivo: new Map(),
     edificioVacio: new Map(),
     equivalencias: new Map(),
+    nombreAnterior: new Map(),
     desaparecidos: new Map(),
   }
 
@@ -277,6 +293,23 @@ export function construirIndice(catalogo: Catalogo): Indice {
     ix.desaparecidos.set(norm(e.nombre), e)
     ix.desaparecidos.set(norm(e.codigo), e)
     ix.desaparecidos.set(norm(`EDIFICIO ${e.codigo}`), e)
+  }
+
+  // Los nombres anteriores, los últimos de todos y a propósito: son el recurso
+  // más débil del índice y no pueden pisar a ninguno de los otros.
+  //
+  //  - Si el nombre viejo es hoy el nombre —o el código— de otro edificio, se
+  //    deja como está: el maestro de hoy manda sobre lo que hubo.
+  //  - Si es el nombre de un edificio que desapareció, tampoco: eso era otro
+  //    edificio, y mandar sus filas al que se quedó con el nombre sería
+  //    inventarse una fusión que nadie hizo.
+  for (const { codigo, nombre } of catalogo.nombresViejos ?? []) {
+    const c = norm(codigo)
+    const n = norm(nombre)
+    if (!c || !n || !ix.edificioVivo.has(c)) continue
+    if (ix.edificioPorNombre.has(n) || ix.desaparecidos.has(n)) continue
+    ix.edificioPorNombre.set(n, c)
+    ix.nombreAnterior.set(n, c)
   }
 
   return ix
@@ -439,14 +472,26 @@ export function resolverSala(ix: Indice, ref: ReferenciaDeSala): Resolucion {
   // Si el edificio se resolvió por una equivalencia declarada, la fila cruza
   // pero no por el maestro de hoy, y eso tiene que verse en el informe.
   const traducido = ix.equivalencias.get(norm(bruto)) === edificio.codigo
+  // Lo mismo con el nombre: la fila cruza, pero llama al edificio como se
+  // llamaba antes, y quien lea el informe tiene que poder saberlo sin adivinar
+  // por qué su libro nombra un edificio que en la aplicación ya no se llama así.
+  const conNombreAnterior = !traducido && ix.nombreAnterior.get(norm(bruto)) === edificio.codigo
 
   // Dentro del edificio, todas las formas de escribir el mismo código.
   for (const c of formasDeEscribir(aula, edificio.codigo)) {
     const sala = ix.porEdificioYCodigo.get(`${edificio.codigo}|${c}`)
     if (sala) {
-      return traducido
-        ? conAviso(sala, 'nomenclatura-vieja', `«${bruto}» es nomenclatura vieja de «${sala.edificioNombre}»`)
-        : conAviso(sala, via)
+      if (traducido) {
+        return conAviso(sala, 'nomenclatura-vieja', `«${bruto}» es nomenclatura vieja de «${sala.edificioNombre}»`)
+      }
+      if (conNombreAnterior) {
+        return conAviso(
+          sala,
+          'nomenclatura-vieja',
+          `«${bruto}» es el nombre anterior de «${sala.edificioNombre}»`,
+        )
+      }
+      return conAviso(sala, via)
     }
   }
 
@@ -683,6 +728,32 @@ export interface RastroDeAuditoria {
   fusiones: Array<{ deId: string; aId: string }>
   /** Los `delete from buildings`, con el código que tenían al morir. */
   borrados: Array<{ rowId: string; codigo: string }>
+  /**
+   * Cada vez que a un edificio le cambió el **nombre** sin cambiarle el código.
+   * La fila es la misma (`rowId`), así que el nombre viejo es de ese edificio.
+   * Un edificio renombrado tres veces deja aquí sus tres nombres anteriores.
+   */
+  nombresCambiados?: Array<{ rowId: string; nombreViejo: string }>
+}
+
+/**
+ * Sigue la cadena de fusiones desde una fila de la auditoría hasta el edificio
+ * que existe hoy. Devuelve su código, o nada si la cadena no llega a ninguno.
+ */
+function seguidorDeCadenas(r: RastroDeAuditoria): (id: string) => string | undefined {
+  const codigoDe = new Map(r.vivos.map((v) => [v.id, norm(v.codigo)]))
+  const absorbidoPor = new Map(r.fusiones.map((f) => [f.deId, f.aId]))
+  return (id: string): string | undefined => {
+    const visto = new Set<string>()
+    let actual: string | undefined = id
+    while (actual && !visto.has(actual)) {
+      const vivo = codigoDe.get(actual)
+      if (vivo) return vivo
+      visto.add(actual)
+      actual = absorbidoPor.get(actual)
+    }
+    return undefined
+  }
 }
 
 /**
@@ -710,22 +781,8 @@ export interface RastroDeAuditoria {
  * rastro aquí, y ése sí hay que declararlo a mano.
  */
 export function equivalenciasDesdeAuditoria(r: RastroDeAuditoria): Record<string, string> {
-  const codigoDe = new Map(r.vivos.map((v) => [v.id, norm(v.codigo)]))
   const vivosHoy = new Set(r.vivos.map((v) => norm(v.codigo)))
-  const absorbidoPor = new Map(r.fusiones.map((f) => [f.deId, f.aId]))
-
-  /** Sigue la cadena de fusiones hasta un edificio que exista hoy. */
-  const codigoActual = (id: string): string | undefined => {
-    const visto = new Set<string>()
-    let actual: string | undefined = id
-    while (actual && !visto.has(actual)) {
-      const vivo = codigoDe.get(actual)
-      if (vivo) return vivo
-      visto.add(actual)
-      actual = absorbidoPor.get(actual)
-    }
-    return undefined
-  }
+  const codigoActual = seguidorDeCadenas(r)
 
   const out: Record<string, string> = {}
   const anotar = (viejo: string, id: string): void => {
@@ -740,5 +797,39 @@ export function equivalenciasDesdeAuditoria(r: RastroDeAuditoria): Record<string
 
   for (const x of r.renombrados) anotar(x.codigoViejo, x.rowId)
   for (const x of r.borrados) anotar(x.codigo, x.rowId)
+  return out
+}
+
+/**
+ * Los nombres que tuvieron antes los edificios que siguen vivos.
+ *
+ * Es el hermano de `equivalenciasDesdeAuditoria` para el otro cambio, el que no
+ * toca el código: renombrar «EDIFICIO CENTRAL» a «ED. CENTRAL» deja el edificio
+ * `C` exactamente donde estaba, pero el libro sigue diciendo el nombre viejo, y
+ * sin esto sus filas dejan de cruzar en el momento del renombrado.
+ *
+ * Aquí no se decide nada: solo se junta lo que la auditoría apuntó. Quién gana
+ * si un nombre viejo choca con un nombre de hoy lo decide `construirIndice`, que
+ * es el único sitio que conoce el maestro entero.
+ *
+ * Solo ve lo que pasó **dentro de la aplicación**, igual que las equivalencias:
+ * un nombre que ya era viejo cuando se cargó la base no dejó rastro.
+ */
+export function nombresAnterioresDesdeAuditoria(
+  r: RastroDeAuditoria,
+): Array<{ codigo: string; nombre: string }> {
+  const codigoActual = seguidorDeCadenas(r)
+  const vistos = new Set<string>()
+  const out: Array<{ codigo: string; nombre: string }> = []
+
+  for (const x of r.nombresCambiados ?? []) {
+    const codigo = codigoActual(x.rowId)
+    const nombre = norm(x.nombreViejo)
+    if (!codigo || !nombre) continue
+    const clave = `${codigo}|${nombre}`
+    if (vistos.has(clave)) continue
+    vistos.add(clave)
+    out.push({ codigo, nombre })
+  }
   return out
 }
