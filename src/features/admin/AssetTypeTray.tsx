@@ -170,7 +170,7 @@ export function AssetTypeTray(): React.ReactElement {
                 value={renaming[type.id] ?? type.name}
                 onChange={(e) => setRenaming((r) => ({ ...r, [type.id]: e.target.value }))}
                 aria-label={`Nombre corregido de ${type.name}`}
-                className="h-10 min-w-40 flex-1 rounded-ctl border border-line bg-surface px-2 text-sm"
+                className="h-10 min-w-40 flex-1 rounded-ctl border border-line bg-surface px-2 text-base"
               />
               <button
                 type="button"
@@ -212,7 +212,7 @@ export function AssetTypeTray(): React.ReactElement {
               <select
                 value={destino}
                 onChange={(e) => setDestino(e.target.value)}
-                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
               >
                 <option value="">Elige el equipo bueno…</option>
                 {seleccionados.length > 0 && (
@@ -241,7 +241,7 @@ export function AssetTypeTray(): React.ReactElement {
                 value={nombreFinal}
                 onChange={(e) => setNombreFinal(e.target.value)}
                 placeholder={tipoDestino ? `Se queda como «${tipoDestino.name}»` : 'Se queda como está'}
-                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
               />
             </label>
           </div>

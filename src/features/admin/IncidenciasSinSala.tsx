@@ -74,7 +74,7 @@ function Fila({
             setRoomId('')
           }}
           aria-label="Edificio de la sala"
-          className="h-10 rounded-ctl border border-line bg-surface px-2 text-sm"
+          className="h-10 rounded-ctl border border-line bg-surface px-2 text-base"
         >
           <option value="">Edificio…</option>
           {edificios.map((b) => (
@@ -89,7 +89,7 @@ function Fila({
           onChange={(e) => setRoomId(e.target.value)}
           disabled={!buildingId}
           aria-label="Sala que le corresponde"
-          className="h-10 rounded-ctl border border-line bg-surface px-2 text-sm disabled:opacity-40"
+          className="h-10 rounded-ctl border border-line bg-surface px-2 text-base disabled:opacity-40"
         >
           <option value="">{buildingId ? 'Sala…' : '—'}</option>
           {delEdificio.map((s) => (

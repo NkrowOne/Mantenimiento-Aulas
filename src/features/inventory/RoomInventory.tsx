@@ -549,7 +549,7 @@ function AssetFixer({
             enterKeyHint="done"
             onChange={(e) => setSerial(e.target.value)}
             onBlur={() => serial.trim() !== (asset.serial ?? '') && onPatch({ serial: serial.trim() || null })}
-            className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 font-mono text-sm text-ink"
+            className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 font-mono text-base text-ink"
           />
         </label>
 
@@ -613,7 +613,7 @@ function AssetFixer({
                 onChange={(e) => setMotivo(e.target.value)}
                 placeholder="No enciende, sobra en el aula…"
                 enterKeyHint="done"
-                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
               />
             </label>
 
