@@ -4,6 +4,7 @@ import {
   contar,
   equivalenciasDesdeAuditoria,
   formasDeEscribir,
+  nombresAnterioresDesdeAuditoria,
   proponerEquivalencias,
   resolverSala,
 } from './cruce'
@@ -401,5 +402,157 @@ describe('los edificios que existen pero no tienen ni una sala', () => {
     const r = resolverSala(IXE, { tipo: 'estado', edificio: 'SIMULACION QUIRURGICA', aula: 'AULA I' })
     expect(r.estado).toBe('sin_cruce')
     if (r.estado === 'sin_cruce') expect(r.motivo).toContain('no tiene ninguna sala')
+  })
+})
+
+describe('un edificio renombrado en la aplicación sigue cruzando con el libro viejo', () => {
+  // El caso real: el edificio `C` se llamaba «EDIFICIO CENTRAL» cuando se
+  // escribió el libro y hoy, en la aplicación, se llama «ED. CENTRAL». El
+  // edificio es el mismo, con el mismo código y las mismas salas: lo único que
+  // cambió fue el rótulo, y sin esto sus diez filas dejan de cruzar de golpe.
+  const HOY: Catalogo = {
+    edificios: [{ codigo: 'C', nombre: 'ED. CENTRAL', activo: true }],
+    salas: [
+      sala({ code: '1.2', edificioCodigo: 'C', edificioNombre: 'ED. CENTRAL', shortRef: 'SALA-000003' }),
+      sala({ code: '1.2', edificioCodigo: 'M', edificioNombre: 'EDIFICIO M' }),
+    ],
+    nombresViejos: [{ codigo: 'C', nombre: 'EDIFICIO CENTRAL' }],
+  }
+
+  it('la fila que dice «EDIFICIO CENTRAL» encuentra su sala', () => {
+    const r = resolverSala(construirIndice(HOY), {
+      tipo: 'estado',
+      edificio: 'EDIFICIO CENTRAL',
+      aula: '1.2',
+    })
+    expect(r).toMatchObject({ estado: 'resuelta' })
+    if (r.estado === 'resuelta') expect(r.sala.shortRef).toBe('SALA-000003')
+  })
+
+  it('y dice por qué: el nombre del libro es el anterior, no el de hoy', () => {
+    const r = resolverSala(construirIndice(HOY), {
+      tipo: 'estado',
+      edificio: 'EDIFICIO CENTRAL',
+      aula: '1.2',
+    })
+    if (r.estado !== 'resuelta') throw new Error('tenía que cruzar')
+    expect(r.via).toBe('nomenclatura-vieja')
+    expect(r.aviso).toContain('nombre anterior')
+    expect(r.aviso).toContain('ED. CENTRAL')
+  })
+
+  it('sin el nombre anterior la misma fila no cruza: es justo lo que arregla', () => {
+    const r = resolverSala(construirIndice({ ...HOY, nombresViejos: [] }), {
+      tipo: 'estado',
+      edificio: 'EDIFICIO CENTRAL',
+      aula: '1.2',
+    })
+    expect(r.estado).toBe('sin_cruce')
+  })
+
+  it('el nombre de hoy sigue cruzando, y sin avisar de nada', () => {
+    const r = resolverSala(construirIndice(HOY), { tipo: 'estado', edificio: 'ED. CENTRAL', aula: '1.2' })
+    expect(r).toMatchObject({ estado: 'resuelta', via: 'edificio+codigo' })
+    if (r.estado === 'resuelta') expect(r.aviso).toBeUndefined()
+  })
+
+  it('un nombre viejo que hoy lleva otro edificio no se lo puede quedar', () => {
+    // `M` se llama hoy «EDIFICIO CENTRAL». Que `C` se llamara así antes no
+    // puede llevarse las filas de `M`: el maestro de hoy manda.
+    const ix = construirIndice({
+      edificios: [
+        { codigo: 'C', nombre: 'ED. CENTRAL', activo: true },
+        { codigo: 'M', nombre: 'EDIFICIO CENTRAL', activo: true },
+      ],
+      salas: [
+        sala({ code: '1.2', edificioCodigo: 'C', edificioNombre: 'ED. CENTRAL' }),
+        sala({ code: '1.2', edificioCodigo: 'M', edificioNombre: 'EDIFICIO CENTRAL', shortRef: 'SALA-M' }),
+      ],
+      nombresViejos: [{ codigo: 'C', nombre: 'EDIFICIO CENTRAL' }],
+    })
+    const r = resolverSala(ix, { tipo: 'estado', edificio: 'EDIFICIO CENTRAL', aula: '1.2' })
+    if (r.estado !== 'resuelta') throw new Error('tenía que cruzar con M')
+    expect(r.sala.shortRef).toBe('SALA-M')
+  })
+
+  it('tampoco se queda el nombre de un edificio que desapareció', () => {
+    const ix = construirIndice({
+      ...HOY,
+      edificiosDesaparecidos: [{ codigo: 'CEN', nombre: 'EDIFICIO CENTRAL', motivo: 'fusionado' }],
+    })
+    expect(ix.nombreAnterior.size).toBe(0)
+  })
+
+  it('un nombre anterior de un edificio que ya no existe no se registra', () => {
+    const ix = construirIndice({ ...HOY, nombresViejos: [{ codigo: 'NO_EXISTE', nombre: 'LO QUE SEA' }] })
+    expect(ix.nombreAnterior.size).toBe(0)
+  })
+})
+
+describe('los nombres anteriores salen de la auditoría, no de una tabla a mano', () => {
+  it('renombrar sin tocar el código deja apuntado el nombre viejo', () => {
+    expect(
+      nombresAnterioresDesdeAuditoria({
+        vivos: [{ id: 'b1', codigo: 'C' }],
+        renombrados: [],
+        fusiones: [],
+        borrados: [],
+        nombresCambiados: [{ rowId: 'b1', nombreViejo: 'EDIFICIO CENTRAL' }],
+      }),
+    ).toEqual([{ codigo: 'C', nombre: 'EDIFICIO CENTRAL' }])
+  })
+
+  it('tres renombrados dejan los tres nombres, sin repetir los que se repiten', () => {
+    expect(
+      nombresAnterioresDesdeAuditoria({
+        vivos: [{ id: 'b1', codigo: 'C' }],
+        renombrados: [],
+        fusiones: [],
+        borrados: [],
+        nombresCambiados: [
+          { rowId: 'b1', nombreViejo: 'EDIFICIO CENTRAL' },
+          { rowId: 'b1', nombreViejo: 'CENTRAL' },
+          { rowId: 'b1', nombreViejo: 'EDIFICIO CENTRAL' },
+        ],
+      }),
+    ).toEqual([
+      { codigo: 'C', nombre: 'EDIFICIO CENTRAL' },
+      { codigo: 'C', nombre: 'CENTRAL' },
+    ])
+  })
+
+  it('si después lo fusionaron, el nombre viejo lleva al edificio que se lo quedó', () => {
+    expect(
+      nombresAnterioresDesdeAuditoria({
+        vivos: [{ id: 'b2', codigo: 'H' }],
+        renombrados: [],
+        fusiones: [{ deId: 'b1', aId: 'b2' }],
+        borrados: [],
+        nombresCambiados: [{ rowId: 'b1', nombreViejo: 'EDIFICIO CENTRAL' }],
+      }),
+    ).toEqual([{ codigo: 'H', nombre: 'EDIFICIO CENTRAL' }])
+  })
+
+  it('un rastro que no llega a ningún edificio de hoy no inventa ninguno', () => {
+    expect(
+      nombresAnterioresDesdeAuditoria({
+        vivos: [{ id: 'b9', codigo: 'Z' }],
+        renombrados: [],
+        fusiones: [],
+        borrados: [],
+        nombresCambiados: [{ rowId: 'b1', nombreViejo: 'EDIFICIO CENTRAL' }],
+      }),
+    ).toEqual([])
+  })
+
+  it('sin renombrados de nombre no hay nada que apuntar', () => {
+    expect(
+      nombresAnterioresDesdeAuditoria({
+        vivos: [{ id: 'b1', codigo: 'C' }],
+        renombrados: [{ rowId: 'b1', codigoViejo: 'CEN' }],
+        fusiones: [],
+        borrados: [],
+      }),
+    ).toEqual([])
   })
 })

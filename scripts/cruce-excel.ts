@@ -27,6 +27,7 @@ import {
   construirIndice,
   contar,
   equivalenciasDesdeAuditoria,
+  nombresAnterioresDesdeAuditoria,
   proponerEquivalencias,
   resolverSala,
 } from '../src/domain/cruce'
@@ -223,13 +224,28 @@ async function catalogoDesdeBase(url: string): Promise<Catalogo> {
        where table_name = 'buildings' and op = 'DELETE'
          and old_data->>'code' is not null
     `
+    // El renombrado que no toca el código: el edificio es el mismo y sigue
+    // donde estaba, pero el libro lo llama como se llamaba antes.
+    const renombresDeNombre = await sql<Array<{ row_id: string; nombre_viejo: string }>>`
+      select row_id, old_data->>'name' as nombre_viejo
+        from audit_log
+       where table_name = 'buildings' and op = 'UPDATE'
+         and old_data->>'name' is distinct from new_data->>'name'
+         and old_data->>'name' is not null
+    `
 
-    const equivalencias = equivalenciasDesdeAuditoria({
+    const rastro = {
       vivos: edificiosVivos.map((e) => ({ id: e.id, codigo: e.codigo })),
       renombrados: renombrados.map((r) => ({ rowId: r.row_id, codigoViejo: r.codigo_viejo })),
       fusiones: fusiones.map((f) => ({ deId: f.de_id, aId: f.a_id })),
       borrados: borrados.map((b) => ({ rowId: b.row_id, codigo: b.codigo })),
-    })
+      nombresCambiados: renombresDeNombre.map((r) => ({
+        rowId: r.row_id,
+        nombreViejo: r.nombre_viejo,
+      })),
+    }
+    const equivalencias = equivalenciasDesdeAuditoria(rastro)
+    const nombresViejos = nombresAnterioresDesdeAuditoria(rastro)
 
     const vivos = new Set(filas.map((f) => f.edificio_codigo))
     const desaparecidos: EdificioDesaparecido[] = muertos
@@ -264,6 +280,7 @@ async function catalogoDesdeBase(url: string): Promise<Catalogo> {
       // línea en `OLD_BUILDING_CODES` es porque sabe algo que la auditoría no
       // puede saber —los códigos que ya eran viejos antes de cargar la base.
       equivalencias: { ...equivalencias, ...OLD_BUILDING_CODES },
+      nombresViejos,
     }
   } finally {
     await sql.end({ timeout: 5 })
@@ -358,6 +375,11 @@ async function main(): Promise<void> {
       for (const [viejo, actual] of Object.entries(catalogo.equivalencias ?? {})) {
         console.log(`   · ${viejo} → ${actual}`)
       }
+    }
+    const nombres = catalogo.nombresViejos ?? []
+    if (nombres.length) {
+      console.log(`   ${nombres.length} nombres anteriores de edificios que siguen vivos:`)
+      for (const x of nombres) console.log(`   · «${x.nombre}» era ${x.codigo}`)
     }
   }
 

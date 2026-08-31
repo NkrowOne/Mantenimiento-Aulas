@@ -51,6 +51,13 @@ export const BUILDING_CODES: Record<string, string> = {
  * Erratas del Excel que apuntan a un edificio que ya existe. Se corrigen al
  * importar y cada corrección queda registrada en `import_fixes`.
  */
+/**
+ * También es el sitio donde se declara a mano un **renombrado que la auditoría
+ * no vio** —el que se hizo antes de que existiera `audit_log`, o fuera de la
+ * aplicación—: `'EDIFICIO CENTRAL': 'ED. CENTRAL'`. Los renombrados hechos
+ * desde la aplicación no hacen falta aquí: salen solos de la auditoría, por
+ * `nombresAnterioresDesdeAuditoria`.
+ */
 export const BUILDING_TYPOS: Record<string, string> = {
   'EDIFICO E': 'EDIFICIO E',
 }

@@ -27,10 +27,15 @@
  *    hechos desde la aplicación están apuntados en `audit_log`, y son la
  *    traducción exacta de la nomenclatura vieja. Sin ellas, las filas de un
  *    edificio renombrado no cruzan.
+ *  - Los **nombres anteriores**, de la misma auditoría. Cambiarle el nombre a
+ *    un edificio desde la aplicación no le cambia el código ni le mueve una
+ *    sala, pero el libro sigue escrito con el nombre viejo: sin esto, renombrar
+ *    «EDIFICIO CENTRAL» a «ED. CENTRAL» deja sin cruzar, de golpe, todas las
+ *    filas de ese edificio.
  */
 
 import { supabase } from '@/lib/supabase'
-import { equivalenciasDesdeAuditoria } from '@/domain/cruce'
+import { equivalenciasDesdeAuditoria, nombresAnterioresDesdeAuditoria } from '@/domain/cruce'
 import type { Catalogo, SalaConocida } from '@/domain/cruce'
 import { OLD_BUILDING_CODES } from '@/domain/normalize'
 import { descargaEntera } from '@/sync/paginada'
@@ -135,6 +140,8 @@ export async function catalogoDelMaestro(): Promise<Catalogo> {
     }
   })
 
+  const historia = await historiaDeLaAuditoria(edificiosD.data ?? [])
+
   const edificios = (edificiosD.data ?? []).map((b) => ({
     codigo: b.code,
     nombre: b.name,
@@ -148,10 +155,8 @@ export async function catalogoDelMaestro(): Promise<Catalogo> {
     // Lo declarado a mano manda sobre lo deducido: quien escribe una línea en
     // `OLD_BUILDING_CODES` sabe algo que la auditoría no puede saber — los
     // códigos que ya eran viejos antes de cargar la base.
-    equivalencias: {
-      ...(await equivalenciasDeLaAuditoria(edificiosD.data ?? [])),
-      ...OLD_BUILDING_CODES,
-    },
+    equivalencias: { ...historia.equivalencias, ...OLD_BUILDING_CODES },
+    nombresViejos: historia.nombresViejos,
   }
 }
 
@@ -168,9 +173,9 @@ export async function catalogoDelMaestro(): Promise<Catalogo> {
  * sin ella: se cruzará peor y las filas afectadas saldrán como «sin cruce», que
  * es visible en la pantalla, en vez de traducirse con media verdad.
  */
-async function equivalenciasDeLaAuditoria(
+async function historiaDeLaAuditoria(
   edificios: FilaEdificio[],
-): Promise<Record<string, string>> {
+): Promise<{ equivalencias: Record<string, string>; nombresViejos: Array<{ codigo: string; nombre: string }> }> {
   const d = await descargaEntera<FilaAuditoria>((desde, hasta) =>
     supabase
       .from('audit_log')
@@ -180,14 +185,14 @@ async function equivalenciasDeLaAuditoria(
       .range(desde, hasta),
   )
 
-  if (d.error || !d.completa || !d.data) return {}
+  if (d.error || !d.completa || !d.data) return { equivalencias: {}, nombresViejos: [] }
 
   const dato = (x: Record<string, unknown> | null, k: string): string | undefined => {
     const v = x?.[k]
     return typeof v === 'string' ? v : undefined
   }
 
-  return equivalenciasDesdeAuditoria({
+  const rastro = {
     vivos: edificios.map((b) => ({ id: b.id, codigo: b.code })),
     renombrados: d.data
       .filter(
@@ -211,5 +216,20 @@ async function equivalenciasDeLaAuditoria(
     borrados: d.data
       .filter((r) => r.table_name === 'buildings' && r.op === 'DELETE' && dato(r.old_data, 'code'))
       .map((r) => ({ rowId: r.row_id, codigo: dato(r.old_data, 'code')! })),
-  })
+    // El renombrado a secas: cambia `name` y el código se queda como estaba.
+    nombresCambiados: d.data
+      .filter(
+        (r) =>
+          r.table_name === 'buildings' &&
+          r.op === 'UPDATE' &&
+          dato(r.old_data, 'name') !== undefined &&
+          dato(r.old_data, 'name') !== dato(r.new_data, 'name'),
+      )
+      .map((r) => ({ rowId: r.row_id, nombreViejo: dato(r.old_data, 'name')! })),
+  }
+
+  return {
+    equivalencias: equivalenciasDesdeAuditoria(rastro),
+    nombresViejos: nombresAnterioresDesdeAuditoria(rastro),
+  }
 }
