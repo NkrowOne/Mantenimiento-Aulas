@@ -200,6 +200,18 @@ describe('la hoja de estado', () => {
     expect(p.celdas.filter((c) => c.celda.endsWith('2'))).toEqual([])
   })
 
+  it('la segunda fila de un aula con dos proyectores se reconoce como continuación', () => {
+    const p = estado(
+      [
+        fila(2, { A: 'EDIFICIO P', C: '0.1P', Y: 'SALA-000001', M: 'SN-1' }),
+        fila(3, { M: 'SN-2', L: 'otro modelo' }),
+      ],
+      [sala()],
+    )
+    expect(p.sinCruzar).toHaveLength(1)
+    expect(p.sinCruzar[0]!.motivo).toContain('continúa la fila de «0.1P»')
+  })
+
   it('una fila entera vacía no es nada: ni cruce ni aviso', () => {
     const p = estado([fila(2, {})], [sala()])
     expect(p.sinCruzar).toEqual([])
@@ -678,7 +690,10 @@ describe('la hoja de bolsa', () => {
     expect(p.insertar).toHaveLength(1)
     const celdas = p.insertar[0]!.celdas
     expect(celdas).toContainEqual({ celda: 'A3', valor: 'Teclado' })
-    expect(celdas).toContainEqual({ celda: 'O3', valor: '=P3-N3' })
+    // Con `{f}` sin resolver: el número de fila lo pone el editor al escribir,
+    // que es el único que sabe dónde cae cada fila nueva. Resuelto aquí, la
+    // segunda fila nueva sumaba la fila de la primera.
+    expect(celdas).toContainEqual({ celda: 'O3', valor: '=P{f}-N{f}' })
   })
 
   it('la segunda columna de nombre no se toca: de ahí salen los alias', () => {
@@ -1046,5 +1061,199 @@ describe.skipIf(!bytes)('una pasada entera contra el libro real', () => {
     for (const q of plan.cuarentena) {
       expect(plan.celdas.some((c) => c.celda === `${q.letra}${q.fila}`)).toBe(false)
     }
+  })
+})
+
+// -----------------------------------------------------------------------------
+// Mudanzas, salas de dos filas, cruce por serial y rótulos de bloque
+// -----------------------------------------------------------------------------
+
+describe('una sala que cambia de edificio se muda de bloque', () => {
+  // Dos edificios conocidos, para que el cruce pueda distinguir «otro edificio»
+  // de «este edificio con otro nombre».
+  const conO: Catalogo = {
+    ...catalogo,
+    salas: [...catalogo.salas],
+    edificios: [
+      { codigo: 'P', nombre: 'EDIFICIO P', activo: true },
+      { codigo: 'O', nombre: 'EDIFICIO O', activo: true },
+    ],
+  }
+  const ixPO = construirIndice(conO)
+  const estadoPO = (filas: FilaLeida[], salas: SalaVolcada[], combinadas: string[] = []) =>
+    sincronizarEstado({ hoja: ESTADO, filas: [CABECERA, ...filas], salas, indice: ixPO, columnaRef: 'Y', combinadas, instantanea: SIN_INSTANTANEA })
+
+  it('la fila sale de su bloque y entra en el del edificio nuevo, con matrícula', () => {
+    const p = estadoPO(
+      [fila(2, { A: 'EDIFICIO P', B: 'PLANTA BAJA', C: '0.1P', Y: 'SALA-000001', M: 'SN-1' })],
+      [sala({ edificio: 'EDIFICIO O' })],
+    )
+    expect(p.borrar).toEqual([2])
+    expect(p.insertar).toHaveLength(1)
+    const celdas = p.insertar[0]!.celdas.map((c) => [c.celda.replace(/\d+$/, ''), c.valor])
+    expect(celdas).toContainEqual(['A', 'EDIFICIO O'])
+    expect(celdas).toContainEqual(['Y', 'SALA-000001'])
+    expect(p.avisos.some((a) => a.includes('se muda'))).toBe(true)
+    // Y no se escribe nada en la fila que se va.
+    expect(p.celdas.filter((c) => c.celda.endsWith('2'))).toEqual([])
+  })
+
+  it('pero un edificio que el maestro no conoce es un renombrado, no una mudanza', () => {
+    const p = estadoPO(
+      [fila(2, { A: 'EDIFICIO VIEJO', C: '0.1P', Y: 'SALA-000001' })],
+      [sala({ edificio: 'EDIFICIO P' })],
+    )
+    expect(p.borrar).toEqual([])
+    expect(p.celdas).toContainEqual({ celda: 'A2', valor: 'EDIFICIO P' })
+  })
+
+  it('una sala de dos filas no se muda: se corrige el edificio en su sitio y se avisa', () => {
+    // Dos proyectores: el segundo va en una fila de continuación combinada.
+    const p = estadoPO(
+      [
+        fila(2, { A: 'EDIFICIO P', C: '0.1P', Y: 'SALA-000001', M: 'SN-1' }),
+        fila(3, { M: 'SN-2', L: 'otro modelo' }),
+      ],
+      [sala({ edificio: 'EDIFICIO O' })],
+      ['C2:C3'],
+    )
+    expect(p.borrar).toEqual([])
+    expect(p.insertar).toEqual([])
+    expect(p.celdas).toContainEqual({ celda: 'A2', valor: 'EDIFICIO O' })
+    expect(p.avisos.some((a) => a.includes('combinada') || a.includes('continuación'))).toBe(true)
+  })
+
+  it('archivar una sala de dos filas se lleva las dos', () => {
+    const p = estadoPO(
+      [
+        fila(2, { A: 'EDIFICIO P', C: '0.1P', Y: 'SALA-000001', M: 'SN-1' }),
+        fila(3, { M: 'SN-2' }),
+        fila(4, { A: 'EDIFICIO P', C: 'otra', Y: 'SALA-000002' }),
+      ],
+      [sala({ activa: false }), sala({ id: 'r2', shortRef: 'SALA-000002', code: 'otra' })],
+      ['C2:C3'],
+    )
+    expect(p.borrar.sort()).toEqual([2, 3])
+  })
+
+  it('al borrar la fila que abre un bloque, la siguiente hereda el rótulo', () => {
+    const p = estadoPO(
+      [
+        fila(2, { A: 'EDIFICIO P', B: 'PLANTA BAJA', C: '0.1P', Y: 'SALA-000001' }),
+        fila(3, { C: 'otra', Y: 'SALA-000002' }),
+      ],
+      [sala({ activa: false }), sala({ id: 'r2', shortRef: 'SALA-000002', code: 'otra' })],
+    )
+    expect(p.borrar).toEqual([2])
+    expect(p.celdas).toContainEqual({ celda: 'A3', valor: 'EDIFICIO P' })
+    expect(p.celdas).toContainEqual({ celda: 'B3', valor: 'PLANTA BAJA' })
+  })
+
+  it('una fila nueva no se cuelga de una fila que se va a borrar', () => {
+    // La última del bloque se archiva y otra entra en el mismo bloque.
+    const p = estadoPO(
+      [fila(2, { A: 'EDIFICIO P', B: 'PLANTA BAJA', C: '0.1P', Y: 'SALA-000001' })],
+      [sala({ activa: false }), sala({ id: 'r9', shortRef: 'SALA-000009', code: '9.9' })],
+    )
+    expect(p.borrar).toEqual([2])
+    expect(p.insertar).toHaveLength(1)
+    expect(p.insertar[0]!.tras).not.toBe(2)
+  })
+})
+
+describe('sin matrícula y sin cruce por nombre, cruzan los números de serie', () => {
+  it('si todos los seriales de la fila son de la misma sala, es esa', () => {
+    const p = estado(
+      [fila(2, { A: 'EDIFICIO P', C: 'nombre que no cruza', M: 'SN-PROY', O: 'SN-CAM' })],
+      [sala({ equipos: [
+        { id: 'e1', tipo: 'Proyector', serial: 'SN-PROY', model: null, desde: null },
+        { id: 'e2', tipo: 'Cámara', serial: 'SN-CAM', model: null, desde: null },
+      ] })],
+    )
+    expect(p.sinCruzar).toEqual([])
+    expect(p.celdas).toContainEqual({ celda: 'Y2', valor: 'SALA-000001' })
+    expect(p.avisos.some((a) => a.includes('números de serie'))).toBe(true)
+  })
+
+  it('si discrepan, no cruza con ninguna y lo dice', () => {
+    const p = estado(
+      [fila(2, { A: 'EDIFICIO P', C: 'nombre que no cruza', M: 'SN-A', O: 'SN-B' })],
+      [
+        sala({ equipos: [{ id: 'e1', tipo: 'Proyector', serial: 'SN-A', model: null, desde: null }] }),
+        sala({ id: 'r2', shortRef: 'SALA-000002', code: 'otra', equipos: [{ id: 'e2', tipo: 'Cámara', serial: 'SN-B', model: null, desde: null }] }),
+      ],
+    )
+    expect(p.sinCruzar).toHaveLength(1)
+    expect(p.sinCruzar[0]!.motivo).toContain('discrepan')
+  })
+
+  it('un serial repetido en dos salas no identifica ninguna', () => {
+    const p = estado(
+      [fila(2, { A: 'EDIFICIO P', C: 'nombre que no cruza', M: 'SN-REPE' })],
+      [
+        sala({ equipos: [{ id: 'e1', tipo: 'Proyector', serial: 'SN-REPE', model: null, desde: null }] }),
+        sala({ id: 'r2', shortRef: 'SALA-000002', code: 'otra', equipos: [{ id: 'e2', tipo: 'Proyector', serial: 'SN-REPE', model: null, desde: null }] }),
+      ],
+    )
+    expect(p.sinCruzar).toHaveLength(1)
+  })
+})
+
+describe('un mes a cero es un mes en blanco', () => {
+  const cab = fila(1, Object.fromEntries(BOLSA_2026.columnas.map((c) => [c.letra, c.cabecera])))
+
+  it('no se escriben ceros en los meses que la hoja tiene en blanco', () => {
+    const art = articulo({ meses: [0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0] })
+    const p = sincronizarBolsa({ hoja: BOLSA_2026, filas: [cab, fila(2, { A: art.nombre })], articulos: [art], resolver: () => art.id })
+    expect(p.celdas.filter((c) => /^[B-M]2$/.test(c.celda))).toEqual([{ celda: 'D2', valor: 3 }])
+  })
+
+  it('ni en una fila nueva', () => {
+    const art = articulo({ id: 'nuevo', nombre: 'Artículo nuevo', meses: [0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], comprado: 5 })
+    const p = sincronizarBolsa({ hoja: BOLSA_2026, filas: [cab], articulos: [art], resolver: () => null })
+    expect(p.insertar).toHaveLength(1)
+    const meses = p.insertar[0]!.celdas.filter((c) => /^[B-M]\d+$/.test(c.celda)).map((c) => [c.celda.replace(/\d+$/, ''), c.valor])
+    expect(meses).toEqual([['C', 2]])
+  })
+
+  it('y un cero escrito a mano frente a un cero de la app no manda nada a la base', () => {
+    const art = articulo({ meses: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] })
+    const p = sincronizarBolsa({ hoja: BOLSA_2026, filas: [cab, fila(2, { A: art.nombre, B: 0 })], articulos: [art], resolver: () => art.id })
+    expect(p.haciaLaBase).toEqual([])
+  })
+
+  it('una fórmula sin valor en la app no es un descuadre', () => {
+    const art = articulo({ meses: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] })
+    const p = sincronizarBolsa({
+      hoja: BOLSA_2026,
+      filas: [cab, { fila: 2, celdas: { A: art.nombre, B: 1, N: 1 }, formulas: { N: 'SUM(B2:M2)' } } as FilaLeida],
+      articulos: [art],
+      resolver: () => art.id,
+    })
+    expect(p.avisos.filter((a) => a.includes('descuadre') || a.includes('Es una fórmula'))).toEqual([])
+  })
+})
+
+describe('cada hoja de partes solo inserta los partes de su año', () => {
+  it('un parte abierto en 2025 no entra en la hoja de 2026', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES],
+      incidencias: [incidencia({ id: 'x25', numero: 'I250301_0001', abierta: '2025-03-01' })],
+    })
+    expect(p.insertar).toEqual([])
+  })
+
+  it('uno de 2026 sí, y uno sin fecha de apertura no va a ninguna', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES],
+      incidencias: [
+        incidencia({ id: 'x26', numero: 'I260301_0001', abierta: '2026-03-01' }),
+        incidencia({ id: 'sin', numero: 'I260301_0002', abierta: null }),
+      ],
+    })
+    expect(p.insertar).toHaveLength(1)
+    expect(p.insertar[0]!.celdas.some((c) => c.valor === 'I260301_0001')).toBe(true)
   })
 })
