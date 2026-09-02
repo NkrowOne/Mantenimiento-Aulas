@@ -32,7 +32,7 @@
 import { ANCHO_MEDIO, ANCHO_TOTAL, actividadDiaria, barrasHorizontales, tendencia } from './charts.js'
 import type { ReportData } from './data.js'
 import { type Indicador, type Lectura, dias as textoDias, indicadores, plural, porcentaje } from './analisis.js'
-import { SECCIONES_POR_DEFECTO, type Opciones, type Seccion, tiene } from './opciones.js'
+import { type Audiencia, type Opciones, type Seccion, seccionesPorDefecto, tiene } from './opciones.js'
 import { diaDeLaSemana, etiquetaDia, nombreDia } from './periods.js'
 import { bandaDeMarcas } from './marcas.js'
 
@@ -334,7 +334,7 @@ function seccionAnalisis(l: Lectura): string {
   </section>`
 }
 
-function seccionEdificios(d: ReportData, conTendencia: boolean): string {
+function seccionEdificios(d: ReportData, conTendencia: boolean, audiencia: Audiencia): string {
   const conActividad = d.porEdificio.filter((b) => b.abiertas > 0)
   const top = conActividad.slice(0, 8)
 
@@ -447,7 +447,7 @@ function seccionEdificios(d: ReportData, conTendencia: boolean): string {
           num: true,
           celda: (b) =>
             b.pendientes
-              ? `<span style="color:${b.pendientes > 3 ? CRIT : INK}">${b.pendientes}</span>`
+              ? `<span style="color:${b.pendientes > 3 && audiencia !== 'direccion' ? CRIT : INK}">${b.pendientes}</span>`
               : '—',
         },
       ])}
@@ -690,14 +690,22 @@ function seccionTendencia(d: ReportData): string {
   </section>`
 }
 
-function seccionSalas(d: ReportData): string {
-  if (!d.topSalas.length && !d.reincidentes.length) return ''
+function seccionSalas(d: ReportData, audiencia: Audiencia): string {
+  /*
+   * Para dirección solo sale la pieza repetida —una mejora concreta, con su
+   * sala y su ahorro—. El ranking de salas con más incidencias y su
+   * fiabilidad en rojo es exactamente el «aula difícil» que este documento no
+   * señala: hay aulas que dan más trabajo, y eso no es noticia para el
+   * cliente.
+   */
+  const conRanking = audiencia !== 'direccion' && d.topSalas.length > 0
+  if (!conRanking && !d.reincidentes.length) return ''
 
   return `
   <section class="bloque">
-    ${rotulo('Salas señaladas')}
+    ${rotulo(audiencia === 'direccion' ? 'Dónde hay una mejora clara' : 'Salas señaladas')}
     ${
-      d.topSalas.length
+      conRanking
         ? tabla(d.topSalas, [
             {
               cab: 'Sala',
@@ -717,7 +725,9 @@ function seccionSalas(d: ReportData): string {
                   : '<span class="tenue">datos insuficientes</span>',
             },
           ])
-        : vacio('Ninguna sala ha acumulado incidencias en el periodo.')
+        : audiencia === 'direccion'
+          ? ''
+          : vacio('Ninguna sala ha acumulado incidencias en el periodo.')
     }
     ${
       d.reincidentes.length
@@ -728,7 +738,9 @@ function seccionSalas(d: ReportData): string {
       ${tabla(d.reincidentes, [
         { cab: 'Sala', celda: (r) => `<span class="mono">${esc(r.building)} ${esc(r.room)}</span>` },
         { cab: 'Repuesto', ancho: '50%', celda: (r) => esc(r.item) },
-        { cab: 'Veces', num: true, celda: (r) => `<span style="color:${CRIT}">${r.veces}</span>` },
+        // En rojo para el equipo, que es un aviso; en tinta para dirección, que
+        // es una mejora con nombre y no una alarma.
+        { cab: 'Veces', num: true, celda: (r) => `<span style="color:${audiencia === 'direccion' ? INK : CRIT}">${r.veces}</span>` },
       ])}
     </div>`
         : ''
@@ -779,7 +791,7 @@ function seccionEstancadas(d: ReportData): string {
   </section>`
 }
 
-function seccionMateriales(d: ReportData): string {
+function seccionMateriales(d: ReportData, audiencia: Audiencia): string {
   const conCierres = d.resolucion.resueltas > 0
   // Sin `evitar`: es un bloque alto, y prohibirle partirse lo empujaba entero a
   // la página siguiente dejando media en blanco.
@@ -808,13 +820,16 @@ function seccionMateriales(d: ReportData): string {
           ${
             // Si la media dice lo mismo que la mediana, la fila solo repite.
             textoDias(d.resolucion.mediaDias) !== textoDias(d.resolucion.medianaDias)
-              ? `<tr><td>Media, arrastrando las antiguas</td><td class="num">${esc(textoDias(d.resolucion.mediaDias))}</td></tr>`
+              ? `<tr><td>${audiencia === 'direccion' ? 'Media' : 'Media, arrastrando las antiguas'}</td><td class="num">${esc(textoDias(d.resolucion.mediaDias))}</td></tr>`
               : ''
           }
           <tr><td>Cerradas en menos de 48 h</td><td class="num">${d.resolucion.enMenosDe48h} de ${d.resolucion.resueltas}</td></tr>
-        </table>
-        <p class="apunte">La mediana va primero porque la media la mueve cualquier
+        </table>${
+          audiencia === 'direccion'
+            ? ''
+            : `<p class="apunte">La mediana va primero porque la media la mueve cualquier
         parte antiguo que se cierre esta semana.</p>`
+        }`
             : vacio('No se ha cerrado nada en el periodo.')
         }
       </td>
@@ -837,11 +852,11 @@ function seccionEquipo(d: ReportData): string {
   </section>`
 }
 
-function seccionRecomendaciones(l: Lectura): string {
+function seccionRecomendaciones(l: Lectura, audiencia: Audiencia): string {
   if (!l.recomendaciones.length) return ''
   return `
   <section class="bloque evitar">
-    ${rotulo('Qué conviene hacer')}
+    ${rotulo(audiencia === 'direccion' ? 'Propuestas de mejora' : 'Qué conviene hacer')}
     <ol class="acciones">
       ${l.recomendaciones
         .map(
@@ -888,7 +903,7 @@ function colofon(d: ReportData, o: Opciones): string {
   // Contra el conjunto por defecto, no contra un número escrito a mano: al
   // añadir dos secciones nuevas, el «< 10» de antes habría marcado como parcial
   // hasta el informe completo.
-  if (o.secciones.length < SECCIONES_POR_DEFECTO.length) {
+  if (o.secciones.length < seccionesPorDefecto(o.audiencia).length) {
     partes.push('Informe parcial: se han pedido solo las secciones marcadas.')
   }
   if (!partes.length) return ''
@@ -909,7 +924,7 @@ export function renderReport(
   pie: Pie,
 ): string {
   const titulo = TITULO_TIPO[d.kind] ?? 'Informe'
-  const inds = indicadores(d)
+  const inds = indicadores(d, o.audiencia)
   // Comparar con un tramo anterior vacío es comparar con nada: la flecha diría
   // «+2 (sin dato antes)» y ocuparía sitio para no informar.
   const comparar =
@@ -928,14 +943,16 @@ export function renderReport(
     ['analisis', seccionAnalisis(l)],
     ['revisiones', seccionRevisiones(d)],
     ['eventos', seccionEventos(d, tiene(o, 'revisiones'))],
-    ['edificios', seccionEdificios(d, tiene(o, 'tendencia'))],
+    ['edificios', seccionEdificios(d, tiene(o, 'tendencia'), o.audiencia)],
     ['tendencia', tendenciaSola ? seccionTendencia(d) : ''],
-    ['salas', seccionSalas(d)],
+    ['salas', seccionSalas(d, o.audiencia)],
     ['lamparas', seccionLamparas(d)],
-    ['estancadas', seccionEstancadas(d)],
-    ['materiales', seccionMateriales(d)],
+    // Vetada para dirección ya al leer las opciones; aquí otra vez, porque es
+    // el documento el que no puede decir «lleva N días», se pida como se pida.
+    ['estancadas', o.audiencia === 'direccion' ? '' : seccionEstancadas(d)],
+    ['materiales', seccionMateriales(d, o.audiencia)],
     ['equipo', seccionEquipo(d)],
-    ['recomendaciones', seccionRecomendaciones(l)],
+    ['recomendaciones', seccionRecomendaciones(l, o.audiencia)],
   ]
 
   const cuerpo = secciones
@@ -1265,7 +1282,7 @@ export function renderReport(
 
 <header class="masthead">
   ${bandaDeMarcas()}
-  <div class="kicker">Mantenimiento de aulas · ${esc(titulo)}</div>
+  <div class="kicker">Mantenimiento de aulas · ${esc(titulo)} · ${o.audiencia === 'direccion' ? 'para dirección' : 'para el equipo técnico'}</div>
   <h1>${esc(l.titular)}</h1>
   <div class="sumario">
     <span class="mono">${esc(d.periodoTexto)}</span> · emitido el

@@ -22,11 +22,30 @@
  *                                   falla y cuando alguien pide el informe sin
  *                                   IA. No es un mensaje de error: es un texto
  *                                   que se puede leer y archivar tal cual.
+ *
+ * Y las tres saben PARA QUIÉN escriben, porque no es el mismo documento:
+ *
+ *   `equipo`      El parte del servicio. Dice lo que hay tal como está, lo
+ *                 grave primero: una incidencia con veinte días abierta es lo
+ *                 primero que hay que leer el lunes.
+ *   `direccion`   Lo que se le entrega al cliente. Da cuenta del trabajo con
+ *                 buena imagen y sin faltar a los datos: abre por lo que ha
+ *                 mejorado, cuenta lo pendiente como trabajo en curso y margen
+ *                 de mejora, y NO dice cuántos días lleva abierta nada ni
+ *                 señala una sala como problemática: hay aulas difíciles, y eso
+ *                 no es noticia para quien dirige un campus. Los problemas de
+ *                 verdad —una incidencia de gravedad alta, una lámpara a punto
+ *                 de fundirse, la misma pieza tres veces en la misma sala— sí
+ *                 se dicen, con su cifra, como algo visto y una decisión que
+ *                 conviene tomar.
  */
 
 import type { ReportData } from './tipos'
 
 export type Tono = 'neutro' | 'ok' | 'aviso' | 'critico'
+
+/** Para quién se escribe. Cambia la voz y lo que se cuenta; nunca una cifra. */
+export type Audiencia = 'direccion' | 'equipo'
 
 export interface Delta {
   /** Diferencia absoluta contra el mismo tramo anterior. */
@@ -138,7 +157,7 @@ export function enPalabras(frase: string): string {
  * hojea. Lo que no cabe aquí está en las tablas, que es donde se va a buscar el
  * detalle cuando uno de estos cuatro llama la atención.
  */
-export function indicadores(d: ReportData): Indicador[] {
+export function indicadores(d: ReportData, audiencia: Audiencia): Indicador[] {
   const cobertura = d.situacion.salasTotal
     ? (d.ahora.salasRevisadas / d.situacion.salasTotal) * 100
     : 0
@@ -190,17 +209,37 @@ export function indicadores(d: ReportData): Indicador[] {
        */
       tono: d.ahora.resueltas === 0 ? 'neutro' : saldo >= 0 ? 'ok' : 'aviso',
     },
-    {
-      etiqueta: 'Pendientes hoy',
-      valor: String(d.situacion.incidenciasAbiertas),
-      detalle:
-        d.situacion.estancadas > 0
-          ? `${d.situacion.estancadas} de más de 7 días`
-          : 'ninguna estancada',
-      // La foto de hoy no se compara con nada: es un saldo, no un flujo.
-      delta: null,
-      tono: d.situacion.estancadas > 0 ? 'critico' : d.situacion.incidenciasAbiertas > 0 ? 'aviso' : 'ok',
-    },
+    /*
+     * La cuarta cifra cambia de voz con la audiencia. Al equipo se le dice
+     * cuántas llevan más de una semana, en rojo, porque es lo que tiene que
+     * mirar hoy. A dirección se le da el saldo y nada más: el número de días
+     * de una incidencia abierta no es un dato que le sirva para decidir nada,
+     * y sí es el que convierte un aula difícil en un reproche.
+     */
+    audiencia === 'direccion'
+      ? {
+          etiqueta: 'Pendientes hoy',
+          valor: String(d.situacion.incidenciasAbiertas),
+          detalle: d.situacion.incidenciasAbiertas > 0 ? 'en seguimiento' : 'ninguna pendiente',
+          delta: null,
+          tono: d.situacion.incidenciasAbiertas > 0 ? 'neutro' : 'ok',
+        }
+      : {
+          etiqueta: 'Pendientes hoy',
+          valor: String(d.situacion.incidenciasAbiertas),
+          detalle:
+            d.situacion.estancadas > 0
+              ? `${d.situacion.estancadas} de más de 7 días`
+              : 'ninguna estancada',
+          // La foto de hoy no se compara con nada: es un saldo, no un flujo.
+          delta: null,
+          tono:
+            d.situacion.estancadas > 0
+              ? 'critico'
+              : d.situacion.incidenciasAbiertas > 0
+                ? 'aviso'
+                : 'ok',
+        },
   ]
 }
 
@@ -211,14 +250,23 @@ export function indicadores(d: ReportData): Indicador[] {
  * dice su cifra: un aviso que no se puede comprobar no debería estar en un
  * informe. El peso ordena; lo que no dispara, no aparece — un informe con nueve
  * secciones fijas donde seis dicen «nada que señalar» enseña a no leerlo.
+ *
+ * Para dirección se reparten en dos juegos: las que dicen que algo ha ido bien
+ * —en `senalesBuenas()`— y las de aquí, que para esa audiencia cambian de voz:
+ * la misma cifra, contada como margen de mejora y con una decisión al lado en
+ * vez de una tarea de taller. Y dos no salen para dirección de ninguna forma:
+ * las incidencias estancadas, que son el «lleva N días abierta» que este
+ * documento no dice, y los registros sin sala, que son limpieza de datos del
+ * servicio y no un asunto del cliente.
  */
-export function senales(d: ReportData): Senal[] {
-  const s: Senal[] = []
+export function senales(d: ReportData, audiencia: Audiencia): Senal[] {
+  const dir = audiencia === 'direccion'
+  const s: Senal[] = dir ? senalesBuenas(d) : []
   const cobertura = d.situacion.salasTotal
     ? (d.ahora.salasRevisadas / d.situacion.salasTotal) * 100
     : 0
 
-  if (d.situacion.estancadas > 0) {
+  if (d.situacion.estancadas > 0 && !dir) {
     const mayor = d.estancadas[0]
     s.push({
       clave: 'estancadas',
@@ -241,9 +289,11 @@ export function senales(d: ReportData): Senal[] {
       titulo: `${d.reincidentes.length === 1 ? 'Una sala repite' : `${d.reincidentes.length} salas repiten`} el mismo consumo`,
       cuerpo:
         `En ${r.building} ${r.room} se ha puesto «${r.item}» ${r.veces} veces en seis meses. ` +
-        'Cuando la misma pieza vuelve a la misma sala, el problema no es la pieza.',
+        (dir
+          ? 'Cuando la misma pieza vuelve a la misma sala conviene mirar la instalación: es la mejora que más repuestos ahorra.'
+          : 'Cuando la misma pieza vuelve a la misma sala, el problema no es la pieza.'),
       tono: 'aviso',
-      peso: 1,
+      peso: dir ? 3 : 1,
       accion: `Revisar la instalación de ${r.building} ${r.room} en vez de reponer «${r.item}» otra vez.`,
     })
   }
@@ -252,15 +302,19 @@ export function senales(d: ReportData): Senal[] {
     const peor = d.lamparas[0]
     s.push({
       clave: 'lamparas',
-      titulo: `${plural(d.situacion.lamparasAlLimite, 'lámpara')} por debajo del 20 % de vida`,
+      titulo: dir
+        ? `${plural(d.situacion.lamparasAlLimite, 'lámpara')} para cambiar antes de que se fundan`
+        : `${plural(d.situacion.lamparasAlLimite, 'lámpara')} por debajo del 20 % de vida`,
       cuerpo: peor
-        ? `La peor está en ${peor.building} ${peor.room}, al ${Math.round(peor.pct * 100)} %` +
+        ? `La${dir ? ' más gastada' : ' peor'} está en ${peor.building} ${peor.room}, al ${Math.round(peor.pct * 100)} %` +
           `${peor.horas ? ` y con ${peor.horas} horas de proyector` : ''}. ` +
           'Sustituirlas antes de que se fundan cuesta lo mismo y no interrumpe una clase.'
         : 'Conviene pedirlas antes de que se funda la primera.',
       tono: 'aviso',
-      peso: 2,
-      accion: 'Pedir lámparas de repuesto y planificar el cambio fuera de horario de clase.',
+      peso: dir ? 4 : 2,
+      accion: dir
+        ? 'Aprobar la compra de lámparas de repuesto y cambiarlas fuera del horario de clase.'
+        : 'Pedir lámparas de repuesto y planificar el cambio fuera de horario de clase.',
     })
   }
 
@@ -271,21 +325,31 @@ export function senales(d: ReportData): Senal[] {
       titulo: `${cuello.code} concentra ${porcentaje(cuello.abiertas, d.ahora.registros)} de lo abierto`,
       cuerpo:
         `${cuello.abiertas} de los ${d.ahora.registros} registros del periodo salen de ${cuello.name} ` +
-        `(${plural(cuello.salas, 'sala')}). Un edificio que acapara así suele tener una causa común, ` +
-        'no diez averías distintas.',
+        `(${plural(cuello.salas, 'sala')}). Un edificio que acapara así suele tener una causa común` +
+        (dir ? ': resolverla mejora varias aulas de golpe.' : ', no diez averías distintas.'),
       tono: 'aviso',
-      peso: 3,
-      accion: `Mirar ${cuello.code} como conjunto: instalación, antigüedad del equipo o uso.`,
+      peso: dir ? 5 : 3,
+      accion: dir
+        ? `Plantear una revisión de conjunto de ${cuello.code}: instalación, antigüedad del equipo o uso.`
+        : `Mirar ${cuello.code} como conjunto: instalación, antigüedad del equipo o uso.`,
     })
   }
 
+  /*
+   * Gravedad alta se dice a todo el mundo, y con el mismo tono. Es lo que impide
+   * dar una clase: callárselo a dirección para que el informe quede más bonito
+   * sería exactamente el informe que no se puede firmar.
+   */
   if (d.ahora.gravedadAlta > 0) {
     s.push({
       clave: 'gravedad',
       titulo: `${plural(d.ahora.gravedadAlta, 'incidencia')} de gravedad alta`,
-      cuerpo: 'Gravedad alta es lo que impide dar la clase. Va primero, aunque sea lo más reciente.',
+      cuerpo: dir
+        ? 'Gravedad alta es lo que impide dar la clase, y por eso se atiende por delante de todo lo demás.'
+        : 'Gravedad alta es lo que impide dar la clase. Va primero, aunque sea lo más reciente.',
       tono: 'critico',
-      peso: 1,
+      peso: dir ? 2 : 1,
+      ...(dir ? { accion: 'Dar prioridad a las de gravedad alta: son las que afectan a la clase.' } : {}),
     })
   }
 
@@ -293,9 +357,10 @@ export function senales(d: ReportData): Senal[] {
     s.push({
       clave: 'sin-actividad',
       titulo: 'No hay actividad registrada en el periodo',
-      cuerpo:
-        'Ni revisiones ni registros nuevos. En una semana de vacaciones es lo esperable; ' +
-        'en una semana de clase, revisa que los dispositivos estén sincronizando.',
+      cuerpo: dir
+        ? 'Ni revisiones ni registros nuevos. En un periodo de vacaciones es lo esperable.'
+        : 'Ni revisiones ni registros nuevos. En una semana de vacaciones es lo esperable; ' +
+          'en una semana de clase, revisa que los dispositivos estén sincronizando.',
       tono: 'aviso',
       peso: 0,
     })
@@ -305,24 +370,34 @@ export function senales(d: ReportData): Senal[] {
       titulo: `Se ha pasado por ${porcentaje(d.ahora.salasRevisadas, d.situacion.salasTotal)} del campus`,
       cuerpo:
         `${plural(d.ahora.salasRevisadas, 'sala')} de ${d.situacion.salasTotal}. ` +
-        'A este ritmo, dar una vuelta completa lleva ' +
-        `${estimaVueltas(d.ahora.salasRevisadas, d.situacion.salasTotal, d.dias)}.`,
+        (dir
+          ? 'Ampliar la ronda es la mejora con más recorrido: cada sala revisada es una avería que se ve antes de que la vea una clase.'
+          : 'A este ritmo, dar una vuelta completa lleva ' +
+            `${estimaVueltas(d.ahora.salasRevisadas, d.situacion.salasTotal, d.dias)}.`),
       tono: 'aviso',
-      peso: 4,
-      accion: 'Repartir la ronda por edificios para que ninguno quede fuera del ciclo.',
+      peso: dir ? 7 : 4,
+      accion: dir
+        ? 'Reforzar la ronda por edificios hasta completar la vuelta al campus.'
+        : 'Repartir la ronda por edificios para que ninguno quede fuera del ciclo.',
     })
   }
 
   if (d.situacion.salasNuncaRevisadas > 0) {
     s.push({
       clave: 'nunca-revisadas',
-      titulo: `${plural(d.situacion.salasNuncaRevisadas, 'sala')} sin una sola revisión`,
-      cuerpo:
-        'De estas no se sabe nada: no tienen histórico, así que tampoco tienen índice de ' +
-        'fiabilidad ni aparecen en ninguna alerta. Son el punto ciego del campus.',
+      titulo: dir
+        ? `${plural(d.situacion.salasNuncaRevisadas, 'sala')} pendientes de incorporar a la ronda`
+        : `${plural(d.situacion.salasNuncaRevisadas, 'sala')} sin una sola revisión`,
+      cuerpo: dir
+        ? 'Todavía no tienen histórico, así que no aparecen en ningún indicador. ' +
+          'Incorporarlas completa la foto del campus.'
+        : 'De estas no se sabe nada: no tienen histórico, así que tampoco tienen índice de ' +
+          'fiabilidad ni aparecen en ninguna alerta. Son el punto ciego del campus.',
       tono: 'neutro',
-      peso: 6,
-      accion: 'Incluir las salas sin histórico en la próxima ronda, aunque nadie haya avisado de nada.',
+      peso: dir ? 8 : 6,
+      accion: dir
+        ? 'Incluir las salas sin histórico en la próxima ronda.'
+        : 'Incluir las salas sin histórico en la próxima ronda, aunque nadie haya avisado de nada.',
     })
   }
 
@@ -336,16 +411,20 @@ export function senales(d: ReportData): Senal[] {
           : `La mitad se cierra en ${dias(d.resolucion.medianaDias)} o menos`,
       cuerpo:
         `${d.resolucion.enMenosDe48h} de ${d.resolucion.resueltas} cerradas en menos de 48 horas` +
-        (d.resolucion.mediaDias !== null && d.resolucion.mediaDias > d.resolucion.medianaDias * 2
+        // A dirección no se le explica que la media la mueven «unas pocas muy
+        // antiguas»: es la puerta de atrás del «lleva N días» que no se dice.
+        (!dir && d.resolucion.mediaDias !== null && d.resolucion.mediaDias > d.resolucion.medianaDias * 2
           ? `. La media sube a ${dias(d.resolucion.mediaDias)} por unas pocas muy antiguas, ` +
             'que es justo lo que la mediana deja ver.'
           : '.'),
       tono: rapido ? 'ok' : 'neutro',
-      peso: 7,
+      // Una buena noticia va arriba en el informe de dirección y abajo en el
+      // del equipo, que ya sabe cómo cierra y viene a por lo que falta.
+      peso: dir ? (rapido ? 1 : 9) : 7,
     })
   }
 
-  if (d.sinSala > 0) {
+  if (d.sinSala > 0 && !dir) {
     s.push({
       clave: 'sin-sala',
       titulo: `${plural(d.sinSala, 'registro')} sin sala identificada`,
@@ -361,15 +440,77 @@ export function senales(d: ReportData): Senal[] {
   if (d.situacion.articulosBajoMinimo > 0) {
     s.push({
       clave: 'almacen',
-      titulo: `${plural(d.situacion.articulosBajoMinimo, 'artículo')} bajo mínimo en almacén`,
-      cuerpo: 'Quedarse sin la pieza convierte una reparación de diez minutos en una semana de espera.',
+      titulo: dir
+        ? `${plural(d.situacion.articulosBajoMinimo, 'artículo')} por reponer en almacén`
+        : `${plural(d.situacion.articulosBajoMinimo, 'artículo')} bajo mínimo en almacén`,
+      cuerpo: dir
+        ? 'Tener la pieza a mano es lo que convierte una reparación en cosa de minutos.'
+        : 'Quedarse sin la pieza convierte una reparación de diez minutos en una semana de espera.',
       tono: 'aviso',
-      peso: 5,
-      accion: 'Reponer lo que está por debajo del mínimo antes del próximo lunes.',
+      peso: dir ? 6 : 5,
+      accion: dir
+        ? 'Aprobar la reposición de lo que está por debajo del mínimo.'
+        : 'Reponer lo que está por debajo del mínimo antes del próximo lunes.',
     })
   }
 
   return s.sort((a, b) => a.peso - b.peso)
+}
+
+/**
+ * Lo que ha ido bien, con su cifra. Solo para dirección.
+ *
+ * Al equipo no se le cuenta: sabe lo que ha hecho, y en su parte cada línea
+ * que no pide nada es una línea que tapa a una que sí. Para dirección es al
+ * revés: es lo primero que se lee, y lo que hace que lo pendiente se lea como
+ * trabajo en curso y no como una lista de faltas. Cada una se apoya en una
+ * comparación o en un saldo que está impreso al lado: sin cifra no hay buena
+ * noticia, hay adjetivos.
+ */
+export function senalesBuenas(d: ReportData): Senal[] {
+  const s: Senal[] = []
+  const saldo = d.ahora.resueltas - d.ahora.registros
+
+  if (d.antes.revisiones > 0 && d.ahora.revisiones > d.antes.revisiones) {
+    const dv = delta(d.ahora.revisiones, d.antes.revisiones)
+    s.push({
+      clave: 'mas-revisiones',
+      titulo: `Suben las revisiones frente a ${d.comparacionTexto}`,
+      cuerpo:
+        `${d.ahora.revisiones} frente a ${d.antes.revisiones}` +
+        `${dv.pct !== null ? ` (+${dv.pct} %)` : ''}: ` +
+        `${plural(d.ahora.salasRevisadas, 'sala')} distintas, ${porcentaje(
+          d.ahora.salasRevisadas,
+          d.situacion.salasTotal,
+        )} del campus.`,
+      tono: 'ok',
+      peso: 0,
+    })
+  }
+
+  if (d.ahora.resueltas > 0 && saldo > 0) {
+    s.push({
+      clave: 'saldo-positivo',
+      titulo: 'Se cierra más de lo que entra',
+      cuerpo:
+        `${d.ahora.resueltas} cerradas por ${plural(d.ahora.registros, 'registro')} ` +
+        `${d.ahora.registros === 1 ? 'abierto' : 'abiertos'} en el periodo: la cola de trabajo baja.`,
+      tono: 'ok',
+      peso: 0,
+    })
+  }
+
+  if (d.ahora.registros > 0 && d.ahora.gravedadAlta === 0) {
+    s.push({
+      clave: 'sin-gravedad-alta',
+      titulo: 'Ninguna incidencia de gravedad alta',
+      cuerpo: `De los ${plural(d.ahora.registros, 'registro')} del periodo, ninguno impide dar clase.`,
+      tono: 'ok',
+      peso: 1,
+    })
+  }
+
+  return s
 }
 
 function estimaVueltas(revisadas: number, total: number, diasPeriodo: number): string {
@@ -395,25 +536,45 @@ function recorta(t: string, n: number): string {
  * párrafo de entrada y su lista de cosas que hacer, y no una hoja de cifras con
  * un hueco donde debía ir el análisis.
  */
-export function lecturaCalculada(d: ReportData): Lectura {
-  const se = senales(d)
+export function lecturaCalculada(d: ReportData, audiencia: Audiencia): Lectura {
+  const dir = audiencia === 'direccion'
+  const se = senales(d, audiencia)
   const saldo = d.ahora.resueltas - d.ahora.registros
   const sinNada = d.ahora.revisiones === 0 && d.ahora.registros === 0
+  const subenRevisiones = d.antes.revisiones > 0 && d.ahora.revisiones > d.antes.revisiones
+  // «Semana en equilibrio» sobre un informe de treinta y nueve días era mentira.
+  const tramo = d.kind === 'diario' ? 'Jornada' : d.kind === 'semanal' ? 'Semana' : 'Periodo'
 
+  /*
+   * El titular de dirección abre por lo que ha mejorado, y si nada ha mejorado,
+   * por lo que se ha hecho. Nunca por lo que falta: eso va en los hallazgos,
+   * con su cifra, donde se lee como margen de mejora y no como el titular de
+   * un documento que llega al cliente.
+   */
   const titular = enPalabras(
     sinNada
-    ? 'Periodo sin actividad registrada'
-    : d.situacion.estancadas > 0
-      // Con una sola, el verbo y el participio concuerdan: «Una incidencia
-      // llevan… abiertas» en el H1 de un PDF firmado se lee como descuido.
-      ? d.situacion.estancadas === 1
-        ? 'Una incidencia lleva más de una semana abierta'
-        : `${plural(d.situacion.estancadas, 'incidencia')} llevan más de una semana abiertas`
-      : saldo > 0
-        ? 'Se ha cerrado más de lo que se ha abierto'
-        : saldo < 0
-          ? 'Entra más trabajo del que sale'
-          : 'Semana en equilibrio',
+      ? 'Periodo sin actividad registrada'
+      : dir
+        ? subenRevisiones && saldo > 0
+          ? `Más revisiones y más cierres que ${d.comparacionTexto}`
+          : saldo > 0
+            ? 'Se ha cerrado más de lo que se ha abierto'
+            : subenRevisiones
+              ? `Suben las revisiones frente a ${d.comparacionTexto}`
+              : d.ahora.resueltas > 0
+                ? `${plural(d.ahora.salasRevisadas, 'sala')} revisadas y ${plural(d.ahora.resueltas, 'cierre')} en el periodo`
+                : `${plural(d.ahora.salasRevisadas, 'sala')} revisadas en el periodo`
+        : d.situacion.estancadas > 0
+          // Con una sola, el verbo y el participio concuerdan: «Una incidencia
+          // llevan… abiertas» en el H1 de un PDF firmado se lee como descuido.
+          ? d.situacion.estancadas === 1
+            ? 'Una incidencia lleva más de una semana abierta'
+            : `${plural(d.situacion.estancadas, 'incidencia')} llevan más de una semana abiertas`
+          : saldo > 0
+            ? 'Se ha cerrado más de lo que se ha abierto'
+            : saldo < 0
+              ? 'Entra más trabajo del que sale'
+              : `${tramo} en equilibrio`,
   )
 
   const frases: string[] = []
@@ -450,12 +611,17 @@ export function lecturaCalculada(d: ReportData): Lectura {
       d.situacion.incidenciasAbiertas === 0
         ? 'Hoy no queda ninguna incidencia abierta.'
         : `Hoy quedan ${plural(d.situacion.incidenciasAbiertas, 'incidencia')} abiertas en total` +
-          (d.situacion.estancadas > 0
+          // El «de ellas con más de una semana» es del parte del equipo. A
+          // dirección se le da el saldo; los días los lleva el servicio.
+          (d.situacion.estancadas > 0 && !dir
             ? `, ${d.situacion.estancadas} de ellas con más de una semana.`
             : '.'),
     )
     const dv = delta(d.ahora.revisiones, d.antes.revisiones)
-    if (d.antes.revisiones > 0 && dv.valor !== 0) {
+    // Para dirección, la subida ya es el titular y el primer hallazgo, con sus
+    // cifras: decirla una tercera vez aquí es lo que hace que deje de creerse.
+    // La bajada sí se dice: es un dato, y este es el único sitio donde va.
+    if (d.antes.revisiones > 0 && dv.valor !== 0 && !(dir && subenRevisiones)) {
       frases.push(
         `Frente a ${d.comparacionTexto}, ${dv.valor > 0 ? 'suben' : 'bajan'} ` +
           `${Math.abs(dv.valor)} revisiones${dv.pct !== null ? ` (${dv.pct > 0 ? '+' : ''}${dv.pct} %)` : ''}.`,
@@ -470,10 +636,20 @@ export function lecturaCalculada(d: ReportData): Lectura {
    * urgente; hace que el lector deje de creerse la primera.
    */
 
+  /*
+   * Los hallazgos de dirección: dos buenas noticias como mucho y, detrás, lo
+   * que pide una decisión. El tope de dos existe para que una semana buena no
+   * empuje fuera de la página una incidencia de gravedad alta: lo que ha ido
+   * bien abre el informe; lo que hay que decidir tiene que seguir en él.
+   */
+  const buenas = se.filter((x) => x.tono === 'ok')
+  const resto = se.filter((x) => x.tono !== 'ok')
+  const elegidos = dir ? [...buenas.slice(0, 2), ...resto.slice(0, 3)] : se.slice(0, 5)
+
   return {
     titular,
     entradilla: frases.join(' '),
-    hallazgos: se.slice(0, 5).map((x) => ({ titulo: x.titulo, cuerpo: x.cuerpo })),
+    hallazgos: elegidos.map((x) => ({ titulo: x.titulo, cuerpo: x.cuerpo })),
     recomendaciones: se
       .filter((x) => x.accion)
       .slice(0, 4)

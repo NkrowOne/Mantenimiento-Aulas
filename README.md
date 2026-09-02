@@ -511,6 +511,18 @@ caído, ni una cola de la que nadie se entera, ni un token que sincronizar: lo
 único que se configura —y solo si se quiere el análisis redactado— es **la clave
 de Gemini**, y se pega desde la propia pantalla.
 
+**Hay dos documentos, no dos tonos.** «Escrito para» elige la audiencia.
+*Equipo técnico* es el parte del servicio: lo grave primero, cada incidencia con
+sus días abiertas, cada sala con su fiabilidad. *Dirección* es lo que se entrega
+al cliente: abre por lo que ha mejorado, cuenta lo pendiente como trabajo en
+curso y margen de mejora, y no dice cuántos días lleva abierta una incidencia ni
+señala un aula como problemática —la sección «Sin cerrar» no se puede pedir para
+él, se marque lo que se marque—. Los problemas de verdad sí salen, con su cifra:
+una incidencia de gravedad alta, una lámpara al límite, la misma pieza repetida
+en la misma sala, un edificio que concentra lo abierto. Las cifras son las
+mismas en los dos; cambia lo que se cuenta y cómo se cuenta. Los informes
+programados salen para dirección.
+
 **El PDF lo hace el navegador.** El documento sale maquetado para A4 y «Guardar
 como PDF» es un destino de impresión más, así que no hay que arrastrar media
 librería de PDF a una aplicación que se abre desde un iPad en un pasillo. Se

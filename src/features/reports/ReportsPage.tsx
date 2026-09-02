@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { fechaCorta } from '@/domain/fechas'
 import { EstadoIA, useEstadoIA } from './EstadoIA'
-import { AUDIENCIAS, POR_DEFECTO, SECCIONES } from './secciones'
+import { AUDIENCIAS, SECCIONES, porDefectoDe, seccionesDe } from './secciones'
 import { type HuellaDeRedaccion, redaccionDe } from './redaccion'
 import { type Eleccion, motivoParaNoPedir } from './peticion'
 import {
@@ -83,10 +83,13 @@ export function ReportsPage(): React.ReactElement {
   const [preset, setPreset] = useState<string>('semana')
   const [desde, setDesde] = useState('')
   const [hasta, setHasta] = useState('')
-  const [secciones, setSecciones] = useState<string[]>(POR_DEFECTO)
+  const [audiencia, setAudiencia] = useState<'direccion' | 'equipo'>('direccion')
+  const [secciones, setSecciones] = useState<string[]>(porDefectoDe('direccion'))
   const [comparar, setComparar] = useState(true)
   const [conIA, setConIA] = useState(true)
-  const [audiencia, setAudiencia] = useState<'direccion' | 'equipo'>('direccion')
+  /* Las casillas que existen para esta audiencia. «Sin cerrar» no se ofrece
+     para dirección: ese documento no dice cuántos días lleva abierta nada. */
+  const ofrecidas = seccionesDe(audiencia)
   const [enfoque, setEnfoque] = useState('')
   const [nota, setNota] = useState('')
   const [ajustes, setAjustes] = useState(false)
@@ -179,6 +182,13 @@ export function ReportsPage(): React.ReactElement {
 
   const alternar = (clave: string): void =>
     setSecciones((s) => (s.includes(clave) ? s.filter((x) => x !== clave) : [...s, clave]))
+
+  /* Cambiar de audiencia cambia el documento, no solo la voz: lo marcado era
+     para la otra, así que se vuelve a lo que lleva esta por defecto. */
+  const elegirAudiencia = (a: 'direccion' | 'equipo'): void => {
+    setAudiencia(a)
+    setSecciones(porDefectoDe(a))
+  }
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-4">
@@ -277,7 +287,7 @@ export function ReportsPage(): React.ReactElement {
         >
           {ajustes ? 'Ocultar los ajustes' : 'Ajustar qué lleva'}
           <span className="ml-2 text-muted">
-            {secciones.length} de {SECCIONES.length} secciones
+            {secciones.length} de {ofrecidas.length} secciones
             {conIA ? ' · con IA' : ' · sin IA'}
           </span>
         </button>
@@ -287,7 +297,7 @@ export function ReportsPage(): React.ReactElement {
             <fieldset>
               <legend className="eyebrow">Secciones</legend>
               <div className="mt-2 grid gap-1 sm:grid-cols-2">
-                {SECCIONES.map((s) => (
+                {ofrecidas.map((s) => (
                   <label
                     key={s.clave}
                     className="flex cursor-pointer items-start gap-2 rounded-ctl px-2 py-2 text-sm hover:bg-raised"
@@ -308,14 +318,14 @@ export function ReportsPage(): React.ReactElement {
               <div className="mt-2 flex gap-3 text-xs">
                 <button
                   type="button"
-                  onClick={() => setSecciones(SECCIONES.map((s) => s.clave))}
+                  onClick={() => setSecciones(ofrecidas.map((s) => s.clave))}
                   className="text-accent underline"
                 >
                   Todas
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSecciones(POR_DEFECTO)}
+                  onClick={() => setSecciones(porDefectoDe(audiencia))}
                   className="text-accent underline"
                 >
                   Las de siempre
@@ -364,7 +374,7 @@ export function ReportsPage(): React.ReactElement {
                     <button
                       key={a.clave}
                       type="button"
-                      onClick={() => setAudiencia(a.clave)}
+                      onClick={() => elegirAudiencia(a.clave)}
                       aria-pressed={audiencia === a.clave}
                       className={`key min-h-11 px-3 text-sm ${
                         audiencia === a.clave ? 'key-accent' : 'key-quiet'

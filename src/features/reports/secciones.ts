@@ -10,6 +10,8 @@
  * informe sale sin ella, en vez de reventar.
  */
 
+import { type Audiencia, VETADAS_PARA_DIRECCION, seccionesPorDefecto } from './informe/opciones'
+
 export interface SeccionInfo {
   clave: string
   etiqueta: string
@@ -104,16 +106,35 @@ export const SECCIONES: SeccionInfo[] = [
 
 export const POR_DEFECTO = SECCIONES.filter((s) => !s.optativa).map((s) => s.clave)
 
+/**
+ * Las casillas que se ofrecen para una audiencia, y las marcadas de entrada.
+ *
+ * Las dos salen del contrato del informe, no de aquí: si «Sin cerrar» no se
+ * puede pedir para dirección, la casilla no está, en vez de estar y no hacer
+ * nada. Y al cambiar de audiencia se vuelve a lo marcado por defecto de la
+ * nueva, porque lo que se había marcado era para la otra.
+ */
+export function seccionesDe(audiencia: Audiencia): SeccionInfo[] {
+  return SECCIONES.filter(
+    (s) => audiencia !== 'direccion' || !(VETADAS_PARA_DIRECCION as string[]).includes(s.clave),
+  )
+}
+
+export function porDefectoDe(audiencia: Audiencia): string[] {
+  return [...seccionesPorDefecto(audiencia)]
+}
+
 export const AUDIENCIAS = [
   {
     clave: 'direccion',
     etiqueta: 'Dirección',
-    detalle: 'Estado general, tendencia y decisiones: compras, refuerzos, prioridades',
+    detalle:
+      'Para el cliente: lo que ha mejorado, lo que está en curso y las decisiones que convienen. Sin días abiertos ni salas señaladas',
   },
   {
     clave: 'equipo',
     etiqueta: 'Equipo técnico',
-    detalle: 'Qué salas tocar, con qué material y en qué orden',
+    detalle: 'El parte del servicio: lo grave primero, qué salas tocar, con qué material y en qué orden',
   },
 ] as const
 
