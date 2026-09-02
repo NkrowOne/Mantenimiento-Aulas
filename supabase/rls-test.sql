@@ -3752,3 +3752,98 @@ begin;
     raise notice 'OK: la fusión que chocaría de códigos se rechaza diciendo qué choca';
   end $$;
 rollback;
+
+-- -----------------------------------------------------------------------------
+begin;
+\echo '=== 20. Dentro del aula, el número de serie manda ==='
+-- El caso que `20260830000100` dejó apuntado y sin hacer: los números de `S/N TV`
+-- y `S/N Monitor` viven sobre equipos que siguen siendo `Pantalla`, y la hoja los
+-- reclama con el nombre nuevo. Sin esto se caía en el `insert` con un número que
+-- ya existe y salía «duplicate key value violates unique constraint».
+  -- Sin `test_as`, como el bloque 15 y por lo mismo: `sync_aplicar_equipo` tiene
+  -- revocado el permiso a `authenticated` a propósito —solo se llama desde dentro
+  -- de `sync_aplicar_celda`— y aquí se prueba ella sola.
+  do $$
+  declare
+    v_sala     uuid;
+    v_zona     uuid;
+    v_edificio uuid;
+    v_pantalla uuid;
+    v_tv       uuid;
+    v_camara   uuid;
+    v_equipo   uuid;
+    v_motivo   text;
+    v_n        int;
+  begin
+    insert into buildings (code, name, sort_order) values ('ZSN', 'EDIFICIO DE LA PRUEBA', 990)
+      returning id into v_edificio;
+    insert into zones (building_id, name, sort_order) values (v_edificio, 'PLANTA BAJA', 10)
+      returning id into v_zona;
+    insert into rooms (zone_id, code, name, kind) values (v_zona, '0.1', '0.1', 'aula')
+      returning id into v_sala;
+
+    select id into v_pantalla from asset_types
+     where public.norm_text(name) = public.norm_text('Pantalla') and merged_into is null;
+    v_tv     := public.asset_type_id('TV');
+    v_camara := public.asset_type_id('Cámara');
+
+    if v_pantalla is null or v_tv is null then
+      raise notice 'OK (saltado): esta base no tiene la fusión de Pantalla que separar';
+      return;
+    end if;
+
+    -- 1) La señal quedó escrita: `TV` se separó de `Pantalla`.
+    if not exists (select 1 from asset_types where id = v_tv and separado_de = v_pantalla) then
+      raise exception 'FALLO: no quedó apuntado que TV se separó de Pantalla';
+    end if;
+    raise notice 'OK: queda apuntado de qué tipo se separó cada tipo';
+
+    -- Un aparato heredado: número de serie de TV, pero todavía tipado Pantalla.
+    insert into assets (asset_type_id, room_id, serial, model, status)
+    values (v_pantalla, v_sala, 'SN-HEREDADO-1', 'LG 55', 'instalado')
+    returning id into v_equipo;
+
+    -- 2) La hoja lo reclama en su columna: se adopta y se reclasifica, y NO se
+    --    da de alta un segundo aparato con el mismo número.
+    v_motivo := public.sync_aplicar_equipo(v_sala, v_tv, 'serial', 'SN-HEREDADO-1');
+    if v_motivo is not null then
+      raise exception 'FALLO: tendría que haberlo adoptado y dijo «%»', v_motivo;
+    end if;
+    if (select asset_type_id from assets where id = v_equipo) <> v_tv then
+      raise exception 'FALLO: no se le devolvió el tipo del que estaba fundido';
+    end if;
+    select count(*) into v_n from assets where serial = 'SN-HEREDADO-1';
+    if v_n <> 1 then
+      raise exception 'FALLO: se duplicó el aparato (hay %)', v_n;
+    end if;
+    if not exists (select 1 from asset_events
+                    where asset_id = v_equipo and kind = 'sustitucion'
+                      and meta->>'tipo_antes' = 'Pantalla' and meta->>'tipo_ahora' = 'TV') then
+      raise exception 'FALLO: la reclasificación no quedó en el historial del equipo';
+    end if;
+    raise notice 'OK: el equipo heredado se adopta, se reclasifica y queda en su historial';
+
+    -- 3) Un choque que NO es una separación se rechaza, y lo explica.
+    insert into assets (asset_type_id, room_id, serial, model, status)
+    values (v_camara, v_sala, 'SN-DE-LA-CAMARA', 'Aver', 'instalado');
+
+    v_motivo := public.sync_aplicar_equipo(v_sala, v_tv, 'serial', 'SN-DE-LA-CAMARA');
+    if v_motivo is null then
+      raise exception 'FALLO: reclasificar una cámara a TV desde una celda no puede colar';
+    end if;
+    if v_motivo not like '%Cámara%' or v_motivo not like '%TV%' then
+      raise exception 'FALLO: el motivo no dice qué equipo lleva el número: «%»', v_motivo;
+    end if;
+    if (select asset_type_id from assets where serial = 'SN-DE-LA-CAMARA') <> v_camara then
+      raise exception 'FALLO: se tocó el tipo de la cámara pese a rechazar';
+    end if;
+    raise notice 'OK: un choque que no es una separación se rechaza y dice cuál es';
+
+    -- 4) Y el `update` del número tampoco puede robarle el suyo a otro aparato.
+    v_motivo := public.sync_aplicar_equipo(v_sala, v_camara, 'model', 'Aver 520');
+    if v_motivo is not null then
+      raise exception 'FALLO: escribir el modelo no tendría que fallar: «%»', v_motivo;
+    end if;
+    raise notice 'OK: el modelo sigue entrando sin estorbo';
+  end $$;
+rollback;

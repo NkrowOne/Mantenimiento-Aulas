@@ -745,9 +745,17 @@ function emit(): void {
 
   out.push('')
   out.push('-- Tipos de equipo')
-  // El catálogo base ya viene de la migración de inventario, con sus alias:
-  // `TV` y `Monitor` resuelven a `Pantalla`. Aquí solo se da de alta lo que no
-  // resuelve a nada, y se marca confirmado porque viene del Excel oficial.
+  // El catálogo base ya viene de la migración de inventario, con sus alias. Aquí
+  // solo se da de alta lo que no resuelve a nada, y se marca confirmado porque
+  // viene del Excel oficial.
+  //
+  // `TV` y `Monitor` resolvían a `Pantalla` hasta que
+  // `20260830000100_lo_que_el_excel_distingue.sql` los volvió a separar: la hoja
+  // lleva `S/N TV` y `S/N Monitor` en dos columnas y con un solo tipo no había
+  // forma de escribirlas de vuelta. Desde entonces `asset_type_id('TV')` da el
+  // tipo `TV`, no `Pantalla`, y una base cargada de nuevo ya nace separada. La
+  // que se cargó antes conserva sus equipos como `Pantalla`, y de reconocerlos
+  // por su número de serie se encarga `sync_aplicar_equipo`.
   const typeNames = [...new Set(assets.map((a) => a.typeName))]
   for (const t of typeNames) {
     out.push(

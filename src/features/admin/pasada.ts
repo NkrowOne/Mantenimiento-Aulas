@@ -227,6 +227,53 @@ export interface Aplicado {
   rechazadas: number
 }
 
+/**
+ * Las filas del libro tal y como venían, para `sync_filas`.
+ *
+ * Se saca aparte de `aplicar` para poder probarla: es la única parte de la carga
+ * que agrupa, y agrupar mal aquí no da un dato raro, tira la pasada entera —el
+ * RPC es una transacción, así que una fila mala se lleva por delante las otras
+ * mil setecientas.
+ *
+ * **Las celdas de filas nuevas no entran.** `anotarCeldaNueva` las marca con
+ * `fila: 0` a propósito, porque describen filas que todavía no existen en el
+ * libro: valen para la instantánea, que se indexa por (hoja, ref, columna), y no
+ * valen aquí, donde `fila` es el número de una fila que se leyó. Colarlas hacía
+ * dos daños a la vez:
+ *
+ *  - `sync_filas` declara `check (fila > 0)` y rechazaba la fila, y con ella la
+ *    pasada entera: «new row for relation "sync_filas" violates check constraint
+ *    "sync_filas_fila_check"», sin decir de qué hoja ni de qué fila hablaba;
+ *  - y antes de eso, la agrupación las fundía TODAS en una sola «fila 0»,
+ *    quedándose con el `ref` de la primera y mezclando en un mismo `contenido`
+ *    las celdas de salas, incidencias y artículos distintos. O sea que si la
+ *    restricción no hubiera estado, el registro de procedencia habría guardado
+ *    una fila que no existe con los datos de doscientas sesenta y cinco.
+ *
+ * No se pierde nada al dejarlas fuera: una fila nueva no estaba en el libro que
+ * se leyó, así que no tiene procedencia que registrar. La tendrá en la pasada
+ * siguiente, cuando ya sea una fila de verdad con su número.
+ */
+export function filasDeLaPasada(
+  planes: Analisis['planes'],
+): Array<{ hoja: string; fila: number; ref: string; contenido: Record<string, unknown> }> {
+  const out: Array<{ hoja: string; fila: number; ref: string; contenido: Record<string, unknown> }> = []
+  for (const p of planes) {
+    // Por `Map` y no buscando dentro de un `reduce`: con las dos mil y pico
+    // celdas de una pasada de verdad, el `some` dentro del bucle es cuadrático y
+    // esto lo hace un iPad.
+    const porFila = new Map<number, { hoja: string; fila: number; ref: string; contenido: Record<string, unknown> }>()
+    for (const c of p.instantanea) {
+      if (c.fila <= 0) continue
+      const f = porFila.get(c.fila)
+      if (f) f.contenido[c.letra] = c.valor
+      else porFila.set(c.fila, { hoja: p.hoja, fila: c.fila, ref: c.clave, contenido: { [c.letra]: c.valor } })
+    }
+    out.push(...porFila.values())
+  }
+  return out
+}
+
 export async function aplicar(a: Analisis): Promise<Aplicado> {
   if (a.bloqueada) throw new Error('Hay hojas con la forma cambiada: la pasada no puede empezar')
 
@@ -242,20 +289,7 @@ export async function aplicar(a: Analisis): Promise<Aplicado> {
     fichero_id: ficheroId,
     origen: ORIGEN,
     disparo: 'manual',
-    filas: a.planes.flatMap((p) =>
-      p.instantanea
-        // Una fila por celda sería absurdo: se agrupan por clave.
-        .reduce<Array<{ hoja: string; fila: number; ref: string }>>((acc, c) => {
-          if (!acc.some((x) => x.fila === c.fila)) acc.push({ hoja: p.hoja, fila: c.fila, ref: c.clave })
-          return acc
-        }, [])
-        .map((f) => ({
-          ...f,
-          contenido: Object.fromEntries(
-            p.instantanea.filter((c) => c.fila === f.fila).map((c) => [c.letra, c.valor]),
-          ),
-        })),
-    ),
+    filas: filasDeLaPasada(a.planes),
     hacia_la_base: ordenarParaElAlmacen(a.planes.flatMap((p) =>
       p.haciaLaBase.map((h) => ({
         hoja: p.hoja,
