@@ -146,6 +146,15 @@ export function actividadDiaria(
 ): string {
   const { width = ANCHO_TOTAL, height = 220 } = opts
 
+  /*
+   * La cifra escrita sobre cada barra deja de ayudar cuando deja de caber. Con
+   * un mes por delante son noventa columnas en 178 mm: las etiquetas se pisan
+   * unas a otras y lo que se lee es «22», «111», que no es ningún dato. Por
+   * debajo del umbral se imprimen —en papel no hay ratón que consultar—; por
+   * encima se leen del eje, que para eso está y que ahí sí se lee limpio.
+   */
+  const cifras = dias.length * series.length <= 36
+
   return render(
     {
       color: [...CATEGORICAL],
@@ -174,7 +183,7 @@ export function actividadDiaria(
           color: CATEGORICAL[i % CATEGORICAL.length],
           borderRadius: [3, 3, 0, 0],
         },
-        label: etiquetaValor,
+        label: cifras ? etiquetaValor : { show: false },
       })),
     },
     width,

@@ -291,6 +291,118 @@ describe('el documento sale entero', () => {
   })
 })
 
+/**
+ * La cabecera corporativa y el fin de la «Procedencia».
+ *
+ * Las dos cosas que un informe que sale del servicio y llega al cliente tiene
+ * que cumplir: llevar las marcas de quién lo emite y para quién, y no repetir
+ * al pie lo que ya ha dicho en la portada.
+ */
+describe('la imagen del documento', () => {
+  const d = expedienteDePrueba()
+  const html = renderReport(d, lecturaCalculada(d), opcionesCompletas, {
+    emitido: '31/07/2026, 9:14',
+    solicitante: 'Eduardo Rubio',
+  })
+
+  it('lleva las dos marcas dentro del fichero, no enlazadas', () => {
+    expect(html).toContain('aria-label="Grupo Oesia"')
+    expect(html).toContain('aria-label="Universidad Francisco de Vitoria"')
+    // Trazadas, no enlazadas: un <img> a un logotipo sería un hueco blanco el
+    // día que la carpeta cambie de sitio, y este documento se archiva.
+    expect(html).not.toMatch(/<img[^>]+aria-label="Grupo Oesia"/)
+  })
+
+  it('las marcas van arriba del todo, antes del titular', () => {
+    const marcas = html.indexOf('aria-label="Grupo Oesia"')
+    const titular = html.indexOf('<h1>')
+    expect(marcas).toBeGreaterThan(-1)
+    expect(marcas).toBeLessThan(titular)
+  })
+
+  it('no repite al pie la fecha, el periodo ni quién lo pidió', () => {
+    // Estaban en «Procedencia», a cuatro dedos de la cabecera que ya las dice.
+    expect(html).not.toContain('Procedencia')
+    expect(html).not.toContain('Datos leídos de la base')
+    expect(html).not.toContain('Solicitado por')
+    expect(html).not.toContain('Un informe emitido no se regenera')
+    // Y siguen dichas una vez, donde tocaba.
+    expect(html.match(/Eduardo Rubio/g)?.length).toBe(1)
+    expect(html.match(/31\/07\/2026, 9:14/g)?.length).toBe(1)
+  })
+
+  it('el alcance solo sale cuando hay algo que advertir', () => {
+    const limpio: ReportData = {
+      ...d,
+      situacion: { ...d.situacion, salasNuncaRevisadas: 0 },
+      sinSala: 0,
+      salasArchivadas: 0,
+    }
+    const salida = renderReport(limpio, lecturaCalculada(limpio), opcionesCompletas, {
+      emitido: '31/07/2026, 9:14',
+    })
+    expect(salida).not.toContain('Alcance de los datos')
+    // Y con salvedades, sí.
+    expect(html).toContain('Alcance de los datos')
+  })
+})
+
+/**
+ * El fin de semana en el gráfico diario.
+ *
+ * El servicio trabaja de lunes a viernes: un sábado a cero es una columna en
+ * blanco que estrecha a las demás. Pero un sábado CON movimiento es justo lo
+ * que hay que ver, y ese no se toca.
+ */
+describe('los fines de semana del gráfico diario', () => {
+  const d = expedienteDePrueba()
+  // La semana del fixture es de lunes a viernes; se le añade su fin de semana.
+  const conFinde = (sabado: { revisiones: number; abiertas: number; resueltas: number }): string => {
+    const ampliado: ReportData = {
+      ...d,
+      period: { start: '2026-07-27', end: '2026-08-02' },
+      dias: 7,
+      serieDiaria: [
+        ...d.serieDiaria,
+        { dia: '2026-08-01', ...sabado },
+        { dia: '2026-08-02', revisiones: 0, abiertas: 0, resueltas: 0 },
+      ],
+    }
+    return renderReport(ampliado, lecturaCalculada(ampliado), opcionesCompletas, {
+      emitido: '03/08/2026, 9:14',
+    })
+  }
+
+  it('un fin de semana en blanco no se dibuja', () => {
+    const html = conFinde({ revisiones: 0, abiertas: 0, resueltas: 0 })
+    // «S 1» y «D 2» son las etiquetas del eje del SVG: sin ellas, no hay columnas.
+    expect(html).not.toContain('>S 1</text>')
+    expect(html).not.toContain('>D 2</text>')
+    expect(html).toContain('fines de semana sin actividad, fuera del gráfico')
+  })
+
+  it('un sábado con trabajo sí se dibuja, que es el dato que se busca', () => {
+    const html = conFinde({ revisiones: 2, abiertas: 1, resueltas: 0 })
+    expect(html).toContain('>S 1</text>')
+    // El domingo vacío se sigue cayendo: no es todo o nada.
+    expect(html).not.toContain('>D 2</text>')
+  })
+
+  it('los días laborables en blanco se quedan: un hueco entre semana informa', () => {
+    const parado: ReportData = {
+      ...d,
+      serieDiaria: d.serieDiaria.map((x, i) =>
+        i === 2 ? { ...x, revisiones: 0, abiertas: 0, resueltas: 0 } : x,
+      ),
+    }
+    const html = renderReport(parado, lecturaCalculada(parado), opcionesCompletas, {
+      emitido: '31/07/2026, 9:14',
+    })
+    expect(html).toContain('>X 29</text>')
+    expect(html).not.toContain('fines de semana sin actividad')
+  })
+})
+
 describe('lo que se pinta sin IA', () => {
   it('la redacción calculada trae titular, entradilla y acciones', () => {
     const l = lecturaCalculada(expedienteDePrueba())
@@ -538,9 +650,9 @@ describe('las secciones que se pueden quitar y las que se pueden añadir', () =>
     expect(html).toContain('1 edificio archivado')
   })
 
-  it('el colofón dice que hubo salas fuera de la lista de trabajo', () => {
+  it('el alcance dice que hubo salas fuera de la lista de trabajo', () => {
     const html = con(['edificios'])
-    expect(html).toContain('3 salas del periodo ya no están en la lista de trabajo')
+    expect(html).toContain('3 salas fuera de la lista de trabajo')
   })
 
   it('sin fotos no se imprime la sección: «no hay fotos» no informa', () => {
