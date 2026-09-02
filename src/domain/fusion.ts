@@ -184,6 +184,12 @@ export function fusionarCelda(c: Celda): Decision {
   // Escribir el número encima se lleva la fórmula, y a partir de ahí la columna
   // miente en silencio para siempre.
   if (c.dueno === 'formula') {
+    // Y si la aplicación no trae valor para la fórmula —que es lo normal: el
+    // total y el disponible los calcula la hoja, no la base— no hay nada que
+    // comparar. Sin esto salían 86 «descuadres» por pasada, uno por cada
+    // fórmula de la bolsa, con «la base null» en el texto: ruido que tapa el
+    // descuadre de verdad cuando lo hay.
+    if (vacio(c.base)) return { tipo: 'sin_cambios' }
     return iguales(c.base, c.excel, c.tipo)
       ? { tipo: 'sin_cambios' }
       : { tipo: 'descuadre', base: c.base, excel: c.excel }

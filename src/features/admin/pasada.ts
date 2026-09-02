@@ -581,6 +581,20 @@ export function lineasDelParte(planes: Plan[]): LineaDelParte[] {
     for (const s of p.sinCruzar) {
       out.push({ hoja: p.hoja, celda: `${s.fila}`, que: 'Sin cruzar', detalle: s.motivo })
     }
+    // Y lo que la pasada HIZO por su cuenta: mudanzas, altas, bajas, filas que
+    // cruzaron por número de serie, fórmulas devueltas. No está pendiente, pero
+    // es lo primero que quiere saber quien abre el libro y ve que una sala ya no
+    // está donde estaba. La celda va delante del texto cuando el aviso la trae
+    // («Fila 2: …», «N5 (…): …»).
+    for (const a of p.avisos) {
+      const m = /^(?:Fila (\d+)|([A-Z]+\d+))\s*(?:\([^)]*\))?:\s*/.exec(a)
+      out.push({
+        hoja: p.hoja,
+        celda: m ? (m[1] ?? m[2] ?? '') : '',
+        que: 'Aviso',
+        detalle: m ? a.slice(m[0].length) : a,
+      })
+    }
   }
   return out
 }

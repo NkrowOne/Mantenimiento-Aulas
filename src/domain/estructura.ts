@@ -458,19 +458,44 @@ function insertarFilaXml(
       columnaANumero(partirCelda(a.celda).columna) - columnaANumero(partirCelda(b.celda).columna),
   )
 
-  const cuerpo = ordenadas
-    .map((c) => {
-      const col = partirCelda(c.celda).columna
-      const heredado = estilo.get(col) ?? respaldo?.get(col) ?? ''
-      // Una fila nueva hereda el estilo de la fila detrás de la que cae, y en la
-      // columna «Fecha Revisión» eso es una lotería: media columna del libro se
-      // quedó en «General» porque nunca tuvo fecha. Si la celda dice de qué es
-      // —`formato: 'fecha'`— se le pide al mismo resolvedor que ya usa la
-      // escritura normal un estilo que de verdad la pinte. Sin él, un aula nueva
-      // estrena su revisión enseñando `46218`.
-      const s = (c.formato && resolver ? resolver(col, c.formato, heredado) : null) ?? heredado
-      return xmlDeCelda(`${col}${fila}`, s, c.valor as string | number | boolean)
-    })
+  // Cada celda por su columna, para poder añadir después las que la fila nueva
+  // no rellena y sacarlas todas en orden: el XML de una fila lo exige.
+  const porColumna = new Map<string, string>()
+  for (const c of ordenadas) {
+    const col = partirCelda(c.celda).columna
+    const heredado = estilo.get(col) ?? respaldo?.get(col) ?? ''
+    // Una fila nueva hereda el estilo de la fila detrás de la que cae, y en la
+    // columna «Fecha Revisión» eso es una lotería: media columna del libro se
+    // quedó en «General» porque nunca tuvo fecha. Si la celda dice de qué es
+    // —`formato: 'fecha'`— se le pide al mismo resolvedor que ya usa la
+    // escritura normal un estilo que de verdad la pinte. Sin él, un aula nueva
+    // estrena su revisión enseñando `46218`.
+    const s = (c.formato && resolver ? resolver(col, c.formato, heredado) : null) ?? heredado
+    // Una fórmula de una fila nueva no puede saber de antemano en qué fila va
+    // a caer: entre que se planifica y se escribe se borran e insertan otras.
+    // Lleva `{f}` donde va el número, y se pone aquí, que es el único sitio que
+    // lo sabe. Antes venía ya resuelto desde el plan con el número de la
+    // primera fila nueva, y las veinte siguientes salían todas sumando la
+    // fila de la primera.
+    const valor =
+      typeof c.valor === 'string' && c.valor.startsWith('=')
+        ? c.valor.replace(/\{f\}/g, String(fila))
+        : (c.valor as string | number | boolean)
+    porColumna.set(col, xmlDeCelda(`${col}${fila}`, s, valor))
+  }
+
+  // Las celdas que la fila nueva no rellena también llevan su estilo. Sin esto
+  // salían sin `<c>`, o sea sin borde, con la fuente por defecto y sin formato
+  // de fecha: un hueco en la cuadrícula justo en la fila que acaba de entrar.
+  const fuente = estilo.size ? estilo : (respaldo ?? new Map<string, string>())
+  for (const [col, s] of fuente) {
+    if (col === '#row' || !s || porColumna.has(col)) continue
+    porColumna.set(col, `<c r="${col}${fila}" s="${s}"/>`)
+  }
+
+  const cuerpo = [...porColumna.entries()]
+    .sort((a, b) => columnaANumero(a[0]) - columnaANumero(b[0]))
+    .map(([, x]) => x)
     .join('')
 
   const nueva = `<row r="${fila}"${attrsFila ? ` ${attrsFila}` : ''}>${cuerpo}</row>`

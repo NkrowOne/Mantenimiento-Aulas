@@ -77,6 +77,16 @@ export interface Columna {
   /** La fórmula que le toca, con `{f}` en lugar del número de fila. */
   formula?: string
   /**
+   * Un cero de la aplicación y un blanco del libro son lo mismo.
+   *
+   * En las columnas de mes de la bolsa nadie escribe un 0: un mes sin consumo
+   * se deja en blanco, y así se lee la hoja. La aplicación, en cambio, cuenta
+   * movimientos y da 0 donde no hay ninguno. Sin esto la primera pasada
+   * rellenaba con ceros las doce columnas de los 43 artículos —481 celdas— y
+   * el libro dejaba de parecerse al que la gente mira todos los días.
+   */
+  ceroEsBlanco?: boolean
+  /**
    * La columna **se arrastra**: una celda en blanco no significa «no hay dato»,
    * significa «lo mismo que la de arriba». El edificio y la planta se escriben
    * solo cuando cambian, y así es como se lee la hoja.
@@ -324,6 +334,7 @@ function columnasDeMes(desde: number): Columna[] {
     letra: String.fromCharCode(65 + desde + i),
     cabecera: mes,
     campo: `mes:${i + 1}`,
+    ceroEsBlanco: true,
     dueno: 'solo_app' as const,
     tipo: 'numero' as const,
   }))
