@@ -1,5 +1,6 @@
 import { useMutation } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
+import { ofrecerFichero } from '@/lib/ficheros'
 import { analizar, aplicar, escribir, lineasDelParte } from './pasada'
 import type { Analisis } from './pasada'
 import type { Plan, Resumen as ResumenDeHoja } from '@/domain/sincronizar'
@@ -33,13 +34,22 @@ import type { Plan, Resumen as ResumenDeHoja } from '@/domain/sincronizar'
  * hoja `Sincronización` del propio libro. Quien abre el Excel no abre la
  * aplicación, y una bandeja que nadie mira es una bandeja que en seis meses
  * tiene quinientos choques.
+ *
+ * **El libro se baja con su propio botón.** Antes se descargaba solo al acabar
+ * la pasada, y en el iPad eso no bajaba nada: la hoja de compartir —que es la
+ * que lleva a Archivos y a SharePoint— solo se abre mientras dura la pulsación,
+ * y la pasada tarda segundos. Así que el libro generado se queda aquí, en
+ * memoria, y se entrega al pulsar, tantas veces como haga falta. El mismo botón
+ * sirve para ver cómo quedaría el libro sin tocar la base.
  */
 export function SincronizarExcel(): React.ReactElement {
   const entrada = useRef<HTMLInputElement>(null)
   const [analisis, setAnalisis] = useState<Analisis | null>(null)
   const [fallo, setFallo] = useState<string | null>(null)
   const [aplicado, setAplicado] = useState<string | null>(null)
-  const [descargado, setDescargado] = useState(false)
+  const [libro, setLibro] = useState<LibroGenerado | null>(null)
+  const [entregado, setEntregado] = useState<'compartido' | 'descargado' | null>(null)
+  const [entregando, setEntregando] = useState(false)
 
   const leer = useMutation({
     mutationFn: (fichero: File) => analizar(fichero),
@@ -47,7 +57,8 @@ export function SincronizarExcel(): React.ReactElement {
       setAnalisis(a)
       setFallo(null)
       setAplicado(null)
-      setDescargado(false)
+      setLibro(null)
+      setEntregado(null)
     },
     onError: (e: Error) => {
       setAnalisis(null)
@@ -59,14 +70,9 @@ export function SincronizarExcel(): React.ReactElement {
     mutationFn: async () => {
       if (!analisis) return
       const r = await aplicar(analisis)
-      const cuando = new Intl.DateTimeFormat('es-ES', {
-        dateStyle: 'short',
-        timeStyle: 'short',
-      }).format(new Date())
-
-      const bytes = await escribir(analisis, cuando, r.parteId)
-      descargarFichero(bytes, analisis.nombre)
-      setDescargado(true)
+      const bytes = await escribir(analisis, ahora(), r.parteId)
+      setLibro({ nombre: conSufijo(analisis.nombre, 'sincronizado'), bytes, sincronizado: true })
+      setEntregado(null)
       return r
     },
     onSuccess: (r) => {
@@ -81,13 +87,44 @@ export function SincronizarExcel(): React.ReactElement {
     onError: (e: Error) => setFallo(e.message),
   })
 
+  /**
+   * El mismo libro que saldría de la pasada, sin la pasada: no entra nada en la
+   * base y no se apunta como salida. Es para mirarlo, y el nombre lo dice.
+   */
+  const previsualizar = useMutation({
+    mutationFn: async () => {
+      if (!analisis) return
+      const bytes = await escribir(analisis, ahora())
+      setLibro({ nombre: conSufijo(analisis.nombre, 'vista previa'), bytes, sincronizado: false })
+      setEntregado(null)
+      setFallo(null)
+    },
+    onError: (e: Error) => setFallo(e.message),
+  })
+
+  /**
+   * Sin `useMutation` a propósito: la hoja de compartir hay que pedirla dentro
+   * de la pulsación, y `mutate` mete un turno de por medio antes de llamar.
+   */
+  const entregar = (): void => {
+    if (!libro || entregando) return
+    setEntregando(true)
+    void ofrecerFichero(libro.nombre, blobDe(libro.bytes))
+      .then((via) => setEntregado(via))
+      .catch((e: Error) => setFallo(e.message))
+      .finally(() => setEntregando(false))
+  }
+
   const limpiar = (): void => {
     setAnalisis(null)
     setFallo(null)
     setAplicado(null)
-    setDescargado(false)
+    setLibro(null)
+    setEntregado(null)
     if (entrada.current) entrada.current.value = ''
   }
+
+  const ocupado = leer.isPending || sincronizar.isPending || previsualizar.isPending
 
   const total = analisis ? sumar(analisis.resumenes) : null
 
@@ -105,7 +142,7 @@ export function SincronizarExcel(): React.ReactElement {
           ref={entrada}
           type="file"
           accept=".xlsx"
-          disabled={leer.isPending || sincronizar.isPending}
+          disabled={ocupado}
           onChange={(e) => {
             const f = e.target.files?.[0]
             if (f) leer.mutate(f)
@@ -153,10 +190,18 @@ export function SincronizarExcel(): React.ReactElement {
             <button
               type="button"
               className="key key-accent h-11 px-4"
-              disabled={sincronizar.isPending}
+              disabled={ocupado}
               onClick={() => sincronizar.mutate()}
             >
-              {sincronizar.isPending ? 'Sincronizando…' : 'Sincronizar y descargar el libro'}
+              {sincronizar.isPending ? 'Sincronizando…' : 'Sincronizar'}
+            </button>
+            <button
+              type="button"
+              className="key key-quiet h-11 px-4"
+              disabled={ocupado}
+              onClick={() => previsualizar.mutate()}
+            >
+              {previsualizar.isPending ? 'Preparando el libro…' : 'Ver cómo quedaría el libro'}
             </button>
             <button type="button" className="key key-quiet h-11 px-4" onClick={limpiar}>
               Empezar de nuevo
@@ -164,10 +209,14 @@ export function SincronizarExcel(): React.ReactElement {
           </div>
 
           {aplicado && <p className="mt-3 text-sm text-ok-ink">{aplicado}</p>}
-          {descargado && (
-            <p className="mt-1 text-sm text-muted">
-              Libro descargado. Súbelo a SharePoint sustituyendo el original.
-            </p>
+
+          {libro && (
+            <Entrega
+              libro={libro}
+              entregado={entregado}
+              entregando={entregando}
+              onEntregar={entregar}
+            />
           )}
         </>
       )}
@@ -176,6 +225,64 @@ export function SincronizarExcel(): React.ReactElement {
 }
 
 // -----------------------------------------------------------------------------
+
+/** El libro que ha salido de la pasada, esperando a que alguien lo baje. */
+interface LibroGenerado {
+  nombre: string
+  bytes: Uint8Array
+  /** Si entró en la base antes de escribirse. Si no, es una vista previa. */
+  sincronizado: boolean
+}
+
+/**
+ * El botón de bajar el libro. Es un botón y no una descarga automática porque
+ * en iOS la hoja de compartir solo se abre desde la pulsación, y es la única
+ * forma de que el fichero llegue a Archivos o a SharePoint desde el iPad.
+ */
+function Entrega({
+  libro,
+  entregado,
+  entregando,
+  onEntregar,
+}: {
+  libro: LibroGenerado
+  entregado: 'compartido' | 'descargado' | null
+  entregando: boolean
+  onEntregar: () => void
+}): React.ReactElement {
+  const que = libro.sincronizado ? 'el libro' : 'la vista previa'
+  return (
+    <div className="card mt-4 p-4">
+      <h2 className="text-sm font-semibold">
+        {libro.sincronizado ? 'El libro está listo' : 'La vista previa está lista'}
+      </h2>
+      <p className="mt-1 text-sm text-muted">
+        {libro.sincronizado
+          ? 'Lleva todo lo que la aplicación sabe. Súbelo a SharePoint sustituyendo el original.'
+          : 'Es cómo quedaría el libro. No ha tocado la base, y no es el que hay que subir a SharePoint: para eso, sincroniza.'}
+      </p>
+      <button
+        type="button"
+        className="key key-accent mt-3 h-11 px-4"
+        disabled={entregando}
+        onClick={onEntregar}
+      >
+        {entregando ? 'Entregando…' : `Descargar ${que}`}
+      </button>
+      <p className="mt-2 text-xs text-muted">{libro.nombre}</p>
+      {entregado && (
+        <p className="mt-2 text-sm text-ok-ink">
+          {entregado === 'compartido'
+            ? `Compartid${libro.sincronizado ? 'o' : 'a'}.`
+            : `Descargad${libro.sincronizado ? 'o' : 'a'}.`}{' '}
+          {libro.sincronizado
+            ? 'Súbelo a SharePoint sustituyendo el original.'
+            : 'Si te convence, pulsa «Sincronizar» y baja el libro de verdad.'}
+        </p>
+      )}
+    </div>
+  )
+}
 
 function Bloqueada({ planes }: { planes: Plan[] }): React.ReactElement {
   const fuera = planes.flatMap((p) => p.desajustes.map((d) => ({ hoja: p.hoja, ...d })))
@@ -453,24 +560,28 @@ function texto(v: unknown): string {
   return String(v)
 }
 
+function ahora(): string {
+  return new Intl.DateTimeFormat('es-ES', { dateStyle: 'short', timeStyle: 'short' }).format(
+    new Date(),
+  )
+}
+
 /**
  * El nombre lleva sufijo a propósito: el fichero que se sube a SharePoint lo
  * elige una persona, y sobreescribir el original sin querer desde la carpeta de
- * descargas es la clase de accidente que no se deshace.
+ * descargas es la clase de accidente que no se deshace. Y una vista previa que
+ * se llame igual que el libro bueno acaba subida en su lugar.
  */
-function descargarFichero(bytes: Uint8Array, nombre: string): void {
-  const base = nombre.replace(/\.xlsx$/i, '')
+function conSufijo(nombre: string, sufijo: string): string {
+  return `${nombre.replace(/\.xlsx$/i, '')} (${sufijo}).xlsx`
+}
+
+function blobDe(bytes: Uint8Array): Blob {
   // `Uint8Array` sobre un `ArrayBuffer` normal: el tipo de Blob no acepta los
   // respaldados por `SharedArrayBuffer`.
-  const blob = new Blob([bytes as unknown as BlobPart], {
+  return new Blob([bytes as unknown as BlobPart], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${base} (sincronizado).xlsx`
-  a.click()
-  URL.revokeObjectURL(url)
 }
 
 export { lineasDelParte }
