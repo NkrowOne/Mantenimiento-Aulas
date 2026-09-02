@@ -161,8 +161,8 @@ export async function generarInforme(
   ])
 
   avisar('analisis')
-  const se = senales(datos)
-  let lectura = lecturaCalculada(datos)
+  const se = senales(datos, opciones.audiencia)
+  let lectura = lecturaCalculada(datos, opciones.audiencia)
   let conIA = false
   let avisoIA: string | null = null
 

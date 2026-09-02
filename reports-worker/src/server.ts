@@ -135,7 +135,7 @@ export async function generate(
   const period = range ?? periodFor(kind)
   const opciones = leerOpciones(params)
   const data = await loadReportData(sql, kind, period.start, period.end)
-  const se = senales(data)
+  const se = senales(data, opciones.audiencia)
 
   /*
    * El orden importa: primero la redacción calculada, siempre. Si Gemini
@@ -143,7 +143,7 @@ export async function generate(
    * informe ha desmarcado la casilla, ya hay un texto completo esperando. Nunca
    * hay un momento en el que el informe pueda quedarse sin análisis.
    */
-  let lectura = lecturaCalculada(data)
+  let lectura = lecturaCalculada(data, opciones.audiencia)
   let conIA = false
 
   if (opciones.ia) {
