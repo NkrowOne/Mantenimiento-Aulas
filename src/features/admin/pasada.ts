@@ -181,7 +181,7 @@ export async function analizar(fichero: File, hoy = new Date(), respuestas: Resp
 
   // La hoja de PCs de repuesto, si el libro no la trae: se estrena con lo que
   // la aplicación sabe. A partir de ahí es una hoja normal, con sus dos caras.
-  if (!libro.hojas.some((h) => h.nombre === PCS_2026.nombre)) {
+  if (!datos.sinUnidades && !libro.hojas.some((h) => h.nombre === PCS_2026.nombre)) {
     hojasNuevas.push(hojaDeUnidades(PCS_2026, datos.unidades))
   }
 
@@ -279,7 +279,9 @@ function planificar(
     )
   }
 
-  const filasPcs = e.filas.get(PCS_2026.nombre)
+  // Sin la tabla en el servidor la hoja de PCs no se toca: aceptar un alta
+  // llamaría a una función que no existe, y la pasada lo dice en su cabecera.
+  const filasPcs = datos.sinUnidades ? undefined : e.filas.get(PCS_2026.nombre)
   if (filasPcs) {
     planes.push(
       sincronizarUnidades({

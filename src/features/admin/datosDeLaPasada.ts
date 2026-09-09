@@ -45,6 +45,8 @@ export interface DatosDeLaPasada {
   equipos: EquipoParaHoja[]
   /** Los ordenadores de repuesto, para la hoja «PCs STOCK». */
   unidades: UnidadVolcada[]
+  /** `true` si el servidor todavía no tiene la tabla: falta la migración de septiembre. */
+  sinUnidades: boolean
 }
 
 interface FilaSala {
@@ -239,12 +241,19 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
         .order('id')
         .range(d, h),
     ),
+    // Un servidor sin la migración de septiembre no tiene `stock_units`, y eso
+    // no puede parar la sincronización de las otras cinco hojas: se sigue sin
+    // ordenadores de repuesto y la pasada lo dice en un aviso.
     descargaEntera<FilaUnidad>((d, h) =>
       supabase
         .from('stock_units')
         .select('id, articulo, brand, model, serial, notes, status, room_id, installed_at, retired_at')
         .order('id')
         .range(d, h),
+    ).then((r) =>
+      r.error && /stock_units/.test(r.error.message)
+        ? { data: [], completa: true, error: null, sinTabla: true }
+        : r,
     ),
   ])
 
@@ -538,6 +547,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     movimientos,
     equipos,
     unidades,
+    sinUnidades: 'sinTabla' in unidadesD && unidadesD.sinTabla === true,
   }
 }
 
