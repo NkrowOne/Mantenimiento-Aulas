@@ -1546,9 +1546,19 @@ async function filasDeRevisiones(
   visitas: FilaRevision[],
   deSala: Map<string, FilaSala>,
 ): Promise<ReportData['revisiones']> {
-  // Solo las que tienen sala viva: una revisión de un aula archivada se cuenta
-  // en el total pero no tiene fila que enseñar, porque no tiene ni código.
-  const conSala = visitas.filter((v) => v.room_id && deSala.has(v.room_id)).slice(0, TOPE_FILAS)
+  /*
+   * Solo las que tienen sala viva: una revisión de un aula archivada se cuenta
+   * en el total pero no tiene fila que enseñar, porque no tiene ni código.
+   *
+   * Y las últimas, no las primeras: `visitas` viene del día más viejo al más
+   * nuevo, así que cortar por el final dejaba fuera las revisiones recientes en
+   * cuanto el periodo pasaba de ciento cincuenta. Se cortan por delante y se
+   * dan la vuelta, para que la tabla empiece por lo último igual que el diario.
+   */
+  const conSala = visitas
+    .filter((v) => v.room_id && deSala.has(v.room_id))
+    .slice(-TOPE_FILAS)
+    .reverse()
   if (conSala.length === 0) return []
 
   const ids = conSala.map((v) => v.id)
@@ -1770,8 +1780,15 @@ async function diarioDelPeriodo(
    *
    * Ahora se ordena, se corta, y solo se pregunta por los que van a salir
    * impresos. La lista queda acotada por `TOPE_FILAS`, pase lo que pase.
+   *
+   * **Y se ordena de lo último a lo primero**, que es la mitad que faltaba. El
+   * recorte se lleva por delante el final de la lista, así que ordenando del
+   * día más viejo al más nuevo lo que se caía era justo lo de esta semana: un
+   * informe de un trimestre enseñaba enero y febrero enteros y ni un apunte de
+   * los últimos quince días. Quien pide un informe largo lo pide para ver lo
+   * último, y lo último es lo que no cabía.
    */
-  const recortados = todos.sort((a, b) => a.at.localeCompare(b.at)).slice(0, TOPE_FILAS)
+  const recortados = todos.sort((a, b) => b.at.localeCompare(a.at)).slice(0, TOPE_FILAS)
   const equipos = await etiquetasDeEquipo(
     recortados.map((e) => e.assetId).filter((x): x is string => Boolean(x)),
   )

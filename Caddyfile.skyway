@@ -76,6 +76,21 @@
 		reverse_proxy 127.0.0.1:{$PORT_INFORMES:8090}
 	}
 
+	# ── El PDF del informe ─────────────────────────────────────────────
+	# El informe lo compone el navegador y lo convierte el worker, que es quien
+	# tiene WeasyPrint. Solo `/informe/*`: `/generate` sigue siendo interno y con
+	# token, y este endpoint autoriza con la sesión del usuario, no con él.
+	handle /informe/* {
+		request_body {
+			max_size 25MB
+		}
+		reverse_proxy 127.0.0.1:{$PORT_INFORMES:8090} {
+			transport http {
+				response_header_timeout 60s
+			}
+		}
+	}
+
 	# ── PWA ────────────────────────────────────────────────────────────
 	handle {
 		root * /srv/dist

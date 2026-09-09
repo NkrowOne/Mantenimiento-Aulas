@@ -1102,11 +1102,16 @@ minuto; sin ella, unos segundos.
 
 Desde ahí salen dos botones:
 
-- **Descargar PDF** abre el informe en una pestaña y lanza el diálogo de
-  imprimir, que es de donde sale el PDF: en el iPad, «Imprimir» y después
-  «Compartir → Guardar en Archivos»; en el ordenador, «Guardar como PDF» en el
-  destino, en lugar de una impresora. Es el mismo gesto que la hoja de
-  inventario y que las placas.
+- **Descargar PDF** baja el PDF ya hecho. El documento se manda al servidor, que
+  lo convierte con WeasyPrint —el mismo que hace los PDF de los informes
+  programados— y lo devuelve como fichero: en el iPad se abre la hoja de
+  compartir para guardarlo en Archivos, y en el ordenador cae en la carpeta de
+  descargas. Tarda un par de segundos.
+
+  Si el servidor no puede convertirlo —está actualizándose, o el worker no
+  corre— la pantalla lo dice y cae sola al camino de antes: abre el informe en
+  una pestaña con el diálogo de imprimir, de donde también sale un PDF («Guardar
+  como PDF» en el ordenador; «Compartir → Guardar en Archivos» en el iPad).
 - **Descargar el original** guarda el HTML del que sale ese PDF: un solo fichero
   que se abre en cualquier navegador, sin conexión y sin nada instalado. Es lo
   que conviene guardar para archivar; no es el PDF.

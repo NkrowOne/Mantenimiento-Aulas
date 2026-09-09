@@ -454,7 +454,10 @@ en un pasillo y se lleva al aula para contrastarla contra los aparatos que se
 ven. Sale de `window.print()` y `@media print`, igual que la hoja de placas: en
 iPad y en escritorio «Imprimir → Guardar como PDF» ya da un PDF de verdad, así
 que no entra jsPDF, ni pdfmake, ni ninguna otra dependencia para hacer lo que el
-navegador ya hace. El worker **no** se usa aquí, y no por ahorrarse el rodeo: es
+navegador ya hace. (El **informe** sí baja como PDF de una sola pulsación: lo
+convierte el worker en `POST /informe/pdf`, con la sesión de quien lo pide y sin
+consultar nada de la base —el documento va entero en la petición—. Y si el
+worker no está, la pantalla cae sola al diálogo de imprimir.) El worker **no** se usa aquí, y no por ahorrarse el rodeo: es
 una tubería de servidor —`pg_cron` despierta a `pg_net`, WeasyPrint compone, el
 PDF se archiva en Storage y se versiona— pensada para un documento que se firma
 una vez y no se regenera nunca. El inventario es lo contrario: se reimprime en
