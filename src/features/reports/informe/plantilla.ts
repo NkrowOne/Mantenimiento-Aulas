@@ -44,7 +44,7 @@
 import { ANCHO_MEDIO, ANCHO_TOTAL, actividadDiaria, barrasHorizontales, tendencia } from './graficos'
 import type { ReportData } from './tipos'
 import { type Indicador, type Lectura, dias as textoDias, indicadores, plural, porcentaje } from './analisis'
-import { type Audiencia, type Opciones, type Seccion, seccionesPorDefecto, tiene } from './opciones'
+import { type Audiencia, type Opciones, type Seccion, tiene } from './opciones'
 import { diaDeLaSemana, etiquetaDia, nombreDia } from '../periodos'
 import { bandaDeMarcas } from './marcas'
 
@@ -660,8 +660,17 @@ function seccionEventos(d: ReportData, conRevisiones: boolean): string {
     porDia.set(e.dia, lista)
   }
 
-  // Todos los días del periodo con algo que contar: eventos o revisiones.
-  const dias = d.serieDiaria
+  /*
+   * Todos los días del periodo con algo que contar: eventos o revisiones, del
+   * más reciente al más antiguo.
+   *
+   * `serieDiaria` va en orden de calendario porque es lo que dibuja el gráfico
+   * de actividad —un eje de tiempo al revés no lo lee nadie—, así que aquí se
+   * copia y se le da la vuelta en vez de tocarla. El diario es un registro de
+   * trabajo, y un registro de trabajo se abre por lo último.
+   */
+  const dias = [...d.serieDiaria]
+    .reverse()
     .filter((s) => porDia.has(s.dia) || s.revisiones > 0)
     .map((s) => s.dia)
 
@@ -675,13 +684,14 @@ function seccionEventos(d: ReportData, conRevisiones: boolean): string {
 
   /*
    * Con el listado recortado, «Solo revisiones: ningún registro nuevo…» pasa a
-   * ser una afirmación que no se puede hacer: los eventos van en orden y el
-   * tope de filas corta por el final, así que del último día listado en
-   * adelante puede haber movimientos que simplemente no caben. Los días
-   * ANTERIORES al corte sí están completos y conservan la frase.
+   * ser una afirmación que no se puede hacer: los eventos vienen de lo más
+   * reciente a lo más antiguo y el tope de filas corta por el final, así que
+   * del día más viejo listado hacia atrás puede haber movimientos que
+   * simplemente no caben. Los días POSTERIORES a ese sí están completos y
+   * conservan la frase.
    */
   const truncado = d.eventosTotal > d.eventos.length
-  const ultimoDiaListado = d.eventos.length ? d.eventos[d.eventos.length - 1]!.dia : ''
+  const diaMasViejoListado = d.eventos.length ? d.eventos[d.eventos.length - 1]!.dia : ''
 
   const jornada = (dia: string): string => {
     const s = d.serieDiaria.find((x) => x.dia === dia)
@@ -731,7 +741,7 @@ function seccionEventos(d: ReportData, conRevisiones: boolean): string {
             .join('')}
         </tbody>
       </table>`
-          : truncado && dia >= ultimoDiaListado
+          : truncado && dia <= diaMasViejoListado
             ? `<p class="vacio">Jornada recortada por extensión: el detalle está en el histórico de cada sala.</p>`
             : `<p class="vacio">Solo revisiones: ningún registro nuevo ni consumo de material.</p>`
       }
@@ -742,12 +752,13 @@ function seccionEventos(d: ReportData, conRevisiones: boolean): string {
 
   return `
   <section class="bloque">
-    ${rotulo('Diario del periodo', `${plural(d.eventosTotal, 'movimiento')}${conRevisiones ? ', aparte de las revisiones' : ''}`)}
+    ${rotulo('Diario del periodo', `${plural(d.eventosTotal, 'movimiento')}${conRevisiones ? ', aparte de las revisiones' : ''} · lo último primero`)}
     ${dias.map(jornada).join('')}
     ${
       fuera > 0
-        ? `<p class="apunte">Y ${plural(fuera, 'movimiento')} más, fuera del diario: la lista se
-           corta en ${d.eventos.length}. El detalle completo está en el histórico de cada sala.</p>`
+        ? `<p class="apunte">Y ${plural(fuera, 'movimiento')} más, anteriores a los que salen: la
+           lista se corta en ${d.eventos.length} empezando por lo más reciente. El detalle completo
+           está en el histórico de cada sala.</p>`
         : ''
     }
   </section>`
@@ -1110,62 +1121,6 @@ function seccionRecomendaciones(l: Lectura, audiencia: Audiencia): string {
         )
         .join('')}
     </ol>
-  </section>`
-}
-
-/**
- * Las salvedades del alcance. Nada más.
- *
- * Aquí había una «Procedencia» que volvía a decir la fecha de emisión, el
- * periodo, el tramo comparado y quién lo pidió: las cuatro cosas están en la
- * cabecera, a un palmo de distancia. Y cerraba con un párrafo explicando que un
- * informe emitido no se regenera. Un documento profesional no se explica a sí
- * mismo: dice lo que hace falta para leer sus cifras y calla el resto.
- *
- * Lo que queda es lo único que las cifras no pueden decir por su cuenta: qué se
- * ha quedado FUERA de la cuenta y por qué. Sin salvedades el bloque entero
- * desaparece, en vez de imprimir una caja con una obviedad dentro.
- *
- * Del rastro de cómo se preparó el análisis sigue sin haber nada, y a
- * propósito: vive en `reports.params` con cada informe y la pantalla de
- * Informes lo enseña. Quien tenga que auditarlo lo tiene; quien lea el PDF, no
- * lo necesita.
- */
-function colofon(d: ReportData, o: Opciones): string {
-  const partes: string[] = []
-  if (d.situacion.salasNuncaRevisadas > 0) {
-    partes.push(
-      `${d.situacion.salasNuncaRevisadas} de las ${d.situacion.salasTotal} salas activas no tienen ninguna revisión registrada: no entran en ningún indicador.`,
-    )
-  }
-  if (d.sinSala > 0) {
-    partes.push(
-      `${plural(d.sinSala, 'registro')} sin sala asignada: cuentan en los totales, no en el desglose por edificio.`,
-    )
-  }
-  /*
-   * Esta frase es la que faltaba cuando un edificio entero se fue a la papelera
-   * y su trabajo pareció evaporarse. Ahora se cuenta, y además se dice: sin
-   * esta línea, el informe y la pantalla de revisar enseñan campus distintos y
-   * no hay forma de saber cuál de los dos está mal.
-   */
-  if (d.salasArchivadas > 0) {
-    partes.push(
-      `${plural(d.salasArchivadas, 'sala')} fuera de la lista de trabajo —archivadas ellas o su edificio—: lo que se hizo en ellas se cuenta igual.`,
-    )
-  }
-  // Contra el conjunto por defecto, no contra un número escrito a mano: al
-  // añadir dos secciones nuevas, el «< 10» de antes habría marcado como parcial
-  // hasta el informe completo.
-  if (o.secciones.length < seccionesPorDefecto(o.audiencia).length) {
-    partes.push('Informe parcial: se han pedido solo las secciones marcadas.')
-  }
-  if (!partes.length) return ''
-
-  return `
-  <section class="colofon">
-    ${rotulo('Alcance de los datos')}
-    <ul class="salvedades">${partes.map((p) => `<li>${p}</li>`).join('')}</ul>
   </section>`
 }
 
@@ -1586,21 +1541,6 @@ export function renderReport(
     font-size: 9pt; color: ${INK2}; line-height: 1.5; margin-top: 0.8mm;
   }
 
-  /* ── Colofón ── */
-  .colofon {
-    margin-top: 10mm; padding-top: 0; font-size: 8pt; color: ${MUTED};
-    page-break-inside: avoid; line-height: 1.5;
-  }
-  .colofon .rotulo { border-bottom-color: ${LINE}; }
-  .colofon p { max-width: 150mm; }
-  /* En lista y no en un párrafo corrido: son salvedades independientes, y de
-     seguido se leían como una sola frase larga que nadie termina. */
-  .salvedades { margin: 0; padding: 0; list-style: none; max-width: 150mm; }
-  .salvedades li { padding-left: 4mm; margin-bottom: 1.4mm; position: relative; }
-  .salvedades li::before {
-    content: "—"; position: absolute; left: 0; color: ${LINE};
-  }
-
   /* ── Las dos marcas de la primera página ──
      La del servicio a la izquierda, la del campus a la derecha, y nada más en
      la banda: un logotipo compitiendo con el titular no es imagen corporativa,
@@ -1652,8 +1592,6 @@ ${
 }
 
 ${cuerpo}
-
-${colofon(d, o)}
 
 <footer class="pie-marca">Grupo Oesia · Servicio de mantenimiento de aulas ·
 Universidad Francisco de Vitoria</footer>

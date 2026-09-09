@@ -22,6 +22,7 @@ import {
 } from './informe/generar'
 import {
   descargarDocumento,
+  descargarPdf,
   imprimirDocumento,
   mostrarEn,
   ventanaEnBlanco,
@@ -103,6 +104,7 @@ export function ReportsPage(): React.ReactElement {
      permisos o red, y descartarlo dejaba el botón «Abrir» como un botón que a
      veces no hace nada. */
   const [falloDescarga, setFalloDescarga] = useState<string | null>(null)
+  const [bajandoPdf, setBajandoPdf] = useState(false)
 
   const marco = useRef<HTMLIFrameElement>(null)
 
@@ -479,17 +481,37 @@ export function ReportsPage(): React.ReactElement {
             <div className="flex shrink-0 flex-wrap gap-2">
               <button
                 type="button"
+                disabled={bajandoPdf}
                 onClick={() => {
                   setFalloDescarga(null)
-                  if (imprimirDocumento(recien.html, marco.current) === 'bloqueado') {
-                    setFalloDescarga(
-                      'El navegador ha bloqueado la ventana del informe. Permite las ventanas emergentes de esta página, o usa «Descargar el original».',
-                    )
-                  }
+                  setBajandoPdf(true)
+                  void (async () => {
+                    const { data } = await supabase.auth.getSession()
+                    const nombre = nombreDeArchivo(recien.kind, recien.rango).replace(/\.html$/, '.pdf')
+                    const r = await descargarPdf(recien.html, nombre, data.session?.access_token ?? null)
+                    setBajandoPdf(false)
+                    if (r.ok) return
+                    /*
+                     * Sin servicio de PDF —un servidor que aún no lo tiene, el
+                     * worker caído— se cae al camino de siempre en vez de dejar
+                     * a nadie sin documento: la ventana con el diálogo de
+                     * imprimir, que también da un PDF.
+                     */
+                    if (r.sinServicio) {
+                      const via = imprimirDocumento(recien.html, marco.current)
+                      setFalloDescarga(
+                        via === 'bloqueado'
+                          ? `No se ha podido preparar el PDF (${r.motivo}) y el navegador ha bloqueado la ventana del informe. Permite las ventanas emergentes de esta página, o usa «Descargar el original».`
+                          : `El servidor no ha podido preparar el PDF (${r.motivo}): se ha abierto el informe con el diálogo de imprimir, que también lo guarda como PDF.`,
+                      )
+                      return
+                    }
+                    setFalloDescarga(`No se ha podido preparar el PDF: ${r.motivo}.`)
+                  })()
                 }}
                 className="key key-accent min-h-11 px-3 text-sm"
               >
-                Descargar PDF
+                {bajandoPdf ? 'Preparando el PDF…' : 'Descargar PDF'}
               </button>
               <button
                 type="button"
@@ -532,16 +554,14 @@ export function ReportsPage(): React.ReactElement {
             className="mt-4 h-[70vh] w-full rounded-card border border-line bg-white"
           />
           {/*
-            Sin esta línea, «Descargar PDF» abre un diálogo de impresión que el
-            usuario no ha pedido: se queda mirando una vista previa y una
-            impresora, decide que se ha equivocado de botón y cierra. El PDF sale
-            de ahí, pero solo si alguien dice dónde está. Es la misma frase que
-            la hoja de inventario, porque es el mismo gesto.
+            Lo que hace cada botón, en una línea. «Descargar PDF» ya baja un
+            fichero de verdad —lo convierte el servidor— y el original en HTML
+            se queda para quien quiera archivarlo o reenviarlo tal cual.
           */}
           <p className="mt-2 text-xs text-muted">
-            El informe se abre en una pestaña y se abre el diálogo de imprimir, que es de donde sale
-            el PDF: en el iPad, toca «Imprimir» y después «Compartir → Guardar en Archivos»; en el
-            ordenador, elige «Guardar como PDF» en el destino, en lugar de una impresora.
+            «Descargar PDF» baja el documento ya convertido: en el iPad se abre la hoja de compartir
+            para guardarlo en Archivos, y en el ordenador cae en la carpeta de descargas. «Descargar
+            el original» baja el mismo informe en HTML, que es de donde sale.
           </p>
         </section>
       )}

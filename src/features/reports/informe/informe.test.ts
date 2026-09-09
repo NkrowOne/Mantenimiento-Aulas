@@ -4,7 +4,7 @@ import { SECCIONES, leerOpciones } from './opciones'
 import { diasLargo, renderReport } from './plantilla'
 import { actividadDiaria } from './graficos'
 import { cifrasInventadas, configurarIA, expediente, formulasDelatoras, instruccion } from './ia'
-import { etiquetaDia, nombreComparacion, periodoAnterior } from '../periodos'
+import { etiquetaDia, nombreComparacion, nombreDia, periodoAnterior } from '../periodos'
 import { inicioDelDia } from '@/domain/fechas'
 import type { ReportData } from './tipos'
 
@@ -205,6 +205,65 @@ function expedienteDePrueba(): ReportData {
 // El documento entero y sin filtro de audiencia: el parte del equipo.
 const opcionesCompletas = leerOpciones({ secciones: [...SECCIONES], audiencia: 'equipo' })
 
+/**
+ * El orden del trabajo: lo último, primero.
+ *
+ * Un informe de un trimestre no cabe entero —el diario se corta a ciento
+ * cincuenta apuntes— y lo que se caía era el final de la lista, que ordenada
+ * por calendario es justo la semana pasada. Se pedía un informe largo para ver
+ * lo último y lo último era lo que no salía.
+ *
+ * Los gráficos siguen el calendario: un eje de tiempo al revés no lo lee nadie.
+ * Las listas de trabajo, no.
+ */
+describe('las listas de trabajo se leen por lo último', () => {
+  const d = expedienteDePrueba()
+  const html = renderReport(d, lecturaCalculada(d, 'equipo'), opcionesCompletas, {
+    emitido: '31/07/2026, 9:14',
+  })
+
+  it('el diario abre por el día más reciente y cierra por el más antiguo', () => {
+    const diario = html.slice(html.indexOf('Diario del periodo'))
+    const primero = diario.indexOf(nombreDia('2026-07-31'))
+    const ultimo = diario.indexOf(nombreDia('2026-07-27'))
+    expect(primero).toBeGreaterThan(-1)
+    expect(ultimo).toBeGreaterThan(-1)
+    expect(primero).toBeLessThan(ultimo)
+  })
+
+  it('y lo dice en la cabecera de la sección, para que nadie lo dé por un error', () => {
+    expect(html).toContain('lo último primero')
+  })
+
+  it('el gráfico de actividad sigue yendo del primer día al último', () => {
+    const grafico = html.slice(html.indexOf('Actividad'), html.indexOf('Diario del periodo'))
+    expect(grafico.indexOf('>L 27</text>')).toBeLessThan(grafico.indexOf('>V 31</text>'))
+  })
+
+  it('lo que no cabe son los movimientos ANTERIORES, y se dice cuáles', () => {
+    // 27 movimientos en total y 1 en la lista: el resto no cabe.
+    expect(html).toContain('anteriores a los que salen')
+    expect(html).toContain('empezando por lo más reciente')
+  })
+
+  /*
+   * Un día del que no sale ningún apunte no es lo mismo antes del corte que
+   * después. Después —más reciente que el más viejo listado— es verdad que no
+   * hubo nada. Antes, solo es que no cabía.
+   */
+  it('un día anterior al corte se marca recortado, y uno posterior no', () => {
+    const diario = html.slice(html.indexOf('Diario del periodo'))
+    const jornadaDe = (dia: string): string => {
+      const i = diario.indexOf(nombreDia(dia))
+      return diario.slice(i, i + 600)
+    }
+    // El único apunte del expediente es del 27, el día más viejo: del 28 en
+    // adelante no hay nada que enseñar y eso es cierto, no un recorte.
+    expect(jornadaDe('2026-07-31')).toContain('Solo revisiones')
+    expect(jornadaDe('2026-07-31')).not.toContain('recortada por extensión')
+  })
+})
+
 describe('el documento sale entero', () => {
   const d = expedienteDePrueba()
   const html = renderReport(d, lecturaCalculada(d, 'equipo'), opcionesCompletas, {
@@ -333,19 +392,19 @@ describe('la imagen del documento', () => {
     expect(html.match(/31\/07\/2026, 9:14/g)?.length).toBe(1)
   })
 
-  it('el alcance solo sale cuando hay algo que advertir', () => {
-    const limpio: ReportData = {
-      ...d,
-      situacion: { ...d.situacion, salasNuncaRevisadas: 0 },
-      sinSala: 0,
-      salasArchivadas: 0,
-    }
-    const salida = renderReport(limpio, lecturaCalculada(limpio, 'equipo'), opcionesCompletas, {
-      emitido: '31/07/2026, 9:14',
-    })
-    expect(salida).not.toContain('Alcance de los datos')
-    // Y con salvedades, sí.
-    expect(html).toContain('Alcance de los datos')
+  /*
+   * El colofón se quitó entero. Decía qué se quedaba fuera de la cuenta —salas
+   * nunca revisadas, registros sin sala, salas archivadas—, y lo decía al final
+   * de un documento que ya lo cuenta donde toca: las salas sin revisar están en
+   * su sección, los registros sin sala en el desglose y las archivadas en el
+   * maestro. Cerrar un informe de dirección con una lista de reparos es acabar
+   * pidiendo disculpas por los datos que se acaban de presentar.
+   */
+  it('no cierra el documento con una lista de reparos', () => {
+    expect(html).not.toContain('Alcance de los datos')
+    expect(html).not.toContain('no entran en ningún indicador')
+    expect(html).not.toContain('Informe parcial')
+    expect(html).not.toContain('class="colofon"')
   })
 })
 
@@ -807,11 +866,6 @@ describe('las secciones que se pueden quitar y las que se pueden añadir', () =>
     // se leería como «este edificio no tiene aulas».
     expect(html).toContain('<span class="tenue">· archivado</span></td><td class="num">—</td>')
     expect(html).toContain('1 edificio archivado')
-  })
-
-  it('el alcance dice que hubo salas fuera de la lista de trabajo', () => {
-    const html = con(['edificios'])
-    expect(html).toContain('3 salas fuera de la lista de trabajo')
   })
 
   it('sin fotos no se imprime la sección: «no hay fotos» no informa', () => {
