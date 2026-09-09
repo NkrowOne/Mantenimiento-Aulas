@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { fechaCorta } from '@/domain/fechas'
@@ -6,6 +6,7 @@ import { EstadoIA, useEstadoIA } from './EstadoIA'
 import { AUDIENCIAS, SECCIONES, porDefectoDe, seccionesDe } from './secciones'
 import { type HuellaDeRedaccion, redaccionDe } from './redaccion'
 import { type Eleccion, motivoParaNoPedir } from './peticion'
+import { FotosDelInforme } from './FotosDelInforme'
 import { TOPE_ENFOQUE } from './informe/opciones'
 import {
   type Kind,
@@ -40,6 +41,7 @@ interface ReportRow {
     | (HuellaDeRedaccion & {
         analisis?: string
         secciones?: string[]
+        fotos_fuera?: string[]
         audiencia?: string
         nota?: string
       })
@@ -87,6 +89,9 @@ export function ReportsPage(): React.ReactElement {
   const [hasta, setHasta] = useState('')
   const [audiencia, setAudiencia] = useState<'direccion' | 'equipo'>('direccion')
   const [secciones, setSecciones] = useState<string[]>(porDefectoDe('direccion'))
+  /* Las fotos que se han quitado, por id de adjunto. Vacío es «todas», que es
+     lo que sale si nadie abre la rejilla. */
+  const [fotosFuera, setFotosFuera] = useState<string[]>([])
   const [comparar, setComparar] = useState(true)
   const [conIA, setConIA] = useState(true)
   /* Las casillas que existen para esta audiencia. «Sin cerrar» no se ofrece
@@ -140,7 +145,25 @@ export function ReportsPage(): React.ReactElement {
       : (PRESETS.find((x) => x.id === preset)?.kind ?? 'personalizado')
   const dias = diasDelRango(rango)
 
-  const eleccion: Eleccion = { kind, rango, secciones, comparar, ia: conIA, audiencia, enfoque, nota }
+  /*
+   * Cambiar de periodo vuelve a marcarlas todas. Los ids que se habían quitado
+   * son de fotos de OTRA semana: dejarlos puestos no quita nada —no están en la
+   * rejilla nueva— pero viajarían en el expediente del informe diciendo que se
+   * descartó algo que ese informe nunca tuvo.
+   */
+  useEffect(() => setFotosFuera([]), [rango.start, rango.end])
+
+  const eleccion: Eleccion = {
+    kind,
+    rango,
+    secciones,
+    fotosFuera,
+    comparar,
+    ia: conIA,
+    audiencia,
+    enfoque,
+    nota,
+  }
   const impedimento = motivoParaNoPedir(eleccion, dias)
 
   const generar = useMutation({
@@ -342,6 +365,8 @@ export function ReportsPage(): React.ReactElement {
           <span className="ml-2 text-muted">
             {secciones.length} de {ofrecidas.length} secciones
             {conIA ? ' · con IA' : ' · sin IA'}
+            {secciones.includes('fotos') && fotosFuera.length > 0 &&
+              ` · ${fotosFuera.length} ${fotosFuera.length === 1 ? 'foto fuera' : 'fotos fuera'}`}
           </span>
         </button>
 
@@ -385,6 +410,24 @@ export function ReportsPage(): React.ReactElement {
                 </button>
               </div>
             </fieldset>
+
+            {/* Las fotos, una por una. Debajo de las secciones porque es el
+                detalle de una de ellas, y solo si esa sección está marcada:
+                elegir fotos para un informe que no las lleva no significa
+                nada. */}
+            {secciones.includes('fotos') && (
+              <fieldset>
+                <legend className="eyebrow">Fotos del periodo</legend>
+                <div className="mt-2">
+                  <FotosDelInforme
+                    rango={rango}
+                    activo={Boolean(rango.start && rango.end && rango.end >= rango.start)}
+                    fuera={fotosFuera}
+                    onFuera={setFotosFuera}
+                  />
+                </div>
+              </fieldset>
+            )}
 
             <fieldset>
               <legend className="eyebrow">Análisis</legend>
@@ -651,6 +694,10 @@ export function ReportsPage(): React.ReactElement {
           {(reports ?? []).map((r) => {
             const parcial =
               r.params?.secciones && r.params.secciones.length < SECCIONES.length - 1
+            /* Cuántas fotos se quitaron al pedirlo. El documento lo dice en su
+               pie; el archivo tiene que poder decirlo sin abrirlo, que es lo
+               que convierte «faltan fotos» en «se quitaron a mano». */
+            const fotosQuitadas = r.params?.fotos_fuera?.length ?? 0
             const redaccion = redaccionDe(r.params)
             return (
               <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm">
@@ -662,6 +709,8 @@ export function ReportsPage(): React.ReactElement {
                   <span className="block text-xs text-muted">
                     {fechaCorta(r.generated_at)}
                     {parcial && ` · ${r.params?.secciones?.length} secciones`}
+                    {fotosQuitadas > 0 &&
+                      ` · ${fotosQuitadas} ${fotosQuitadas === 1 ? 'foto fuera' : 'fotos fuera'}`}
                     {r.params?.nota && ` · «${r.params.nota}»`}
                   </span>
                   {/* El motivo, escrito. Un informe marcado en ámbar sin decir

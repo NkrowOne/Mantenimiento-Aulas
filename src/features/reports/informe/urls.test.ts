@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cargarDatos } from './datos'
+import { cargarDatos, fotosParaElegir } from './datos'
 
 /**
  * Ninguna consulta del informe puede armar una URL que el servidor rechace.
@@ -28,6 +28,20 @@ const TOPE_URL = 8192
 
 /** Un mes de inventario: miles de equipos movidos, cada uno el suyo. */
 const EVENTOS = 3000
+
+/** Un trimestre de incidencias: la lista de la que la rejilla pide adjuntos. */
+const INCIDENCIAS = 1200
+
+/**
+ * Qué hay montado detrás del portero.
+ *
+ * Son dos preguntas distintas contra las mismas tablas —el diario del informe y
+ * la rejilla de fotos— y cada una revienta por su lado: la primera por los
+ * equipos movidos, la segunda por los adjuntos de un trimestre de incidencias.
+ * Montarlas a la vez haría que ninguna de las dos dijera de dónde salió el
+ * fallo.
+ */
+let escenario: 'equipos' | 'fotos' = 'equipos'
 
 const uuid = (prefijo: string, n: number): string =>
   `${prefijo.padEnd(8, '0').slice(0, 8)}-1111-4222-8333-${String(n).padStart(12, '0')}`
@@ -68,6 +82,32 @@ function filasDe(tabla: string, primeraPagina: boolean): unknown[] {
         meta: {},
         asset_id: uuid('act', i),
       }))
+    case 'incidents':
+      if (escenario !== 'fotos') return []
+      return Array.from({ length: INCIDENCIAS }, (_, i) => ({
+        id: uuid('inc', i),
+        kind: 'incidencia',
+        severity: 'media',
+        state: 'abierta',
+        title: `Incidencia ${i}`,
+        description: null,
+        external_ref: null,
+        room_id: uuid('sala', 1),
+        opened_at: `2026-08-${String((i % 25) + 1).padStart(2, '0')}T10:00:00.000Z`,
+        opened_by: uuid('user', 1),
+        opened_from_inspection_id: null,
+      }))
+    case 'attachments':
+      if (escenario !== 'fotos') return []
+      return Array.from({ length: 5 }, (_, i) => ({
+        id: uuid('adj', i),
+        entity_id: uuid('inc', i),
+        storage_path: `${uuid('inc', i)}/${i}.jpg`,
+        taken_at: `2026-08-0${i + 1}T10:00:00.000Z`,
+      }))
+    case 'rooms':
+      if (escenario !== 'fotos') return []
+      return [{ id: uuid('sala', 1), code: '1.7', name: 'AULA 1.7', active: true, zones: null }]
     case 'assets':
       return []
     case 'asset_types':
@@ -105,6 +145,7 @@ describe('las URL que arma el informe', () => {
   beforeEach(() => {
     peticiones = []
     rechazadas = []
+    escenario = 'equipos'
     vi.stubGlobal('fetch', (entrada: RequestInfo | URL) =>
       Promise.resolve(porteroDeEntrada(entrada)),
     )
@@ -137,6 +178,28 @@ describe('las URL que arma el informe', () => {
     const aAssets = peticiones.filter((p) => p.tabla === 'assets')
     expect(aAssets.length).toBeGreaterThan(0)
     expect(aAssets.length).toBeLessThanOrEqual(2)
+  })
+
+  /*
+   * La rejilla de fotos pregunta por los adjuntos de TODO lo que pasó en el
+   * periodo, y esa lista de identificadores es la misma que reventaba la línea
+   * de petición con los equipos. Elegir qué fotos van no puede ser lo que
+   * impida pedir el informe.
+   */
+  it('la rejilla de fotos de un trimestre tampoco pasa del tope', async () => {
+    escenario = 'fotos'
+    const { total } = await fotosParaElegir({ start: '2026-08-01', end: '2026-08-25' })
+
+    expect(rechazadas).toEqual([])
+    const laMasLarga = peticiones.reduce((a, b) => (a.largo >= b.largo ? a : b))
+    expect(laMasLarga.largo).toBeLessThan(TOPE_URL)
+
+    // Y ha preguntado de verdad por los adjuntos, repartidos en varias
+    // consultas: mil doscientas incidencias no caben en una sola línea.
+    const aAdjuntos = peticiones.filter((p) => p.tabla === 'attachments')
+    expect(aAdjuntos.length).toBeGreaterThan(1)
+    // Y la lista sale de esos adjuntos: la rejilla enseña fotos, no incidencias.
+    expect(total).toBeGreaterThan(0)
   })
 
   it('si el servidor rechaza la petición, lo dice en cristiano y no «Load failed»', async () => {
