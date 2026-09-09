@@ -556,7 +556,7 @@ export function RoomSheet({
               onChange={(e) => setTexto(e.target.value)}
               rows={3}
               placeholder="¿Qué ocurre? Opcional — se puede rellenar luego."
-              className="mt-3 w-full rounded-ctl border border-line bg-surface p-3 text-sm"
+              className="mt-3 w-full rounded-ctl border border-line bg-surface p-3 text-base"
             />
 
             {/* Los dos tipos que quedan pueden llevar ticket externo, así que el
@@ -567,7 +567,7 @@ export function RoomSheet({
                 value={codigo}
                 onChange={(e) => setCodigo(e.target.value)}
                 placeholder="I260728_0001"
-                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-sm"
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-base"
               />
             </label>
 

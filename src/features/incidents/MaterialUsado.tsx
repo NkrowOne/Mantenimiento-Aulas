@@ -241,7 +241,7 @@ export function MaterialUsado({
               }}
               placeholder="Material usado: busca el artículo"
               enterKeyHint="search"
-              className="h-touch w-full rounded-ctl border border-line bg-sunken px-3 text-sm"
+              className="h-touch w-full rounded-ctl border border-line bg-sunken px-3 text-base"
             />
           </label>
 

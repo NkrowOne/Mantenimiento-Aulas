@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  codigosAnterioresDeSalaDesdeAuditoria,
   construirIndice,
   contar,
   equivalenciasDesdeAuditoria,
   formasDeEscribir,
+  nombresAnterioresDesdeAuditoria,
   proponerEquivalencias,
   resolverSala,
 } from './cruce'
@@ -70,6 +72,54 @@ describe('los alias son donde viven los renombrados', () => {
     const r = resolverSala(IX, { tipo: 'parte', ref: '0.1 P' })
     expect(r).toMatchObject({ estado: 'resuelta' })
     if (r.estado === 'resuelta') expect(r.sala.shortRef).toBe('SALA-000001')
+  })
+})
+
+describe('un alias caducado no puede ganarle al maestro de hoy', () => {
+  // La sala A se llamaba `1.1` y pasó a `2.1`, dejando el alias `1.1 CRAI`.
+  // Después la sala B pasó a llamarse `1.1`. Nada lo impide: ni `rename_room`
+  // ni `create_room` comprueban el código contra `room_aliases`, y de esa tabla
+  // no se borra nunca nada.
+  const CADUCADO = construirIndice({
+    edificios: [{ codigo: 'CRAI', nombre: 'EDIFICIO CRAI', activo: true }],
+    salas: [
+      sala({ code: '2.1', edificioCodigo: 'CRAI', edificioNombre: 'EDIFICIO CRAI', shortRef: 'SALA-000101', alias: ['1.1 CRAI'] }),
+      sala({ code: '1.1', edificioCodigo: 'CRAI', edificioNombre: 'EDIFICIO CRAI', shortRef: 'SALA-000102' }),
+    ],
+  })
+
+  it('el parte no resuelve la sala que YA NO se llama así: lo declara ambiguo', () => {
+    const r = resolverSala(CADUCADO, { tipo: 'parte', ref: '1.1 CRAI' })
+    expect(r.estado).toBe('ambigua')
+    if (r.estado === 'ambigua') {
+      expect(r.candidatas.map((c) => c.shortRef).sort()).toEqual(['SALA-000101', 'SALA-000102'])
+    }
+  })
+
+  it('la hoja de estado sigue dando la sala que hoy se llama así', () => {
+    const r = resolverSala(CADUCADO, { tipo: 'estado', edificio: 'EDIFICIO CRAI', aula: '1.1' })
+    expect(r).toMatchObject({ estado: 'resuelta' })
+    if (r.estado === 'resuelta') expect(r.sala.shortRef).toBe('SALA-000102')
+  })
+
+  it('un alias que apunta a la sala de siempre sigue cruzando por alias', () => {
+    const r = resolverSala(CADUCADO, { tipo: 'parte', ref: '2.1 CRAI' })
+    expect(r).toMatchObject({ estado: 'resuelta', via: 'edificio+codigo' })
+  })
+
+  it('dos alias que la base distingue y `norm()` junta: gana el primero, como el servidor', () => {
+    // `alias_norm` se escribe con `norm_text`, que NO pasa las comas a puntos;
+    // el índice usa `norm()`, que sí. En la base son dos filas distintas y aquí
+    // colapsan en la misma clave.
+    const ix = construirIndice({
+      salas: [
+        sala({ code: '9.1', edificioCodigo: 'H', shortRef: 'SALA-000103', alias: ['1,7 H'] }),
+        sala({ code: '9.2', edificioCodigo: 'H', shortRef: 'SALA-000104', alias: ['1.7 H'] }),
+      ],
+    })
+    const r = resolverSala(ix, { tipo: 'parte', ref: '1.7 H' })
+    expect(r).toMatchObject({ estado: 'resuelta', via: 'alias' })
+    if (r.estado === 'resuelta') expect(r.sala.shortRef).toBe('SALA-000103')
   })
 })
 
@@ -401,5 +451,270 @@ describe('los edificios que existen pero no tienen ni una sala', () => {
     const r = resolverSala(IXE, { tipo: 'estado', edificio: 'SIMULACION QUIRURGICA', aula: 'AULA I' })
     expect(r.estado).toBe('sin_cruce')
     if (r.estado === 'sin_cruce') expect(r.motivo).toContain('no tiene ninguna sala')
+  })
+})
+
+describe('un edificio renombrado en la aplicación sigue cruzando con el libro viejo', () => {
+  // El caso real: el edificio `C` se llamaba «EDIFICIO CENTRAL» cuando se
+  // escribió el libro y hoy, en la aplicación, se llama «ED. CENTRAL». El
+  // edificio es el mismo, con el mismo código y las mismas salas: lo único que
+  // cambió fue el rótulo, y sin esto sus diez filas dejan de cruzar de golpe.
+  const HOY: Catalogo = {
+    edificios: [{ codigo: 'C', nombre: 'ED. CENTRAL', activo: true }],
+    salas: [
+      sala({ code: '1.2', edificioCodigo: 'C', edificioNombre: 'ED. CENTRAL', shortRef: 'SALA-000003' }),
+      sala({ code: '1.2', edificioCodigo: 'M', edificioNombre: 'EDIFICIO M' }),
+    ],
+    nombresViejos: [{ codigo: 'C', nombre: 'EDIFICIO CENTRAL' }],
+  }
+
+  it('la fila que dice «EDIFICIO CENTRAL» encuentra su sala', () => {
+    const r = resolverSala(construirIndice(HOY), {
+      tipo: 'estado',
+      edificio: 'EDIFICIO CENTRAL',
+      aula: '1.2',
+    })
+    expect(r).toMatchObject({ estado: 'resuelta' })
+    if (r.estado === 'resuelta') expect(r.sala.shortRef).toBe('SALA-000003')
+  })
+
+  it('y dice por qué: el nombre del libro es el anterior, no el de hoy', () => {
+    const r = resolverSala(construirIndice(HOY), {
+      tipo: 'estado',
+      edificio: 'EDIFICIO CENTRAL',
+      aula: '1.2',
+    })
+    if (r.estado !== 'resuelta') throw new Error('tenía que cruzar')
+    expect(r.via).toBe('nomenclatura-vieja')
+    expect(r.aviso).toContain('nombre anterior')
+    expect(r.aviso).toContain('ED. CENTRAL')
+  })
+
+  it('sin el nombre anterior la misma fila no cruza: es justo lo que arregla', () => {
+    const r = resolverSala(construirIndice({ ...HOY, nombresViejos: [] }), {
+      tipo: 'estado',
+      edificio: 'EDIFICIO CENTRAL',
+      aula: '1.2',
+    })
+    expect(r.estado).toBe('sin_cruce')
+  })
+
+  it('el nombre de hoy sigue cruzando, y sin avisar de nada', () => {
+    const r = resolverSala(construirIndice(HOY), { tipo: 'estado', edificio: 'ED. CENTRAL', aula: '1.2' })
+    expect(r).toMatchObject({ estado: 'resuelta', via: 'edificio+codigo' })
+    if (r.estado === 'resuelta') expect(r.aviso).toBeUndefined()
+  })
+
+  it('un nombre viejo que hoy lleva otro edificio no se lo puede quedar', () => {
+    // `M` se llama hoy «EDIFICIO CENTRAL». Que `C` se llamara así antes no
+    // puede llevarse las filas de `M`: el maestro de hoy manda.
+    const ix = construirIndice({
+      edificios: [
+        { codigo: 'C', nombre: 'ED. CENTRAL', activo: true },
+        { codigo: 'M', nombre: 'EDIFICIO CENTRAL', activo: true },
+      ],
+      salas: [
+        sala({ code: '1.2', edificioCodigo: 'C', edificioNombre: 'ED. CENTRAL' }),
+        sala({ code: '1.2', edificioCodigo: 'M', edificioNombre: 'EDIFICIO CENTRAL', shortRef: 'SALA-M' }),
+      ],
+      nombresViejos: [{ codigo: 'C', nombre: 'EDIFICIO CENTRAL' }],
+    })
+    const r = resolverSala(ix, { tipo: 'estado', edificio: 'EDIFICIO CENTRAL', aula: '1.2' })
+    if (r.estado !== 'resuelta') throw new Error('tenía que cruzar con M')
+    expect(r.sala.shortRef).toBe('SALA-M')
+  })
+
+  it('tampoco se queda el nombre de un edificio que desapareció', () => {
+    const ix = construirIndice({
+      ...HOY,
+      edificiosDesaparecidos: [{ codigo: 'CEN', nombre: 'EDIFICIO CENTRAL', motivo: 'fusionado' }],
+    })
+    expect(ix.nombreAnterior.size).toBe(0)
+  })
+
+  it('un nombre anterior de un edificio que ya no existe no se registra', () => {
+    const ix = construirIndice({ ...HOY, nombresViejos: [{ codigo: 'NO_EXISTE', nombre: 'LO QUE SEA' }] })
+    expect(ix.nombreAnterior.size).toBe(0)
+  })
+})
+
+describe('los nombres anteriores salen de la auditoría, no de una tabla a mano', () => {
+  it('renombrar sin tocar el código deja apuntado el nombre viejo', () => {
+    expect(
+      nombresAnterioresDesdeAuditoria({
+        vivos: [{ id: 'b1', codigo: 'C' }],
+        renombrados: [],
+        fusiones: [],
+        borrados: [],
+        nombresCambiados: [{ rowId: 'b1', nombreViejo: 'EDIFICIO CENTRAL' }],
+      }),
+    ).toEqual([{ codigo: 'C', nombre: 'EDIFICIO CENTRAL' }])
+  })
+
+  it('tres renombrados dejan los tres nombres, sin repetir los que se repiten', () => {
+    expect(
+      nombresAnterioresDesdeAuditoria({
+        vivos: [{ id: 'b1', codigo: 'C' }],
+        renombrados: [],
+        fusiones: [],
+        borrados: [],
+        nombresCambiados: [
+          { rowId: 'b1', nombreViejo: 'EDIFICIO CENTRAL' },
+          { rowId: 'b1', nombreViejo: 'CENTRAL' },
+          { rowId: 'b1', nombreViejo: 'EDIFICIO CENTRAL' },
+        ],
+      }),
+    ).toEqual([
+      { codigo: 'C', nombre: 'EDIFICIO CENTRAL' },
+      { codigo: 'C', nombre: 'CENTRAL' },
+    ])
+  })
+
+  it('si después lo fusionaron, el nombre viejo lleva al edificio que se lo quedó', () => {
+    expect(
+      nombresAnterioresDesdeAuditoria({
+        vivos: [{ id: 'b2', codigo: 'H' }],
+        renombrados: [],
+        fusiones: [{ deId: 'b1', aId: 'b2' }],
+        borrados: [],
+        nombresCambiados: [{ rowId: 'b1', nombreViejo: 'EDIFICIO CENTRAL' }],
+      }),
+    ).toEqual([{ codigo: 'H', nombre: 'EDIFICIO CENTRAL' }])
+  })
+
+  it('un rastro que no llega a ningún edificio de hoy no inventa ninguno', () => {
+    expect(
+      nombresAnterioresDesdeAuditoria({
+        vivos: [{ id: 'b9', codigo: 'Z' }],
+        renombrados: [],
+        fusiones: [],
+        borrados: [],
+        nombresCambiados: [{ rowId: 'b1', nombreViejo: 'EDIFICIO CENTRAL' }],
+      }),
+    ).toEqual([])
+  })
+
+  it('sin renombrados de nombre no hay nada que apuntar', () => {
+    expect(
+      nombresAnterioresDesdeAuditoria({
+        vivos: [{ id: 'b1', codigo: 'C' }],
+        renombrados: [{ rowId: 'b1', codigoViejo: 'CEN' }],
+        fusiones: [],
+        borrados: [],
+      }),
+    ).toEqual([])
+  })
+})
+
+describe('las nueve aulas de sótano del CRAI', () => {
+  // El caso real, y las tres cosas que le pasaron encima:
+  //
+  //  1. el libro las escribe con el menos DETRÁS —`1.1-`—, que es como el
+  //     importador las creó y como quedó su alias: `1.1- CRAI`;
+  //  2. alguien las renombró en la aplicación a `-1.1` … `-1.9`;
+  //  3. y después fusionó el CRAI con el T. Moro.
+  //
+  // El alias siguió en la base y siguió apuntando a la sala correcta. Lo que
+  // dejó de servir fue su forma: lleva pegado el código del edificio de aquel
+  // día, y el cruce lo recomponía con el de hoy.
+  //
+  // Se arma desde el rastro de la auditoría a propósito, y no escribiendo la
+  // equivalencia a mano: así la prueba cubre también que la fusión se reconoce.
+  const RASTRO = {
+    vivos: [{ id: 'tm', codigo: 'TM' }],
+    renombrados: [],
+    fusiones: [{ deId: 'crai', aId: 'tm' }],
+    borrados: [{ rowId: 'crai', codigo: 'CRAI' }],
+  }
+
+  const NUEVE = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+  const CATALOGO_CRAI: Catalogo = {
+    edificios: [{ codigo: 'TM', nombre: 'Edificio TM', activo: true }],
+    salas: NUEVE.map((n) =>
+      sala({
+        code: `-1.${n}`,
+        edificioCodigo: 'TM',
+        edificioNombre: 'Edificio TM',
+        shortRef: `SALA-00020${n}`,
+        alias: [`1.${n}- CRAI`],
+      }),
+    ),
+    equivalencias: equivalenciasDesdeAuditoria(RASTRO),
+  }
+
+  const IXC = construirIndice(CATALOGO_CRAI)
+
+  it('la auditoría reconoce la fusión sin que nadie la declare', () => {
+    expect(equivalenciasDesdeAuditoria(RASTRO)).toEqual({ CRAI: 'TM' })
+  })
+
+  it.each(NUEVE)('la fila «1.%i-» de «EDIFICIO CRAI» encuentra su sala', (n) => {
+    const r = resolverSala(IXC, { tipo: 'estado', edificio: 'EDIFICIO CRAI', zona: 'PLANTA -1', aula: `1.${n}-` })
+    expect(r).toMatchObject({ estado: 'resuelta', via: 'alias' })
+    if (r.estado === 'resuelta') expect(r.sala.code).toBe(`-1.${n}`)
+  })
+
+  it('y dice que el alias se guardó con el código de antes', () => {
+    const r = resolverSala(IXC, { tipo: 'estado', edificio: 'EDIFICIO CRAI', aula: '1.1-' })
+    if (r.estado !== 'resuelta') throw new Error('tenía que cruzar')
+    expect(r.aviso).toContain('1.1- CRAI')
+  })
+
+  it('sin la equivalencia de la fusión no cruza, y por eso hace falta la lápida', () => {
+    const ix = construirIndice({ ...CATALOGO_CRAI, equivalencias: {} })
+    const r = resolverSala(ix, { tipo: 'estado', edificio: 'EDIFICIO CRAI', aula: '1.1-' })
+    expect(r.estado).not.toBe('resuelta')
+  })
+
+  it('sin el alias, el código anterior de la auditoría la rescata igual', () => {
+    const ix = construirIndice({
+      ...CATALOGO_CRAI,
+      salas: CATALOGO_CRAI.salas.map((s) => ({ ...s, alias: [] })),
+      codigosViejosDeSala: codigosAnterioresDeSalaDesdeAuditoria({
+        ...RASTRO,
+        salasRenombradas: NUEVE.map((n) => ({ rowId: `id-TM--1.${n}`, codigoViejo: `1.${n}-` })),
+      }),
+    })
+    const r = resolverSala(ix, { tipo: 'estado', edificio: 'EDIFICIO CRAI', aula: '1.4-' })
+    expect(r).toMatchObject({ estado: 'resuelta', via: 'codigo-anterior-de-sala' })
+    if (r.estado === 'resuelta') expect(r.sala.code).toBe('-1.4')
+  })
+
+  it('el código de hoy manda sobre el de ayer: no se secuestra una sala viva', () => {
+    // La sala A se llamaba `-1.1` y pasó a `-1.9`; después la sala B pasó a
+    // llamarse `-1.1`. La fila que dice `-1.1` es de B, que es como se llama hoy.
+    const ix = construirIndice({
+      edificios: [{ codigo: 'TM', nombre: 'Edificio TM', activo: true }],
+      salas: [
+        sala({ code: '-1.9', edificioCodigo: 'TM', shortRef: 'SALA-A', id: 'sala-a' }),
+        sala({ code: '-1.1', edificioCodigo: 'TM', shortRef: 'SALA-B', id: 'sala-b' }),
+      ],
+      codigosViejosDeSala: [{ salaId: 'sala-a', codigo: '-1.1' }],
+    })
+    const r = resolverSala(ix, { tipo: 'estado', edificio: 'TM', aula: '-1.1' })
+    if (r.estado !== 'resuelta') throw new Error('tenía que cruzar')
+    expect(r.sala.shortRef).toBe('SALA-B')
+  })
+
+  it('un código anterior nunca sale a buscar por todo el campus', () => {
+    // Es la trampa que hay que evitar: `1.1-` del CRAI y `-1.1` del EDIFICIO H
+    // son aulas de sótano distintas, de edificios distintos. El código anterior
+    // vive dentro de su edificio y no entra en `porCodigoSuelto`.
+    const ix = construirIndice({
+      edificios: [
+        { codigo: 'TM', nombre: 'Edificio TM', activo: true },
+        { codigo: 'H', nombre: 'EDIFICIO H', activo: true },
+      ],
+      salas: [
+        sala({ code: '-1.1', edificioCodigo: 'TM', shortRef: 'SALA-TM', id: 'sala-tm' }),
+        sala({ code: '-1.1', edificioCodigo: 'H', shortRef: 'SALA-H', id: 'sala-h' }),
+      ],
+      codigosViejosDeSala: [{ salaId: 'sala-tm', codigo: '1.1-' }],
+    })
+    expect(ix.porCodigoSuelto.get('1.1-')).toBeUndefined()
+    // Y con un edificio que ya no está, tampoco lo encuentra por ahí.
+    const r = resolverSala(ix, { tipo: 'estado', edificio: 'EDIFICIO QUE NO EXISTE', aula: '1.1-' })
+    expect(r.estado).not.toBe('resuelta')
   })
 })

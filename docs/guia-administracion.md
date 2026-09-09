@@ -45,6 +45,12 @@ asigna la suya con dos toques. Cada asignación deja además ese texto como
 **alias** de la sala, así que la próxima importación —y el buscador— lo
 resuelven solos, y cierra su fila de cuarentena con autor.
 
+Aquí caen también los partes que entran desde el Excel de SharePoint cuando,
+al sincronizar, se contesta «no es de ninguna sala»: llegan con el texto de
+aula que llevaba la fila y se colocan igual. Lo normal es contestarlo en la
+propia pantalla de sincronizar, que ofrece las salas candidatas; esta bandeja
+es para lo que se dejó pasar.
+
 En la pestaña de Incidencias, la búsqueda entiende también salas y edificios de
 verdad: teclear `H` lista el histórico completo del edificio H —resueltas
 incluidas—, y `1.7 H` la sala, se escriba en el orden que se escriba.
@@ -863,6 +869,31 @@ where name in ('Lámpara proyector NP44', 'Cable HDMI fibra 15 m');
 
 Los artículos por debajo salen en rojo y en el panel.
 
+### PCs de repuesto — los ordenadores por número de serie
+
+Al final de la pestaña **Almacén** está la lista de ordenadores de repuesto:
+los tiny que esperan en el almacén, uno por número de serie. El almacén de
+arriba cuenta —«quedan 7 Ordenador Tiny M70Q»— y esta lista nombra: cuál es
+cada uno y dónde está. Es la misma lista que la hoja `PCs STOCK <año>` del
+Excel: lo que se da de alta aquí sale en la hoja al sincronizar, y lo que se
+teclea en la hoja entra aquí (la pasada lo pregunta antes).
+
+- **Nuevo PC** (supervisor): artículo, marca, modelo, número de serie y
+  observaciones. Si el número de serie ya es de un equipo instalado en un aula,
+  la unidad nace ya como «instalada» apuntando a él.
+- **Instalar en un aula** (cualquiera del personal): elige edificio y sala. La
+  aplicación crea el equipo en el aula con ese número de serie, retira el
+  ordenador que hubiera del mismo tipo (queda como sustitución en su
+  historial), descuenta una unidad del artículo del almacén y deja la unidad
+  como «Instalado en 2.1 C · 08/09/2026». Todo en una sola operación: no puede
+  quedar un ordenador en dos sitios.
+- **Dar de baja** (supervisor): para el que no va a instalarse.
+- Si un equipo que vino de aquí se retira después desde el aula con destino
+  «almacén», la unidad vuelve sola a «disponible»; con destino «baja», a
+  «baja».
+
+Los ordenadores disponibles salen en el informe como capacidad de respuesta.
+
 ## 5. Las placas de puerta
 
 Se imprimen desde la lista de salas del edificio, con **Placas**: una por
@@ -1072,14 +1103,25 @@ minuto; sin ella, unos segundos.
 
 Desde ahí salen dos botones:
 
-- **Descargar PDF** abre el informe en una pestaña y lanza el diálogo de
-  imprimir, que es de donde sale el PDF: en el iPad, «Imprimir» y después
-  «Compartir → Guardar en Archivos»; en el ordenador, «Guardar como PDF» en el
-  destino, en lugar de una impresora. Es el mismo gesto que la hoja de
-  inventario y que las placas.
+- **Descargar PDF** baja el PDF ya hecho. El documento se manda al servidor, que
+  lo convierte con WeasyPrint —el mismo que hace los PDF de los informes
+  programados— y lo devuelve como fichero: en el iPad se abre la hoja de
+  compartir para guardarlo en Archivos, y en el ordenador cae en la carpeta de
+  descargas. Tarda un par de segundos.
+
+  Si el servidor no puede convertirlo —está actualizándose, o el worker no
+  corre— la pantalla lo dice y cae sola al camino de antes: abre el informe en
+  una pestaña con el diálogo de imprimir, de donde también sale un PDF («Guardar
+  como PDF» en el ordenador; «Compartir → Guardar en Archivos» en el iPad).
 - **Descargar el original** guarda el HTML del que sale ese PDF: un solo fichero
   que se abre en cualquier navegador, sin conexión y sin nada instalado. Es lo
   que conviene guardar para archivar; no es el PDF.
+
+**El orden del documento.** Primero lo que se lee —las cifras, los gráficos,
+dónde está el trabajo y qué conviene hacer— y después, detrás del corte
+«Detalle del periodo», los listados completos: cada revisión, el diario, cada
+cierre y las fotos. Se consultan, no se leen de seguido: con un periodo largo
+son trescientas filas, y antes se metían entre el análisis y las conclusiones.
 
 El informe queda además **archivado** en la lista de abajo, y cada entrada lleva
 un distintivo con **cómo salió su análisis**:

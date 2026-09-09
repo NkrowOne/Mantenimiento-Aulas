@@ -3112,3 +3112,1067 @@ begin;
     end;
   end $$;
 rollback;
+
+\echo ''
+\echo '=== 11. La sincronización no la ejecuta un anónimo ==='
+-- `alter default privileges … to anon, authenticated` del bootstrap hace que
+-- toda función nazca ejecutable por anónimos, y `revoke … from public` no se lo
+-- quita: ese permiso está a nombre de `anon`, no de `PUBLIC`. Con las funciones
+-- de la sincronización eso significaba escritura completa sin sesión, porque son
+-- `security definer` y se saltan la RLS entera.
+--
+-- Esto no comprueba que el SQL compile: comprueba que **deniega**. Si alguien
+-- añade una función hermana y se olvida del `revoke`, salta aquí.
+begin;
+  do $$
+  declare
+    f text;
+    quien text;
+    fallos int := 0;
+  begin
+    -- Ninguna de las de dentro puede tener permiso para nadie salvo el dueño.
+    for f, quien in
+      select p.proname, a.grantee::regrole::text
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join lateral aclexplode(p.proacl) a
+       where n.nspname = 'public'
+         and p.proname in (
+           'sync_aplicar_celda', 'sync_celda_de_sala', 'sync_celda_de_articulo',
+           'sync_celda_de_incidencia', 'sync_material_del_parte', 'sync_aplicar_equipo',
+           'sync_mover_sala', 'sync_revision_desde_el_excel', 'cuarentena_apuntar',
+           'sync_solo_admin')
+         and a.grantee::regrole::text in ('anon', 'authenticated', 'public', '-')
+    loop
+      raise warning 'FALLO: % la puede ejecutar %', f, quien;
+      fallos := fallos + 1;
+    end loop;
+
+    -- Y ninguna de las de fuera puede ser ejecutable por un anónimo.
+    for f, quien in
+      select p.proname, a.grantee::regrole::text
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join lateral aclexplode(p.proacl) a
+       where n.nspname = 'public'
+         and p.proname in (
+           'sync_aplicar', 'sync_registrar_fichero', 'sync_instantanea',
+           'sync_ultima_salida', 'sync_apuntar_salida')
+         and a.grantee::regrole::text in ('anon', 'public', '-')
+    loop
+      raise warning 'FALLO: % la puede ejecutar %', f, quien;
+      fallos := fallos + 1;
+    end loop;
+
+    if fallos > 0 then
+      raise exception 'FALLO: % permisos de sincronización abiertos de más', fallos;
+    end if;
+    raise notice 'OK: las funciones de la sincronización no las alcanza un anónimo';
+  end $$;
+
+  -- Y que un técnico no pase, por el camino que sea. Las dos barreras valen: si
+  -- el permiso está bien puesto salta el «permission denied», y si algún día se
+  -- pierde salta la comprobación de dentro. Lo que no vale es que pase.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.sync_solo_admin();
+    raise exception 'FALLO: un técnico pasó la comprobación de administrador';
+  exception when others then
+    if sqlerrm like '%administrador%' or sqlerrm like '%permission denied%'
+       or sqlerrm like '%permiso denegado%' then
+      raise notice 'OK: a un técnico se le deniega (%)', left(sqlerrm, 40);
+    else
+      raise;
+    end if;
+  end $$;
+rollback;
+
+\echo '=== 12. «Comprado» se cuadra contra las compras de SU año ==='
+begin;
+  -- El fallo: la hoja suma solo las compras de su año y la base las sumaba
+  -- todas, así que un artículo con compras de 2025 salía a negativo y el cuadre
+  -- no entraba nunca —lo paraba el signo, que exige que una compra sea positiva.
+  -- Sin `test_as`: el montaje escribe movimientos con `source = 'import'`, que
+  -- es cosa del importador y no de un administrador con sesión, y la función que
+  -- se prueba es `security definer` —se salta la RLS a propósito, que para eso
+  -- la llama `sync_aplicar` como dueña—. Lo que se comprueba aquí es la cuenta,
+  -- no el permiso; el permiso es el bloque 11.
+  do $$
+  declare
+    v_item   uuid := gen_random_uuid();
+    v_motivo text;
+    v_2026   numeric;
+    v_total  numeric;
+  begin
+    insert into stock_items (id, name, unit) values (v_item, 'Cable de prueba', 'ud');
+    -- 40 compradas en 2025 y 12 en 2026. La hoja de 2026 dice 32.
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, source)
+    values (gen_random_uuid(), v_item, 40, 'compra', '2025-06-01T10:00:00Z', 'import'),
+           (gen_random_uuid(), v_item, 12, 'compra', '2026-03-01T10:00:00Z', 'import');
+
+    v_motivo := public.sync_celda_de_articulo(jsonb_build_object(
+      'campo', 'articulo.comprado', 'clave', v_item::text, 'valor', '32', 'anyo', 2026));
+
+    if v_motivo is not null then
+      raise exception 'FALLO: el cuadre de 2026 se rechazó: %', v_motivo;
+    end if;
+
+    select coalesce(sum(qty), 0) into v_2026 from stock_movements
+     where stock_item_id = v_item and kind = 'compra'
+       and extract(year from (occurred_at at time zone 'Europe/Madrid')) = 2026;
+    if v_2026 <> 32 then
+      raise exception 'FALLO: 2026 tendría que quedarse en 32 y tiene %', v_2026;
+    end if;
+
+    select coalesce(sum(qty), 0) into v_total from stock_movements
+     where stock_item_id = v_item and kind = 'compra';
+    if v_total <> 72 then
+      raise exception 'FALLO: 2025 no se toca: el total tendría que ser 72 y es %', v_total;
+    end if;
+    raise notice 'OK: el cuadre de 2026 no arrastra las compras de 2025';
+
+    -- Y repetirlo no vuelve a mover nada: ya cuadra.
+    v_motivo := public.sync_celda_de_articulo(jsonb_build_object(
+      'campo', 'articulo.comprado', 'clave', v_item::text, 'valor', '32', 'anyo', 2026));
+    select coalesce(sum(qty), 0) into v_total from stock_movements
+     where stock_item_id = v_item and kind = 'compra';
+    if v_motivo is not null or v_total <> 72 then
+      raise exception 'FALLO: la segunda pasada movió algo (% / %)', v_motivo, v_total;
+    end if;
+    raise notice 'OK: y la pasada siguiente no vuelve a moverlo';
+
+    -- Si la hoja dice MENOS que la base, no se inventa una compra negativa.
+    v_motivo := public.sync_celda_de_articulo(jsonb_build_object(
+      'campo', 'articulo.comprado', 'clave', v_item::text, 'valor', '5', 'anyo', 2026));
+    if v_motivo is null then
+      raise exception 'FALLO: 5 < 32 y lo dio por bueno';
+    end if;
+    select coalesce(sum(qty), 0) into v_total from stock_movements
+     where stock_item_id = v_item and kind = 'compra';
+    if v_total <> 72 then
+      raise exception 'FALLO: rechazó y aun así tocó el almacén (%)', v_total;
+    end if;
+    raise notice 'OK: una compra no se deshace desde una celda (%)', left(v_motivo, 48);
+  end $$;
+rollback;
+
+\echo '=== 13. Una corrección rechazada no deja antepasado ==='
+begin;
+  -- Si la deja, la pasada siguiente hace esta cuenta: el Excel no se movió
+  -- —coincide con el antepasado— y la base sí, luego manda la app… y escribe
+  -- encima de la celda lo que el usuario acababa de corregir. Sin aviso, y con
+  -- la entrada de cuarentena diciendo que no se hizo nada.
+  select test_as('44444444-4444-4444-4444-444444444444', 'admin');
+  do $$
+  declare
+    v_plan  jsonb;
+    v_out   jsonb;
+    v_anteps int;
+  begin
+    -- Una corrección que entra y otra que no: la clave de la segunda no existe.
+    v_plan := jsonb_build_object(
+      'origen', 'material_aulas',
+      'hacia_la_base', jsonb_build_array(
+        jsonb_build_object('entidad', 'articulo', 'hoja', 'Bolsa 2026',
+                           'clave', 'no-es-un-uuid', 'columna', 'A',
+                           'campo', 'articulo.nombre', 'valor', 'Lo que sea')
+      ),
+      'instantanea', jsonb_build_array(
+        jsonb_build_object('hoja', 'Bolsa 2026', 'clave', 'no-es-un-uuid',
+                           'columna', 'A', 'valor', 'Lo que sea'),
+        jsonb_build_object('hoja', 'Bolsa 2026', 'clave', 'no-es-un-uuid',
+                           'columna', 'B', 'valor', '3')
+      )
+    );
+
+    v_out := public.sync_aplicar(v_plan);
+    if (v_out->>'rechazadas')::int <> 1 then
+      raise exception 'FALLO: tendría que haberse rechazado una y se rechazaron %', v_out->>'rechazadas';
+    end if;
+
+    select count(*) into v_anteps from sync_celdas
+     where hoja = 'Bolsa 2026' and ref = 'no-es-un-uuid' and columna = 'A';
+    if v_anteps <> 0 then
+      raise exception 'FALLO: la celda rechazada dejó antepasado';
+    end if;
+    raise notice 'OK: la celda rechazada no dejó antepasado';
+
+    -- Y las demás de la misma fila sí: el rechazo es de una celda, no de la fila.
+    select count(*) into v_anteps from sync_celdas
+     where hoja = 'Bolsa 2026' and ref = 'no-es-un-uuid' and columna = 'B';
+    if v_anteps <> 1 then
+      raise exception 'FALLO: se perdió el antepasado de una celda que no se tocó';
+    end if;
+    raise notice 'OK: y las demás celdas de la fila sí lo dejaron';
+
+    -- Y la pasada no se cayó: quedó su parte con la cuenta hecha.
+    if not exists (select 1 from sync_partes where id = (v_out->>'parte_id')::bigint
+                     and termino_at is not null) then
+      raise exception 'FALLO: la pasada no llegó a terminar';
+    end if;
+    raise notice 'OK: y la pasada terminó igual';
+  end $$;
+rollback;
+
+\echo '=== 14. Bajar una cantidad o quitar una línea devuelve el material ==='
+begin;
+  -- Antes: `3 → 2` intentaba insertar un consumo POSITIVO, lo paraba el signo y
+  -- la celda se rechazaba en cada pasada; y quitar la línea entera no devolvía
+  -- nada, así que el descuento se quedaba en el almacén para siempre.
+  do $$
+  declare
+    v_item uuid := gen_random_uuid();
+    v_inc  uuid := gen_random_uuid();
+    v_neto int;
+    v_msg  text;
+    v_det  jsonb;
+  begin
+    insert into stock_items (id, name, unit) values (v_item, 'Cable de prueba', 'ud');
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, source)
+    values (gen_random_uuid(), v_item, 50, 'compra', '2026-01-05T10:00:00Z', 'import');
+    insert into incidents (id, external_ref, title, severity, state, opened_at, source)
+    values (v_inc, 'I260210_0099', 'Prueba', 'media', 'abierta', '2026-02-10T09:00:00Z', 'import');
+
+    v_det := jsonb_build_array(jsonb_build_object(
+      'articulo_id', v_item::text, 'cantidad', 3, 'texto', '3 Cable de prueba'));
+    v_msg := public.sync_material_del_parte(v_inc, v_det);
+    if v_msg is not null then raise exception 'FALLO: no entró el material: %', v_msg; end if;
+
+    select coalesce(-sum(qty), 0)::int into v_neto from stock_movements
+     where incident_id = v_inc and kind in ('consumo', 'devolucion');
+    if v_neto <> 3 then raise exception 'FALLO: tendría que haber 3 descontadas y hay %', v_neto; end if;
+    raise notice 'OK: tres unidades descontadas del parte';
+
+    -- Repetir la misma cantidad no descuenta otra vez.
+    v_msg := public.sync_material_del_parte(v_inc, v_det);
+    select coalesce(-sum(qty), 0)::int into v_neto from stock_movements
+     where incident_id = v_inc and kind in ('consumo', 'devolucion');
+    if v_neto <> 3 then raise exception 'FALLO: la segunda pasada volvió a descontar (neto %)', v_neto; end if;
+    raise notice 'OK: y la pasada siguiente no vuelve a descontarlas';
+
+    -- 3 → 2: una vuelve al almacén, y esto es lo que antes ni siquiera entraba.
+    v_msg := public.sync_material_del_parte(v_inc, jsonb_build_array(jsonb_build_object(
+      'articulo_id', v_item::text, 'cantidad', 2, 'texto', '2 Cable de prueba')));
+    if v_msg is not null then raise exception 'FALLO: bajar la cantidad se rechazó: %', v_msg; end if;
+    select coalesce(-sum(qty), 0)::int into v_neto from stock_movements
+     where incident_id = v_inc and kind in ('consumo', 'devolucion');
+    if v_neto <> 2 then raise exception 'FALLO: tendrían que quedar 2 descontadas y quedan %', v_neto; end if;
+    raise notice 'OK: bajar de 3 a 2 devuelve una al almacén';
+
+    -- Y quitar la línea entera devuelve las dos que quedaban.
+    v_msg := public.sync_material_del_parte(v_inc, '[]'::jsonb);
+    select coalesce(-sum(qty), 0)::int into v_neto from stock_movements
+     where incident_id = v_inc and kind in ('consumo', 'devolucion');
+    if v_neto <> 0 then raise exception 'FALLO: quitar la línea dejó % descontadas', v_neto; end if;
+    if exists (select 1 from incident_materials where incident_id = v_inc) then
+      raise exception 'FALLO: la lista del parte no se vació';
+    end if;
+    raise notice 'OK: y quitar la línea devuelve lo que quedaba';
+
+    -- El almacén vuelve a las 50 de la compra: nada se ha perdido por el camino.
+    select coalesce(sum(qty), 0)::int into v_neto from stock_movements where stock_item_id = v_item;
+    if v_neto <> 50 then raise exception 'FALLO: el almacén se quedó en % y no en 50', v_neto; end if;
+    raise notice 'OK: el almacén cuadra al final';
+  end $$;
+rollback;
+
+\echo '=== 15. Un equipo de baja no es «un equipo de otra aula» ==='
+begin;
+  do $$
+  declare
+    v_tipo  uuid;
+    v_aula1 uuid;
+    v_aula2 uuid;
+    v_zona  uuid;
+    v_eq    uuid := gen_random_uuid();
+    v_msg   text;
+    v_est   asset_status;
+    v_donde uuid;
+    v_cuantos int;
+  begin
+    select id into v_zona from zones limit 1;
+    select id into v_tipo from asset_types limit 1;
+    insert into rooms (id, zone_id, code, name) values (gen_random_uuid(), v_zona, 'PRB-1', 'Prueba 1')
+      returning id into v_aula1;
+    insert into rooms (id, zone_id, code, name) values (gen_random_uuid(), v_zona, 'PRB-2', 'Prueba 2')
+      returning id into v_aula2;
+
+    -- Un proyector que se retiró y sigue apuntado en la hoja de SU aula.
+    insert into assets (id, asset_type_id, room_id, serial, status)
+    values (v_eq, v_tipo, v_aula1, 'SN-PRUEBA-1', 'retirado');
+
+    v_msg := public.sync_aplicar_equipo(v_aula1, v_tipo, 'serial', 'SN-PRUEBA-1');
+    if v_msg is not null then
+      raise exception 'FALLO: la hoja no pudo decir que sigue puesto: %', v_msg;
+    end if;
+    select status into v_est from assets where id = v_eq;
+    if v_est <> 'instalado' then raise exception 'FALLO: no se reactivó (está %)', v_est; end if;
+    select count(*) into v_cuantos from assets where serial = 'SN-PRUEBA-1';
+    if v_cuantos <> 1 then raise exception 'FALLO: se duplicó el equipo (% con ese número)', v_cuantos; end if;
+    if not exists (select 1 from asset_events where asset_id = v_eq and meta->>'source' = 'sharepoint') then
+      raise exception 'FALLO: la reactivación no dejó apunte en el historial';
+    end if;
+    raise notice 'OK: de baja en su aula, la hoja lo reactiva y no lo duplica';
+
+    -- Pero de baja en OTRA aula no se mueve desde una celda, y se dice por qué.
+    update assets set status = 'retirado' where id = v_eq;
+    v_msg := public.sync_aplicar_equipo(v_aula2, v_tipo, 'serial', 'SN-PRUEBA-1');
+    if v_msg is null then raise exception 'FALLO: se llevó a otra aula un equipo de baja'; end if;
+    if v_msg not like '%dado de baja%' then
+      raise exception 'FALLO: el motivo no dice lo que pasa: %', v_msg;
+    end if;
+    select room_id into v_donde from assets where id = v_eq;
+    if v_donde <> v_aula1 then raise exception 'FALLO: rechazó y aun así lo movió'; end if;
+    raise notice 'OK: de baja en otra aula se rechaza diciendo la verdad';
+
+    -- Y el caso de siempre: en uso en otra aula, sigue siendo un choque.
+    update assets set status = 'instalado' where id = v_eq;
+    v_msg := public.sync_aplicar_equipo(v_aula2, v_tipo, 'serial', 'SN-PRUEBA-1');
+    if v_msg not like '%ya está en otra aula%' then
+      raise exception 'FALLO: un equipo en uso en otra aula tendría que chocar: %', v_msg;
+    end if;
+    raise notice 'OK: y en uso en otra aula sigue chocando';
+  end $$;
+rollback;
+
+\echo '=== 16. Las horas llegan a la sala en el orden en que sube la cola ==='
+begin;
+  do $$
+  declare
+    v_zona uuid;
+    v_aula uuid;
+    v_tipo uuid;
+    v_proy uuid := gen_random_uuid();
+    v_rev  uuid := gen_random_uuid();
+    v_vieja uuid := gen_random_uuid();
+    v_horas int;
+  begin
+    select id into v_zona from zones limit 1;
+    insert into rooms (id, zone_id, code, name, projector_hours)
+    values (gen_random_uuid(), v_zona, 'PRB-H', 'Prueba horas', 900)
+    returning id into v_aula;
+
+    -- Una lectura de horas de verdad es la de un proyector instalado en el aula
+    -- que se revisa, y su clave es `asset:<id>`. Cualquier otra fila que diga
+    -- «h» no es una lectura: ver el bloque 17.
+    select id into v_tipo from asset_types where tracks_lamp_hours limit 1;
+    insert into assets (id, asset_type_id, room_id, status)
+    values (v_proy, v_tipo, v_aula, 'instalado');
+
+    -- El orden EXACTO de `outbox.ts`: la revisión sube en borrador porque le
+    -- faltan comprobaciones, luego las comprobaciones, y luego el cierre.
+    insert into inspections (id, room_id, by_user, occurred_at, status)
+    values (v_rev, v_aula, null, '2026-03-04T09:30:00Z', 'borrador');
+
+    insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
+    values (gen_random_uuid(), v_rev, 'asset:' || v_proy::text, 'ok', 4200, 'h');
+
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 900 then
+      raise exception 'FALLO: un borrador no puede fechar nada y ya movió la sala a %', v_horas;
+    end if;
+
+    update inspections set status = 'completa' where id = v_rev;
+
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 4200 then
+      raise exception 'FALLO: al cerrar, la sala tendría que tener 4200 y tiene %', v_horas;
+    end if;
+    raise notice 'OK: al cerrar la revisión, las 4.200 horas llegan a la sala';
+
+    -- Una revisión ANTERIOR que entra tarde no puede hacer retroceder la sala.
+    insert into inspections (id, room_id, by_user, occurred_at, status)
+    values (v_vieja, v_aula, null, '2025-11-02T09:30:00Z', 'borrador');
+    insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
+    values (gen_random_uuid(), v_vieja, 'asset:' || v_proy::text, 'ok', 3900, 'h');
+    update inspections set status = 'completa' where id = v_vieja;
+
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 4200 then
+      raise exception 'FALLO: una revisión vieja hizo retroceder la sala a %', v_horas;
+    end if;
+    raise notice 'OK: y una revisión vieja que entra tarde no la hace retroceder';
+
+    -- Corregir la lectura de la revisión ya cerrada sí la mueve.
+    update inspection_checks set measure = 4250 where inspection_id = v_rev and measure_unit = 'h';
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 4250 then
+      raise exception 'FALLO: corregir la lectura no llegó a la sala (%)', v_horas;
+    end if;
+    raise notice 'OK: y corregir la lectura de la más reciente sí llega';
+  end $$;
+rollback;
+
+\echo '=== 17. Ni el número de incidencia ni las horas los escribe un técnico ==='
+begin;
+  -- Dos escrituras que un técnico podía hacer rodeando la RLS, no rompiéndola.
+  do $$
+  declare
+    v_zona uuid;
+    v_aula uuid;
+    v_tipo uuid;
+    v_proy uuid := gen_random_uuid();
+    v_rev  uuid := gen_random_uuid();
+    v_rev2 uuid := gen_random_uuid();
+    v_inc  uuid := gen_random_uuid();
+    v_ref  text;
+    v_horas int;
+  begin
+    select id into v_zona from zones limit 1;
+    insert into rooms (id, zone_id, code, name, projector_hours)
+    values (gen_random_uuid(), v_zona, 'PRB-S', 'Prueba seguridad', 900)
+    returning id into v_aula;
+    select id into v_tipo from asset_types where tracks_lamp_hours limit 1;
+    insert into assets (id, asset_type_id, room_id, status)
+    values (v_proy, v_tipo, v_aula, 'instalado');
+
+    -- (1) El número escrito a mano se descarta: con `_9999` puesto por una
+    --     sesión, ese día se quedaba sin números que dar.
+    perform test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+    insert into incidents (id, room_id, title, description, severity, state, opened_at, opened_by, external_ref)
+    values (v_inc, v_aula, 'Prueba', 'Prueba', 'media', 'abierta',
+            '2026-12-31T09:00:00Z', '11111111-1111-4111-8111-111111111111', 'I261231_9999')
+    returning external_ref into v_ref;
+    if v_ref = 'I261231_9999' then
+      raise exception 'FALLO: un técnico fijó el número a mano y se quedó';
+    end if;
+    if v_ref <> 'I261231_0001' then
+      raise exception 'FALLO: el número que puso la base es «%» y esperábamos I261231_0001', v_ref;
+    end if;
+    raise notice 'OK: el número que escribe un técnico se descarta (quedó %)', v_ref;
+
+    -- (2) Una comprobación inventada con «h» no escribe en rooms.
+    insert into inspections (id, room_id, by_user, occurred_at, status)
+    values (v_rev, v_aula, '11111111-1111-4111-8111-111111111111',
+            '2026-12-31T10:00:00Z', 'borrador');
+    insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
+    values (gen_random_uuid(), v_rev, 'me-lo-invento', 'ok', 123456, 'h');
+    update inspections set status = 'completa' where id = v_rev;
+
+    reset role;
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 900 then
+      raise exception 'FALLO: una comprobación inventada escribió % en rooms', v_horas;
+    end if;
+    raise notice 'OK: una comprobación que no es de un proyector no toca rooms';
+
+    -- (3) Y una comprobación de un proyector de OTRA aula, tampoco.
+    perform test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+    insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
+    values (gen_random_uuid(), v_rev,
+            'asset:' || (select id from assets where room_id <> v_aula and status = 'instalado' limit 1)::text,
+            'ok', 654321, 'h');
+    reset role;
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 900 then
+      raise exception 'FALLO: el proyector de otra aula escribió % en esta', v_horas;
+    end if;
+    raise notice 'OK: ni el proyector de otra aula';
+
+    -- (4) Y una medida absurda tampoco, que además reventaba el ::int.
+    perform test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+    insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
+    values (gen_random_uuid(), v_rev, 'asset:' || v_proy::text, 'ok', 99999999999, 'h');
+    reset role;
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 900 then
+      raise exception 'FALLO: entraron % horas de lámpara', v_horas;
+    end if;
+    raise notice 'OK: ni cien mil millones de horas de lámpara';
+
+    -- (5) Pero la lectura de verdad sí entra: esto es la función, no el candado.
+    --     En una revisión nueva, que una cerrada ya no se toca —y hay una sola
+    --     comprobación por elemento, así que la de arriba está ocupada.
+    perform test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+    insert into inspections (id, room_id, by_user, occurred_at, status)
+    values (v_rev2, v_aula, '11111111-1111-4111-8111-111111111111',
+            '2026-12-31T12:00:00Z', 'borrador');
+    insert into inspection_checks (id, inspection_id, check_key, result, measure, measure_unit)
+    values (gen_random_uuid(), v_rev2, 'asset:' || v_proy::text, 'ok', 4200, 'h');
+    update inspections set status = 'completa' where id = v_rev2;
+    reset role;
+    select projector_hours into v_horas from rooms where id = v_aula;
+    if v_horas <> 4200 then
+      raise exception 'FALLO: la lectura buena no llegó (%)', v_horas;
+    end if;
+    raise notice 'OK: y la lectura de verdad sí llega';
+  end $$;
+rollback;
+
+\echo '=== 18. El antepasado de una celda escrita espera al fichero ==='
+begin;
+  -- Guardarlo dentro de `sync_aplicar` era guardar una promesa sobre un libro
+  -- que todavía no existe: si la pasada no llega a generar el fichero, la
+  -- instantánea dice que el Excel vale A cuando vale V, y la pasada siguiente
+  -- mete la V en la base deshaciendo el trabajo de la aplicación.
+  select test_as('44444444-4444-4444-4444-444444444444', 'admin');
+  do $$
+  declare
+    v_out    jsonb;
+    v_parte  bigint;
+    v_cuantas int;
+  begin
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      -- Lo que dice el libro que se acaba de leer: se guarda ya.
+      'instantanea', jsonb_build_array(
+        jsonb_build_object('hoja', 'Bolsa 2026', 'clave', 'K1', 'columna', 'A', 'valor', 'lo que ya decía')
+      )
+    ));
+    v_parte := (v_out->>'parte_id')::bigint;
+
+    select count(*) into v_cuantas from sync_celdas where hoja = 'Bolsa 2026' and ref = 'K1';
+    if v_cuantas <> 1 then
+      raise exception 'FALLO: lo que el libro ya decía tendría que guardarse (hay %)', v_cuantas;
+    end if;
+    select count(*) into v_cuantas from sync_celdas where hoja = 'Bolsa 2026' and ref = 'K2';
+    if v_cuantas <> 0 then
+      raise exception 'FALLO: se guardó un antepasado que nadie mandó';
+    end if;
+    raise notice 'OK: lo que el libro ya decía se guarda al aplicar';
+
+    -- Y lo que el libro VA a decir, solo cuando el fichero existe.
+    perform public.sync_apuntar_salida(v_parte, repeat('a', 64), jsonb_build_array(
+      jsonb_build_object('hoja', 'Bolsa 2026', 'clave', 'K2', 'columna', 'A', 'valor', 'lo que dirá')
+    ));
+
+    select count(*) into v_cuantas from sync_celdas
+     where hoja = 'Bolsa 2026' and ref = 'K2' and valor_base = 'lo que dirá';
+    if v_cuantas <> 1 then
+      raise exception 'FALLO: al cerrar la pasada tendría que guardarse (hay %)', v_cuantas;
+    end if;
+    if (select salida_sha256 from sync_partes where id = v_parte) <> repeat('a', 64) then
+      raise exception 'FALLO: no se apuntó el hash del libro que salió';
+    end if;
+    raise notice 'OK: y lo que va a decir, solo cuando el fichero ya existe';
+  end $$;
+rollback;
+
+-- -----------------------------------------------------------------------------
+begin;
+\echo '=== 19. Renombrar una sala deja rastro, y la fusión no lo borra ==='
+-- Es el caso de las nueve aulas de sótano del CRAI: el libro las escribe `1.1-`,
+-- alguien las renombró a `-1.1` en la aplicación y después fusionó el edificio.
+-- El alias seguía apuntando a la sala correcta pero con el código del edificio
+-- de aquel día, así que el cruce —que lo recompone con el de hoy— no lo
+-- encontraba nunca. Aquí se comprueban las tres piezas del arreglo.
+  select test_as('44444444-4444-4444-4444-444444444444', 'admin');
+  do $$
+  declare
+    v_origen  uuid;
+    v_destino uuid;
+    v_zona    uuid;
+    v_sala    uuid;
+    v_n       int;
+  begin
+    -- Por los RPC y no con `insert` a pelo: es como los crea la aplicación, y
+    -- el alta de una sala dispara `materializar_defaults`, que solo se puede
+    -- llamar desde dentro de `create_room`.
+    v_origen  := public.create_building('ZZO', 'EDIFICIO DE ORIGEN');
+    v_destino := public.create_building('ZZD', 'EDIFICIO DE DESTINO');
+    v_sala    := public.create_room(v_origen, 'PLANTA -1', '1.1-', '1.1-', 'aula');
+    select zone_id into v_zona from rooms where id = v_sala;
+
+    -- 1) El disparador: un `update rooms set code` a pelo —el camino que usa la
+    --    vuelta del Excel, que no llamaba a `rename_room` y no dejaba nada—
+    --    tiene que dejar el alias igual.
+    update rooms set code = '-1.1', name = '-1.1' where id = v_sala;
+
+    select count(*) into v_n from room_aliases
+     where room_id = v_sala and alias_norm = public.norm_text('1.1- ZZO');
+    if v_n <> 1 then
+      raise exception 'FALLO: renombrar por fuera de rename_room no dejó alias (hay %)', v_n;
+    end if;
+    raise notice 'OK: renombrar la sala deja alias venga el renombrado de donde venga';
+
+    -- 2) La fusión recualifica ese alias con el código del edificio de hoy. El
+    --    viejo se queda: sigue siendo verdad que la sala se llamó así.
+    perform public.merge_building(v_origen, v_destino);
+
+    select count(*) into v_n from room_aliases
+     where room_id = v_sala and alias_norm = public.norm_text('1.1- ZZD');
+    if v_n <> 1 then
+      raise exception 'FALLO: la fusión no recualificó el alias (hay %)', v_n;
+    end if;
+    select count(*) into v_n from room_aliases
+     where room_id = v_sala and alias_norm = public.norm_text('1.1- ZZO');
+    if v_n <> 1 then
+      raise exception 'FALLO: la fusión borró el alias viejo, y eso era historia';
+    end if;
+    raise notice 'OK: la fusión recualifica los alias de las salas que se lleva';
+
+    -- 3) La lápida: `merged_into` deja escrito a dónde fue el edificio, para que
+    --    no haya que deducirlo del salto de las plantas —que no ocurre cuando
+    --    las plantas chocan de nombre y la fusión se vuelve invisible.
+    select count(*) into v_n from audit_log
+     where table_name = 'buildings' and op = 'DELETE' and row_id = v_origen::text
+       and old_data->>'merged_into' = v_destino::text;
+    if v_n <> 1 then
+      raise exception 'FALLO: la fusión no dejó apuntado a dónde fue el edificio (hay %)', v_n;
+    end if;
+    raise notice 'OK: la fusión deja escrito a dónde fue, en vez de que se deduzca';
+
+    -- 4) Y la vista lo cuenta ya filtrado, que es lo que lee el cruce sin tener
+    --    que bajarse la auditoría entera de `rooms` a un iPad.
+    select count(*) into v_n from historial_de_nomenclatura
+     where que = 'sala' and id = v_sala::text and codigo_viejo = '1.1-';
+    if v_n <> 1 then
+      raise exception 'FALLO: el historial no trae el código anterior de la sala (hay %)', v_n;
+    end if;
+    select count(*) into v_n from historial_de_nomenclatura
+     where que = 'edificio_borrado' and id = v_origen::text and destino = v_destino::text;
+    if v_n <> 1 then
+      raise exception 'FALLO: el historial no trae la fusión (hay %)', v_n;
+    end if;
+    raise notice 'OK: el historial de nomenclatura trae el renombrado y la fusión';
+  end $$;
+
+  -- 5) Y la fusión que chocaría de códigos se rechaza diciendo qué choca, en vez
+  --    de reventar a mitad con el error crudo del índice.
+  do $$
+  declare
+    v_a uuid; v_b uuid;
+  begin
+    v_a := public.create_building('ZZA', 'EDIFICIO A');
+    v_b := public.create_building('ZZB', 'EDIFICIO B');
+    -- «PLANTA BAJA» y «planta baja» son la misma planta para `norm_text`, que es
+    -- justo lo que la fusión tiene que ver y antes no veía.
+    perform public.create_room(v_a, 'PLANTA BAJA', '0.1', '0.1', 'aula');
+    perform public.create_room(v_b, 'planta baja', '0.1', '0.1', 'aula');
+
+    begin
+      perform public.merge_building(v_a, v_b);
+      raise exception 'FALLO: fusionar con dos aulas «0.1» en la misma planta tendría que rechazarse';
+    exception when others then
+      if sqlerrm not like '%no se puede fusionar%' and sqlerrm not like '%No se puede fusionar%' then
+        raise exception 'FALLO: el rechazo no explica el choque: %', sqlerrm;
+      end if;
+    end;
+    raise notice 'OK: la fusión que chocaría de códigos se rechaza diciendo qué choca';
+  end $$;
+rollback;
+
+-- -----------------------------------------------------------------------------
+begin;
+\echo '=== 20. Dentro del aula, el número de serie manda ==='
+-- El caso que `20260830000100` dejó apuntado y sin hacer: los números de `S/N TV`
+-- y `S/N Monitor` viven sobre equipos que siguen siendo `Pantalla`, y la hoja los
+-- reclama con el nombre nuevo. Sin esto se caía en el `insert` con un número que
+-- ya existe y salía «duplicate key value violates unique constraint».
+  -- Sin `test_as`, como el bloque 15 y por lo mismo: `sync_aplicar_equipo` tiene
+  -- revocado el permiso a `authenticated` a propósito —solo se llama desde dentro
+  -- de `sync_aplicar_celda`— y aquí se prueba ella sola.
+  do $$
+  declare
+    v_sala     uuid;
+    v_zona     uuid;
+    v_edificio uuid;
+    v_pantalla uuid;
+    v_tv       uuid;
+    v_camara   uuid;
+    v_equipo   uuid;
+    v_motivo   text;
+    v_n        int;
+  begin
+    insert into buildings (code, name, sort_order) values ('ZSN', 'EDIFICIO DE LA PRUEBA', 990)
+      returning id into v_edificio;
+    insert into zones (building_id, name, sort_order) values (v_edificio, 'PLANTA BAJA', 10)
+      returning id into v_zona;
+    insert into rooms (zone_id, code, name, kind) values (v_zona, '0.1', '0.1', 'aula')
+      returning id into v_sala;
+
+    select id into v_pantalla from asset_types
+     where public.norm_text(name) = public.norm_text('Pantalla') and merged_into is null;
+    v_tv     := public.asset_type_id('TV');
+    v_camara := public.asset_type_id('Cámara');
+
+    if v_pantalla is null or v_tv is null then
+      raise notice 'OK (saltado): esta base no tiene la fusión de Pantalla que separar';
+      return;
+    end if;
+
+    -- 1) La señal quedó escrita: `TV` se separó de `Pantalla`.
+    if not exists (select 1 from asset_types where id = v_tv and separado_de = v_pantalla) then
+      raise exception 'FALLO: no quedó apuntado que TV se separó de Pantalla';
+    end if;
+    raise notice 'OK: queda apuntado de qué tipo se separó cada tipo';
+
+    -- Un aparato heredado: número de serie de TV, pero todavía tipado Pantalla.
+    insert into assets (asset_type_id, room_id, serial, model, status)
+    values (v_pantalla, v_sala, 'SN-HEREDADO-1', 'LG 55', 'instalado')
+    returning id into v_equipo;
+
+    -- 2) La hoja lo reclama en su columna: se adopta y se reclasifica, y NO se
+    --    da de alta un segundo aparato con el mismo número.
+    v_motivo := public.sync_aplicar_equipo(v_sala, v_tv, 'serial', 'SN-HEREDADO-1');
+    if v_motivo is not null then
+      raise exception 'FALLO: tendría que haberlo adoptado y dijo «%»', v_motivo;
+    end if;
+    if (select asset_type_id from assets where id = v_equipo) <> v_tv then
+      raise exception 'FALLO: no se le devolvió el tipo del que estaba fundido';
+    end if;
+    select count(*) into v_n from assets where serial = 'SN-HEREDADO-1';
+    if v_n <> 1 then
+      raise exception 'FALLO: se duplicó el aparato (hay %)', v_n;
+    end if;
+    if not exists (select 1 from asset_events
+                    where asset_id = v_equipo and kind = 'sustitucion'
+                      and meta->>'tipo_antes' = 'Pantalla' and meta->>'tipo_ahora' = 'TV') then
+      raise exception 'FALLO: la reclasificación no quedó en el historial del equipo';
+    end if;
+    raise notice 'OK: el equipo heredado se adopta, se reclasifica y queda en su historial';
+
+    -- 3) Un choque que NO es una separación se rechaza, y lo explica.
+    insert into assets (asset_type_id, room_id, serial, model, status)
+    values (v_camara, v_sala, 'SN-DE-LA-CAMARA', 'Aver', 'instalado');
+
+    v_motivo := public.sync_aplicar_equipo(v_sala, v_tv, 'serial', 'SN-DE-LA-CAMARA');
+    if v_motivo is null then
+      raise exception 'FALLO: reclasificar una cámara a TV desde una celda no puede colar';
+    end if;
+    if v_motivo not like '%Cámara%' or v_motivo not like '%TV%' then
+      raise exception 'FALLO: el motivo no dice qué equipo lleva el número: «%»', v_motivo;
+    end if;
+    if (select asset_type_id from assets where serial = 'SN-DE-LA-CAMARA') <> v_camara then
+      raise exception 'FALLO: se tocó el tipo de la cámara pese a rechazar';
+    end if;
+    raise notice 'OK: un choque que no es una separación se rechaza y dice cuál es';
+
+    -- 4) Y el `update` del número tampoco puede robarle el suyo a otro aparato.
+    v_motivo := public.sync_aplicar_equipo(v_sala, v_camara, 'model', 'Aver 520');
+    if v_motivo is not null then
+      raise exception 'FALLO: escribir el modelo no tendría que fallar: «%»', v_motivo;
+    end if;
+    raise notice 'OK: el modelo sigue entrando sin estorbo';
+  end $$;
+rollback;
+
+-- -----------------------------------------------------------------------------
+begin;
+\echo '=== 76. Lo que el libro tiene y la aplicación no: entra. Y los PCs de repuesto ==='
+-- Cuatro filas al final de «Material Instalado 2026» sin número, una hoja nueva
+-- «PCs STOCK 2026» con dos tiny por número de serie, y un parte que dice «se
+-- reemplaza por un PC de stock». Hasta aquí nada de eso entraba.
+  -- El escenario se monta como dueño, igual que en el bloque 20: montar salas
+  -- no es lo que se prueba.
+  do $$
+  declare
+    v_sala     uuid;
+    v_zona     uuid;
+    v_edificio uuid;
+    v_item     uuid;
+    v_tipo     uuid;
+  begin
+    insert into buildings (code, name, sort_order) values ('ZPC', 'EDIFICIO DE LOS PCS', 991)
+      returning id into v_edificio;
+    insert into zones (building_id, name, sort_order) values (v_edificio, 'PLANTA BAJA', 10)
+      returning id into v_zona;
+    insert into rooms (zone_id, code, name, kind) values (v_zona, '2.1', '2.1', 'aula')
+      returning id into v_sala;
+    v_tipo := public.asset_type_id('Ordenador');
+    if v_tipo is null then
+      insert into asset_types (name) values ('Ordenador') returning id into v_tipo;
+    end if;
+    insert into stock_items (name) values ('Cable de la prueba 21')
+      on conflict (name) do nothing;
+    select id into v_item from stock_items where name = 'Cable de la prueba 21';
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at)
+    values (gen_random_uuid(), v_item, 5, 'compra', now());
+    insert into stock_items (name, asset_type_id) values ('Ordenador Tiny M710Q', v_tipo)
+      on conflict (name) do update set asset_type_id = excluded.asset_type_id;
+    select id into v_item from stock_items where name = 'Ordenador Tiny M710Q';
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at)
+    values (gen_random_uuid(), v_item, 1, 'compra', now());
+    insert into assets (asset_type_id, room_id, serial, model, status)
+    values (v_tipo, v_sala, 'PC-VIEJO-21', 'M70Q', 'instalado');
+  end $$;
+
+  select test_as('44444444-4444-4444-4444-444444444444', 'admin');
+  do $$
+  declare
+    v_sala     uuid;
+    v_out      jsonb;
+    v_alta     jsonb;
+    v_numero   text;
+    v_inc      uuid;
+    v_item     uuid;
+    v_unidad   uuid;
+    v_unidad2  uuid;
+    v_n        int;
+    v_alias    text[];
+  begin
+    select r.id into v_sala from rooms r join zones z on z.id = r.zone_id
+      join buildings b on b.id = z.building_id where b.code = 'ZPC' and r.code = '2.1';
+    select id into v_item from stock_items where name = 'Cable de la prueba 21';
+
+    -- 1) Un parte sin número, con sala y material, entra por `sync_aplicar` y
+    --    vuelve con el número que la base le puso.
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'altas', jsonb_build_array(
+        jsonb_build_object(
+          'hoja', 'Material Instalado 2026', 'fila', 101, 'tipo', 'incidencia',
+          'sala_id', v_sala, 'aula', '2.1 ZPC', 'numero', null,
+          'abierta', '2026-09-08', 'resuelta', '2026-09-08',
+          'problema', 'El PC no arranca Windows',
+          'resolucion', 'Se reemplaza por un PC de stock Tiny Lenovo',
+          'detalle', jsonb_build_array(jsonb_build_object('articulo_id', v_item, 'cantidad', 2, 'texto', '2 Cable de la prueba 21')),
+          'columna_numero', 'D',
+          'celdas', jsonb_build_object('A', '2.1 ZPC', 'B', '2026-09-08', 'C', '2026-09-08', 'D', null,
+                                       'E', 'El PC no arranca Windows', 'F', 'Se reemplaza por un PC de stock Tiny Lenovo',
+                                       'G', '2 Cable de la prueba 21')
+        )
+      )
+    ));
+    if jsonb_array_length(v_out->'altas') <> 1 then
+      raise exception 'FALLO: la pasada no devolvió el alta: %', v_out;
+    end if;
+    v_alta := v_out->'altas'->0;
+    v_numero := v_alta->>'numero';
+    if v_numero is null or v_numero !~ '^I260908_\d{4}$' then
+      raise exception 'FALLO: el número del parte nuevo tendría que ser del 8 de septiembre y es «%»', v_numero;
+    end if;
+    select id into v_inc from incidents where external_ref = v_numero;
+    if v_inc is null then
+      raise exception 'FALLO: el parte no está en la base con su número';
+    end if;
+    if (select room_id from incidents where id = v_inc) <> v_sala then
+      raise exception 'FALLO: el parte no quedó en su sala';
+    end if;
+    if (select state from incidents where id = v_inc) <> 'resuelta' then
+      raise exception 'FALLO: un parte con fecha de resuelto entra resuelto';
+    end if;
+    if (select source from incidents where id = v_inc) <> 'sharepoint' then
+      raise exception 'FALLO: el parte no dice de dónde vino';
+    end if;
+    select coalesce(-sum(qty), 0) into v_n from stock_movements
+     where incident_id = v_inc and stock_item_id = v_item and kind = 'consumo';
+    if v_n <> 2 then
+      raise exception 'FALLO: el material del parte nuevo no descontó del almacén (descontó %)', v_n;
+    end if;
+    if not exists (select 1 from room_aliases where room_id = v_sala and alias_norm = public.norm_text('2.1 ZPC')) then
+      raise exception 'FALLO: el aula tal y como se escribió no quedó de alias';
+    end if;
+    if (select valor_base from sync_celdas where hoja = 'Material Instalado 2026' and ref = v_numero and columna = 'D') <> v_numero then
+      raise exception 'FALLO: el antepasado de la columna del número no dice el número';
+    end if;
+    if (select valor_base from sync_celdas where hoja = 'Material Instalado 2026' and ref = v_numero and columna = 'E') <> 'El PC no arranca Windows' then
+      raise exception 'FALLO: la fila nueva no dejó antepasado bajo su número';
+    end if;
+    raise notice 'OK: un parte sin número entra, se descuenta su material y vuelve con número (%)', v_numero;
+
+    -- 2) Un parte con número libre y bien formado se queda con el suyo.
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'altas', jsonb_build_array(
+        jsonb_build_object(
+          'hoja', 'Material Instalado 2026', 'fila', 102, 'tipo', 'incidencia',
+          'sala_id', null, 'aula', 'Lab Docente 5', 'numero', 'S260901_0075',
+          'abierta', '2026-09-01', 'problema', 'Sin sala y con número propio',
+          'columna_numero', 'D', 'celdas', jsonb_build_object('D', 'S260901_0075')
+        )
+      )
+    ));
+    if (v_out->'altas'->0->>'numero') <> 'S260901_0075' then
+      raise exception 'FALLO: el número libre que traía la fila no se respetó: %', v_out;
+    end if;
+    if (select room_id from incidents where external_ref = 'S260901_0075') is not null then
+      raise exception 'FALLO: un parte sin sala entra sin sala';
+    end if;
+    if not exists (select 1 from incidencias_sin_sala() where ref = 'S260901_0075' and aula_original = 'Lab Docente 5') then
+      raise exception 'FALLO: un parte sin sala no sale en «Incidencias sin sala» con su aula original';
+    end if;
+    raise notice 'OK: un parte con número libre lo conserva, y sin sala entra sin sala';
+
+    -- 3) Un número ya usado no se roba: manda el de la base.
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'altas', jsonb_build_array(
+        jsonb_build_object(
+          'hoja', 'Material Instalado 2026', 'fila', 103, 'tipo', 'incidencia',
+          'numero', 'S260901_0075', 'abierta', '2026-09-01', 'problema', 'Repite número',
+          'columna_numero', 'D', 'celdas', jsonb_build_object('D', 'S260901_0075')
+        )
+      )
+    ));
+    if (v_out->'altas'->0->>'numero') = 'S260901_0075' then
+      raise exception 'FALLO: dos partes nuevos con el mismo número';
+    end if;
+    raise notice 'OK: un número ya usado no se repite: la base pone otro (%)', v_out->'altas'->0->>'numero';
+
+    -- 4) Un artículo que la bolsa lista y el almacén no, con lo comprado.
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'altas', jsonb_build_array(
+        jsonb_build_object(
+          'hoja', 'Bolsa 2026', 'fila', 47, 'tipo', 'articulo',
+          'nombre', 'Pasta térmica de la prueba', 'nombre_alternativo', 'Pasta termica', 'comprado', 30,
+          'celdas', jsonb_build_object('A', 'Pasta térmica de la prueba', 'P', '30')
+        )
+      )
+    ));
+    select id into v_item from stock_items where name = 'Pasta térmica de la prueba';
+    if v_item is null then raise exception 'FALLO: el artículo nuevo no está'; end if;
+    if (v_out->'altas'->0->>'clave') <> v_item::text then
+      raise exception 'FALLO: la clave del artículo nuevo no es su id';
+    end if;
+    if (select on_hand from stock_levels where stock_item_id = v_item) <> 30 then
+      raise exception 'FALLO: lo comprado del artículo nuevo no entró como compra';
+    end if;
+    select aliases into v_alias from stock_items where id = v_item;
+    if not ('Pasta termica' = any (v_alias)) then
+      raise exception 'FALLO: el nombre alternativo no quedó de alias';
+    end if;
+    raise notice 'OK: un artículo nuevo entra con su alias y lo comprado';
+
+    -- 5) Dos PCs de repuesto por número de serie, desde la hoja.
+    select id into v_item from stock_items where name = 'Ordenador Tiny M710Q';
+
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'altas', jsonb_build_array(
+        jsonb_build_object('hoja', 'PCs STOCK 2026', 'fila', 3, 'tipo', 'unidad',
+          'articulo', 'Ordenador Tiny', 'marca', 'Lenovo ThinkCentre', 'modelo', 'M710Q', 'serial', 'S4GM1899',
+          'observaciones', 'Ordenador con imagen funcional de repuesto',
+          'celdas', jsonb_build_object('A', 'Ordenador Tiny', 'B', 'Lenovo ThinkCentre', 'C', 'M710Q', 'D', 'S4GM1899')),
+        jsonb_build_object('hoja', 'PCs STOCK 2026', 'fila', 4, 'tipo', 'unidad',
+          'articulo', 'Ordenador Tiny', 'marca', 'Lenovo ThinkCentre', 'modelo', 'M710Q', 'serial', 'S4DF5471',
+          'celdas', jsonb_build_object('D', 'S4DF5471'))
+      )
+    ));
+    if jsonb_array_length(v_out->'altas') <> 2 then
+      raise exception 'FALLO: las dos unidades no entraron: %', v_out;
+    end if;
+    select id into v_unidad  from stock_units where serial = 'S4GM1899';
+    select id into v_unidad2 from stock_units where serial = 'S4DF5471';
+    if v_unidad is null or v_unidad2 is null then raise exception 'FALLO: falta una unidad'; end if;
+    if (select stock_item_id from stock_units where id = v_unidad) <> v_item then
+      raise exception 'FALLO: la unidad no casó con «Ordenador Tiny M710Q» por artículo + modelo';
+    end if;
+    if (select status from stock_units where id = v_unidad) <> 'disponible' then
+      raise exception 'FALLO: una unidad nueva nace disponible';
+    end if;
+    -- Y volver a darla de alta con el mismo número (con espacios) no duplica.
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'altas', jsonb_build_array(
+        jsonb_build_object('hoja', 'PCs STOCK 2026', 'fila', 3, 'tipo', 'unidad',
+          'articulo', 'Ordenador Tiny', 'serial', ' S4GM-1899 ', 'celdas', '{}'::jsonb)
+      )
+    ));
+    if (select count(*) from stock_units where upper(regexp_replace(serial, '[\s\-_./]', '', 'g')) = 'S4GM1899') <> 1 then
+      raise exception 'FALLO: el mismo número de serie escrito con guion dio otra unidad';
+    end if;
+    raise notice 'OK: los PCs de repuesto entran por número de serie, casan con su artículo y no se duplican';
+  end $$;
+
+  -- 6) Instalar uno en el aula: crea el equipo, retira el anterior, descuenta.
+
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_sala   uuid;
+    v_unidad uuid;
+    v_equipo uuid;
+    v_previo uuid;
+    v_item   uuid;
+    v_n      int;
+  begin
+    select r.id into v_sala from rooms r join zones z on z.id = r.zone_id
+      join buildings b on b.id = z.building_id where b.code = 'ZPC' and r.code = '2.1';
+    select id into v_unidad from stock_units where serial = 'S4GM1899';
+    select id into v_previo from assets where serial = 'PC-VIEJO-21';
+    select id into v_item from stock_items where name = 'Ordenador Tiny M710Q';
+
+    v_equipo := public.stock_unit_instalar(v_unidad, v_sala, 'lo pone el técnico');
+
+    if (select room_id from assets where id = v_equipo) <> v_sala
+       or (select serial from assets where id = v_equipo) <> 'S4GM1899'
+       or (select status from assets where id = v_equipo) <> 'instalado' then
+      raise exception 'FALLO: el equipo no quedó instalado en el aula con su número';
+    end if;
+    if (select status from assets where id = v_previo) <> 'retirado' then
+      raise exception 'FALLO: el ordenador que había no se retiró';
+    end if;
+    if not exists (select 1 from asset_events where asset_id = v_previo and kind = 'sustitucion') then
+      raise exception 'FALLO: la sustitución no quedó en el historial del viejo';
+    end if;
+    if not exists (select 1 from asset_events where asset_id = v_equipo and kind = 'alta') then
+      raise exception 'FALLO: el alta del nuevo no quedó en el historial';
+    end if;
+    select count(*) into v_n from stock_movements
+     where stock_item_id = v_item and kind = 'consumo' and room_id = v_sala;
+    if v_n <> 1 then
+      raise exception 'FALLO: la unidad no se descontó del almacén (% movimientos)', v_n;
+    end if;
+    if (select status from stock_units where id = v_unidad) <> 'instalado'
+       or (select asset_id from stock_units where id = v_unidad) <> v_equipo
+       or (select room_id from stock_units where id = v_unidad) <> v_sala then
+      raise exception 'FALLO: la unidad no dice dónde está';
+    end if;
+    raise notice 'OK: instalar un PC de repuesto crea el equipo, retira el viejo y descuenta el almacén';
+
+    -- Y no se instala dos veces.
+    begin
+      perform public.stock_unit_instalar(v_unidad, v_sala, null);
+      raise exception 'FALLO: una unidad instalada se pudo instalar otra vez';
+    exception when others then
+      if sqlerrm like 'FALLO%' then raise; end if;
+    end;
+    raise notice 'OK: una unidad instalada no se instala dos veces';
+  end $$;
+
+  -- 7) Si el equipo se retira al almacén desde el aula, la unidad vuelve a
+  --    estar disponible; si se da de baja, la unidad también.
+  select test_as('44444444-4444-4444-4444-444444444444', 'admin');
+  do $$
+  declare
+    v_unidad uuid;
+    v_equipo uuid;
+    v_unidad2 uuid;
+    v_out    jsonb;
+  begin
+    select id, asset_id into v_unidad, v_equipo from stock_units where serial = 'S4GM1899';
+    update assets set status = 'retirado', room_id = null where id = v_equipo;
+    if (select status from stock_units where id = v_unidad) <> 'disponible' then
+      raise exception 'FALLO: el equipo volvió al almacén y la unidad no';
+    end if;
+    raise notice 'OK: retirar el equipo al almacén devuelve la unidad a disponible';
+
+    select id into v_unidad2 from stock_units where serial = 'S4DF5471';
+    perform public.stock_unit_baja(v_unidad2, 'no enciende');
+    if (select status from stock_units where id = v_unidad2) <> 'baja' then
+      raise exception 'FALLO: la baja no se aplicó';
+    end if;
+    begin
+      perform public.stock_unit_instalar(v_unidad2, (select room_id from stock_units where id = v_unidad), null);
+      raise exception 'FALLO: una unidad de baja se pudo instalar';
+    exception when others then
+      if sqlerrm like 'FALLO%' then raise; end if;
+    end;
+    raise notice 'OK: una unidad de baja no se instala';
+
+    -- 8) Una celda de la hoja de PCs, de vuelta: las observaciones entran, el
+    --    número de serie no se cambia desde una celda.
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'hacia_la_base', jsonb_build_array(
+        jsonb_build_object('entidad', 'unidad', 'hoja', 'PCs STOCK 2026', 'clave', v_unidad::text,
+                           'columna', 'E', 'campo', 'unidad.observaciones', 'valor', 'Imagen de julio'),
+        jsonb_build_object('entidad', 'unidad', 'hoja', 'PCs STOCK 2026', 'clave', v_unidad::text,
+                           'columna', 'D', 'campo', 'unidad.serial', 'valor', 'OTRO')
+      )
+    ));
+    if (v_out->>'aplicadas')::int <> 1 or (v_out->>'rechazadas')::int <> 1 then
+      raise exception 'FALLO: tendría que entrar la observación y rechazarse el número de serie: %', v_out;
+    end if;
+    if (select notes from stock_units where id = v_unidad) <> 'Imagen de julio' then
+      raise exception 'FALLO: las observaciones no se guardaron';
+    end if;
+    if (select serial from stock_units where id = v_unidad) <> 'S4GM1899' then
+      raise exception 'FALLO: el número de serie se cambió desde una celda';
+    end if;
+    raise notice 'OK: las celdas de la hoja de PCs vuelven, y el número de serie es identidad';
+  end $$;
+rollback;

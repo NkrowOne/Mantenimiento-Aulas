@@ -233,7 +233,7 @@ export function EstadoIA(): React.ReactElement {
               autoComplete="off"
               spellCheck={false}
               placeholder={activa ? 'Hay una guardada; escribe para sustituirla' : 'AIza…'}
-              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-sm"
+              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-base"
             />
           </label>
           <p className="mt-2 text-xs text-muted">
@@ -250,7 +250,7 @@ export function EstadoIA(): React.ReactElement {
                   value={modelo}
                   onChange={(e) => setModelo(e.target.value)}
                   spellCheck={false}
-                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-sm"
+                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-base"
                 />
               </label>
               <label className="block text-sm">
@@ -258,7 +258,7 @@ export function EstadoIA(): React.ReactElement {
                 <select
                   value={thinking}
                   onChange={(e) => setThinking(e.target.value)}
-                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm"
+                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base"
                 >
                   {NIVELES_RAZONAMIENTO.map((n) => (
                     <option key={n.clave} value={n.clave}>

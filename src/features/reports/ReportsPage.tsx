@@ -3,10 +3,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { fechaCorta } from '@/domain/fechas'
 import { EstadoIA, useEstadoIA } from './EstadoIA'
-import { AUDIENCIAS, POR_DEFECTO, SECCIONES } from './secciones'
+import { AUDIENCIAS, SECCIONES, porDefectoDe, seccionesDe } from './secciones'
 import { type HuellaDeRedaccion, redaccionDe } from './redaccion'
 import { type Eleccion, motivoParaNoPedir } from './peticion'
 import { FotosDelInforme } from './FotosDelInforme'
+import { TOPE_ENFOQUE } from './informe/opciones'
 import {
   type Kind,
   type Rango,
@@ -23,6 +24,7 @@ import {
 } from './informe/generar'
 import {
   descargarDocumento,
+  descargarPdf,
   imprimirDocumento,
   mostrarEn,
   ventanaEnBlanco,
@@ -85,13 +87,16 @@ export function ReportsPage(): React.ReactElement {
   const [preset, setPreset] = useState<string>('semana')
   const [desde, setDesde] = useState('')
   const [hasta, setHasta] = useState('')
-  const [secciones, setSecciones] = useState<string[]>(POR_DEFECTO)
+  const [audiencia, setAudiencia] = useState<'direccion' | 'equipo'>('direccion')
+  const [secciones, setSecciones] = useState<string[]>(porDefectoDe('direccion'))
   /* Las fotos que se han quitado, por id de adjunto. Vacío es «todas», que es
      lo que sale si nadie abre la rejilla. */
   const [fotosFuera, setFotosFuera] = useState<string[]>([])
   const [comparar, setComparar] = useState(true)
   const [conIA, setConIA] = useState(true)
-  const [audiencia, setAudiencia] = useState<'direccion' | 'equipo'>('direccion')
+  /* Las casillas que existen para esta audiencia. «Sin cerrar» no se ofrece
+     para dirección: ese documento no dice cuántos días lleva abierta nada. */
+  const ofrecidas = seccionesDe(audiencia)
   const [enfoque, setEnfoque] = useState('')
   const [nota, setNota] = useState('')
   const [ajustes, setAjustes] = useState(false)
@@ -105,6 +110,9 @@ export function ReportsPage(): React.ReactElement {
      permisos o red, y descartarlo dejaba el botón «Abrir» como un botón que a
      veces no hace nada. */
   const [falloDescarga, setFalloDescarga] = useState<string | null>(null)
+  const [bajandoPdf, setBajandoPdf] = useState(false)
+  /** Qué informe del archivo se está convirtiendo, para no dejar el botón mudo. */
+  const [pdfDelArchivo, setPdfDelArchivo] = useState<string | null>(null)
 
   const marco = useRef<HTMLIFrameElement>(null)
 
@@ -200,8 +208,63 @@ export function ReportsPage(): React.ReactElement {
     mostrarEn(ventana, data)
   }
 
+  /**
+   * El PDF de un informe que ya está archivado.
+   *
+   * En el archivo solo había «Abrir», que enseña el documento en una pestaña.
+   * Sirve para consultarlo y no sirve para nada más: quien entra al archivo
+   * suele venir a mandarle a alguien el informe del mes pasado, y lo que se
+   * llevaba era un HTML que en el correo del cliente se abre como código.
+   *
+   * El original se guarda entero y autocontenido —los gráficos son SVG y las
+   * fotos van dentro—, así que basta con recuperarlo y pasarlo por el mismo
+   * conversor que el informe recién hecho. No se vuelve a consultar la base ni
+   * se recalcula nada: el PDF de un informe de marzo dice lo que decía en
+   * marzo, que es justo lo que se espera de un archivo.
+   */
+  async function pdfArchivado(r: {
+    id: string
+    kind: string
+    storage_path: string
+    period_start: string
+    period_end: string
+  }): Promise<void> {
+    setFalloDescarga(null)
+    setPdfDelArchivo(r.id)
+    try {
+      const { data, error } = await supabase.storage.from('reports').download(r.storage_path)
+      if (error || !data) {
+        setFalloDescarga(`No se ha podido leer el informe del archivo${error ? `: ${error.message}` : ''}.`)
+        return
+      }
+      const html = await data.text()
+      const { data: sesion } = await supabase.auth.getSession()
+      const nombre = nombreDeArchivo(r.kind, { start: r.period_start, end: r.period_end }).replace(
+        /\.html$/,
+        '.pdf',
+      )
+      const hecho = await descargarPdf(html, nombre, sesion.session?.access_token ?? null)
+      if (!hecho.ok) {
+        setFalloDescarga(
+          hecho.sinServicio
+            ? `No se ha podido preparar el PDF (${hecho.motivo}). Con «Abrir» sale el informe y desde ahí se imprime a PDF.`
+            : `No se ha podido preparar el PDF: ${hecho.motivo}.`,
+        )
+      }
+    } finally {
+      setPdfDelArchivo(null)
+    }
+  }
+
   const alternar = (clave: string): void =>
     setSecciones((s) => (s.includes(clave) ? s.filter((x) => x !== clave) : [...s, clave]))
+
+  /* Cambiar de audiencia cambia el documento, no solo la voz: lo marcado era
+     para la otra, así que se vuelve a lo que lleva esta por defecto. */
+  const elegirAudiencia = (a: 'direccion' | 'equipo'): void => {
+    setAudiencia(a)
+    setSecciones(porDefectoDe(a))
+  }
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-4">
@@ -300,7 +363,7 @@ export function ReportsPage(): React.ReactElement {
         >
           {ajustes ? 'Ocultar los ajustes' : 'Ajustar qué lleva'}
           <span className="ml-2 text-muted">
-            {secciones.length} de {SECCIONES.length} secciones
+            {secciones.length} de {ofrecidas.length} secciones
             {conIA ? ' · con IA' : ' · sin IA'}
             {secciones.includes('fotos') && fotosFuera.length > 0 &&
               ` · ${fotosFuera.length} ${fotosFuera.length === 1 ? 'foto fuera' : 'fotos fuera'}`}
@@ -312,7 +375,7 @@ export function ReportsPage(): React.ReactElement {
             <fieldset>
               <legend className="eyebrow">Secciones</legend>
               <div className="mt-2 grid gap-1 sm:grid-cols-2">
-                {SECCIONES.map((s) => (
+                {ofrecidas.map((s) => (
                   <label
                     key={s.clave}
                     className="flex cursor-pointer items-start gap-2 rounded-ctl px-2 py-2 text-sm hover:bg-raised"
@@ -333,14 +396,14 @@ export function ReportsPage(): React.ReactElement {
               <div className="mt-2 flex gap-3 text-xs">
                 <button
                   type="button"
-                  onClick={() => setSecciones(SECCIONES.map((s) => s.clave))}
+                  onClick={() => setSecciones(ofrecidas.map((s) => s.clave))}
                   className="text-accent underline"
                 >
                   Todas
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSecciones(POR_DEFECTO)}
+                  onClick={() => setSecciones(porDefectoDe(audiencia))}
                   className="text-accent underline"
                 >
                   Las de siempre
@@ -407,7 +470,7 @@ export function ReportsPage(): React.ReactElement {
                     <button
                       key={a.clave}
                       type="button"
-                      onClick={() => setAudiencia(a.clave)}
+                      onClick={() => elegirAudiencia(a.clave)}
                       aria-pressed={audiencia === a.clave}
                       className={`key min-h-11 px-3 text-sm ${
                         audiencia === a.clave ? 'key-accent' : 'key-quiet'
@@ -423,18 +486,44 @@ export function ReportsPage(): React.ReactElement {
                 </p>
               </div>
 
+              {/*
+                El encargo a la IA, y una caja en la que quepa.
+
+                Era una línea de texto de 400 caracteres, y una línea pide una
+                frase: «mira el CRAI». Pero quien pide el informe suele tener
+                media página de contexto que no está en los datos —lo que se
+                habló en la reunión del lunes, la obra del edificio H, el
+                proveedor que va tarde— y con una caja de una línea o no lo
+                escribía o lo escribía a ciegas, sin ver lo que llevaba puesto.
+                Ahora cabe, se lee entera y se puede alargar. Los saltos de
+                línea llegan tal cual a la instrucción.
+              */}
               <label className="mt-4 block text-sm">
-                <span className="text-muted">En qué quieres que se fije (opcional)</span>
-                <input
-                  type="text"
+                <span className="text-muted">Qué quieres contarle a la IA (opcional)</span>
+                <textarea
                   value={enfoque}
-                  maxLength={400}
+                  maxLength={TOPE_ENFOQUE}
+                  rows={7}
                   onChange={(e) => setEnfoque(e.target.value)}
-                  placeholder="Céntrate en el edificio H y en el consumo de cable"
-                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-sm"
+                  placeholder={
+                    'Céntrate en el edificio H, que arrastra la obra desde julio.\n' +
+                    'El consumo de cable HDMI es alto porque se cambió toda la planta 2.\n' +
+                    'Este informe lo lee el vicerrector: que se note lo que se ha cerrado.'
+                  }
+                  className="mt-1 min-h-[10rem] w-full resize-y rounded-ctl border border-line bg-surface p-3 text-base leading-relaxed"
                 />
-                <span className="mt-1 block text-xs text-muted">
-                  Va a la redacción del análisis. No cambia ninguna cifra.
+                <span className="mt-1 flex flex-wrap justify-between gap-x-3 text-xs text-muted">
+                  <span>
+                    Va a la redacción del análisis, por delante de lo demás. No cambia ninguna cifra.
+                  </span>
+                  {/* Lo que queda, y solo cuando ya importa: un contador en cero
+                      caracteres es ruido, y uno que aparece a falta de cien es
+                      un aviso a tiempo de que la frase se va a cortar. */}
+                  {enfoque.length > TOPE_ENFOQUE - 150 && (
+                    <span className={enfoque.length >= TOPE_ENFOQUE ? 'text-warn' : ''}>
+                      {TOPE_ENFOQUE - enfoque.length} caracteres
+                    </span>
+                  )}
                 </span>
               </label>
 
@@ -446,7 +535,7 @@ export function ReportsPage(): React.ReactElement {
                   maxLength={300}
                   onChange={(e) => setNota(e.target.value)}
                   placeholder="Para la reunión de dirección del lunes"
-                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-sm"
+                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-base"
                 />
                 <span className="mt-1 block text-xs text-muted">
                   Se imprime tal cual, bajo el título. No pasa por la IA.
@@ -512,17 +601,37 @@ export function ReportsPage(): React.ReactElement {
             <div className="flex shrink-0 flex-wrap gap-2">
               <button
                 type="button"
+                disabled={bajandoPdf}
                 onClick={() => {
                   setFalloDescarga(null)
-                  if (imprimirDocumento(recien.html, marco.current) === 'bloqueado') {
-                    setFalloDescarga(
-                      'El navegador ha bloqueado la ventana del informe. Permite las ventanas emergentes de esta página, o usa «Descargar el original».',
-                    )
-                  }
+                  setBajandoPdf(true)
+                  void (async () => {
+                    const { data } = await supabase.auth.getSession()
+                    const nombre = nombreDeArchivo(recien.kind, recien.rango).replace(/\.html$/, '.pdf')
+                    const r = await descargarPdf(recien.html, nombre, data.session?.access_token ?? null)
+                    setBajandoPdf(false)
+                    if (r.ok) return
+                    /*
+                     * Sin servicio de PDF —un servidor que aún no lo tiene, el
+                     * worker caído— se cae al camino de siempre en vez de dejar
+                     * a nadie sin documento: la ventana con el diálogo de
+                     * imprimir, que también da un PDF.
+                     */
+                    if (r.sinServicio) {
+                      const via = imprimirDocumento(recien.html, marco.current)
+                      setFalloDescarga(
+                        via === 'bloqueado'
+                          ? `No se ha podido preparar el PDF (${r.motivo}) y el navegador ha bloqueado la ventana del informe. Permite las ventanas emergentes de esta página, o usa «Descargar el original».`
+                          : `El servidor no ha podido preparar el PDF (${r.motivo}): se ha abierto el informe con el diálogo de imprimir, que también lo guarda como PDF.`,
+                      )
+                      return
+                    }
+                    setFalloDescarga(`No se ha podido preparar el PDF: ${r.motivo}.`)
+                  })()
                 }}
                 className="key key-accent min-h-11 px-3 text-sm"
               >
-                Descargar PDF
+                {bajandoPdf ? 'Preparando el PDF…' : 'Descargar PDF'}
               </button>
               <button
                 type="button"
@@ -565,16 +674,14 @@ export function ReportsPage(): React.ReactElement {
             className="mt-4 h-[70vh] w-full rounded-card border border-line bg-white"
           />
           {/*
-            Sin esta línea, «Descargar PDF» abre un diálogo de impresión que el
-            usuario no ha pedido: se queda mirando una vista previa y una
-            impresora, decide que se ha equivocado de botón y cierra. El PDF sale
-            de ahí, pero solo si alguien dice dónde está. Es la misma frase que
-            la hoja de inventario, porque es el mismo gesto.
+            Lo que hace cada botón, en una línea. «Descargar PDF» ya baja un
+            fichero de verdad —lo convierte el servidor— y el original en HTML
+            se queda para quien quiera archivarlo o reenviarlo tal cual.
           */}
           <p className="mt-2 text-xs text-muted">
-            El informe se abre en una pestaña y se abre el diálogo de imprimir, que es de donde sale
-            el PDF: en el iPad, toca «Imprimir» y después «Compartir → Guardar en Archivos»; en el
-            ordenador, elige «Guardar como PDF» en el destino, en lugar de una impresora.
+            «Descargar PDF» baja el documento ya convertido: en el iPad se abre la hoja de compartir
+            para guardarlo en Archivos, y en el ordenador cae en la carpeta de descargas. «Descargar
+            el original» baja el mismo informe en HTML, que es de donde sale.
           </p>
         </section>
       )}
@@ -622,6 +729,15 @@ export function ReportsPage(): React.ReactElement {
                     {redaccion.etiqueta}
                   </span>
                 )}
+                <button
+                  type="button"
+                  disabled={pdfDelArchivo !== null}
+                  onClick={() => void pdfArchivado(r)}
+                  className="key key-accent min-h-11 px-3 text-xs"
+                  title="El informe archivado, en PDF"
+                >
+                  {pdfDelArchivo === r.id ? 'Preparando…' : 'PDF'}
+                </button>
                 <button
                   type="button"
                   onClick={() => void abrir(r.storage_path)}

@@ -239,7 +239,7 @@ export function EquipoPorDefecto(): React.ReactElement {
             <select
               value={tipo}
               onChange={(e) => setTipo(e.target.value)}
-              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
             >
               <option value="">Elige del catálogo…</option>
               {/* Un `<option>` no admite maquetación, así que la marca va en el
@@ -257,7 +257,7 @@ export function EquipoPorDefecto(): React.ReactElement {
             <select
               value={ambito}
               onChange={(e) => setAmbito(e.target.value)}
-              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
             >
               <option value="">En todas las salas</option>
               {edificios.map((b: Building) => (
@@ -277,7 +277,7 @@ export function EquipoPorDefecto(): React.ReactElement {
               inputMode="numeric"
               value={cantidad}
               onChange={(e) => setCantidad(Math.min(20, Math.max(1, Number(e.target.value) || 1)))}
-              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink sm:w-20"
+              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink sm:w-20"
             />
           </label>
         </div>
@@ -317,7 +317,7 @@ export function EquipoPorDefecto(): React.ReactElement {
             value={aplicarA}
             onChange={(e) => setAplicarA(e.target.value)}
             aria-label="Ámbito al que aplicar el equipamiento por defecto"
-            className="h-11 min-w-48 flex-1 rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+            className="h-11 min-w-48 flex-1 rounded-ctl border border-line bg-surface px-2 text-base text-ink"
           >
             <option value="">Todo el campus</option>
             {edificios.map((b: Building) => (

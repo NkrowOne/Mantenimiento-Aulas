@@ -89,7 +89,7 @@ export function LevantarInventario({
             onChange={(e) => setNota(e.target.value)}
             placeholder="Lo que convenga dejar dicho"
             enterKeyHint="done"
-            className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+            className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
           />
         </label>
       )}

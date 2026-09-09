@@ -229,7 +229,7 @@ export function OrigenDelEquipo({
                 <select
                   value={stockItemId}
                   onChange={(e) => setStockItemId(e.target.value)}
-                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
                 >
                   {articulos.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -288,7 +288,7 @@ export function OrigenDelEquipo({
               <select
                 value={buildingId}
                 onChange={(e) => setBuildingId(e.target.value)}
-                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
               >
                 <option value="">Elige…</option>
                 {buildings.map((b) => (
@@ -305,7 +305,7 @@ export function OrigenDelEquipo({
                 value={origenRoomId}
                 onChange={(e) => setOrigenRoomId(e.target.value)}
                 disabled={!buildingId}
-                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink disabled:opacity-40"
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink disabled:opacity-40"
               >
                 <option value="">{buildingId ? 'Elige…' : '—'}</option>
                 {salas.map((r) => (
@@ -323,7 +323,7 @@ export function OrigenDelEquipo({
               <select
                 value={assetId}
                 onChange={(e) => setAssetId(e.target.value)}
-                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
               >
                 <option value="">Elige…</option>
                 {equipos.map((a) => (

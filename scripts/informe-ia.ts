@@ -217,7 +217,7 @@ async function main(): Promise<number> {
   const { senales, lecturaCalculada } = await import('../reports-worker/src/analisis.js')
 
   const d = datos()
-  const se = senales(d)
+  const se = senales(d, 'equipo')
 
   console.log('\n▸ Sin clave no se llama a nadie')
   delete process.env['GEMINI_API_KEY']
@@ -246,7 +246,7 @@ async function main(): Promise<number> {
   delete process.env['GEMINI_THINKING']
   comprueba(
     'la redacción calculada se sostiene sola',
-    lecturaCalculada(d).entradilla.length > 80 && lecturaCalculada(d).recomendaciones.length > 0,
+    lecturaCalculada(d, 'equipo').entradilla.length > 80 && lecturaCalculada(d, 'equipo').recomendaciones.length > 0,
   )
 
   console.log('\n▸ Con clave, y razonando')
@@ -267,7 +267,7 @@ async function main(): Promise<number> {
   comprueba('se pide salida con esquema', gen?.['responseMimeType'] === 'application/json' && !!gen?.['responseSchema'])
   comprueba(
     'el expediente no lleva nombres de personas',
-    !expediente(d, se).includes('Ana Pérez'),
+    !expediente(d, se, 'equipo').includes('Ana Pérez'),
     'se ha filtrado un nombre al prompt',
   )
   comprueba('hay redacción', lectura !== null)
@@ -291,11 +291,11 @@ async function main(): Promise<number> {
   console.log('\n▸ Una cifra que no está en los datos invalida el texto')
   comprueba(
     'cifrasInventadas caza los números grandes que no existen',
-    cifrasInventadas('Se revisaron 348 de 412 salas', expediente(d, se)).length === 2,
+    cifrasInventadas('Se revisaron 348 de 412 salas', expediente(d, se, 'equipo')).length === 2,
   )
   comprueba(
     'y deja pasar los que sí están',
-    cifrasInventadas('276 salas activas, 117 sin revisar', expediente(d, se)).length === 0,
+    cifrasInventadas('276 salas activas, 117 sin revisar', expediente(d, se, 'equipo')).length === 0,
   )
 
   devolver = respuesta(REDACCION_INVENTADA)

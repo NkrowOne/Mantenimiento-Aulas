@@ -20,6 +20,7 @@ import { lecturaCalculada, senales } from './analisis.js'
 import { configurarIA, redactar } from './ia.js'
 import { leerOpciones } from './opciones.js'
 import { canjearAlta, leerCuerpoPequeno } from './alta.js'
+import { informePdf } from './informe-pdf.js'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type postgres from 'postgres'
 
@@ -135,7 +136,7 @@ export async function generate(
   const period = range ?? periodFor(kind)
   const opciones = leerOpciones(params)
   const data = await loadReportData(sql, kind, period.start, period.end)
-  const se = senales(data)
+  const se = senales(data, opciones.audiencia)
 
   /*
    * El orden importa: primero la redacción calculada, siempre. Si Gemini
@@ -143,7 +144,7 @@ export async function generate(
    * informe ha desmarcado la casilla, ya hay un texto completo esperando. Nunca
    * hay un momento en el que el informe pueda quedarse sin análisis.
    */
-  let lectura = lecturaCalculada(data)
+  let lectura = lecturaCalculada(data, opciones.audiencia)
   let conIA = false
 
   if (opciones.ia) {
@@ -231,6 +232,17 @@ const server = createServer((req, res) => {
       const cuerpo = await leerCuerpoPequeno(req, res)
       if (cuerpo === null) return
       await canjearAlta(req, res, cuerpo)
+      return
+    }
+
+    /*
+     * El PDF del informe que compone el navegador. SIN token de worker: quien
+     * llama es la aplicación desde el navegador de una persona, y ese token es
+     * un secreto del servidor. La autorización va con la sesión del usuario y
+     * se comprueba dentro, contra Supabase y contra su perfil.
+     */
+    if (req.method === 'POST' && req.url?.startsWith('/informe/pdf')) {
+      await informePdf(req, res)
       return
     }
 

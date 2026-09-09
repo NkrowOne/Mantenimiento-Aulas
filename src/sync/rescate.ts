@@ -252,39 +252,3 @@ export async function importarPendientes(copia: Copia): Promise<Importacion> {
 
   return { entradas: entradas.length, fotos: fotos.length }
 }
-
-/**
- * Ofrece el fichero al usuario por el mejor camino que tenga el dispositivo.
- *
- * En iOS —que es donde ocurre esto— un `<a download>` no siempre guarda nada:
- * según la versión abre el JSON en una pestaña y el técnico se queda mirando
- * texto. La hoja de compartir sí funciona y además es la que lleva a AirDrop y
- * a Correo, que es exactamente lo que hay que hacer con esta copia. Se intenta
- * primero, y el `<a download>` queda de red para el escritorio.
- */
-export async function ofrecerFichero(nombre: string, blob: Blob): Promise<'compartido' | 'descargado'> {
-  const fichero = new File([blob], nombre, { type: blob.type })
-
-  if (navigator.canShare?.({ files: [fichero] })) {
-    try {
-      await navigator.share({ files: [fichero], title: nombre })
-      return 'compartido'
-    } catch (err) {
-      // Cancelar la hoja de compartir no es un fallo, pero tampoco ha guardado
-      // nada: se cae a la descarga para que siempre quede una copia.
-      if ((err as Error)?.name !== 'AbortError') console.warn('compartir', err)
-    }
-  }
-
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = nombre
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  // Un objeto URL vivo retiene el Blob entero en memoria; con las fotos dentro
-  // eso son megas. Se revoca en cuanto el navegador ha tenido su oportunidad.
-  setTimeout(() => URL.revokeObjectURL(url), 60_000)
-  return 'descargado'
-}

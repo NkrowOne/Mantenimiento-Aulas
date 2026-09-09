@@ -346,6 +346,29 @@ npm run informe:ia
   cómo mantener el inventario de revisiones y el stock al día en los dos sentidos:
   identidad de fila, fusión a tres bandas, y cómo escribir en el libro sin
   llevarse por delante sus fórmulas ni su formato.
+
+  Funciona ya, desde **Datos → Sincronizar el Excel de SharePoint**: se sube el
+  `.xlsx`, se ve hoja por hoja qué entraría y qué saldría, se aplica y se baja el
+  libro con todo lo que la aplicación sabe. Las seis hojas —estado, partes y
+  bolsa del año, la de `PCs STOCK` con los ordenadores de repuesto por número
+  de serie, y las dos de 2025— con las revisiones, las horas, los partes y su
+  material, y el consumo del almacén repartido mes a mes, más cuatro nuevas para
+  lo que no cabe en una celda: `Revisiones`, `Movimientos de Almacén`,
+  `Inventario por Sala` y `Sincronización`. Las salas nuevas entran en el bloque
+  de su edificio, las archivadas salen, y en enero se crean solas las hojas del
+  año.
+
+  Lo que el libro tiene y la aplicación no, **entra**: un parte tecleado en la
+  hoja sin número se da de alta y vuelve con el número que le pone la base; un
+  artículo nuevo de la bolsa y un PC de repuesto nuevo entran también. Y lo que
+  la pasada no sabe decidir lo **pregunta antes de aplicar**: una fila de estado
+  sin código de aula, un parte cuya aula cruza con ocho salas, un número de serie
+  que crearía un equipo que la sala no tenía. Se contesta en la pantalla y la
+  pasada se recalcula; con dudas sin contestar no se sincroniza.
+
+  Lo que no se puede leer no se interpreta: un `********` en la columna de horas
+  o un `19/0672025` en la de fecha van a cuarentena con su motivo, y no entran en
+  la base ni se pisan en la hoja. El fichero no sale del navegador.
 - **[Permisos de SharePoint, y qué pedirle a IT](docs/sincronizacion-sharepoint-permisos.md)** —
   el acceso mínimo (`Sites.Selected` sobre un solo sitio), el correo redactado, lo
   que no se pide, y la prueba que hay que hacer antes de pedir nada.
@@ -431,7 +454,10 @@ en un pasillo y se lleva al aula para contrastarla contra los aparatos que se
 ven. Sale de `window.print()` y `@media print`, igual que la hoja de placas: en
 iPad y en escritorio «Imprimir → Guardar como PDF» ya da un PDF de verdad, así
 que no entra jsPDF, ni pdfmake, ni ninguna otra dependencia para hacer lo que el
-navegador ya hace. El worker **no** se usa aquí, y no por ahorrarse el rodeo: es
+navegador ya hace. (El **informe** sí baja como PDF de una sola pulsación: lo
+convierte el worker en `POST /informe/pdf`, con la sesión de quien lo pide y sin
+consultar nada de la base —el documento va entero en la petición—. Y si el
+worker no está, la pantalla cae sola al diálogo de imprimir.) El worker **no** se usa aquí, y no por ahorrarse el rodeo: es
 una tubería de servidor —`pg_cron` despierta a `pg_net`, WeasyPrint compone, el
 PDF se archiva en Storage y se versiona— pensada para un documento que se firma
 una vez y no se regenera nunca. El inventario es lo contrario: se reimprime en
@@ -497,6 +523,18 @@ redacción y compone el documento. No hay un servicio detrás que pueda estar
 caído, ni una cola de la que nadie se entera, ni un token que sincronizar: lo
 único que se configura —y solo si se quiere el análisis redactado— es **la clave
 de Gemini**, y se pega desde la propia pantalla.
+
+**Hay dos documentos, no dos tonos.** «Escrito para» elige la audiencia.
+*Equipo técnico* es el parte del servicio: lo grave primero, cada incidencia con
+sus días abiertas, cada sala con su fiabilidad. *Dirección* es lo que se entrega
+al cliente: abre por lo que ha mejorado, cuenta lo pendiente como trabajo en
+curso y margen de mejora, y no dice cuántos días lleva abierta una incidencia ni
+señala un aula como problemática —la sección «Sin cerrar» no se puede pedir para
+él, se marque lo que se marque—. Los problemas de verdad sí salen, con su cifra:
+una incidencia de gravedad alta, una lámpara al límite, la misma pieza repetida
+en la misma sala, un edificio que concentra lo abierto. Las cifras son las
+mismas en los dos; cambia lo que se cuenta y cómo se cuenta. Los informes
+programados salen para dirección.
 
 **El PDF lo hace el navegador.** El documento sale maquetado para A4 y «Guardar
 como PDF» es un destino de impresión más, así que no hay que arrastrar media

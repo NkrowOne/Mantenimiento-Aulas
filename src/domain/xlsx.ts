@@ -136,6 +136,22 @@ export interface FilaLeida {
   fila: number
   /** Columna (`B`) → valor. Las celdas vacías no aparecen. */
   celdas: Record<string, ValorCelda>
+  /**
+   * Columna → la fórmula que lleva, sin el `=`.
+   *
+   * Hace falta porque `celdas` devuelve el **valor cacheado** de una celda de
+   * fórmula, no la fórmula: mirando solo ahí, `=P5-N5` y un `35` tecleado a mano
+   * son indistinguibles. Y la sincronización necesita distinguirlos justo para lo
+   * contrario de lo que parece — no para escribir la fórmula, sino para **no**
+   * dar por pisada una que está perfectamente.
+   *
+   * Una fórmula compartida (`<f t="shared" si="0"/>`) no trae texto: entra con
+   * cadena vacía, porque lo que importa es que la celda es una fórmula.
+   *
+   * Opcional porque una fila armada a mano —en una prueba, o por quien construye
+   * una hoja nueva— no tiene fórmulas que declarar. `leerHoja` siempre lo llena.
+   */
+  formulas?: Record<string, string>
 }
 
 function desescapar(s: string): string {
@@ -194,6 +210,7 @@ export async function leerHoja(libro: Libro, nombre: string): Promise<FilaLeida[
     const numero = Number(/\br="(\d+)"/.exec(attrs)?.[1] ?? 0)
     if (!numero) continue
     const celdas: Record<string, ValorCelda> = {}
+    const formulas: Record<string, string> = {}
 
     for (const mc of (mf[3] ?? '').matchAll(/<c\b([^>]*)\/>|<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
       const ca = mc[1] ?? mc[2] ?? ''
@@ -202,6 +219,9 @@ export async function leerHoja(libro: Libro, nombre: string): Promise<FilaLeida[
       const tipo = /\bt="([^"]+)"/.exec(ca)?.[1] ?? 'n'
       const cuerpo = mc[3] ?? ''
       const columna = partirCelda(ref).columna
+
+      const f = /<f\b[^>]*\/>|<f\b[^>]*>([\s\S]*?)<\/f>/.exec(cuerpo)
+      if (f) formulas[columna] = desescapar(f[1] ?? '')
 
       if (tipo === 'inlineStr') {
         celdas[columna] = textoDe(cuerpo)
@@ -215,10 +235,25 @@ export async function leerHoja(libro: Libro, nombre: string): Promise<FilaLeida[
       else celdas[columna] = Number(v)
     }
 
-    filas.push({ fila: numero, celdas })
+    filas.push({ fila: numero, celdas, formulas })
   }
 
   return filas
+}
+
+/**
+ * Los rangos combinados de una hoja (`E67:E68`).
+ *
+ * Hacen falta fuera del parcheador porque **la mitad de abajo de una combinación
+ * se lee vacía**, y una celda que se lee vacía es una celda en la que la fusión
+ * propone escribir. El valor que se guardara ahí no lo vería nadie —lo tapa la
+ * celda de arriba— y reaparecería el día que alguien deshiciera la combinación.
+ */
+export async function celdasCombinadas(libro: Libro, nombre: string): Promise<string[]> {
+  const hoja = libro.hojas.find((h) => h.nombre === nombre)
+  if (!hoja) throw new Error(`El libro no tiene la hoja «${nombre}»`)
+  const xml = await leerTexto(libro, hoja.ruta)
+  return [...xml.matchAll(/<mergeCell\b[^>]*\bref="([^"]+)"/g)].map((m) => m[1]!)
 }
 
 // -----------------------------------------------------------------------------
@@ -229,6 +264,13 @@ export interface Cambio {
   /** `B87`. */
   celda: string
   /**
+   * Qué tiene que pintar la celda. Solo hace falta cuando el valor es una fecha
+   * o un porcentaje: en una hoja de Excel los dos son números, y lo que los
+   * convierte en lo que son es el formato de la celda. Sin esto, escribir una
+   * revisión en una celda que se quedó en «General» enseña `46218`.
+   */
+  formato?: 'fecha' | 'porcentaje'
+  /**
    * `null` **no toca la celda**: la deja exactamente como está, con su fórmula y
    * su formato. Para vaciarla hay que pedir `''` a propósito, y eso sí borra su
    * contenido. La diferencia es la defensa contra escribir un hueco encima de un
@@ -237,17 +279,44 @@ export interface Cambio {
   valor: ValorCelda
 }
 
-function xmlDeCelda(ref: string, estilo: string, valor: Exclude<ValorCelda, null>): string {
+/**
+ * El XML de una celda. **La única**: había tres copias de esto —aquí, en
+ * `estructura.ts` y en `libro.ts`— y las otras dos tenían la rama de fórmula que
+ * a ésta le faltaba. El resultado fue el peor fallo de todo el sincronizador:
+ * las 86 fórmulas de `Bolsa 2026` se escribían como **texto**, la columna dejaba
+ * de calcular, y el libro seguía abriendo tan tranquilo enseñando `=P5-N5` en
+ * una celda. Tres copias de una función es una invitación a que una se quede
+ * atrás; ahora es una y la usan las tres.
+ */
+export function xmlDeCelda(ref: string, estilo: string, valor: Exclude<ValorCelda, null>): string {
   const s = estilo ? ` s="${estilo}"` : ''
   if (typeof valor === 'number') return `<c r="${ref}"${s}><v>${valor}</v></c>`
   if (typeof valor === 'boolean') return `<c r="${ref}"${s} t="b"><v>${valor ? 1 : 0}</v></c>`
   if (valor === '') return `<c r="${ref}"${s}/>`
+  // Una fórmula va en `<f>`, sin el `=`: escribirla como texto la mata.
+  if (valor.startsWith('=')) return `<c r="${ref}"${s}><f>${escapar(valor.slice(1))}</f></c>`
   // `xml:space="preserve"` o los espacios de los extremos desaparecen al leer.
   return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${escapar(valor)}</t></is></c>`
 }
 
+/**
+ * Decide el estilo de una celda que va a pintar una fecha o un porcentaje.
+ *
+ * Devuelve el índice nuevo, o `null` para dejar el que tenga. Lo resuelve
+ * `estilos.ts`, que es quien sabe leer `styles.xml`; aquí solo se le pregunta.
+ */
+export type ResolverEstilo = (
+  columna: string,
+  formato: 'fecha' | 'porcentaje',
+  actual: string,
+) => string | null
+
 /** Reescribe el XML de una hoja con los cambios pedidos. */
-export function parchearHojaXml(xml: string, cambios: Cambio[]): string {
+export function parchearHojaXml(
+  xml: string,
+  cambios: Cambio[],
+  resolverEstilo?: ResolverEstilo,
+): string {
   const porFila = new Map<number, Cambio[]>()
   for (const c of cambios) {
     if (c.valor === null) continue // no tocar
@@ -271,7 +340,7 @@ export function parchearHojaXml(xml: string, cambios: Cambio[]): string {
       pendientes.delete(numero)
       // Una fila autocerrada existe pero está vacía: al escribir en ella deja
       // de estarlo, así que hay que abrirla.
-      return `<row${attrs.replace(/\/$/, '')}>${aplicarEnFila(cuerpo ?? '', dela)}</row>`
+      return `<row${attrs.replace(/\/$/, '')}>${aplicarEnFila(cuerpo ?? '', dela, resolverEstilo)}</row>`
     },
   )
 
@@ -279,14 +348,18 @@ export function parchearHojaXml(xml: string, cambios: Cambio[]): string {
   // desordenadas la abre Excel y la reordena, pero por el camino se lleva por
   // delante los rangos que apuntaban a ellas.
   for (const fila of [...pendientes].sort((a, b) => a - b)) {
-    const nueva = `<row r="${fila}">${aplicarEnFila('', porFila.get(fila)!)}</row>`
+    const nueva = `<row r="${fila}">${aplicarEnFila('', porFila.get(fila)!, resolverEstilo)}</row>`
     out = insertarFila(out, fila, nueva)
   }
 
   return out
 }
 
-function aplicarEnFila(cuerpo: string, cambios: Cambio[]): string {
+function aplicarEnFila(
+  cuerpo: string,
+  cambios: Cambio[],
+  resolverEstilo?: ResolverEstilo,
+): string {
   const pendientes = new Map(cambios.map((c) => [c.celda, c]))
 
   let out = cuerpo.replace(
@@ -301,7 +374,7 @@ function aplicarEnFila(cuerpo: string, cambios: Cambio[]): string {
       // El estilo se conserva: es lo que lleva el formato de número, el borde y
       // el color de la celda, y perderlo convierte una fecha en un número de
       // cinco cifras a la vista de todo el mundo.
-      const estilo = /\bs="(\d+)"/.exec(attrs)?.[1] ?? ''
+      const estilo = conFormato(ref, /\bs="(\d+)"/.exec(attrs)?.[1] ?? '', c, resolverEstilo)
       return xmlDeCelda(ref, estilo, c.valor as Exclude<ValorCelda, null>)
     },
   )
@@ -316,10 +389,26 @@ function aplicarEnFila(cuerpo: string, cambios: Cambio[]): string {
   for (const c of [...pendientes.values()].sort(
     (a, b) => columnaANumero(partirCelda(a.celda).columna) - columnaANumero(partirCelda(b.celda).columna),
   )) {
-    const estilo = estiloDeLaIzquierda(out, columnaANumero(partirCelda(c.celda).columna))
+    const estilo = conFormato(
+      c.celda,
+      estiloDeLaIzquierda(out, columnaANumero(partirCelda(c.celda).columna)),
+      c,
+      resolverEstilo,
+    )
     out = insertarCelda(out, c.celda, xmlDeCelda(c.celda, estilo, c.valor as Exclude<ValorCelda, null>))
   }
   return out
+}
+
+/** El estilo que le toca a la celda, ya con el formato que pide el cambio. */
+function conFormato(
+  ref: string,
+  estilo: string,
+  c: Cambio,
+  resolverEstilo?: ResolverEstilo,
+): string {
+  if (!c.formato || !resolverEstilo) return estilo
+  return resolverEstilo(partirCelda(ref).columna, c.formato, estilo) ?? estilo
 }
 
 /** El `s` de la celda existente más cercana por la izquierda, o nada. */

@@ -47,6 +47,26 @@
 		reverse_proxy reports-worker:8080
 	}
 
+	# ── El PDF del informe ─────────────────────────────────────────────
+	# El informe lo compone el navegador y lo convierte el worker, que es quien
+	# tiene WeasyPrint. Solo `/informe/*`: `/generate` sigue siendo interno y con
+	# token, y este endpoint autoriza con la sesión del usuario, no con él.
+	#
+	# El tope de cuerpo es alto a propósito: un informe con las fotos del periodo
+	# dentro, en `data:`, pesa megas. El worker vuelve a comprobarlo por su
+	# cuenta —no se delega un límite de seguridad al proxy— y ese es el que manda.
+	handle /informe/* {
+		request_body {
+			max_size 25MB
+		}
+		reverse_proxy reports-worker:8080 {
+			# Convertir un informe largo tarda segundos, no milisegundos.
+			transport http {
+				response_header_timeout 60s
+			}
+		}
+	}
+
 	# ── PWA ────────────────────────────────────────────────────────────
 	handle {
 		root * /srv/dist

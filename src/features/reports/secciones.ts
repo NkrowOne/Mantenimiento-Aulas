@@ -10,6 +10,8 @@
  * informe sale sin ella, en vez de reventar.
  */
 
+import { type Audiencia, VETADAS_PARA_DIRECCION, seccionesPorDefecto } from './informe/opciones'
+
 export interface SeccionInfo {
   clave: string
   etiqueta: string
@@ -33,16 +35,6 @@ export const SECCIONES: SeccionInfo[] = [
     clave: 'analisis',
     etiqueta: 'Lo que dicen los datos',
     detalle: 'Los hallazgos del periodo, redactados',
-  },
-  {
-    clave: 'revisiones',
-    etiqueta: 'Revisiones del periodo',
-    detalle: 'Cada revisión hecha: sala, hora, quién y cómo salió',
-  },
-  {
-    clave: 'eventos',
-    etiqueta: 'Diario del periodo',
-    detalle: 'Día a día: altas, cierres, material, inventarios y equipos',
   },
   {
     clave: 'edificios',
@@ -80,40 +72,76 @@ export const SECCIONES: SeccionInfo[] = [
     detalle: 'La mediana, la media y las cerradas en menos de 48 h. Desmárcala para que el informe no dé ese número',
   },
   {
-    clave: 'cierres',
-    etiqueta: 'Cada cierre, con sus días',
-    detalle: 'Uno por línea: cuándo se abrió, cuándo se cerró, cuánto llevó y qué se hizo. Es lo que sirve para justificar un tiempo',
-  },
-  {
     clave: 'equipo',
     etiqueta: 'Reparto del trabajo',
     detalle: 'Con nombres: revisiones y altas de cada persona',
     optativa: true,
   },
   {
-    clave: 'fotos',
-    etiqueta: 'Fotos del periodo',
-    detalle: 'Las de las revisiones y las de las incidencias, dentro del propio documento y diciendo de cuándo es cada una: cómo se encontró y cómo quedó',
-  },
-  {
     clave: 'recomendaciones',
     etiqueta: 'Qué conviene hacer',
     detalle: 'Las acciones que salen de los hallazgos',
+  },
+
+  /*
+   * A partir de aquí, los listados. Van al final del documento —detrás del
+   * corte «Detalle del periodo»— porque se consultan, no se leen de seguido:
+   * con un periodo largo, la tabla de revisiones y el diario son trescientas
+   * filas que antes se metían entre el análisis y las conclusiones.
+   */
+  {
+    clave: 'revisiones',
+    etiqueta: 'Revisiones del periodo',
+    detalle: 'Cada revisión hecha: sala, hora, quién y cómo salió',
+  },
+  {
+    clave: 'eventos',
+    etiqueta: 'Diario del periodo',
+    detalle: 'Día a día: altas, cierres, material, inventarios y equipos',
+  },
+  {
+    clave: 'cierres',
+    etiqueta: 'Cada cierre, con sus días',
+    detalle: 'Uno por línea: cuándo se abrió, cuándo se cerró, cuánto llevó y qué se hizo. Es lo que sirve para justificar un tiempo',
+  },
+  {
+    clave: 'fotos',
+    etiqueta: 'Fotos del periodo',
+    detalle: 'Las de las revisiones y las de las incidencias, dentro del propio documento y diciendo de cuándo es cada una: cómo se encontró y cómo quedó',
   },
 ]
 
 export const POR_DEFECTO = SECCIONES.filter((s) => !s.optativa).map((s) => s.clave)
 
+/**
+ * Las casillas que se ofrecen para una audiencia, y las marcadas de entrada.
+ *
+ * Las dos salen del contrato del informe, no de aquí: si «Sin cerrar» no se
+ * puede pedir para dirección, la casilla no está, en vez de estar y no hacer
+ * nada. Y al cambiar de audiencia se vuelve a lo marcado por defecto de la
+ * nueva, porque lo que se había marcado era para la otra.
+ */
+export function seccionesDe(audiencia: Audiencia): SeccionInfo[] {
+  return SECCIONES.filter(
+    (s) => audiencia !== 'direccion' || !(VETADAS_PARA_DIRECCION as string[]).includes(s.clave),
+  )
+}
+
+export function porDefectoDe(audiencia: Audiencia): string[] {
+  return [...seccionesPorDefecto(audiencia)]
+}
+
 export const AUDIENCIAS = [
   {
     clave: 'direccion',
     etiqueta: 'Dirección',
-    detalle: 'Estado general, tendencia y decisiones: compras, refuerzos, prioridades',
+    detalle:
+      'Para el cliente: lo que ha mejorado, lo que está en curso y las decisiones que convienen. Sin días abiertos ni salas señaladas',
   },
   {
     clave: 'equipo',
     etiqueta: 'Equipo técnico',
-    detalle: 'Qué salas tocar, con qué material y en qué orden',
+    detalle: 'El parte del servicio: lo grave primero, qué salas tocar, con qué material y en qué orden',
   },
 ] as const
 

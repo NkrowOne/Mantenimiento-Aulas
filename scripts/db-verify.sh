@@ -160,8 +160,12 @@ union all select 'consumos sin destino', count(*) from stock_movements
   where kind = 'consumo' and incident_id is null and room_id is null;" | sed 's/^/   /'
 
 echo "▸ Pruebas de RLS e inmutabilidad"
+# `ERROR|DETAIL|CONTEXT` en el filtro no es de adorno: sin ellos, una prueba que
+# revienta imprime su cabecera, el `pipefail` corta el script y no queda ni una
+# línea que diga por qué. Se depura a ciegas hasta que a alguien se le ocurre
+# mirar el filtro.
 psql "$PGURL" -q -v ON_ERROR_STOP=1 -f supabase/rls-test.sql 2>&1 \
-  | grep -E "===|OK:|FALLO|ATENCIÓN" | sed 's/^/   /'
+  | grep -E "===|OK:|FALLO|ATENCIÓN|ERROR|DETAIL:|CONTEXT:" | sed 's/^/   /'
 
 echo
 echo "✓ Verificación completada"

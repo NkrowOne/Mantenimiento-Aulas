@@ -120,6 +120,28 @@ async function main(): Promise<void> {
   await check('la página no se desborda en horizontal', async () =>
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
   )
+  /*
+   * Ningún campo por debajo de 16px.
+   *
+   * No es una preferencia de estilo: Safari de iOS amplía la página al enfocar
+   * un campo con la letra más pequeña, y con la página ampliada la barra de
+   * pestañas —que es `fixed`— se queda varada en mitad de la pantalla, porque
+   * WebKit ancla los elementos fijos al viewport de maquetación y no al que se
+   * ve. Es el fallo de «el menú tiene que estar fijado», y se arregla aquí: sin
+   * zoom no hay divergencia y la barra no se mueve.
+   *
+   * Se comprueba sobre lo RENDERIZADO y no sobre las clases: lo que importa es
+   * el tamaño con el que iOS decide, y ese sale del CSS ya compilado.
+   */
+  await check('ningún campo baja de 16px, que es lo que hace que iOS amplíe', async () => {
+    const chicos = await page.evaluate(() =>
+      [...document.querySelectorAll('input, textarea, select')]
+        .filter((el) => parseFloat(getComputedStyle(el).fontSize) < 16)
+        .map((el) => `${el.tagName.toLowerCase()}[name=${el.getAttribute('name') ?? '?'}]`),
+    )
+    if (chicos.length) problems.push(`campos por debajo de 16px: ${chicos.join(', ')}`)
+    return chicos.length === 0
+  })
 
   console.log('\n▸ Guardado de contraseña en el alta')
   await check('el PIN es un campo de contraseña', async () =>

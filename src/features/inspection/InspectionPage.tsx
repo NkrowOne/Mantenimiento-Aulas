@@ -479,12 +479,21 @@ export function InspectionPage({
             <p className="mt-2 text-sm text-warn">Añade una foto de la incidencia.</p>
           )}
 
+          {/*
+            Grande de verdad, y no por gusto. Con tres líneas la caja parecía
+            pedir una frase, y la revisión de un aula tiene más que contar que
+            una frase: el mando que aparece en el cajón, la persiana que cuesta,
+            el cable que alguien ha vuelto a cambiar de sitio. Quien escribía
+            perdía de vista el principio a la tercera línea y acababa cortando.
+            Ocho líneas caben en la pantalla del iPhone sin tapar la barra de
+            abajo, y `resize-y` deja alargarla en el ordenador.
+          */}
           <TextoLargo
             value={draft.inspection.notes ?? ''}
             onCommit={setNotes}
-            placeholder="Observaciones (opcional)"
-            rows={3}
-            className="mt-3 w-full rounded-ctl border border-line bg-surface p-3 text-sm"
+            placeholder="Observaciones (opcional). Lo que has visto y no es una avería."
+            rows={8}
+            className="mt-3 min-h-[11rem] w-full resize-y rounded-ctl border border-line bg-surface p-3 text-base leading-relaxed"
             label="Observaciones de la revisión"
           />
         </div>
@@ -664,8 +673,8 @@ function NotaIncidencia({
       value={value}
       onCommit={onCommit}
       placeholder="¿Qué has visto?"
-      rows={2}
-      className="mt-2 w-full rounded-ctl border border-crit/25 bg-surface p-2 text-sm"
+      rows={4}
+      className="mt-2 min-h-[6rem] w-full resize-y rounded-ctl border border-crit/25 bg-surface p-2 text-base leading-relaxed"
       label="Qué has visto"
     />
   )

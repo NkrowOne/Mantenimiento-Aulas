@@ -181,7 +181,7 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
                 <select
                   value={mergeInto[b.id] ?? ''}
                   onChange={(e) => setMergeInto((m) => ({ ...m, [b.id]: e.target.value }))}
-                  className="h-10 rounded-ctl border border-line bg-surface px-2 text-sm"
+                  className="h-10 rounded-ctl border border-line bg-surface px-2 text-base"
                 >
                   <option value="">Fusionar con…</option>
                   {(known ?? []).map((k) => (

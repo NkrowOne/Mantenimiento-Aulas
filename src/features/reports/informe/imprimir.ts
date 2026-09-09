@@ -21,6 +21,8 @@
  * hace bien.
  */
 
+import { ofrecerFichero } from '@/lib/ficheros'
+
 /** Qué se ha podido hacer, para poder decirlo en vez de dejar un botón mudo. */
 export type Resultado = 'ventana' | 'marco' | 'bloqueado'
 
@@ -113,4 +115,80 @@ export function descargarDocumento(html: string, nombre: string): void {
   enlace.remove()
   // Sin esperar, Safari cancela la descarga al revocar la URL demasiado pronto.
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
+}
+
+/**
+ * El PDF de verdad: un fichero, no un diálogo.
+ *
+ * «Descargar PDF» abría el documento en una pestaña y lanzaba el diálogo de
+ * imprimir. De ahí sale un PDF, sí, pero solo si quien lo pulsa sabe que tiene
+ * que ir a «Compartir → Guardar en Archivos» —tres toques y una hoja de sistema
+ * que no dice «PDF» por ninguna parte—. Quien pedía un informe para mandarlo
+ * acababa mandando el HTML, que en el correo del cliente se abre como código.
+ *
+ * Así que el PDF lo hace el servidor, con el mismo WeasyPrint que lleva años
+ * haciendo los de los informes programados, y vuelve como fichero. El documento
+ * es autocontenido —gráficos en SVG y fotos en `data:`— así que lo único que
+ * viaja es el informe que ya se iba a archivar de todas formas.
+ *
+ * Lo que NO se hace: montar una librería de PDF en el navegador. Son cientos de
+ * kilobytes en el arranque de una aplicación que se abre desde un iPad en un
+ * pasillo, y lo que sacan —el documento pintado como una imagen— es peor que
+ * esto en todo: pesa más, no se puede buscar y las tablas se parten donde
+ * quieren.
+ */
+export type ResultadoPdf =
+  | { ok: true; via: 'compartido' | 'descargado' }
+  /** No se pudo, y por qué. Quien llama decide si cae al diálogo de imprimir. */
+  | { ok: false; motivo: string; sinServicio: boolean }
+
+export async function descargarPdf(
+  html: string,
+  nombre: string,
+  token: string | null,
+): Promise<ResultadoPdf> {
+  if (!token) {
+    return { ok: false, motivo: 'no hay sesión con la que pedirlo', sinServicio: false }
+  }
+
+  let respuesta: Response
+  try {
+    respuesta = await fetch('/informe/pdf', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ html, nombre }),
+    })
+  } catch {
+    // Sin red, o el servicio no está: es el caso en el que hay que caer al
+    // diálogo de imprimir sin dar la lata, porque desde ahí sale igual.
+    return { ok: false, motivo: 'no se ha podido hablar con el servidor', sinServicio: true }
+  }
+
+  if (!respuesta.ok) {
+    /*
+     * Un 404 es un despliegue sin la ruta —el servidor todavía no se ha
+     * actualizado— y un 502 es el worker caído. Los dos son «no está», y de los
+     * dos se sale por el diálogo de imprimir. Un 401 o un 403 no: ahí hay algo
+     * que arreglar y hay que decirlo.
+     */
+    const sinServicio = respuesta.status === 404 || respuesta.status === 502 || respuesta.status === 503
+    let motivo = `el servidor ha respondido ${respuesta.status}`
+    try {
+      const cuerpo = (await respuesta.json()) as { error?: string }
+      if (cuerpo.error) motivo = cuerpo.error
+    } catch {
+      // Sin cuerpo legible se queda el código, que ya dice algo.
+    }
+    return { ok: false, motivo, sinServicio }
+  }
+
+  const blob = await respuesta.blob()
+  if (blob.size === 0) {
+    return { ok: false, motivo: 'el PDF ha llegado vacío', sinServicio: true }
+  }
+  const via = await ofrecerFichero(nombre, new Blob([blob], { type: 'application/pdf' }))
+  return { ok: true, via }
 }

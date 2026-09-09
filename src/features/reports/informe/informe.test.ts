@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { lecturaCalculada, senales } from './analisis'
-import { SECCIONES, leerOpciones } from './opciones'
+import { indicadores, lecturaCalculada, senales } from './analisis'
+import { SECCIONES, TOPE_ENFOQUE, leerOpciones } from './opciones'
 import { diasLargo, renderReport } from './plantilla'
 import { actividadDiaria } from './graficos'
-import { cifrasInventadas, configurarIA, expediente, formulasDelatoras } from './ia'
-import { etiquetaDia, nombreComparacion, periodoAnterior } from '../periodos'
+import { cifrasInventadas, configurarIA, encargo, expediente, formulasDelatoras, instruccion } from './ia'
+import { MARCO_DEL_SERVICIO, NIVELES, fueraDeAlcance, sinPedirPermiso } from './contrato'
+import { etiquetaDia, nombreComparacion, nombreDia, periodoAnterior } from '../periodos'
 import { inicioDelDia } from '@/domain/fechas'
 import type { ReportData } from './tipos'
 
@@ -55,6 +56,7 @@ function expedienteDePrueba(): ReportData {
       salasSinRevisarHace6Meses: 12,
       salasNuncaRevisadas: 5,
       articulosBajoMinimo: 2,
+      pcsDeRepuesto: 2,
     },
     serieDiaria: [
       { dia: '2026-07-27', revisiones: 5, abiertas: 3, resueltas: 1 },
@@ -202,11 +204,126 @@ function expedienteDePrueba(): ReportData {
   }
 }
 
-const opcionesCompletas = leerOpciones({ secciones: [...SECCIONES] })
+// El documento entero y sin filtro de audiencia: el parte del equipo.
+const opcionesCompletas = leerOpciones({ secciones: [...SECCIONES], audiencia: 'equipo' })
+
+/**
+ * El orden del documento: primero lo que se argumenta, después lo que se consulta.
+ *
+ * Los listados largos —cada revisión, el diario, cada cierre y las fotos— iban
+ * mezclados con el análisis, y con un periodo largo son trescientas filas entre
+ * la entradilla y la primera conclusión. Ahora van al final, detrás de un corte.
+ */
+describe('los listados van al final, detrás del análisis', () => {
+  const d = expedienteDePrueba()
+  const html = renderReport(d, lecturaCalculada(d, 'equipo'), opcionesCompletas, {
+    emitido: '31/07/2026, 9:14',
+  })
+  const donde = (texto: string): number => {
+    const i = html.indexOf(texto)
+    expect(i, `no está «${texto}»`).toBeGreaterThan(-1)
+    return i
+  }
+
+  it('el análisis y las conclusiones van antes que las tablas', () => {
+    expect(donde('Lo que dicen los datos')).toBeLessThan(donde('Detalle del periodo'))
+    expect(donde('Dónde está el trabajo')).toBeLessThan(donde('Detalle del periodo'))
+    expect(donde('Qué conviene hacer')).toBeLessThan(donde('Detalle del periodo'))
+  })
+
+  it('y las tablas largas, después del corte', () => {
+    const corte = donde('Detalle del periodo')
+    expect(donde('Revisiones del periodo')).toBeGreaterThan(corte)
+    expect(donde('Diario del periodo')).toBeGreaterThan(corte)
+    expect(donde('Cada cierre, con sus días')).toBeGreaterThan(corte)
+  })
+
+  it('sin ningún listado pedido no se imprime el corte, que no separaría nada', () => {
+    const soloAnalisis = renderReport(
+      d,
+      lecturaCalculada(d, 'equipo'),
+      leerOpciones({ secciones: ['resumen', 'analisis', 'edificios'], audiencia: 'equipo' }),
+      { emitido: '31/07/2026, 9:14' },
+    )
+    expect(soloAnalisis).toContain('Dónde está el trabajo')
+    expect(soloAnalisis).not.toContain('Detalle del periodo')
+  })
+
+  it('con un solo listado el corte sí sale: dice dónde acaba lo que se lee', () => {
+    const conDiario = renderReport(
+      d,
+      lecturaCalculada(d, 'equipo'),
+      leerOpciones({ secciones: ['resumen', 'analisis', 'eventos'], audiencia: 'equipo' }),
+      { emitido: '31/07/2026, 9:14' },
+    )
+    expect(conDiario.indexOf('Detalle del periodo')).toBeLessThan(
+      conDiario.indexOf('Diario del periodo'),
+    )
+  })
+})
+
+/**
+ * El orden del trabajo: lo último, primero.
+ *
+ * Un informe de un trimestre no cabe entero —el diario se corta a ciento
+ * cincuenta apuntes— y lo que se caía era el final de la lista, que ordenada
+ * por calendario es justo la semana pasada. Se pedía un informe largo para ver
+ * lo último y lo último era lo que no salía.
+ *
+ * Los gráficos siguen el calendario: un eje de tiempo al revés no lo lee nadie.
+ * Las listas de trabajo, no.
+ */
+describe('las listas de trabajo se leen por lo último', () => {
+  const d = expedienteDePrueba()
+  const html = renderReport(d, lecturaCalculada(d, 'equipo'), opcionesCompletas, {
+    emitido: '31/07/2026, 9:14',
+  })
+
+  it('el diario abre por el día más reciente y cierra por el más antiguo', () => {
+    const diario = html.slice(html.indexOf('Diario del periodo'))
+    const primero = diario.indexOf(nombreDia('2026-07-31'))
+    const ultimo = diario.indexOf(nombreDia('2026-07-27'))
+    expect(primero).toBeGreaterThan(-1)
+    expect(ultimo).toBeGreaterThan(-1)
+    expect(primero).toBeLessThan(ultimo)
+  })
+
+  it('y lo dice en la cabecera de la sección, para que nadie lo dé por un error', () => {
+    expect(html).toContain('lo último primero')
+  })
+
+  it('el gráfico de actividad sigue yendo del primer día al último', () => {
+    const grafico = html.slice(html.indexOf('Actividad'), html.indexOf('Diario del periodo'))
+    expect(grafico.indexOf('>L 27</text>')).toBeLessThan(grafico.indexOf('>V 31</text>'))
+  })
+
+  it('lo que no cabe son los movimientos ANTERIORES, y se dice cuáles', () => {
+    // 27 movimientos en total y 1 en la lista: el resto no cabe.
+    expect(html).toContain('anteriores a los que salen')
+    expect(html).toContain('empezando por lo más reciente')
+  })
+
+  /*
+   * Un día del que no sale ningún apunte no es lo mismo antes del corte que
+   * después. Después —más reciente que el más viejo listado— es verdad que no
+   * hubo nada. Antes, solo es que no cabía.
+   */
+  it('un día anterior al corte se marca recortado, y uno posterior no', () => {
+    const diario = html.slice(html.indexOf('Diario del periodo'))
+    const jornadaDe = (dia: string): string => {
+      const i = diario.indexOf(nombreDia(dia))
+      return diario.slice(i, i + 600)
+    }
+    // El único apunte del expediente es del 27, el día más viejo: del 28 en
+    // adelante no hay nada que enseñar y eso es cierto, no un recorte.
+    expect(jornadaDe('2026-07-31')).toContain('Solo revisiones')
+    expect(jornadaDe('2026-07-31')).not.toContain('recortada por extensión')
+  })
+})
 
 describe('el documento sale entero', () => {
   const d = expedienteDePrueba()
-  const html = renderReport(d, lecturaCalculada(d), opcionesCompletas, {
+  const html = renderReport(d, lecturaCalculada(d, 'equipo'), opcionesCompletas, {
     emitido: '31/07/2026, 9:14',
   })
 
@@ -285,7 +402,7 @@ describe('el documento sale entero', () => {
       fotosTotal: 0,
       fotosDescartadas: 0,
     }
-    const lectura = lecturaCalculada(vacio)
+    const lectura = lecturaCalculada(vacio, 'equipo')
     expect(lectura.titular).toBeTruthy()
     expect(lectura.entradilla).toBeTruthy()
     const salida = renderReport(vacio, lectura, opcionesCompletas, { emitido: '31/07/2026, 9:14' })
@@ -293,9 +410,284 @@ describe('el documento sale entero', () => {
   })
 })
 
+/**
+ * La cabecera corporativa y el fin de la «Procedencia».
+ *
+ * Las dos cosas que un informe que sale del servicio y llega al cliente tiene
+ * que cumplir: llevar las marcas de quién lo emite y para quién, y no repetir
+ * al pie lo que ya ha dicho en la portada.
+ */
+describe('la imagen del documento', () => {
+  const d = expedienteDePrueba()
+  const html = renderReport(d, lecturaCalculada(d, 'equipo'), opcionesCompletas, {
+    emitido: '31/07/2026, 9:14',
+    solicitante: 'Eduardo Rubio',
+  })
+
+  it('lleva las dos marcas dentro del fichero, no enlazadas', () => {
+    expect(html).toContain('aria-label="Grupo Oesia"')
+    expect(html).toContain('aria-label="Universidad Francisco de Vitoria"')
+    // Trazadas, no enlazadas: un <img> a un logotipo sería un hueco blanco el
+    // día que la carpeta cambie de sitio, y este documento se archiva.
+    expect(html).not.toMatch(/<img[^>]+aria-label="Grupo Oesia"/)
+  })
+
+  it('las marcas van arriba del todo, antes del titular', () => {
+    const marcas = html.indexOf('aria-label="Grupo Oesia"')
+    const titular = html.indexOf('<h1>')
+    expect(marcas).toBeGreaterThan(-1)
+    expect(marcas).toBeLessThan(titular)
+  })
+
+  it('no repite al pie la fecha, el periodo ni quién lo pidió', () => {
+    // Estaban en «Procedencia», a cuatro dedos de la cabecera que ya las dice.
+    expect(html).not.toContain('Procedencia')
+    expect(html).not.toContain('Datos leídos de la base')
+    expect(html).not.toContain('Solicitado por')
+    expect(html).not.toContain('Un informe emitido no se regenera')
+    // Y siguen dichas una vez, donde tocaba.
+    expect(html.match(/Eduardo Rubio/g)?.length).toBe(1)
+    expect(html.match(/31\/07\/2026, 9:14/g)?.length).toBe(1)
+  })
+
+  /*
+   * El colofón se quitó entero. Decía qué se quedaba fuera de la cuenta —salas
+   * nunca revisadas, registros sin sala, salas archivadas—, y lo decía al final
+   * de un documento que ya lo cuenta donde toca: las salas sin revisar están en
+   * su sección, los registros sin sala en el desglose y las archivadas en el
+   * maestro. Cerrar un informe de dirección con una lista de reparos es acabar
+   * pidiendo disculpas por los datos que se acaban de presentar.
+   */
+  it('no cierra el documento con una lista de reparos', () => {
+    expect(html).not.toContain('Alcance de los datos')
+    expect(html).not.toContain('no entran en ningún indicador')
+    expect(html).not.toContain('Informe parcial')
+    expect(html).not.toContain('class="colofon"')
+  })
+})
+
+/**
+ * El fin de semana en el gráfico diario.
+ *
+ * El servicio trabaja de lunes a viernes: un sábado a cero es una columna en
+ * blanco que estrecha a las demás. Pero un sábado CON movimiento es justo lo
+ * que hay que ver, y ese no se toca.
+ */
+describe('los fines de semana del gráfico diario', () => {
+  const d = expedienteDePrueba()
+  // La semana del fixture es de lunes a viernes; se le añade su fin de semana.
+  const conFinde = (sabado: { revisiones: number; abiertas: number; resueltas: number }): string => {
+    const ampliado: ReportData = {
+      ...d,
+      period: { start: '2026-07-27', end: '2026-08-02' },
+      dias: 7,
+      serieDiaria: [
+        ...d.serieDiaria,
+        { dia: '2026-08-01', ...sabado },
+        { dia: '2026-08-02', revisiones: 0, abiertas: 0, resueltas: 0 },
+      ],
+    }
+    return renderReport(ampliado, lecturaCalculada(ampliado, 'equipo'), opcionesCompletas, {
+      emitido: '03/08/2026, 9:14',
+    })
+  }
+
+  it('un fin de semana en blanco no se dibuja', () => {
+    const html = conFinde({ revisiones: 0, abiertas: 0, resueltas: 0 })
+    // «S 1» y «D 2» son las etiquetas del eje del SVG: sin ellas, no hay columnas.
+    expect(html).not.toContain('>S 1</text>')
+    expect(html).not.toContain('>D 2</text>')
+    expect(html).toContain('fines de semana sin actividad, fuera del gráfico')
+  })
+
+  it('un sábado con trabajo sí se dibuja, que es el dato que se busca', () => {
+    const html = conFinde({ revisiones: 2, abiertas: 1, resueltas: 0 })
+    expect(html).toContain('>S 1</text>')
+    // El domingo vacío se sigue cayendo: no es todo o nada.
+    expect(html).not.toContain('>D 2</text>')
+  })
+
+  it('los días laborables en blanco se quedan: un hueco entre semana informa', () => {
+    const parado: ReportData = {
+      ...d,
+      serieDiaria: d.serieDiaria.map((x, i) =>
+        i === 2 ? { ...x, revisiones: 0, abiertas: 0, resueltas: 0 } : x,
+      ),
+    }
+    const html = renderReport(parado, lecturaCalculada(parado, 'equipo'), opcionesCompletas, {
+      emitido: '31/07/2026, 9:14',
+    })
+    expect(html).toContain('>X 29</text>')
+    expect(html).not.toContain('fines de semana sin actividad')
+  })
+})
+
+/**
+ * El informe de dirección.
+ *
+ * Es el que llega al cliente, y se escribe para dar cuenta del trabajo con
+ * buena imagen sin faltar a los datos. Lo que estas pruebas vigilan es la
+ * regla en las dos direcciones: que no diga cuántos días lleva abierta nada ni
+ * señale un aula, Y que los problemas de verdad sigan saliendo con su cifra.
+ * Un informe que solo cumpliera la primera mitad sería un folleto.
+ */
+describe('el informe para dirección', () => {
+  const d = expedienteDePrueba()
+  const opcionesDireccion = leerOpciones({ secciones: [...SECCIONES], audiencia: 'direccion' })
+  const pie = { emitido: '31/07/2026, 9:14' }
+
+  it('el titular no es un reproche: abre por lo hecho, no por lo que falta', () => {
+    const l = lecturaCalculada(d, 'direccion')
+    // El mismo expediente titula «Cuatro incidencias llevan más de una semana
+    // abiertas» para el equipo. Para dirección, lo que se ha hecho.
+    expect(l.titular).not.toMatch(/semana abierta|días|sin cerrar/i)
+    expect(l.titular).toMatch(/revisadas/)
+    expect(lecturaCalculada(d, 'equipo').titular).toMatch(/más de una semana abiertas/)
+  })
+
+  it('y si hay mejora, el titular es la mejora', () => {
+    const bueno: ReportData = {
+      ...d,
+      ahora: { ...d.ahora, revisiones: 40, resueltas: 14, gravedadAlta: 0 },
+    }
+    const l = lecturaCalculada(bueno, 'direccion')
+    expect(l.titular).toBe('Más revisiones y más cierres que la semana anterior')
+    // Las buenas noticias abren los hallazgos, con su cifra.
+    expect(l.hallazgos[0]?.titulo).toBe('Suben las revisiones frente a la semana anterior')
+    expect(l.hallazgos[0]?.cuerpo).toContain('40 frente a 31')
+    // Y no tapan lo que pide una decisión: las lámparas siguen ahí.
+    expect(l.hallazgos.map((h) => h.titulo)).toContain('3 lámparas para cambiar antes de que se fundan')
+    // Dos buenas como mucho, aunque haya tres.
+    const se = senales(bueno, 'direccion')
+    expect(se.filter((x) => x.tono === 'ok').length).toBeGreaterThanOrEqual(3)
+    expect(l.hallazgos.slice(0, 2).every((h) => se.find((x) => x.titulo === h.titulo)?.tono === 'ok')).toBe(true)
+    expect(se.find((x) => x.titulo === l.hallazgos[2]?.titulo)?.tono).not.toBe('ok')
+  })
+
+  it('no dice cuántos días lleva abierta nada, ni en la entradilla ni en los hallazgos', () => {
+    const l = lecturaCalculada(d, 'direccion')
+    const todo = [l.titular, l.entradilla, ...l.hallazgos.flatMap((h) => [h.titulo, h.cuerpo])].join(' ')
+    expect(todo).not.toMatch(/más de una semana|sin cerrar|estancad|más antiguas|de más de 7 días/i)
+    // Pero el saldo de hoy sí: es un dato, no un reproche.
+    expect(l.entradilla).toContain('Hoy quedan 23 incidencias abiertas en total.')
+    expect(lecturaCalculada(d, 'equipo').entradilla).toContain('4 de ellas con más de una semana')
+  })
+
+  it('los problemas de verdad se dicen igual, con su cifra', () => {
+    const se = senales(d, 'direccion')
+    const claves = se.map((x) => x.clave)
+    expect(claves).not.toContain('estancadas')
+    expect(claves).not.toContain('sin-sala')
+    expect(claves).toContain('gravedad')
+    expect(claves).toContain('reincidencia')
+    expect(claves).toContain('lamparas')
+    expect(claves).toContain('concentracion')
+    expect(se.find((x) => x.clave === 'gravedad')?.tono).toBe('critico')
+    expect(se.map((s) => s.peso)).toEqual([...se.map((s) => s.peso)].sort((a, b) => a - b))
+  })
+
+  /*
+   * De conjunto, y en la voz de quien hace el trabajo. Decían «Aprobar la
+   * compra de lámparas» —el informe pidiéndole permiso al cliente por algo que
+   * es literalmente nuestro encargo— y ahora dicen lo que vamos a hacer.
+   */
+  it('las recomendaciones son de conjunto y no piden permiso', () => {
+    const l = lecturaCalculada(d, 'direccion')
+    const acciones = l.recomendaciones.map((r) => r.accion)
+    expect(acciones.some((a) => /Pedir las lámparas de repuesto/.test(a))).toBe(true)
+    expect(acciones.some((a) => /Repasar la lista de estancadas/.test(a))).toBe(false)
+    expect(acciones.some((a) => /^(Autorizar|Aprobar|Validar|Solicitar autorizaci)/.test(a))).toBe(false)
+  })
+
+  it('«Pendientes hoy» da el saldo y no los días', () => {
+    const dir = indicadores(d, 'direccion')[3]!
+    const eq = indicadores(d, 'equipo')[3]!
+    expect(dir.etiqueta).toBe('Pendientes hoy')
+    expect(dir.valor).toBe('23')
+    expect(dir.detalle).toBe('en seguimiento')
+    expect(dir.tono).toBe('neutro')
+    expect(eq.detalle).toBe('4 de más de 7 días')
+    expect(eq.tono).toBe('critico')
+  })
+
+  it('«Sin cerrar» no se puede pedir para dirección, y las secciones por defecto son otras', () => {
+    expect(leerOpciones({ secciones: ['estancadas', 'resumen'], audiencia: 'direccion' }).secciones).toEqual(['resumen'])
+    // Solo la vetada: se cae al conjunto por defecto de dirección, no a un informe en blanco.
+    const solo = leerOpciones({ secciones: ['estancadas'], audiencia: 'direccion' }).secciones
+    expect(solo).not.toContain('estancadas')
+    expect(solo).toContain('resumen')
+    const defecto = leerOpciones({ audiencia: 'direccion' }).secciones
+    for (const fuera of ['estancadas', 'revisiones', 'eventos', 'cierres', 'equipo']) {
+      expect(defecto).not.toContain(fuera)
+    }
+    for (const dentro of ['resumen', 'analisis', 'edificios', 'fotos', 'tiempos', 'recomendaciones']) {
+      expect(defecto).toContain(dentro)
+    }
+    // El equipo sí puede pedirla.
+    expect(leerOpciones({ secciones: ['estancadas'], audiencia: 'equipo' }).secciones).toEqual(['estancadas'])
+  })
+
+  it('el documento no imprime días abiertos ni salas señaladas, y dice para quién es', () => {
+    const html = renderReport(d, lecturaCalculada(d, 'direccion'), opcionesDireccion, pie)
+    expect(html).toContain('para dirección')
+    expect(html).not.toContain('Sin cerrar')
+    expect(html).not.toContain('más de siete días')
+    expect(html).not.toContain('de más de 7 días')
+    expect(html).not.toContain('arrastrando las antiguas')
+    expect(html).not.toContain('Salas señaladas')
+    expect(html).toContain('Propuestas de mejora')
+    // La pieza repetida sí: es una mejora concreta, con su sala.
+    expect(html).toContain('Dónde hay una mejora clara')
+    expect(html).toContain('Mismo repuesto, misma sala')
+    expect(html).toContain('Cable HDMI 3 m')
+    // Y gravedad alta también.
+    expect(html).toContain('de gravedad alta')
+  })
+
+  it('el parte del equipo sigue diciéndolo todo', () => {
+    const html = renderReport(d, lecturaCalculada(d, 'equipo'), opcionesCompletas, pie)
+    expect(html).toContain('para el equipo técnico')
+    expect(html).toContain('Sin cerrar')
+    expect(html).toContain('Salas señaladas')
+    expect(html).toContain('Qué conviene hacer')
+    expect(html).toContain('4 de más de 7 días')
+  })
+
+  it('al modelo no se le dan los datos que el documento no dice', () => {
+    const dir = expediente(d, senales(d, 'direccion'), 'direccion')
+    expect(dir).not.toContain('LAS MÁS ANTIGUAS SIN CERRAR')
+    expect(dir).not.toContain('de ellas con más de 7 días')
+    expect(dir).not.toContain('SALAS CON MÁS INCIDENCIAS')
+    // Los datos que sí se cuentan viajan igual.
+    expect(dir).toContain('de gravedad alta: 2')
+    expect(dir).toContain('LÁMPARAS AL LÍMITE')
+    const eq = expediente(d, senales(d, 'equipo'), 'equipo')
+    expect(eq).toContain('LAS MÁS ANTIGUAS SIN CERRAR')
+    expect(eq).toContain('de ellas con más de 7 días: 4')
+  })
+
+  it('la instrucción del sistema lleva la regla escrita', () => {
+    expect(instruccion('direccion')).toContain('No se dice cuántos días lleva abierta una incidencia')
+    expect(instruccion('direccion')).toContain('Los problemas reales sí se dicen')
+    expect(instruccion('equipo')).not.toContain('No se dice cuántos días')
+    expect(instruccion('equipo')).toContain('lo grave primero')
+  })
+
+  it('«en equilibrio» nombra el tramo, no siempre la semana', () => {
+    const mes: ReportData = {
+      ...d,
+      kind: 'personalizado',
+      situacion: { ...d.situacion, estancadas: 0 },
+      ahora: { ...d.ahora, resueltas: d.ahora.registros },
+    }
+    expect(lecturaCalculada(mes, 'equipo').titular).toBe('Periodo en equilibrio')
+    expect(lecturaCalculada({ ...mes, kind: 'semanal' }, 'equipo').titular).toBe('Semana en equilibrio')
+  })
+})
+
 describe('lo que se pinta sin IA', () => {
   it('la redacción calculada trae titular, entradilla y acciones', () => {
-    const l = lecturaCalculada(expedienteDePrueba())
+    const l = lecturaCalculada(expedienteDePrueba(), 'equipo')
     expect(l.titular).toMatch(/incidencias llevan más de una semana abiertas/)
     expect(l.entradilla.length).toBeGreaterThan(80)
     expect(l.hallazgos.length).toBeGreaterThan(0)
@@ -304,7 +696,7 @@ describe('lo que se pinta sin IA', () => {
   })
 
   it('las señales salen ordenadas por peso, lo grave primero', () => {
-    const se = senales(expedienteDePrueba())
+    const se = senales(expedienteDePrueba(), 'equipo')
     expect(se[0]?.clave).toBe('estancadas')
     expect(se.map((s) => s.peso)).toEqual([...se.map((s) => s.peso)].sort((a, b) => a - b))
   })
@@ -312,7 +704,7 @@ describe('lo que se pinta sin IA', () => {
 
 describe('el expediente que sale hacia Gemini', () => {
   const d = expedienteDePrueba()
-  const texto = expediente(d, senales(d))
+  const texto = expediente(d, senales(d, 'equipo'), 'equipo')
 
   it('lleva las cifras del periodo y las de hoy', () => {
     expect(texto).toContain('revisiones completadas: 18 (antes 31)')
@@ -478,7 +870,7 @@ describe('las fotos que se quitan, leídas del expediente del informe', () => {
 
 describe('las secciones que se pueden quitar y las que se pueden añadir', () => {
   const d = expedienteDePrueba()
-  const lectura = lecturaCalculada(d)
+  const lectura = lecturaCalculada(d, 'equipo')
   const con = (secciones: string[]): string =>
     renderReport(d, lectura, leerOpciones({ secciones }), { emitido: '31/07/2026, 9:14' })
 
@@ -557,11 +949,6 @@ describe('las secciones que se pueden quitar y las que se pueden añadir', () =>
     expect(html).toContain('1 edificio archivado')
   })
 
-  it('el colofón dice que hubo salas fuera de la lista de trabajo', () => {
-    const html = con(['edificios'])
-    expect(html).toContain('3 salas del periodo ya no están en la lista de trabajo')
-  })
-
   it('las fotos quitadas a mano se cuentan aparte de las que no caben', () => {
     /*
      * No es lo mismo el tope del documento que una decisión de quien lo pide, y
@@ -615,7 +1002,7 @@ describe('cómo se presenta el informe', () => {
   const d = expedienteDePrueba()
   const portada = (kind: ReportData['kind']): string => {
     const x = { ...d, kind }
-    return renderReport(x, lecturaCalculada(x), opcionesCompletas, {
+    return renderReport(x, lecturaCalculada(x, 'equipo'), opcionesCompletas, {
       emitido: '31/07/2026, 9:14',
       solicitante: 'Eduardo Rubio',
     })
@@ -641,5 +1028,165 @@ describe('cómo se presenta el informe', () => {
     const html = portada('semanal')
     expect(html).not.toContain('text-transform: uppercase')
     expect(html).not.toContain('text-align: justify')
+  })
+})
+
+/**
+ * El encargo, delante del que redacta.
+ *
+ * La IA se tomaba libertades: sin saber dónde acaba el contrato, recomendaba
+ * implantar una herramienta de tickets —que la pone la universidad y ya está en
+ * uso—, renegociar los plazos o reforzar la plantilla. Eso no lo decide este
+ * servicio, y el informe se lo entregaba al cliente como si fuera nuestro.
+ */
+describe('el informe se escribe dentro del contrato', () => {
+  it('el marco del servicio viaja en la instrucción, sea para quien sea', () => {
+    for (const audiencia of ['direccion', 'equipo'] as const) {
+      const i = instruccion(audiencia)
+      expect(i).toContain('EL SERVICIO DEL QUE HABLA ESTE INFORME')
+      expect(i).toContain('Qué NO es este servicio')
+      // Y sigue llevando lo suyo: el marco se suma, no sustituye.
+      expect(i).toContain('Prohibido, sin excepciones')
+    }
+  })
+
+  it('dice los plazos del pliego, y que son un porcentaje de casos y no un siempre', () => {
+    expect(MARCO_DEL_SERVICIO).toContain('se atiende en 5 minutos y se resuelve en 10, en el 96 %')
+    expect(MARCO_DEL_SERVICIO).toContain('2 horas para resolver, en el 93 %')
+    expect(MARCO_DEL_SERVICIO).toContain('26 horas para resolver, en el 92 %')
+    expect(MARCO_DEL_SERVICIO).toContain('porcentaje de casos al mes, no un «siempre»')
+    // Y la tabla que sostiene esas frases dice lo mismo.
+    expect(NIVELES.map((n) => n.criticidad)).toEqual(['Crítica', 'Alta', 'Media', 'Baja'])
+    expect(NIVELES.every((n) => n.respuesta === '5 minutos')).toBe(true)
+  })
+
+  it('caza lo que se sale del encargo, y dice qué era', () => {
+    const casos: Array<[string, string]> = [
+      ['Renegociar el SLA de criticidad alta con la universidad', 'el contrato'],
+      ['Conviene reforzar la plantilla del servicio en septiembre', 'la plantilla'],
+      ['Implantar una herramienta de ticketing que centralice las peticiones', 'herramientas'],
+      ['Revisar la infraestructura de red del campus', 'la red'],
+      ['Acometer la reforma del aula 1.7 y su instalación eléctrica', 'obra'],
+    ]
+    for (const [texto, esperado] of casos) {
+      const fuera = fueraDeAlcance(texto)
+      expect(fuera.length, texto).toBeGreaterThan(0)
+      expect(fuera[0]!.que).toContain(esperado)
+      expect(texto).toContain(fuera[0]!.dice)
+    }
+  })
+
+  /*
+   * Y no muerde lo que sí es del servicio, que es la mitad del trabajo: un
+   * guardián que tumba las recomendaciones buenas deja el informe sin ninguna.
+   */
+  it('deja pasar lo que sí decide el servicio', () => {
+    const buenas = [
+      'Reponer las lámparas por debajo del 20 % antes del comienzo de curso',
+      'Sustituir el proyector del aula 1.7, que ha dado tres avisos en el mes',
+      'Adelantar la ronda del edificio H, que concentra lo abierto',
+      'Pasar la puesta a punto de los laboratorios antes de Semana Santa',
+      'Aprobar la compra de cuatro lámparas NP30, que quedan dos en almacén',
+      'Revisar el aula 2.1 tras el cambio de ordenador',
+    ]
+    for (const b of buenas) expect(fueraDeAlcance(b), b).toEqual([])
+  })
+})
+
+/*
+ * Y en la voz de quien hace el trabajo.
+ *
+ * «Autorizar la sustitución de las seis lámparas» es lo que sale cuando al
+ * modelo se le dice que el informe lo lee la dirección de la universidad:
+ * deduce que quien lee es quien decide y convierte nuestro encargo en una
+ * petición de permiso. El cliente lo lee y entiende que nos está bloqueando.
+ */
+describe('las recomendaciones no piden permiso para el trabajo propio', () => {
+  it('endereza la frase y deja la acción en infinitivo', () => {
+    const casos: Array<[string, string]> = [
+      [
+        'Autorizar la sustitución de las 6 lámparas de proyector por debajo del 20 %',
+        'Sustituir las 6 lámparas de proyector por debajo del 20 %',
+      ],
+      ['Aprobar la reposición de lo que está por debajo del mínimo', 'Reponer lo que está por debajo del mínimo'],
+      ['Autorizar la compra de 12 cables HDMI de 3 m', 'Pedir 12 cables HDMI de 3 m'],
+      ['Validar el cambio de los proyectores del edificio H', 'Cambiar los proyectores del edificio H'],
+      [
+        'Solicitar autorización para sustituir el proyector del aula 1.7',
+        'Sustituir el proyector del aula 1.7',
+      ],
+      ['Dar el visto bueno a reforzar la ronda del edificio P', 'Reforzar la ronda del edificio P'],
+    ]
+    for (const [antes, despues] of casos) {
+      expect(sinPedirPermiso(antes), antes).toBe(despues)
+    }
+  })
+
+  /*
+   * Y no toca lo que ya está bien, que es la mitad del trabajo: una acción
+   * recortada de más dice otra cosa, y aquí se está reescribiendo un informe
+   * que va al cliente.
+   */
+  it('deja intacto lo que ya está en voz de quien hace', () => {
+    const buenas = [
+      'Sustituir las 6 lámparas de proyector por debajo del 20 % de vida',
+      'Priorizar el cierre de las 8 incidencias pendientes en el edificio P',
+      'Programar la revisión inicial de las 31 salas sin inspección registrada',
+      'Reponer lo que está por debajo del mínimo antes del próximo lunes',
+      'Repasar la lista de estancadas y cerrar o reasignar cada una.',
+    ]
+    for (const b of buenas) expect(sinPedirPermiso(b), b).toBe(b)
+  })
+
+  // Una fórmula que no está en la tabla sale tal cual: una frase rara con
+  // sentido es mejor que una recortada sin él.
+  it('no inventa cuando no entiende la fórmula del todo', () => {
+    const raro = 'Autorizar el despliegue de una segunda ronda semanal'
+    expect(sinPedirPermiso(raro)).toBe(raro)
+  })
+
+  it('la instrucción de dirección lo dice, y el marco también', () => {
+    const i = instruccion('direccion')
+    expect(i).toContain('en la voz de quien hace el trabajo')
+    expect(i).toContain('Nunca «Autorizar»')
+    expect(MARCO_DEL_SERVICIO).toContain('El servicio no se pide permiso a sí mismo')
+  })
+})
+
+/*
+ * La instrucción de quien pide el informe, que ahora cabe entera.
+ *
+ * Era una línea de 400 caracteres y ahora son 1500 en una caja de siete
+ * líneas, porque el contexto que no está en ninguna tabla —la obra del
+ * edificio H, lo que se habló el lunes— es media página y no una frase.
+ */
+describe('lo que se le cuenta a la IA cabe y llega entero', () => {
+  it('el tope es uno solo y no se recorta lo que la caja deja escribir', () => {
+    const largo = 'a'.repeat(TOPE_ENFOQUE)
+    const o = leerOpciones({ secciones: [...SECCIONES], audiencia: 'equipo', enfoque: largo })
+    expect(o.enfoque).toHaveLength(TOPE_ENFOQUE)
+    // Y lo que pasa del tope sí se recorta, que para eso está.
+    const pasado = leerOpciones({ secciones: [...SECCIONES], enfoque: 'a'.repeat(TOPE_ENFOQUE + 500) })
+    expect(pasado.enfoque).toHaveLength(TOPE_ENFOQUE)
+  })
+
+  /*
+   * Y sangrada. La instrucción vive dentro de una lista de condiciones con
+   * guiones: sin sangrar, la segunda línea de lo que escribió una persona
+   * parece una condición más del sistema.
+   */
+  it('las varias líneas van sangradas bajo su guion', () => {
+    const d = expedienteDePrueba()
+    const texto = encargo(d, senales(d, 'equipo'), {
+      clave: 'x',
+      modelo: 'm',
+      thinking: 'low',
+      audiencia: 'equipo',
+      enfoque: 'El edificio H arrastra la obra.\nEl cable HDMI subió por la planta 2.',
+    })
+    expect(texto).toContain('- Instrucción de quien pide el informe, que va por delante de lo anterior:\n')
+    expect(texto).toContain('  El edificio H arrastra la obra.\n  El cable HDMI subió por la planta 2.')
+    // Ninguna línea suya empieza por guion: no se confunde con las nuestras.
+    expect(texto).not.toContain('\n- El cable HDMI')
   })
 })

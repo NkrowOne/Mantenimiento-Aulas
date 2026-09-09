@@ -44,8 +44,9 @@
 import { ANCHO_MEDIO, ANCHO_TOTAL, actividadDiaria, barrasHorizontales, tendencia } from './graficos'
 import type { ReportData } from './tipos'
 import { type Indicador, type Lectura, dias as textoDias, indicadores, plural, porcentaje } from './analisis'
-import { SECCIONES_POR_DEFECTO, type Opciones, type Seccion, tiene } from './opciones'
-import { etiquetaDia, nombreDia } from '../periodos'
+import { type Audiencia, type Opciones, type Seccion, tiene } from './opciones'
+import { diaDeLaSemana, etiquetaDia, nombreDia } from '../periodos'
+import { bandaDeMarcas } from './marcas'
 
 /*
  * La paleta de la aplicación, para que el PDF y la pantalla sean el mismo
@@ -319,9 +320,23 @@ function tabla<T>(filas: T[], cols: Array<Columna<T>>): string {
 
 // ── Secciones ────────────────────────────────────────────────────────────────
 
+/**
+ * La actividad del periodo, día a día.
+ *
+ * Los sábados y domingos EN BLANCO no se dibujan. El servicio trabaja de lunes
+ * a viernes: en un periodo de cinco semanas son diez columnas a cero que
+ * estrechan a las demás y dan al gráfico un aspecto de parón que no ha
+ * existido. No se esconde nada —el total de la sección se cuenta sobre el
+ * periodo entero— y el fin de semana CON movimiento sí se dibuja: es
+ * precisamente el dato que hay que ver, y su etiqueta lo dice sola, «S 1».
+ */
 function seccionActividad(d: ReportData): string {
   if (d.serieDiaria.length < 2) return ''
   const total = d.serieDiaria.reduce((a, x) => a + x.revisiones + x.abiertas + x.resueltas, 0)
+  const serie = d.serieDiaria.filter(
+    (x) => diaDeLaSemana(x.dia) < 6 || x.revisiones + x.abiertas + x.resueltas > 0,
+  )
+  const fuera = d.serieDiaria.length - serie.length
 
   return `
   <section class="bloque">
@@ -331,13 +346,15 @@ function seccionActividad(d: ReportData): string {
         ? vacio('Ningún movimiento registrado en el periodo: ni revisiones, ni altas, ni cierres.')
         : figura(
             'Día a día',
-            'Revisiones completadas, registros abiertos y cerrados',
+            `Revisiones completadas, registros abiertos y cerrados${
+              fuera > 0 ? ' · fines de semana sin actividad, fuera del gráfico' : ''
+            }`,
             actividadDiaria(
-              d.serieDiaria.map((x) => etiquetaDia(x.dia)),
+              serie.map((x) => etiquetaDia(x.dia)),
               [
-                { nombre: 'Revisiones', datos: d.serieDiaria.map((x) => x.revisiones) },
-                { nombre: 'Abiertas', datos: d.serieDiaria.map((x) => x.abiertas) },
-                { nombre: 'Cerradas', datos: d.serieDiaria.map((x) => x.resueltas) },
+                { nombre: 'Revisiones', datos: serie.map((x) => x.revisiones) },
+                { nombre: 'Abiertas', datos: serie.map((x) => x.abiertas) },
+                { nombre: 'Cerradas', datos: serie.map((x) => x.resueltas) },
               ],
               { width: ANCHO_TOTAL, height: 212 },
             ),
@@ -380,7 +397,7 @@ function seccionAnalisis(l: Lectura): string {
   </section>`
 }
 
-function seccionEdificios(d: ReportData, conTendencia: boolean): string {
+function seccionEdificios(d: ReportData, conTendencia: boolean, audiencia: Audiencia): string {
   const conActividad = d.porEdificio.filter((b) => b.abiertas > 0)
   const top = conActividad.slice(0, 8)
 
@@ -506,7 +523,7 @@ function seccionEdificios(d: ReportData, conTendencia: boolean): string {
           num: true,
           celda: (b) =>
             b.pendientes
-              ? `<span style="color:${b.pendientes > 3 ? CRIT : INK}">${b.pendientes}</span>`
+              ? `<span style="color:${b.pendientes > 3 && audiencia !== 'direccion' ? CRIT : INK}">${b.pendientes}</span>`
               : '—',
         },
       ])}
@@ -643,8 +660,17 @@ function seccionEventos(d: ReportData, conRevisiones: boolean): string {
     porDia.set(e.dia, lista)
   }
 
-  // Todos los días del periodo con algo que contar: eventos o revisiones.
-  const dias = d.serieDiaria
+  /*
+   * Todos los días del periodo con algo que contar: eventos o revisiones, del
+   * más reciente al más antiguo.
+   *
+   * `serieDiaria` va en orden de calendario porque es lo que dibuja el gráfico
+   * de actividad —un eje de tiempo al revés no lo lee nadie—, así que aquí se
+   * copia y se le da la vuelta en vez de tocarla. El diario es un registro de
+   * trabajo, y un registro de trabajo se abre por lo último.
+   */
+  const dias = [...d.serieDiaria]
+    .reverse()
     .filter((s) => porDia.has(s.dia) || s.revisiones > 0)
     .map((s) => s.dia)
 
@@ -658,13 +684,14 @@ function seccionEventos(d: ReportData, conRevisiones: boolean): string {
 
   /*
    * Con el listado recortado, «Solo revisiones: ningún registro nuevo…» pasa a
-   * ser una afirmación que no se puede hacer: los eventos van en orden y el
-   * tope de filas corta por el final, así que del último día listado en
-   * adelante puede haber movimientos que simplemente no caben. Los días
-   * ANTERIORES al corte sí están completos y conservan la frase.
+   * ser una afirmación que no se puede hacer: los eventos vienen de lo más
+   * reciente a lo más antiguo y el tope de filas corta por el final, así que
+   * del día más viejo listado hacia atrás puede haber movimientos que
+   * simplemente no caben. Los días POSTERIORES a ese sí están completos y
+   * conservan la frase.
    */
   const truncado = d.eventosTotal > d.eventos.length
-  const ultimoDiaListado = d.eventos.length ? d.eventos[d.eventos.length - 1]!.dia : ''
+  const diaMasViejoListado = d.eventos.length ? d.eventos[d.eventos.length - 1]!.dia : ''
 
   const jornada = (dia: string): string => {
     const s = d.serieDiaria.find((x) => x.dia === dia)
@@ -714,8 +741,8 @@ function seccionEventos(d: ReportData, conRevisiones: boolean): string {
             .join('')}
         </tbody>
       </table>`
-          : truncado && dia >= ultimoDiaListado
-            ? `<p class="vacio">Este día no cabe entero aquí. Está completo en el histórico de cada sala.</p>`
+          : truncado && dia <= diaMasViejoListado
+            ? `<p class="vacio">Jornada recortada por extensión: el detalle está en el histórico de cada sala.</p>`
             : `<p class="vacio">Solo revisiones: ningún registro nuevo ni consumo de material.</p>`
       }
     </div>`
@@ -725,13 +752,13 @@ function seccionEventos(d: ReportData, conRevisiones: boolean): string {
 
   return `
   <section class="bloque">
-    ${rotulo('Diario del periodo', `${plural(d.eventosTotal, 'movimiento')}${conRevisiones ? ', aparte de las revisiones' : ''}`)}
+    ${rotulo('Diario del periodo', `${plural(d.eventosTotal, 'movimiento')}${conRevisiones ? ', aparte de las revisiones' : ''} · lo último primero`)}
     ${dias.map(jornada).join('')}
     ${
       fuera > 0
-        ? `<p class="apunte">Y ${plural(fuera, 'movimiento')} más, fuera del diario: se ha cortado
-           al ${d.eventos.length} para que el informe siga siendo un informe. Están todos en el
-           histórico de cada sala.</p>`
+        ? `<p class="apunte">Y ${plural(fuera, 'movimiento')} más, anteriores a los que salen: la
+           lista se corta en ${d.eventos.length} empezando por lo más reciente. El detalle completo
+           está en el histórico de cada sala.</p>`
         : ''
     }
   </section>`
@@ -755,14 +782,22 @@ function seccionTendencia(d: ReportData): string {
   </section>`
 }
 
-function seccionSalas(d: ReportData): string {
-  if (!d.topSalas.length && !d.reincidentes.length) return ''
+function seccionSalas(d: ReportData, audiencia: Audiencia): string {
+  /*
+   * Para dirección solo sale la pieza repetida —una mejora concreta, con su
+   * sala y su ahorro—. El ranking de salas con más incidencias y su
+   * fiabilidad en rojo es exactamente el «aula difícil» que este documento no
+   * señala: hay aulas que dan más trabajo, y eso no es noticia para el
+   * cliente.
+   */
+  const conRanking = audiencia !== 'direccion' && d.topSalas.length > 0
+  if (!conRanking && !d.reincidentes.length) return ''
 
   return `
   <section class="bloque">
-    ${rotulo('Salas señaladas')}
+    ${rotulo(audiencia === 'direccion' ? 'Dónde hay una mejora clara' : 'Salas señaladas')}
     ${
-      d.topSalas.length
+      conRanking
         ? tabla(d.topSalas, [
             {
               cab: 'Sala',
@@ -782,7 +817,9 @@ function seccionSalas(d: ReportData): string {
                   : '<span class="tenue">datos insuficientes</span>',
             },
           ])
-        : vacio('Ninguna sala ha acumulado incidencias en el periodo.')
+        : audiencia === 'direccion'
+          ? ''
+          : vacio('Ninguna sala ha acumulado incidencias en el periodo.')
     }
     ${
       d.reincidentes.length
@@ -793,7 +830,9 @@ function seccionSalas(d: ReportData): string {
       ${tabla(d.reincidentes, [
         { cab: 'Sala', celda: (r) => `<span class="mono">${esc(r.building)} ${esc(r.room)}</span>` },
         { cab: 'Repuesto', ancho: '50%', celda: (r) => esc(r.item) },
-        { cab: 'Veces', num: true, celda: (r) => `<span style="color:${CRIT}">${r.veces}</span>` },
+        // En rojo para el equipo, que es un aviso; en tinta para dirección, que
+        // es una mejora con nombre y no una alarma.
+        { cab: 'Veces', num: true, celda: (r) => `<span style="color:${audiencia === 'direccion' ? INK : CRIT}">${r.veces}</span>` },
       ])}
     </div>`
         : ''
@@ -873,7 +912,7 @@ function seccionMateriales(d: ReportData): string {
  * se desmarca sola, y por eso el desglose de al lado es otra sección: quien
  * necesita justificar lleva los cierres uno a uno y deja fuera la media.
  */
-function seccionTiempos(d: ReportData): string {
+function seccionTiempos(d: ReportData, audiencia: Audiencia): string {
   if (d.resolucion.resueltas === 0) {
     return `
   <section class="bloque evitar">
@@ -890,13 +929,17 @@ function seccionTiempos(d: ReportData): string {
       ${
         // Si la media dice lo mismo que la mediana, la fila solo repite.
         textoDias(d.resolucion.mediaDias) !== textoDias(d.resolucion.medianaDias)
-          ? `<tr><td>Media, arrastrando las antiguas</td><td class="num">${esc(textoDias(d.resolucion.mediaDias))}</td></tr>`
+          ? `<tr><td>${audiencia === 'direccion' ? 'Media' : 'Media, arrastrando las antiguas'}</td><td class="num">${esc(textoDias(d.resolucion.mediaDias))}</td></tr>`
           : ''
       }
       <tr><td>Cerradas en menos de 48 h</td><td class="num">${d.resolucion.enMenosDe48h} de ${d.resolucion.resueltas}</td></tr>
     </table>
-    <p class="apunte">La mediana va primero porque la media la mueve cualquier
-    parte antiguo que se cierre esta semana.</p>
+    ${
+      audiencia === 'direccion'
+        ? ''
+        : `<p class="apunte">La mediana va primero porque la media la mueve cualquier
+    parte antiguo que se cierre esta semana.</p>`
+    }
   </section>`
 }
 
@@ -1079,11 +1122,11 @@ function seccionEquipo(d: ReportData): string {
   </section>`
 }
 
-function seccionRecomendaciones(l: Lectura): string {
+function seccionRecomendaciones(l: Lectura, audiencia: Audiencia): string {
   if (!l.recomendaciones.length) return ''
   return `
   <section class="bloque evitar">
-    ${rotulo('Qué conviene hacer')}
+    ${rotulo(audiencia === 'direccion' ? 'Propuestas de mejora' : 'Qué conviene hacer')}
     <ol class="acciones">
       ${l.recomendaciones
         .map(
@@ -1097,63 +1140,6 @@ function seccionRecomendaciones(l: Lectura): string {
   </section>`
 }
 
-/**
- * La procedencia de los DATOS. Nada más.
- *
- * Aquí iba una línea que decía con qué se había redactado el análisis. Se ha
- * quitado, y es una decisión del que firma el informe, no un descuido: este
- * documento sale del servicio de mantenimiento y habla del estado del campus.
- * Cómo se preparó por dentro es asunto de la herramienta, igual que no se
- * imprime qué versión de Postgres contó las incidencias ni qué motor maquetó
- * las páginas.
- *
- * El rastro NO se pierde: queda en `reports.params` con cada informe, y la
- * pantalla de Informes lo enseña junto a cada entrada del archivo. Quien tenga
- * que auditarlo lo tiene; quien lea el PDF, no lo necesita.
- */
-function colofon(d: ReportData, o: Opciones, pie: Pie): string {
-  const partes = [
-    `Datos leídos de la base el ${esc(pie.emitido)}, en hora de Madrid.`,
-    `Periodo ${esc(d.period.start)} a ${esc(d.period.end)}, comparado con ${esc(d.anterior.start)} a ${esc(d.anterior.end)}.`,
-    pie.solicitante ? `Solicitado por ${esc(pie.solicitante)}.` : 'Emisión automática programada.',
-  ]
-  if (d.situacion.salasNuncaRevisadas > 0) {
-    partes.push(
-      `${d.situacion.salasNuncaRevisadas} de las ${d.situacion.salasTotal} salas activas no tienen ninguna revisión registrada: no aparecen en ningún indicador de este informe.`,
-    )
-  }
-  if (d.sinSala > 0) {
-    partes.push(
-      `${plural(d.sinSala, 'registro')} del periodo no tienen sala asignada, así que cuentan en los totales y no en el desglose por edificio.`,
-    )
-  }
-  /*
-   * Esta frase es la que faltaba cuando un edificio entero se fue a la papelera
-   * y su trabajo pareció evaporarse. Ahora se cuenta, y además se dice: sin
-   * esta línea, el informe y la pantalla de revisar enseñan campus distintos y
-   * no hay forma de saber cuál de los dos está mal.
-   */
-  if (d.salasArchivadas > 0) {
-    partes.push(
-      `${plural(d.salasArchivadas, 'sala')} del periodo ya no están en la lista de trabajo —archivadas ellas o su edificio—: lo que se hizo en ellas se cuenta aquí igual.`,
-    )
-  }
-  // Contra el conjunto por defecto, no contra un número escrito a mano: al
-  // añadir dos secciones nuevas, el «< 10» de antes habría marcado como parcial
-  // hasta el informe completo.
-  if (o.secciones.length < SECCIONES_POR_DEFECTO.length) {
-    partes.push('Informe parcial: se han pedido solo algunas secciones.')
-  }
-
-  return `
-  <section class="colofon">
-    ${rotulo('Procedencia')}
-    <p>${partes.join(' ')}</p>
-    <p class="tenue">Un informe emitido no se regenera: si los datos cambian, se emite otro. Este
-    documento sigue diciendo lo que decía el día que se firmó.</p>
-  </section>`
-}
-
 // ── El documento ─────────────────────────────────────────────────────────────
 
 export function renderReport(
@@ -1163,7 +1149,7 @@ export function renderReport(
   pie: Pie,
 ): string {
   const titulo = TITULO_TIPO[d.kind] ?? 'Informe'
-  const inds = indicadores(d)
+  const inds = indicadores(d, o.audiencia)
   // Comparar con un tramo anterior vacío es comparar con nada: la flecha diría
   // «+2 (sin dato antes)» y ocuparía sitio para no informar.
   const comparar =
@@ -1177,28 +1163,72 @@ export function renderReport(
    */
   const tendenciaSola = tiene(o, 'tendencia') && !tiene(o, 'edificios')
 
-  const secciones: Array<[Seccion, string]> = [
+  /*
+   * EL ORDEN DEL DOCUMENTO, en dos mitades.
+   *
+   * Primero lo que se lee: las cifras, los gráficos, dónde está el trabajo, qué
+   * conviene hacer. Y después, detrás de un corte, los listados completos —cada
+   * revisión, cada movimiento, cada cierre y las fotos—, que es material de
+   * consulta y no de lectura.
+   *
+   * Estaban mezclados, y con un periodo largo eso deja el documento inservible
+   * para lo que se pide: la tabla de revisiones del periodo son ciento cincuenta
+   * filas, el diario otras tantas, y las dos se metían entre el análisis y el
+   * reparto por edificio. Quien abría el informe para ver cómo va el campus
+   * tenía que pasar seis páginas de tabla para llegar a la primera conclusión.
+   *
+   * Un informe se lee en el orden en que argumenta, y los anexos van detrás. Que
+   * es además como se lee cualquier informe que alguien firma.
+   */
+  const analisisDelPeriodo: Array<[Seccion, string]> = [
     ['actividad', seccionActividad(d)],
     ['analisis', seccionAnalisis(l)],
-    ['revisiones', seccionRevisiones(d)],
-    ['eventos', seccionEventos(d, tiene(o, 'revisiones'))],
-    ['edificios', seccionEdificios(d, tiene(o, 'tendencia'))],
+    ['edificios', seccionEdificios(d, tiene(o, 'tendencia'), o.audiencia)],
     ['tendencia', tendenciaSola ? seccionTendencia(d) : ''],
-    ['salas', seccionSalas(d)],
+    ['salas', seccionSalas(d, o.audiencia)],
     ['lamparas', seccionLamparas(d)],
-    ['estancadas', seccionEstancadas(d)],
+    // Vetada para dirección ya al leer las opciones; aquí otra vez, porque es
+    // el documento el que no puede decir «lleva N días», se pida como se pida.
+    ['estancadas', o.audiencia === 'direccion' ? '' : seccionEstancadas(d)],
     ['materiales', seccionMateriales(d)],
-    ['tiempos', seccionTiempos(d)],
-    ['cierres', seccionCierres(d)],
+    ['tiempos', seccionTiempos(d, o.audiencia)],
     ['equipo', seccionEquipo(d)],
-    ['fotos', seccionFotos(d)],
-    ['recomendaciones', seccionRecomendaciones(l)],
+    ['recomendaciones', seccionRecomendaciones(l, o.audiencia)],
   ]
 
-  const cuerpo = secciones
-    .filter(([clave, html]) => tiene(o, clave) && html)
-    .map(([, html]) => html)
-    .join('\n')
+  /** Los listados largos: se consultan, no se leen de seguido. */
+  const detalleDelPeriodo: Array<[Seccion, string]> = [
+    ['revisiones', seccionRevisiones(d)],
+    ['eventos', seccionEventos(d, tiene(o, 'revisiones'))],
+    ['cierres', seccionCierres(d)],
+    ['fotos', seccionFotos(d)],
+  ]
+
+  const pedidas = (lista: Array<[Seccion, string]>): string[] =>
+    lista.filter(([clave, html]) => tiene(o, clave) && html).map(([, html]) => html)
+
+  const arriba = pedidas(analisisDelPeriodo)
+  const abajo = pedidas(detalleDelPeriodo)
+
+  /*
+   * El corte solo si hay algo detrás, y sin salto de página forzado: en un parte
+   * diario los listados son cuatro filas, y una página en blanco para separar
+   * cuatro filas es peor que no separarlas. El rótulo con su regla ya dice
+   * dónde acaba lo que se lee.
+   */
+  const cuerpo = [
+    ...arriba,
+    ...(abajo.length
+      ? [
+          `
+  <section class="detalle-cab">
+    <h2>Detalle del periodo</h2>
+    <p>Los listados completos, para consultar: cada revisión, cada movimiento y cada cierre.</p>
+  </section>`,
+          ...abajo,
+        ]
+      : []),
+  ].join('\n')
 
   return `<!doctype html>
 <html lang="es">
@@ -1215,7 +1245,7 @@ export function renderReport(
       vertical-align: bottom; padding-bottom: 3mm;
     }
     @bottom-left {
-      content: "Mantenimiento de aulas";
+      content: "Grupo Oesia · Mantenimiento de aulas UFV";
       font-family: "IBM Plex Sans", "Instrument Sans Variable", system-ui, sans-serif; font-size: 7.5pt; color: ${MUTED};
       vertical-align: top; padding-top: 4mm;
     }
@@ -1357,6 +1387,20 @@ export function renderReport(
      documento baja el tono. */
   .bloque { margin-top: 11mm; }
   .bloque.evitar { page-break-inside: avoid; }
+
+  /* ── El corte entre lo que se lee y lo que se consulta ──
+     Sin salto de página forzado, y con page-break-after evitado para que el
+     rótulo no se quede solo al pie de una página con su listado en la
+     siguiente, que es la forma más tonta de perder un encabezado. */
+  .detalle-cab {
+    margin-top: 14mm; padding-top: 3mm; border-top: 2px solid ${INK};
+    page-break-after: avoid; page-break-inside: avoid;
+  }
+  .detalle-cab h2 {
+    margin: 0; font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 15pt; font-weight: 600; color: ${INK}; letter-spacing: -0.01em;
+  }
+  .detalle-cab p { margin: 1.5mm 0 0; font-size: 9pt; color: ${MUTED}; }
   .rotulo {
     display: flex; align-items: baseline; gap: 3mm;
     border-bottom: 0.6pt solid ${LINE}; padding-bottom: 1.8mm; margin-bottom: 4.5mm;
@@ -1569,19 +1613,33 @@ export function renderReport(
     font-size: 9pt; color: ${INK2}; line-height: 1.5; margin-top: 0.8mm;
   }
 
-  /* ── Colofón ── */
-  .colofon {
-    margin-top: 10mm; padding-top: 0; font-size: 8pt; color: ${MUTED};
-    page-break-inside: avoid; line-height: 1.5;
+  /* ── Las dos marcas de la primera página ──
+     La del servicio a la izquierda, la del campus a la derecha, y nada más en
+     la banda: un logotipo compitiendo con el titular no es imagen corporativa,
+     es ruido con colores. */
+  .marcas { width: 100%; border-collapse: collapse; margin: 0 0 7mm; }
+  .marca-emisor { text-align: left; vertical-align: middle; }
+  .marca-cliente { text-align: right; vertical-align: middle; }
+  .marcas svg { display: inline-block; vertical-align: middle; }
+
+  /* ── El pie de la última página ──
+     Una línea y se acabó. El navegador ignora las cajas de margen de @page y
+     pone su propia cabecera, así que sin esto el documento impreso desde la
+     aplicación no llevaría en ninguna página quién lo firma ni para quién es.
+     Va en el flujo, que es lo único que imprimen los dos motores. */
+  .pie-marca {
+    margin-top: 8mm; padding-top: 2.5mm; border-top: 0.5pt solid ${LINE};
+    font-size: 7.5pt; color: ${MUTED}; letter-spacing: 0.01em;
   }
-  .colofon .rotulo { border-bottom-color: ${LINE}; }
-  .colofon p { max-width: 150mm; }
 </style>
 </head>
 <body>
 
 <header class="masthead">
-  <div class="kicker"><span class="punto"></span><b>Mantenimiento de aulas</b> · ${esc(titulo)}</div>
+  ${bandaDeMarcas()}
+  <div class="kicker"><span class="punto"></span><b>Mantenimiento de aulas</b> · ${esc(titulo)} · ${
+    o.audiencia === 'direccion' ? 'para dirección' : 'para el equipo técnico'
+  }</div>
   <h1>${esc(l.titular)}</h1>
   <div class="sumario">
     ${esc(mayuscula(d.periodoTexto))} · emitido el ${esc(pie.emitido)}${
@@ -1607,7 +1665,8 @@ ${
 
 ${cuerpo}
 
-${colofon(d, o, pie)}
+<footer class="pie-marca">Grupo Oesia · Servicio de mantenimiento de aulas ·
+Universidad Francisco de Vitoria</footer>
 
 </body>
 </html>`

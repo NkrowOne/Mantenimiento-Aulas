@@ -37,6 +37,8 @@ export interface Situacion {
   salasSinRevisarHace6Meses: number
   salasNuncaRevisadas: number
   articulosBajoMinimo: number
+  /** Ordenadores de repuesto disponibles en el almacén, por número de serie. */
+  pcsDeRepuesto: number
 }
 
 export interface ReportData {

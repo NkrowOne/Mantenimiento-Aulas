@@ -40,6 +40,8 @@
  */
 
 import type { ReportData } from './tipos'
+import { MARCO_DEL_SERVICIO, fueraDeAlcance, sinPedirPermiso } from './contrato'
+import { TOPE_ENFOQUE } from './opciones'
 import { type Lectura, type Senal, dias, porcentaje } from './analisis'
 
 /** El último Flash. `gemini-flash-latest` sigue al día solo; esto fija la versión. */
@@ -107,7 +109,7 @@ export function configurarIA(ajustes: Ajustes = {}): OpcionesIA | null {
       ? thinking
       : THINKING_POR_DEFECTO,
     audiencia: ajustes.audiencia === 'equipo' ? 'equipo' : 'direccion',
-    ...(ajustes.enfoque ? { enfoque: ajustes.enfoque.slice(0, 400) } : {}),
+    ...(ajustes.enfoque ? { enfoque: ajustes.enfoque.slice(0, TOPE_ENFOQUE) } : {}),
   }
 }
 
@@ -124,7 +126,7 @@ export function configurarIA(ajustes: Ajustes = {}): OpcionesIA | null {
  * prohíbe explícitamente, con ejemplos, porque prohibirlo en abstracto
  * («escribe con naturalidad») no funciona.
  */
-const INSTRUCCION = `Eres el redactor de un informe interno de mantenimiento de aulas de un campus universitario español. Lo leen el responsable del servicio y el equipo técnico. Escribes en español de España.
+const INSTRUCCION = `Eres el redactor de un informe de mantenimiento de aulas de un campus universitario español. Escribes en español de España.
 
 Cómo se escribe aquí:
 - Prosa corriente, en párrafos. Frases de longitud desigual. Voz sobria, sin entusiasmo y sin alarmismo.
@@ -138,6 +140,40 @@ Prohibido, sin excepciones:
 - Empezar dos frases seguidas con la misma palabra. Cerrar repitiendo lo que ya dice la entradilla.
 - Inventar, redondear o recalcular cifras. Solo se usan las del expediente, tal como están. Si una cifra que querrías citar no está, se escribe la frase sin ella.
 - Dar por hecho el motivo de algo. «Puede deberse a» es aceptable; «se debe a» no, salvo que el expediente lo diga.`
+
+/*
+ * Lo que cambia con la audiencia va en la instrucción del sistema y no en el
+ * encargo, porque no es una preferencia: es la regla del documento. El parte
+ * del equipo dice lo grave primero y con sus días. El informe de dirección
+ * llega al cliente, y se escribe para dar cuenta del trabajo con buena imagen
+ * sin faltar a los datos: lo que ha ido bien abre; lo pendiente es trabajo en
+ * curso y margen de mejora; los días que lleva abierta una incidencia no se
+ * dicen, y una sala no se señala como problemática. Los problemas de verdad sí
+ * se cuentan, con su cifra, como algo visto y una decisión que conviene tomar.
+ */
+const POR_AUDIENCIA: Record<Audiencia, string> = {
+  equipo: `Lo leen el responsable del servicio y el equipo técnico que va a las aulas. Es un parte de trabajo: lo grave primero, con sus días y su sala, y lo que hay que hacer esta semana.`,
+  direccion: `Lo recibe la dirección de la universidad, que es el cliente del servicio. Se escribe para dar cuenta del trabajo con buena imagen y sin faltar a los datos:
+- Se abre por lo que ha ido bien o ha mejorado, con su cifra: más revisiones, más cierres que aperturas, cierres rápidos, ninguna incidencia de gravedad alta. Lo pendiente se cuenta como lo que es, trabajo en curso y margen de mejora, nunca como reproche.
+- No se dice cuántos días lleva abierta una incidencia, ni «estancadas», ni «sin cerrar desde hace», ni «las más antiguas», ni se señala una sala como problemática o poco fiable: hay aulas difíciles y eso no es noticia.
+- Los problemas reales sí se dicen, con su dato: una incidencia de gravedad alta, una lámpara a punto de fundirse, una pieza que se repite en la misma sala, un edificio que concentra lo abierto, un almacén por reponer. Se cuentan como algo que el servicio tiene visto y una decisión que conviene tomar.
+- Tono cordial y sereno. Sin triunfalismo: que va bien se demuestra con la cifra, no con adjetivos.
+- Las recomendaciones se escriben en la voz de quien hace el trabajo, porque el informe lo firma el servicio: «Sustituir las seis lámparas por debajo del 20 %», «Reforzar la ronda del edificio P». Nunca «Autorizar», «Aprobar» ni «Solicitar el visto bueno»: el aula es nuestro encargo y no se pide permiso para cumplirlo. Cuando hay un gasto de por medio se dice qué hace falta y por qué, que es lo que la universidad necesita para decidir.
+- Y son cosas de conjunto —una ronda, un edificio, una reposición—, no el parte de taller de cada avería.`,
+}
+
+/**
+ * La instrucción del sistema completa, para esta audiencia.
+ *
+ * Con el marco del servicio delante, y no de adorno: sin él, un modelo al que
+ * se le pide «di qué conviene hacer» recomienda implantar una herramienta de
+ * tickets que ya existe, renegociar los plazos del contrato o contratar a más
+ * gente. Ninguna de esas cosas las decide este servicio, y el informe las
+ * entregaba al cliente como si fueran nuestras.
+ */
+export function instruccion(audiencia: Audiencia): string {
+  return `${INSTRUCCION}\n\n${MARCO_DEL_SERVICIO}\n\n${POR_AUDIENCIA[audiencia]}`
+}
 
 const ESQUEMA = {
   type: 'OBJECT',
@@ -203,7 +239,8 @@ const ESQUEMA = {
  * terceros no tiene por qué ir quién revisó cuántas aulas—, y los títulos de
  * incidencia van recortados.
  */
-export function expediente(d: ReportData, se: Senal[]): string {
+export function expediente(d: ReportData, se: Senal[], audiencia: Audiencia): string {
+  const dir = audiencia === 'direccion'
   const l: string[] = []
   const v = (n: number, antes: number): string =>
     antes === 0 ? `${n} (antes ninguno)` : `${n} (antes ${antes})`
@@ -233,7 +270,10 @@ export function expediente(d: ReportData, se: Senal[]): string {
   l.push('')
   l.push('SITUACIÓN A DÍA DE HOY (no del periodo)')
   l.push(`- incidencias abiertas en total: ${d.situacion.incidenciasAbiertas}`)
-  l.push(`- de ellas con más de 7 días: ${d.situacion.estancadas}`)
+  // Lo que no se le da al modelo no puede acabar en el texto: para dirección
+  // no viajan ni los días abiertas ni la lista de las más antiguas ni el
+  // ranking de salas con más incidencias. Es más seguro que prohibirlo.
+  if (!dir) l.push(`- de ellas con más de 7 días: ${d.situacion.estancadas}`)
   l.push(`- lámparas por debajo del 20 % de vida: ${d.situacion.lamparasAlLimite}`)
   l.push(`- salas nunca revisadas: ${d.situacion.salasNuncaRevisadas}`)
   l.push(`- salas sin revisar desde hace más de 6 meses: ${d.situacion.salasSinRevisarHace6Meses}`)
@@ -258,7 +298,7 @@ export function expediente(d: ReportData, se: Senal[]): string {
     }
   }
 
-  if (d.topSalas.length) {
+  if (d.topSalas.length && !dir) {
     l.push('')
     l.push('SALAS CON MÁS INCIDENCIAS EN EL PERIODO')
     for (const r of d.topSalas.slice(0, 6)) {
@@ -269,7 +309,7 @@ export function expediente(d: ReportData, se: Senal[]): string {
     }
   }
 
-  if (d.estancadas.length) {
+  if (d.estancadas.length && !dir) {
     l.push('')
     l.push('LAS MÁS ANTIGUAS SIN CERRAR')
     for (const e of d.estancadas.slice(0, 6)) {
@@ -318,11 +358,25 @@ export function expediente(d: ReportData, se: Senal[]): string {
   return l.join('\n')
 }
 
-function encargo(d: ReportData, se: Senal[], o: OpcionesIA): string {
+/*
+ * La instrucción va dentro de una lista de condiciones con guiones, y ahora
+ * puede traer varias líneas: sin sangrar, la segunda línea de lo que escribió
+ * una persona parece una condición más del sistema, y una frase suya suelta
+ * entre las nuestras es exactamente lo que no queremos que pase.
+ */
+function sangrada(texto: string): string {
+  return texto
+    .split('\n')
+    .map((l) => `  ${l.trim()}`)
+    .join('\n')
+    .trimEnd()
+}
+
+export function encargo(d: ReportData, se: Senal[], o: OpcionesIA): string {
   const paraQuien =
     o.audiencia === 'direccion'
-      ? 'Lo lee el responsable del servicio, que no entra en cada aula: le interesa el estado general, la tendencia y las decisiones que hay que tomar (compras, refuerzos, prioridades).'
-      : 'Lo lee el equipo técnico que va a las aulas: le interesa qué salas tocar, con qué material y en qué orden.'
+      ? 'Es el informe para la dirección de la universidad: le interesa saber que el campus está atendido, qué ha mejorado y qué decisiones convienen (compras, refuerzos, prioridades).'
+      : 'Es el parte para el equipo técnico que va a las aulas: le interesa qué salas tocar, con qué material y en qué orden.'
 
   return `${paraQuien}
 
@@ -332,9 +386,13 @@ Con estas condiciones:
 - Los avisos calculados del final del expediente son el punto de partida, no un guion: agrúpalos si cuentan lo mismo, descarta el que no aporte y añade lo que veas tú en los datos.
 - La entradilla no repite la lista de indicadores. Los indicadores ya están impresos justo encima, con sus cifras y sus variaciones.
 - Entre dos hallazgos igual de ciertos, elige el que cambie una decisión.
-${o.enfoque ? `- Instrucción de quien pide el informe, que va por delante de lo anterior: ${o.enfoque}\n` : ''}
+${
+  o.enfoque
+    ? `- Instrucción de quien pide el informe, que va por delante de lo anterior:\n${sangrada(o.enfoque)}\n`
+    : ''
+}
 EXPEDIENTE
-${expediente(d, se)}`
+${expediente(d, se, o.audiencia)}`
 }
 
 // ── Limpieza de la respuesta ─────────────────────────────────────────────────
@@ -476,7 +534,7 @@ export async function redactar(
 ): Promise<Redaccion> {
   const prompt = encargo(d, se, o)
   const cuerpo = {
-    systemInstruction: { parts: [{ text: INSTRUCCION }] },
+    systemInstruction: { parts: [{ text: instruccion(o.audiencia) }] },
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
       responseMimeType: 'application/json',
@@ -526,9 +584,21 @@ export async function redactar(
           .slice(0, 4)
           .map((h) => ({ titulo: limpia(h.titulo, 90).replace(/[.:]$/, ''), cuerpo: limpia(h.cuerpo, 600) }))
           .filter((h) => h.titulo && h.cuerpo),
+        /*
+         * Y la acción, en la voz de quien la hace. La instrucción lo dice y aun
+         * así se cuela, porque el modelo sabe que el informe lo lee la
+         * universidad y deduce que quien lee es quien decide: sale «Autorizar
+         * la sustitución de las seis lámparas» cuando sustituirlas es
+         * exactamente nuestro encargo. Se endereza la frase en vez de tirar el
+         * texto, que es lo que hacen los controles de más abajo: aquello son
+         * errores de fondo y esto es la misma recomendación dicha del revés.
+         */
         recomendaciones: (bruto.recomendaciones ?? [])
           .slice(0, 4)
-          .map((r) => ({ accion: limpia(r.accion, 140), porque: limpia(r.porque, 260) }))
+          .map((r) => ({
+            accion: sinPedirPermiso(limpia(r.accion, 140)),
+            porque: limpia(r.porque, 260),
+          }))
           .filter((r) => r.accion),
         origen: `redactado con ${o.modelo}, razonamiento ${o.thinking}`,
       }
@@ -537,7 +607,7 @@ export async function redactar(
         throw new Error('la respuesta no traía titular, entradilla o hallazgos')
       }
 
-      const hechos = expediente(d, se)
+      const hechos = expediente(d, se, o.audiencia)
       const todo = [
         lectura.titular,
         lectura.entradilla,
@@ -547,6 +617,24 @@ export async function redactar(
       const inventadas = cifrasInventadas(todo, hechos)
       if (inventadas.length >= 2) {
         throw new Error(`cifras que no están en los datos: ${inventadas.join(', ')}`)
+      }
+
+      /*
+       * Y lo que se sale del encargo.
+       *
+       * Basta con una: a diferencia de una fórmula de relleno —que es un tic de
+       * estilo y hace falta ver dos para tener certeza— una recomendación fuera
+       * de alcance es un error de fondo, y con una sola el informe ya le está
+       * diciendo al cliente que hay que hacer algo que no nos toca. Se cae el
+       * texto entero y sale el análisis calculado, que se ciñe a los datos.
+       */
+      const fuera = fueraDeAlcance(todo)
+      if (fuera.length > 0) {
+        throw new Error(
+          `propone cosas que no decide este servicio: ${fuera
+            .map((f) => `${f.que} («${f.dice}»)`)
+            .join('; ')}`,
+        )
       }
 
       /*

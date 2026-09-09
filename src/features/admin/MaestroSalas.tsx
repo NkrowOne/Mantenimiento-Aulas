@@ -206,7 +206,7 @@ export function MaestroSalas(): React.ReactElement {
               spellCheck={false}
               onChange={(e) => setCodigoEd(e.target.value)}
               placeholder="H"
-              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 font-mono text-sm text-ink"
+              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 font-mono text-base text-ink"
             />
           </label>
           <label className="text-xs text-muted">
@@ -216,7 +216,7 @@ export function MaestroSalas(): React.ReactElement {
               value={nombreEd}
               onChange={(e) => setNombreEd(e.target.value)}
               placeholder="Edificio H"
-              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+              className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
             />
           </label>
           <button

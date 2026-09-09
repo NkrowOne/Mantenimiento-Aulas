@@ -54,9 +54,9 @@ try {
   })
 
   const data = await loadReportData(sql, kind, period.start, period.end)
-  const se = senales(data)
+  const se = senales(data, opciones.audiencia)
 
-  let lectura = lecturaCalculada(data)
+  let lectura = lecturaCalculada(data, opciones.audiencia)
   if (opciones.ia) {
     const cfg = configurarIA({
       audiencia: opciones.audiencia,

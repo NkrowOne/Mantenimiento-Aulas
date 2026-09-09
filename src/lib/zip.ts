@@ -237,6 +237,41 @@ export async function reemplazar(original: EntradaZip, datos: Uint8Array): Promi
   }
 }
 
+/**
+ * Una entrada nueva, para los ficheros que el libro todavía no tiene: la hoja
+ * que se añade y su relación.
+ *
+ * La fecha se copia de otra entrada en vez de leer el reloj. No es manía: el
+ * mismo libro sincronizado dos veces sin cambios tiene que dar los mismos
+ * bytes, y una marca de tiempo nueva en cada pasada rompe eso y con ello la
+ * comprobación de idempotencia — además de producir una versión nueva en
+ * SharePoint cada vez que alguien pulsa el botón.
+ */
+export async function crearEntrada(
+  nombre: string,
+  datos: Uint8Array,
+  comoLa: EntradaZip,
+): Promise<EntradaZip> {
+  const comprimido = await porStream(datos, new CompressionStream('deflate-raw'))
+  return {
+    nombre,
+    metodo: 8,
+    crc32: crc32(datos),
+    comprimido,
+    tamanoOriginal: datos.length,
+    banderas: 0,
+    fecha: comoLa.fecha,
+    hora: comoLa.hora,
+    versionCreacion: comoLa.versionCreacion,
+    versionNecesaria: comoLa.versionNecesaria,
+    atributosInternos: 0,
+    atributosExternos: comoLa.atributosExternos,
+    extraLocal: new Uint8Array(0),
+    extraCentral: new Uint8Array(0),
+    comentario: new Uint8Array(0),
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Escribir
 // -----------------------------------------------------------------------------

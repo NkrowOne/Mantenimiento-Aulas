@@ -44,6 +44,33 @@ describe('la tabla de decisión del apartado 4', () => {
   })
 })
 
+describe('canonizar no puede juntar dos aulas distintas', () => {
+  it('«1.10» no es «1.1» en una columna de texto', () => {
+    // En este libro son dos aulas del mismo edificio, y hay siete pares así:
+    // 0.1/0.10 en el CRAI, 1.1/1.10 en E, H, O y el CRAI, 2.1/2.10 en M y O.
+    expect(canonizar('1.10', 'texto')).not.toBe(canonizar('1.1', 'texto'))
+    expect(iguales('1.10', '1.1', 'texto')).toBe(false)
+  })
+
+  it('y una medida sigue comparándose como medida', () => {
+    // El antepasado va y vuelve por una columna `text`: sin esto, el 12,5 de la
+    // base no coincidiría nunca con el «12.5» que sale de la instantánea.
+    expect(iguales(12.5, '12,50', 'numero')).toBe(true)
+    expect(iguales(4200, '4200', 'numero')).toBe(true)
+  })
+
+  it('un número de serie con ceros delante tampoco se toca', () => {
+    expect(iguales('0012', '12', 'texto')).toBe(false)
+    expect(iguales('0012', '12')).toBe(false)
+  })
+
+  it('una fila de aula renombrada a la de al lado no pasa por sin_cambios', () => {
+    const r = fusionarCelda(celda({ tipo: 'texto', base: '1.10', excel: '1.1', antepasado: '1.10' }))
+    expect(r.tipo).not.toBe('sin_cambios')
+    expect(r).toMatchObject({ tipo: 'hacia_la_base', valor: '1.1' })
+  })
+})
+
 describe('un hueco no es un desacuerdo', () => {
   it('la base no tenía el número de serie: entra el del Excel', () => {
     const r = fusionarCelda(celda({ base: null, excel: 'X4KM9900123', antepasado: null }))
@@ -55,6 +82,27 @@ describe('un hueco no es un desacuerdo', () => {
     // tenga el dato no es motivo para perderlo en la hoja.
     const r = fusionarCelda(celda({ base: '', excel: 'X4KM9900123', antepasado: 'X4KM9900123' }))
     expect(r).toMatchObject({ tipo: 'hacia_la_base' })
+  })
+
+  it('la penúltima revisión no entra en la base aunque la base no la tenga', () => {
+    // Columna `solo_app`: la base no la tiene escrita a mano porque no puede
+    // —es el segundo elemento de un historial—, así que mandársela la rechaza.
+    // Y vaciar la celda perdería la única fecha que hay de esa revisión: 22
+    // aulas de este libro tienen la revisión en la columna de la anterior.
+    const r = fusionarCelda(celda({ dueno: 'solo_app', base: null, excel: '2024-09-02' }))
+    expect(r.tipo).toBe('sin_cambios')
+  })
+
+  it('una columna del Excel que ya se mandó y la base sigue sin devolver no se manda otra vez', () => {
+    // El nombre alternativo de un artículo entra como alias, y el volcado no
+    // trae los alias de vuelta: la base se ve vacía para siempre. Sin esto son
+    // veinte correcciones en `import_fixes` por pasada, todas iguales.
+    const c = { dueno: 'solo_excel' as const, base: null, excel: 'Cable Hdmi 3 metros' }
+    expect(fusionarCelda(celda(c)).tipo).toBe('hacia_la_base')
+    expect(fusionarCelda(celda({ ...c, antepasado: 'Cable Hdmi 3 metros' })).tipo).toBe('sin_cambios')
+    // Pero si alguien la corrige en la hoja, esa sí es nueva y sí va.
+    expect(fusionarCelda(celda({ ...c, excel: 'Cable HDMI 3 m', antepasado: 'Cable Hdmi 3 metros' })))
+      .toMatchObject({ tipo: 'hacia_la_base', valor: 'Cable HDMI 3 m' })
   })
 
   it('la celda estaba vacía y la app sí sabe: se rellena', () => {

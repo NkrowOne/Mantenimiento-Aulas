@@ -192,7 +192,7 @@ export function ResolverIncidencia({
           aria-invalid={tocado && problema !== null}
           aria-describedby={ayudaId}
           placeholder="Se ha cambiado el cable HDMI de la mesa; el proyector ya da imagen."
-          className="mt-1 w-full rounded-ctl border border-line bg-surface p-3 text-sm"
+          className="mt-1 w-full rounded-ctl border border-line bg-surface p-3 text-base"
         />
       </label>
 

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { v7 as uuidv7 } from 'uuid'
 import { supabase } from '@/lib/supabase'
 import type { Role } from '@/domain/types'
+import { UnidadesDeAlmacen } from './UnidadesDeAlmacen'
 
 interface StockLevel {
   stock_item_id: string
@@ -212,7 +213,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
                 name="name"
                 required
                 autoFocus
-                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-sm"
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-base"
               />
             </label>
             <label className="w-24 text-sm">
@@ -220,7 +221,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
               <input
                 name="unit"
                 defaultValue="ud"
-                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-sm"
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-base"
               />
             </label>
             <label className="w-24 text-sm">
@@ -230,7 +231,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
                 type="number"
                 min={0}
                 defaultValue={0}
-                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-sm"
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-base"
               />
             </label>
           </div>
@@ -265,7 +266,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Buscar artículo"
-          className="h-11 min-w-48 flex-1 rounded-ctl border border-line bg-surface px-3 text-sm"
+          className="h-11 min-w-48 flex-1 rounded-ctl border border-line bg-surface px-3 text-base"
         />
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={onlyLow} onChange={(e) => setOnlyLow(e.target.checked)} />
@@ -472,6 +473,8 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
           </button>
         </div>
       )}
+
+      <UnidadesDeAlmacen role={role} />
     </div>
   )
 }

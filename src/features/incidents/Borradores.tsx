@@ -179,7 +179,7 @@ export function Borradores(): React.ReactElement | null {
                   rows={2}
                   autoFocus
                   placeholder="Qué ocurre"
-                  className="w-full rounded-ctl border border-line bg-surface p-3 text-sm"
+                  className="w-full rounded-ctl border border-line bg-surface p-3 text-base"
                 />
                 {/* Igual que en la ficha: una observación no genera ticket, así
                     que pedirle el código sería pedir algo que no existe. */}
@@ -188,7 +188,7 @@ export function Borradores(): React.ReactElement | null {
                     value={ref}
                     onChange={(e) => setRef(e.target.value)}
                     placeholder="Código de ticket (opcional)"
-                    className="mt-2 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-sm"
+                    className="mt-2 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-base"
                   />
                 )}
                 {completar.isError && (

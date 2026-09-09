@@ -1,116 +1,172 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
-import { construirIndice } from '@/domain/cruce'
-import { prepararHojaDeEstado } from '@/domain/preparar'
-import type { Preparacion } from '@/domain/preparar'
-import { abrirLibro, leerHoja, parchear } from '@/domain/xlsx'
-import type { Libro } from '@/domain/xlsx'
-import { catalogoDelMaestro } from './catalogoDelMaestro'
-
-const HOJA = 'Estado Aulas y Salas de reunion'
+import { ofrecerFichero } from '@/lib/ficheros'
+import { analizar, aplicar, dudasPendientes, escribir, lineasDelParte, replanificar } from './pasada'
+import type { Analisis } from './pasada'
+import { Dudas } from './Dudas'
+import type { Respuesta } from '@/domain/dudas'
+import type { Alta, Plan, Resumen as ResumenDeHoja } from '@/domain/sincronizar'
 
 /**
- * Preparar el Excel de SharePoint para que se pueda sincronizar.
+ * Sincronizar el Excel de SharePoint, en los dos sentidos.
  *
- * Es la vía que no necesita permiso de nadie: se sube el `.xlsx`, se ve **qué
- * pasaría antes de que pase**, y se descarga el mismo fichero con la columna de
- * matrículas ya escrita. El viaje de vuelta a SharePoint lo hace una persona.
+ * Se sube el `.xlsx`, se ve **qué pasaría antes de que pase**, se aplica lo que
+ * el Excel corrige y se descarga el libro con todo lo que la aplicación sabe. El
+ * viaje de vuelta a SharePoint lo hace una persona, que es lo que permite que
+ * esto funcione sin pedirle permiso a nadie.
  *
- * Tres cosas que esta pantalla promete y conviene que se lean aquí:
+ * Cuatro cosas que esta pantalla promete y conviene que se lean aquí:
  *
  * **El fichero no sale de este ordenador.** Se abre, se cruza y se parchea en el
- * navegador. No se sube a ningún sitio, ni al servidor de la aplicación.
+ * navegador. Lo único que viaja al servidor es el plan —qué celdas ganó el
+ * Excel— y las filas leídas, que es lo que permite contestar «¿de dónde salió
+ * este dato?» seis meses después.
  *
- * **No se escribe nada en la base de datos.** Esto solo prepara el libro. Que
- * las correcciones del Excel entren en la base es el paso siguiente, y necesita
- * la instantánea de la fusión a tres bandas para poder distinguir quién cambió
- * qué.
+ * **Se aplica a la base antes de descargar el libro, y no al revés.** Si el
+ * libro se escribiera primero y la base fallara, el fichero diría cosas que la
+ * base no sabe y la pasada siguiente las volvería a meter — o las daría por
+ * choque contra la aplicación.
  *
- * **El libro vuelve intacto.** No se regenera: se reescriben las celdas de la
- * columna nueva y todo lo demás se copia con sus bytes. Sobreviven las fórmulas,
- * los formatos condicionales, el autofiltro, la fila inmovilizada, los
- * comentarios, la etiqueta de confidencialidad y los metadatos de SharePoint —
- * que es justo lo que se pierde al regenerar el libro con una librería.
+ * **El libro vuelve intacto en todo lo que no cambia.** No se regenera: se
+ * reescriben las celdas que toca y el resto se copia con sus bytes. Sobreviven
+ * las fórmulas, los formatos condicionales, el autofiltro, la fila inmovilizada,
+ * los comentarios, la etiqueta de confidencialidad y los metadatos de SharePoint.
+ *
+ * **Lo que no se puede decidir no se toca, y se dice dos veces**: aquí y en la
+ * hoja `Sincronización` del propio libro. Quien abre el Excel no abre la
+ * aplicación, y una bandeja que nadie mira es una bandeja que en seis meses
+ * tiene quinientos choques.
+ *
+ * **El libro se baja con su propio botón.** Antes se descargaba solo al acabar
+ * la pasada, y en el iPad eso no bajaba nada: la hoja de compartir —que es la
+ * que lleva a Archivos y a SharePoint— solo se abre mientras dura la pulsación,
+ * y la pasada tarda segundos. Así que el libro generado se queda aquí, en
+ * memoria, y se entrega al pulsar, tantas veces como haga falta. El mismo botón
+ * sirve para ver cómo quedaría el libro sin tocar la base.
+ *
+ * **Lo que la pasada no sabe, lo pregunta antes de aplicar.** Una fila de la
+ * hoja de estado con datos y sin código de aula, un parte nuevo cuya aula cruza
+ * con ocho salas, un número de serie que crearía un equipo que la sala no tenía,
+ * un ordenador de repuesto que la hoja de PCs lista y la aplicación no conoce:
+ * salen como dudas, se contestan aquí y la pasada se recalcula con la respuesta.
+ * Con dudas sin contestar no se sincroniza; ver el libro sí se puede.
  */
 export function SincronizarExcel(): React.ReactElement {
   const entrada = useRef<HTMLInputElement>(null)
-  const [nombre, setNombre] = useState<string | null>(null)
-  const [libro, setLibro] = useState<Libro | null>(null)
-  const [plan, setPlan] = useState<Preparacion | null>(null)
+  const [analisis, setAnalisis] = useState<Analisis | null>(null)
   const [fallo, setFallo] = useState<string | null>(null)
-  const [descargado, setDescargado] = useState(false)
+  const [aplicado, setAplicado] = useState<string | null>(null)
+  const [libro, setLibro] = useState<LibroGenerado | null>(null)
+  const [entregado, setEntregado] = useState<'compartido' | 'descargado' | null>(null)
+  const [entregando, setEntregando] = useState(false)
 
-  const { data: catalogo, isPending: cargandoMaestro } = useQuery({
-    queryKey: ['maestro', 'catalogo'],
-    queryFn: catalogoDelMaestro,
-    staleTime: 60_000,
-  })
-
-  const analizar = useMutation({
-    mutationFn: async (fichero: File) => {
-      if (!catalogo) throw new Error('El maestro de salas todavía no ha cargado')
-      const bytes = new Uint8Array(await fichero.arrayBuffer())
-      const l = await abrirLibro(bytes)
-      if (!l.hojas.some((h) => h.nombre === HOJA)) {
-        throw new Error(
-          `Este libro no tiene la hoja «${HOJA}». Sus hojas son: ${l.hojas.map((h) => h.nombre).join(', ')}`,
-        )
-      }
-      const filas = await leerHoja(l, HOJA)
-      return { libro: l, plan: prepararHojaDeEstado(filas, construirIndice(catalogo)) }
-    },
-    onSuccess: (r) => {
-      setLibro(r.libro)
-      setPlan(r.plan)
+  const leer = useMutation({
+    mutationFn: (fichero: File) => analizar(fichero),
+    onSuccess: (a) => {
+      setAnalisis(a)
       setFallo(null)
-      setDescargado(false)
+      setAplicado(null)
+      setLibro(null)
+      setEntregado(null)
     },
     onError: (e: Error) => {
-      setLibro(null)
-      setPlan(null)
+      setAnalisis(null)
       setFallo(e.message)
     },
   })
 
-  const descargar = useMutation({
+  const sincronizar = useMutation({
     mutationFn: async () => {
-      if (!libro || !plan) return
-      const bytes = await parchear(libro, [{ hoja: HOJA, celdas: plan.cambios }])
-      // El nombre lleva sufijo a propósito: el fichero que se sube a SharePoint
-      // lo elige una persona, y sobreescribir el original sin querer desde la
-      // carpeta de descargas es la clase de accidente que no se deshace.
-      const base = (nombre ?? 'libro.xlsx').replace(/\.xlsx$/i, '')
-      // `Uint8Array` sobre un `ArrayBuffer` normal: el tipo de Blob no acepta
-      // los respaldados por `SharedArrayBuffer`.
-      const blob = new Blob([bytes as unknown as BlobPart], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${base} (con referencias).xlsx`
-      a.click()
-      URL.revokeObjectURL(url)
-      setDescargado(true)
+      if (!analisis) return
+      const r = await aplicar(analisis)
+      // Con los números que la base puso a los partes nuevos: van a su fila.
+      const bytes = await escribir(analisis, ahora(), r.parteId, r.altas)
+      setLibro({ nombre: conSufijo(analisis.nombre, 'sincronizado'), bytes, sincronizado: true })
+      setEntregado(null)
+      return r
     },
+    onSuccess: (r) => {
+      if (!r) return
+      const partes = r.altas.filter((x) => x.tipo === 'incidencia').length
+      const nuevas = r.altas.length
+      setAplicado(
+        [
+          r.rechazadas === 0
+            ? `${r.aplicadas} celdas del Excel han entrado en la base.`
+            : `${r.aplicadas} celdas han entrado y ${r.rechazadas} han ido a la bandeja de choques.`,
+          nuevas > 0
+            ? `${nuevas} filas nuevas del libro han entrado en la aplicación${partes > 0 ? `; los ${partes === 1 ? 'parte lleva' : `${partes} partes llevan`} ya su número en el libro` : ''}.`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+      )
+      setFallo(null)
+    },
+    onError: (e: Error) => setFallo(e.message),
   })
 
-  const limpiar = (): void => {
+  /** Contestar una duda es volver a planificar: no toca ni la base ni el libro. */
+  const contestar = (id: string, respuesta: Respuesta | null): void => {
+    if (!analisis) return
+    const respuestas = { ...analisis.respuestas }
+    if (respuesta === null) delete respuestas[id]
+    else respuestas[id] = respuesta
+    setAnalisis(replanificar(analisis, respuestas))
     setLibro(null)
-    setPlan(null)
+    setEntregado(null)
+    setAplicado(null)
+  }
+
+  /**
+   * El mismo libro que saldría de la pasada, sin la pasada: no entra nada en la
+   * base y no se apunta como salida. Es para mirarlo, y el nombre lo dice.
+   */
+  const previsualizar = useMutation({
+    mutationFn: async () => {
+      if (!analisis) return
+      const bytes = await escribir(analisis, ahora())
+      setLibro({ nombre: conSufijo(analisis.nombre, 'vista previa'), bytes, sincronizado: false })
+      setEntregado(null)
+      setFallo(null)
+    },
+    onError: (e: Error) => setFallo(e.message),
+  })
+
+  /**
+   * Sin `useMutation` a propósito: la hoja de compartir hay que pedirla dentro
+   * de la pulsación, y `mutate` mete un turno de por medio antes de llamar.
+   */
+  const entregar = (): void => {
+    if (!libro || entregando) return
+    setEntregando(true)
+    void ofrecerFichero(libro.nombre, blobDe(libro.bytes))
+      .then((via) => setEntregado(via))
+      .catch((e: Error) => setFallo(e.message))
+      .finally(() => setEntregando(false))
+  }
+
+  const limpiar = (): void => {
+    setAnalisis(null)
     setFallo(null)
-    setNombre(null)
-    setDescargado(false)
+    setAplicado(null)
+    setLibro(null)
+    setEntregado(null)
     if (entrada.current) entrada.current.value = ''
   }
 
+  const ocupado = leer.isPending || sincronizar.isPending || previsualizar.isPending
+
+  const total = analisis ? sumar(analisis.resumenes) : null
+  const pendientes = analisis ? dudasPendientes(analisis).length : 0
+
   return (
     <section>
-      <h1 className="text-xl font-semibold">Preparar el Excel de SharePoint</h1>
+      <h1 className="text-xl font-semibold">Sincronizar el Excel de SharePoint</h1>
       <p className="mt-1 text-sm text-muted">
-        Escribe en el libro la matrícula de cada aula, que es lo que permite reconocer cada fila
-        aunque se ordene, se filtre o se inserten filas encima. El fichero no sale de este
-        ordenador y no se toca la base de datos.
+        Sube el libro y baja el mismo fichero con todo lo que la aplicación sabe: revisiones,
+        horas, salidas de material, entradas y movimientos del almacén. Lo que hayas corregido en
+        la hoja entra en la base. El fichero no sale de este ordenador.
       </p>
 
       <div className="card mt-4 p-4">
@@ -118,140 +174,382 @@ export function SincronizarExcel(): React.ReactElement {
           ref={entrada}
           type="file"
           accept=".xlsx"
-          disabled={cargandoMaestro || analizar.isPending}
+          disabled={ocupado}
           onChange={(e) => {
             const f = e.target.files?.[0]
-            if (!f) return
-            setNombre(f.name)
-            analizar.mutate(f)
+            if (f) leer.mutate(f)
           }}
-          className="block w-full text-sm file:mr-3 file:h-10 file:rounded-ctl file:border-0 file:bg-accent-fill file:px-4 file:font-semibold file:text-accent-ink"
+          className="block w-full text-base file:mr-3 file:h-10 file:rounded-ctl file:border-0 file:bg-accent-fill file:px-4 file:font-semibold file:text-accent-ink"
         />
         <p className="mt-2 text-xs text-muted">
-          {cargandoMaestro
-            ? 'Cargando el maestro de salas…'
-            : analizar.isPending
-              ? 'Leyendo el libro…'
-              : `Se mira la hoja «${HOJA}».`}
+          {leer.isPending
+            ? 'Leyendo el libro y el estado de la aplicación…'
+            : 'Se miran las seis hojas del libro: estado, partes, bolsa y PCs de repuesto del año, y las dos de 2025.'}
         </p>
       </div>
 
-      {fallo && (
-        <p className="mt-3 rounded-ctl bg-crit-fill p-3 text-sm text-crit-ink">{fallo}</p>
+      {fallo && <p className="mt-3 rounded-ctl bg-crit-fill p-3 text-sm text-crit-ink">{fallo}</p>}
+
+      {analisis?.bloqueada && <Bloqueada planes={analisis.planes} />}
+
+      {analisis && !analisis.bloqueada && analisis.libroDesconocido && (
+        <div className="card mt-4 border-warn p-4">
+          <h2 className="text-sm font-semibold text-warn-ink">
+            Este no es el libro que salió de la última sincronización
+          </h2>
+          <p className="mt-2 text-sm text-muted">
+            {analisis.ultimaSalida
+              ? `La última se hizo el ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(analisis.ultimaSalida))} y produjo un fichero distinto de éste.`
+              : 'La aplicación esperaba otro fichero.'}{' '}
+            Si es una copia de antes, lo que la hoja diga se tomará por una
+            corrección y entrará en la base: se revertiría lo que se haya hecho en
+            la aplicación desde entonces, y no daría ningún error. Mira lo que
+            entraría antes de aplicar.
+          </p>
+        </div>
       )}
 
-      {plan && <Resumen plan={plan} nombre={nombre} />}
-
-      {plan && (
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            className="key key-accent h-11 px-4"
-            disabled={plan.cambios.length === 0 || descargar.isPending}
-            onClick={() => descargar.mutate()}
-          >
-            {plan.cambios.length === 0
-              ? 'No hay nada que escribir'
-              : `Descargar el libro con ${plan.escrituras.length} matrículas`}
-          </button>
-          <button type="button" className="key key-quiet h-11 px-4" onClick={limpiar}>
-            Empezar de nuevo
-          </button>
-          {descargado && (
-            <span className="text-sm text-muted">
-              Descargado. Súbelo a SharePoint sustituyendo el original.
-            </span>
+      {analisis && !analisis.bloqueada && total && (
+        <>
+          <Cabecera analisis={analisis} total={total} />
+          {analisis.dudas.length > 0 && (
+            <Dudas
+              dudas={analisis.dudas}
+              respuestas={analisis.respuestas}
+              catalogo={analisis.catalogo}
+              onContestar={contestar}
+            />
           )}
-        </div>
+          <div className="mt-4 space-y-3">
+            {analisis.planes.map((p, i) => (
+              <PorHoja key={p.hoja} plan={p} resumen={analisis.resumenes[i]!} />
+            ))}
+          </div>
+
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              className="key key-accent h-11 px-4"
+              disabled={ocupado || pendientes > 0}
+              title={pendientes > 0 ? 'Contesta las dudas antes de sincronizar' : undefined}
+              onClick={() => sincronizar.mutate()}
+            >
+              {sincronizar.isPending
+                ? 'Sincronizando…'
+                : pendientes > 0
+                  ? `Sincronizar (${pendientes} ${pendientes === 1 ? 'duda' : 'dudas'} sin contestar)`
+                  : 'Sincronizar'}
+            </button>
+            <button
+              type="button"
+              className="key key-quiet h-11 px-4"
+              disabled={ocupado}
+              onClick={() => previsualizar.mutate()}
+            >
+              {previsualizar.isPending ? 'Preparando el libro…' : 'Ver cómo quedaría el libro'}
+            </button>
+            <button type="button" className="key key-quiet h-11 px-4" onClick={limpiar}>
+              Empezar de nuevo
+            </button>
+          </div>
+
+          {aplicado && <p className="mt-3 text-sm text-ok-ink">{aplicado}</p>}
+
+          {libro && (
+            <Entrega
+              libro={libro}
+              entregado={entregado}
+              entregando={entregando}
+              onEntregar={entregar}
+            />
+          )}
+        </>
       )}
     </section>
   )
 }
 
-function Resumen({ plan, nombre }: { plan: Preparacion; nombre: string | null }): React.ReactElement {
-  const problemas = plan.ambiguas.length + plan.sinCruce.length + plan.discrepan.length
+// -----------------------------------------------------------------------------
 
+/** El libro que ha salido de la pasada, esperando a que alguien lo baje. */
+interface LibroGenerado {
+  nombre: string
+  bytes: Uint8Array
+  /** Si entró en la base antes de escribirse. Si no, es una vista previa. */
+  sincronizado: boolean
+}
+
+/**
+ * El botón de bajar el libro. Es un botón y no una descarga automática porque
+ * en iOS la hoja de compartir solo se abre desde la pulsación, y es la única
+ * forma de que el fichero llegue a Archivos o a SharePoint desde el iPad.
+ */
+function Entrega({
+  libro,
+  entregado,
+  entregando,
+  onEntregar,
+}: {
+  libro: LibroGenerado
+  entregado: 'compartido' | 'descargado' | null
+  entregando: boolean
+  onEntregar: () => void
+}): React.ReactElement {
+  const que = libro.sincronizado ? 'el libro' : 'la vista previa'
   return (
-    <div className="mt-4 space-y-4">
-      <div className="card p-4">
-        <p className="eyebrow">{nombre}</p>
-        <p className="mt-2 text-sm">
-          <strong>{plan.total}</strong> aulas en la hoja. Se escribirían{' '}
-          <strong>{plan.escrituras.length}</strong> matrículas en la columna{' '}
-          <strong>{plan.columna}</strong>
-          {plan.yaCorrectas > 0 && <> y {plan.yaCorrectas} ya la tenían bien</>}.
+    <div className="card mt-4 p-4">
+      <h2 className="text-sm font-semibold">
+        {libro.sincronizado ? 'El libro está listo' : 'La vista previa está lista'}
+      </h2>
+      <p className="mt-1 text-sm text-muted">
+        {libro.sincronizado
+          ? 'Lleva todo lo que la aplicación sabe. Súbelo a SharePoint sustituyendo el original.'
+          : 'Es cómo quedaría el libro. No ha tocado la base, y no es el que hay que subir a SharePoint: para eso, sincroniza.'}
+      </p>
+      <button
+        type="button"
+        className="key key-accent mt-3 h-11 px-4"
+        disabled={entregando}
+        onClick={onEntregar}
+      >
+        {entregando ? 'Entregando…' : `Descargar ${que}`}
+      </button>
+      <p className="mt-2 text-xs text-muted">{libro.nombre}</p>
+      {entregado && (
+        <p className="mt-2 text-sm text-ok-ink">
+          {entregado === 'compartido'
+            ? `Compartid${libro.sincronizado ? 'o' : 'a'}.`
+            : `Descargad${libro.sincronizado ? 'o' : 'a'}.`}{' '}
+          {libro.sincronizado
+            ? 'Súbelo a SharePoint sustituyendo el original.'
+            : 'Si te convence, pulsa «Sincronizar» y baja el libro de verdad.'}
         </p>
-        <p className="mt-2 text-xs text-muted">
-          La columna va al final y no la primera: insertarla a la izquierda desplazaría todas las
-          demás y habría que reescribir cada fórmula, el rango del autofiltro y los formatos
-          condicionales. Al final no desplaza nada.
-        </p>
-        {problemas === 0 && plan.total > 0 && (
-          <p className="mt-2 text-sm text-ok-ink">Todas las filas cruzan con el maestro.</p>
-        )}
-      </div>
-
-      {plan.escrituras.length > 0 && (
-        <Detalle titulo={`Se escribirá (${plan.escrituras.length})`} abierto={false}>
-          <Tabla
-            cabeceras={['Celda', 'Aula', 'Matrícula']}
-            filas={plan.escrituras.map((e) => [e.celda, e.aula, e.valor])}
-          />
-        </Detalle>
-      )}
-
-      {plan.discrepan.length > 0 && (
-        <Detalle titulo={`Ya tenían otra matrícula (${plan.discrepan.length})`} abierto>
-          <p className="mb-2 text-sm text-muted">
-            No se tocan. Puede que alguien las corrigiera a mano sabiendo algo que el cruce no
-            sabe, o que el cruce se equivoque: pisarlas borraría la única señal de que hay un
-            desacuerdo.
-          </p>
-          <Tabla
-            cabeceras={['Celda', 'Aula', 'Dice', 'Saldría']}
-            filas={plan.discrepan.map((e) => [e.celda, e.aula, e.actual, e.valor])}
-          />
-        </Detalle>
-      )}
-
-      {plan.ambiguas.length > 0 && (
-        <Detalle titulo={`Ambiguas (${plan.ambiguas.length})`} abierto>
-          <p className="mb-2 text-sm text-muted">
-            El código encaja con más de una sala. No se elige por cuenta propia.
-          </p>
-          <Tabla
-            cabeceras={['Fila', 'Edificio', 'Aula', 'Por qué']}
-            filas={plan.ambiguas.map((a) => [String(a.fila), a.edificio, a.aula, a.motivo])}
-          />
-        </Detalle>
-      )}
-
-      {plan.sinCruce.length > 0 && (
-        <Detalle titulo={`Sin cruce (${plan.sinCruce.length})`} abierto>
-          <Tabla
-            cabeceras={['Fila', 'Edificio', 'Aula', 'Por qué']}
-            filas={plan.sinCruce.map((a) => [String(a.fila), a.edificio, a.aula, a.motivo])}
-          />
-        </Detalle>
       )}
     </div>
   )
 }
 
-function Detalle({
+function Bloqueada({ planes }: { planes: Plan[] }): React.ReactElement {
+  const fuera = planes.flatMap((p) => p.desajustes.map((d) => ({ hoja: p.hoja, ...d })))
+  return (
+    <div className="card mt-4 border-crit p-4">
+      <h2 className="text-sm font-semibold text-crit-ink">
+        Una hoja no tiene la forma que la aplicación espera
+      </h2>
+      <p className="mt-2 text-sm text-muted">
+        La pasada no empieza. Una columna insertada mueve todas las de su derecha, y escribir sin
+        comprobarlo pondría cientos de números de serie en la columna de al lado sin que saltara
+        nada. Corrige la cabecera en el libro o avisa de que la hoja ha cambiado.
+      </p>
+      <Tabla
+        cabeceras={['Hoja', 'Columna', 'Debería decir', 'Dice']}
+        filas={fuera.map((f) => [f.hoja, f.letra, f.esperada, f.encontrada || '(vacía)'])}
+      />
+    </div>
+  )
+}
+
+function Cabecera({
+  analisis,
+  total,
+}: {
+  analisis: Analisis
+  total: ReturnType<typeof sumar>
+}): React.ReactElement {
+  const pendientes = total.conflictos + total.cuarentena
+  return (
+    <div className="card mt-4 p-4">
+      <p className="eyebrow">{analisis.nombre}</p>
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <Cifra n={total.celdasAlExcel} que="celdas al Excel" />
+        <Cifra n={total.celdasALaBase} que="celdas a la base" />
+        <Cifra n={total.altas} que="filas del libro que entran" />
+        <Cifra n={total.filasNuevas} que="filas nuevas" />
+        <Cifra n={total.filasBorradas} que="filas que salen" />
+      </div>
+      {analisis.hojasNuevas.length > 0 && (
+        <p className="mt-3 text-sm">
+          Se crean {analisis.hojasNuevas.map((h) => `«${h.nombre}»`).join(' y ')}: ha cambiado el
+          año.
+        </p>
+      )}
+      <p className="mt-3 text-sm text-muted">
+        Se añaden además las hojas <strong>Revisiones</strong>,{' '}
+        <strong>Movimientos de Almacén</strong>, <strong>Inventario por Sala</strong> y{' '}
+        <strong>Sincronización</strong>, que se rehacen enteras en cada pasada.
+        {analisis.hojasNuevas.some((h) => h.nombre.startsWith('PCs STOCK')) &&
+          ' El libro no traía la hoja de PCs de repuesto: se estrena con lo que la aplicación sabe.'}
+      </p>
+      {analisis.datos.sinUnidades && (
+        <p className="mt-2 text-sm text-warn-ink">
+          El servidor no tiene todavía la tabla de PCs de repuesto (falta aplicar la migración de
+          septiembre): la hoja «PCs STOCK» se deja como está y el resto se sincroniza igual.
+        </p>
+      )}
+      {pendientes === 0 ? (
+        <p className="mt-2 text-sm text-ok-ink">Nada queda pendiente de decidir.</p>
+      ) : (
+        <p className="mt-2 text-sm text-warn-ink">
+          {pendientes} celdas quedan sin decidir. No se toca ninguno de los dos lados, y salen
+          listadas en la hoja «Sincronización» del libro.
+        </p>
+      )}
+    </div>
+  )
+}
+
+function Cifra({ n, que }: { n: number; que: string }): React.ReactElement {
+  return (
+    <div>
+      <p className="text-2xl font-semibold tabular-nums">{n}</p>
+      <p className="text-xs text-muted">{que}</p>
+    </div>
+  )
+}
+
+function PorHoja({ plan, resumen }: { plan: Plan; resumen: ResumenDeHoja }): React.ReactElement {
+  const nada =
+    resumen.celdasAlExcel === 0 &&
+    resumen.celdasALaBase === 0 &&
+    resumen.filasNuevas === 0 &&
+    resumen.filasBorradas === 0 &&
+    resumen.conflictos === 0 &&
+    resumen.cuarentena === 0 &&
+    resumen.sinCruzar === 0 &&
+    resumen.altas === 0 &&
+    resumen.dudas === 0
+
+  return (
+    <details className="card p-4" open={resumen.conflictos + resumen.cuarentena + resumen.altas > 0}>
+      <summary className="cursor-pointer text-sm font-semibold">
+        {plan.hoja}
+        <span className="ml-2 font-normal text-muted">
+          {nada
+            ? 'sin cambios'
+            : [
+                resumen.celdasAlExcel > 0 && `${resumen.celdasAlExcel} al Excel`,
+                resumen.celdasALaBase > 0 && `${resumen.celdasALaBase} a la base`,
+                resumen.altas > 0 && `${resumen.altas} entran como nuevas`,
+                resumen.filasNuevas > 0 && `${resumen.filasNuevas} filas nuevas`,
+                resumen.filasBorradas > 0 && `${resumen.filasBorradas} salen`,
+                resumen.conflictos > 0 && `${resumen.conflictos} choques`,
+                resumen.cuarentena > 0 && `${resumen.cuarentena} sin leer`,
+                resumen.dudas > 0 && `${resumen.dudas} dudas`,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+        </span>
+      </summary>
+
+      <div className="mt-3 space-y-4">
+        {plan.conflictos.length > 0 && (
+          <Bloque
+            titulo={`Choques (${plan.conflictos.length})`}
+            explicacion="Los dos lados cambiaron desde la última sincronización y a cosas distintas. No se toca ninguno: decide una persona."
+          >
+            <Tabla
+              cabeceras={['Celda', 'Dónde', 'Dice la aplicación', 'Dice la hoja']}
+              filas={plan.conflictos.map((c) => [
+                `${c.letra}${c.fila}`,
+                c.destino,
+                texto(c.base),
+                texto(c.excel),
+              ])}
+            />
+          </Bloque>
+        )}
+
+        {plan.cuarentena.length > 0 && (
+          <Bloque
+            titulo={`No se pueden leer (${plan.cuarentena.length})`}
+            explicacion="Ni entran en la base ni se pisan en la hoja. Un cero inventado en la columna de lámparas mandaría a alguien a un aula que está perfectamente."
+          >
+            <Tabla
+              cabeceras={['Celda', 'Dónde', 'Dice', 'Por qué']}
+              filas={plan.cuarentena.map((q) => [
+                `${q.letra}${q.fila}`,
+                q.destino,
+                texto(q.crudo),
+                q.motivo,
+              ])}
+            />
+          </Bloque>
+        )}
+
+        {plan.sinCruzar.length > 0 && (
+          <Bloque
+            titulo={`Filas sin cruzar (${plan.sinCruzar.length})`}
+            explicacion="No se han podido emparejar con nada de la aplicación. Se dejan exactamente como están."
+          >
+            <Tabla
+              cabeceras={['Fila', 'Por qué']}
+              filas={plan.sinCruzar.map((s) => [String(s.fila), s.motivo])}
+            />
+          </Bloque>
+        )}
+
+        {plan.altas.length > 0 && (
+          <Bloque
+            titulo={`Filas del libro que entran en la aplicación (${plan.altas.length})`}
+            explicacion="Estaban en el libro y la aplicación no las tenía. A un parte le pone número la base, y el número vuelve a su fila."
+          >
+            <Tabla
+              cabeceras={['Fila', 'Qué', 'Detalle']}
+              filas={plan.altas.map((a) => [String(a.fila), queEs(a), describirAlta(a)])}
+            />
+          </Bloque>
+        )}
+
+        {plan.haciaLaBase.length > 0 && (
+          <Bloque
+            titulo={`Entran en la base (${plan.haciaLaBase.length})`}
+            explicacion="Lo que se corrigió en la hoja y la aplicación no había tocado."
+          >
+            <Tabla
+              cabeceras={['Celda', 'Dónde', 'Qué', 'Valor', 'Por qué']}
+              filas={plan.haciaLaBase.map((h) => [
+                `${h.letra}${h.fila}`,
+                h.destino,
+                h.campo,
+                texto(h.valor),
+                h.motivo,
+              ])}
+            />
+          </Bloque>
+        )}
+
+        {plan.avisos.length > 0 && (
+          <Bloque titulo={`Avisos (${plan.avisos.length})`} explicacion="">
+            <ul className="list-disc space-y-1 pl-5 text-sm">
+              {plan.avisos.slice(0, 25).map((a) => (
+                <li key={a}>{a}</li>
+              ))}
+            </ul>
+            {plan.avisos.length > 25 && (
+              <p className="mt-2 text-xs text-muted">y {plan.avisos.length - 25} más.</p>
+            )}
+          </Bloque>
+        )}
+      </div>
+    </details>
+  )
+}
+
+function Bloque({
   titulo,
-  abierto,
+  explicacion,
   children,
 }: {
   titulo: string
-  abierto: boolean
+  explicacion: string
   children: React.ReactNode
 }): React.ReactElement {
   return (
-    <details className="card p-4" open={abierto}>
-      <summary className="cursor-pointer text-sm font-semibold">{titulo}</summary>
-      <div className="mt-3">{children}</div>
-    </details>
+    <div>
+      <h3 className="text-sm font-semibold">{titulo}</h3>
+      {explicacion && <p className="mt-1 text-xs text-muted">{explicacion}</p>}
+      <div className="mt-2">{children}</div>
+    </div>
   )
 }
 
@@ -280,10 +578,10 @@ function Tabla({
         </thead>
         <tbody>
           {filas.slice(0, tope).map((f, i) => (
-            <tr key={i} className="border-t border-line">
-              {f.map((celda, j) => (
-                <td key={j} className="py-1 pr-4 font-mono text-xs">
-                  {celda}
+            <tr key={`${f[0]}-${i}`} className="border-t border-hair">
+              {f.map((v, j) => (
+                <td key={j} className="py-1 pr-4 align-top">
+                  {v}
                 </td>
               ))}
             </tr>
@@ -291,8 +589,86 @@ function Tabla({
         </tbody>
       </table>
       {filas.length > tope && (
-        <p className="mt-2 text-xs text-muted">y {filas.length - tope} más</p>
+        <p className="mt-2 text-xs text-muted">y {filas.length - tope} más.</p>
       )}
     </div>
   )
 }
+
+// -----------------------------------------------------------------------------
+
+function sumar(resumenes: ResumenDeHoja[]): {
+  celdasAlExcel: number
+  celdasALaBase: number
+  filasNuevas: number
+  filasBorradas: number
+  conflictos: number
+  cuarentena: number
+  altas: number
+} {
+  return resumenes.reduce(
+    (a, r) => ({
+      celdasAlExcel: a.celdasAlExcel + r.celdasAlExcel,
+      celdasALaBase: a.celdasALaBase + r.celdasALaBase,
+      filasNuevas: a.filasNuevas + r.filasNuevas,
+      filasBorradas: a.filasBorradas + r.filasBorradas,
+      conflictos: a.conflictos + r.conflictos,
+      cuarentena: a.cuarentena + r.cuarentena,
+      altas: a.altas + r.altas,
+    }),
+    {
+      celdasAlExcel: 0,
+      celdasALaBase: 0,
+      filasNuevas: 0,
+      filasBorradas: 0,
+      conflictos: 0,
+      cuarentena: 0,
+      altas: 0,
+    },
+  )
+}
+
+function queEs(a: Alta): string {
+  if (a.tipo === 'incidencia') return 'Parte'
+  if (a.tipo === 'articulo') return 'Artículo del almacén'
+  return 'Ordenador de repuesto'
+}
+
+function describirAlta(a: Alta): string {
+  if (a.tipo === 'incidencia') {
+    return `${a.aula || 'sin aula'} · ${a.abierta ?? 'sin fecha'} · ${a.problema}${a.numero ? ` · ${a.numero}` : ''}`
+  }
+  if (a.tipo === 'articulo') return `${a.nombre}${a.comprado !== null ? ` · ${a.comprado} comprados` : ''}`
+  return `${[a.articulo, a.marca, a.modelo].filter(Boolean).join(' ')} · ${a.serial}`
+}
+
+function texto(v: unknown): string {
+  if (v === null || v === undefined) return '(vacío)'
+  return String(v)
+}
+
+function ahora(): string {
+  return new Intl.DateTimeFormat('es-ES', { dateStyle: 'short', timeStyle: 'short' }).format(
+    new Date(),
+  )
+}
+
+/**
+ * El nombre lleva sufijo a propósito: el fichero que se sube a SharePoint lo
+ * elige una persona, y sobreescribir el original sin querer desde la carpeta de
+ * descargas es la clase de accidente que no se deshace. Y una vista previa que
+ * se llame igual que el libro bueno acaba subida en su lugar.
+ */
+function conSufijo(nombre: string, sufijo: string): string {
+  return `${nombre.replace(/\.xlsx$/i, '')} (${sufijo}).xlsx`
+}
+
+function blobDe(bytes: Uint8Array): Blob {
+  // `Uint8Array` sobre un `ArrayBuffer` normal: el tipo de Blob no acepta los
+  // respaldados por `SharedArrayBuffer`.
+  return new Blob([bytes as unknown as BlobPart], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+}
+
+export { lineasDelParte }
