@@ -105,6 +105,8 @@ export function ReportsPage(): React.ReactElement {
      veces no hace nada. */
   const [falloDescarga, setFalloDescarga] = useState<string | null>(null)
   const [bajandoPdf, setBajandoPdf] = useState(false)
+  /** Qué informe del archivo se está convirtiendo, para no dejar el botón mudo. */
+  const [pdfDelArchivo, setPdfDelArchivo] = useState<string | null>(null)
 
   const marco = useRef<HTMLIFrameElement>(null)
 
@@ -180,6 +182,54 @@ export function ReportsPage(): React.ReactElement {
       return
     }
     mostrarEn(ventana, data)
+  }
+
+  /**
+   * El PDF de un informe que ya está archivado.
+   *
+   * En el archivo solo había «Abrir», que enseña el documento en una pestaña.
+   * Sirve para consultarlo y no sirve para nada más: quien entra al archivo
+   * suele venir a mandarle a alguien el informe del mes pasado, y lo que se
+   * llevaba era un HTML que en el correo del cliente se abre como código.
+   *
+   * El original se guarda entero y autocontenido —los gráficos son SVG y las
+   * fotos van dentro—, así que basta con recuperarlo y pasarlo por el mismo
+   * conversor que el informe recién hecho. No se vuelve a consultar la base ni
+   * se recalcula nada: el PDF de un informe de marzo dice lo que decía en
+   * marzo, que es justo lo que se espera de un archivo.
+   */
+  async function pdfArchivado(r: {
+    id: string
+    kind: string
+    storage_path: string
+    period_start: string
+    period_end: string
+  }): Promise<void> {
+    setFalloDescarga(null)
+    setPdfDelArchivo(r.id)
+    try {
+      const { data, error } = await supabase.storage.from('reports').download(r.storage_path)
+      if (error || !data) {
+        setFalloDescarga(`No se ha podido leer el informe del archivo${error ? `: ${error.message}` : ''}.`)
+        return
+      }
+      const html = await data.text()
+      const { data: sesion } = await supabase.auth.getSession()
+      const nombre = nombreDeArchivo(r.kind, { start: r.period_start, end: r.period_end }).replace(
+        /\.html$/,
+        '.pdf',
+      )
+      const hecho = await descargarPdf(html, nombre, sesion.session?.access_token ?? null)
+      if (!hecho.ok) {
+        setFalloDescarga(
+          hecho.sinServicio
+            ? `No se ha podido preparar el PDF (${hecho.motivo}). Con «Abrir» sale el informe y desde ahí se imprime a PDF.`
+            : `No se ha podido preparar el PDF: ${hecho.motivo}.`,
+        )
+      }
+    } finally {
+      setPdfDelArchivo(null)
+    }
   }
 
   const alternar = (clave: string): void =>
@@ -603,6 +653,15 @@ export function ReportsPage(): React.ReactElement {
                     {redaccion.etiqueta}
                   </span>
                 )}
+                <button
+                  type="button"
+                  disabled={pdfDelArchivo !== null}
+                  onClick={() => void pdfArchivado(r)}
+                  className="key key-accent min-h-11 px-3 text-xs"
+                  title="El informe archivado, en PDF"
+                >
+                  {pdfDelArchivo === r.id ? 'Preparando…' : 'PDF'}
+                </button>
                 <button
                   type="button"
                   onClick={() => void abrir(r.storage_path)}
