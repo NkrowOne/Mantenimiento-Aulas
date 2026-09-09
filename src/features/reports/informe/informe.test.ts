@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { indicadores, lecturaCalculada, senales } from './analisis'
-import { SECCIONES, leerOpciones } from './opciones'
+import { SECCIONES, TOPE_ENFOQUE, leerOpciones } from './opciones'
 import { diasLargo, renderReport } from './plantilla'
 import { actividadDiaria } from './graficos'
-import { cifrasInventadas, configurarIA, expediente, formulasDelatoras, instruccion } from './ia'
+import { cifrasInventadas, configurarIA, encargo, expediente, formulasDelatoras, instruccion } from './ia'
 import { MARCO_DEL_SERVICIO, NIVELES, fueraDeAlcance, sinPedirPermiso } from './contrato'
 import { etiquetaDia, nombreComparacion, nombreDia, periodoAnterior } from '../periodos'
 import { inicioDelDia } from '@/domain/fechas'
@@ -1099,5 +1099,43 @@ describe('las recomendaciones no piden permiso para el trabajo propio', () => {
     expect(i).toContain('en la voz de quien hace el trabajo')
     expect(i).toContain('Nunca «Autorizar»')
     expect(MARCO_DEL_SERVICIO).toContain('El servicio no se pide permiso a sí mismo')
+  })
+})
+
+/*
+ * La instrucción de quien pide el informe, que ahora cabe entera.
+ *
+ * Era una línea de 400 caracteres y ahora son 1500 en una caja de siete
+ * líneas, porque el contexto que no está en ninguna tabla —la obra del
+ * edificio H, lo que se habló el lunes— es media página y no una frase.
+ */
+describe('lo que se le cuenta a la IA cabe y llega entero', () => {
+  it('el tope es uno solo y no se recorta lo que la caja deja escribir', () => {
+    const largo = 'a'.repeat(TOPE_ENFOQUE)
+    const o = leerOpciones({ secciones: [...SECCIONES], audiencia: 'equipo', enfoque: largo })
+    expect(o.enfoque).toHaveLength(TOPE_ENFOQUE)
+    // Y lo que pasa del tope sí se recorta, que para eso está.
+    const pasado = leerOpciones({ secciones: [...SECCIONES], enfoque: 'a'.repeat(TOPE_ENFOQUE + 500) })
+    expect(pasado.enfoque).toHaveLength(TOPE_ENFOQUE)
+  })
+
+  /*
+   * Y sangrada. La instrucción vive dentro de una lista de condiciones con
+   * guiones: sin sangrar, la segunda línea de lo que escribió una persona
+   * parece una condición más del sistema.
+   */
+  it('las varias líneas van sangradas bajo su guion', () => {
+    const d = expedienteDePrueba()
+    const texto = encargo(d, senales(d, 'equipo'), {
+      clave: 'x',
+      modelo: 'm',
+      thinking: 'low',
+      audiencia: 'equipo',
+      enfoque: 'El edificio H arrastra la obra.\nEl cable HDMI subió por la planta 2.',
+    })
+    expect(texto).toContain('- Instrucción de quien pide el informe, que va por delante de lo anterior:\n')
+    expect(texto).toContain('  El edificio H arrastra la obra.\n  El cable HDMI subió por la planta 2.')
+    // Ninguna línea suya empieza por guion: no se confunde con las nuestras.
+    expect(texto).not.toContain('\n- El cable HDMI')
   })
 })
