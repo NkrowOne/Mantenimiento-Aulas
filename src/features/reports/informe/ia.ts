@@ -40,6 +40,7 @@
  */
 
 import type { ReportData } from './tipos'
+import { MARCO_DEL_SERVICIO, fueraDeAlcance } from './contrato'
 import { type Lectura, type Senal, dias, porcentaje } from './analisis'
 
 /** El último Flash. `gemini-flash-latest` sigue al día solo; esto fija la versión. */
@@ -159,9 +160,17 @@ const POR_AUDIENCIA: Record<Audiencia, string> = {
 - Las recomendaciones son decisiones de dirección —aprobar una compra, reforzar una ronda, priorizar un edificio—, no tareas de taller.`,
 }
 
-/** La instrucción del sistema completa, para esta audiencia. */
+/**
+ * La instrucción del sistema completa, para esta audiencia.
+ *
+ * Con el marco del servicio delante, y no de adorno: sin él, un modelo al que
+ * se le pide «di qué conviene hacer» recomienda implantar una herramienta de
+ * tickets que ya existe, renegociar los plazos del contrato o contratar a más
+ * gente. Ninguna de esas cosas las decide este servicio, y el informe las
+ * entregaba al cliente como si fueran nuestras.
+ */
 export function instruccion(audiencia: Audiencia): string {
-  return `${INSTRUCCION}\n\n${POR_AUDIENCIA[audiencia]}`
+  return `${INSTRUCCION}\n\n${MARCO_DEL_SERVICIO}\n\n${POR_AUDIENCIA[audiencia]}`
 }
 
 const ESQUEMA = {
@@ -576,6 +585,24 @@ export async function redactar(
       const inventadas = cifrasInventadas(todo, hechos)
       if (inventadas.length >= 2) {
         throw new Error(`cifras que no están en los datos: ${inventadas.join(', ')}`)
+      }
+
+      /*
+       * Y lo que se sale del encargo.
+       *
+       * Basta con una: a diferencia de una fórmula de relleno —que es un tic de
+       * estilo y hace falta ver dos para tener certeza— una recomendación fuera
+       * de alcance es un error de fondo, y con una sola el informe ya le está
+       * diciendo al cliente que hay que hacer algo que no nos toca. Se cae el
+       * texto entero y sale el análisis calculado, que se ciñe a los datos.
+       */
+      const fuera = fueraDeAlcance(todo)
+      if (fuera.length > 0) {
+        throw new Error(
+          `propone cosas que no decide este servicio: ${fuera
+            .map((f) => `${f.que} («${f.dice}»)`)
+            .join('; ')}`,
+        )
       }
 
       /*

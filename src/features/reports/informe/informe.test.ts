@@ -4,6 +4,7 @@ import { SECCIONES, leerOpciones } from './opciones'
 import { diasLargo, renderReport } from './plantilla'
 import { actividadDiaria } from './graficos'
 import { cifrasInventadas, configurarIA, expediente, formulasDelatoras, instruccion } from './ia'
+import { MARCO_DEL_SERVICIO, NIVELES, fueraDeAlcance } from './contrato'
 import { etiquetaDia, nombreComparacion, nombreDia, periodoAnterior } from '../periodos'
 import { inicioDelDia } from '@/domain/fechas'
 import type { ReportData } from './tipos'
@@ -970,5 +971,67 @@ describe('cómo se presenta el informe', () => {
     const html = portada('semanal')
     expect(html).not.toContain('text-transform: uppercase')
     expect(html).not.toContain('text-align: justify')
+  })
+})
+
+/**
+ * El encargo, delante del que redacta.
+ *
+ * La IA se tomaba libertades: sin saber dónde acaba el contrato, recomendaba
+ * implantar una herramienta de tickets —que la pone la universidad y ya está en
+ * uso—, renegociar los plazos o reforzar la plantilla. Eso no lo decide este
+ * servicio, y el informe se lo entregaba al cliente como si fuera nuestro.
+ */
+describe('el informe se escribe dentro del contrato', () => {
+  it('el marco del servicio viaja en la instrucción, sea para quien sea', () => {
+    for (const audiencia of ['direccion', 'equipo'] as const) {
+      const i = instruccion(audiencia)
+      expect(i).toContain('EL SERVICIO DEL QUE HABLA ESTE INFORME')
+      expect(i).toContain('Qué NO es este servicio')
+      // Y sigue llevando lo suyo: el marco se suma, no sustituye.
+      expect(i).toContain('Prohibido, sin excepciones')
+    }
+  })
+
+  it('dice los plazos del pliego, y que son un porcentaje de casos y no un siempre', () => {
+    expect(MARCO_DEL_SERVICIO).toContain('se atiende en 5 minutos y se resuelve en 10, en el 96 %')
+    expect(MARCO_DEL_SERVICIO).toContain('2 horas para resolver, en el 93 %')
+    expect(MARCO_DEL_SERVICIO).toContain('26 horas para resolver, en el 92 %')
+    expect(MARCO_DEL_SERVICIO).toContain('porcentaje de casos al mes, no un «siempre»')
+    // Y la tabla que sostiene esas frases dice lo mismo.
+    expect(NIVELES.map((n) => n.criticidad)).toEqual(['Crítica', 'Alta', 'Media', 'Baja'])
+    expect(NIVELES.every((n) => n.respuesta === '5 minutos')).toBe(true)
+  })
+
+  it('caza lo que se sale del encargo, y dice qué era', () => {
+    const casos: Array<[string, string]> = [
+      ['Renegociar el SLA de criticidad alta con la universidad', 'el contrato'],
+      ['Conviene reforzar la plantilla del servicio en septiembre', 'la plantilla'],
+      ['Implantar una herramienta de ticketing que centralice las peticiones', 'herramientas'],
+      ['Revisar la infraestructura de red del campus', 'la red'],
+      ['Acometer la reforma del aula 1.7 y su instalación eléctrica', 'obra'],
+    ]
+    for (const [texto, esperado] of casos) {
+      const fuera = fueraDeAlcance(texto)
+      expect(fuera.length, texto).toBeGreaterThan(0)
+      expect(fuera[0]!.que).toContain(esperado)
+      expect(texto).toContain(fuera[0]!.dice)
+    }
+  })
+
+  /*
+   * Y no muerde lo que sí es del servicio, que es la mitad del trabajo: un
+   * guardián que tumba las recomendaciones buenas deja el informe sin ninguna.
+   */
+  it('deja pasar lo que sí decide el servicio', () => {
+    const buenas = [
+      'Reponer las lámparas por debajo del 20 % antes del comienzo de curso',
+      'Sustituir el proyector del aula 1.7, que ha dado tres avisos en el mes',
+      'Adelantar la ronda del edificio H, que concentra lo abierto',
+      'Pasar la puesta a punto de los laboratorios antes de Semana Santa',
+      'Aprobar la compra de cuatro lámparas NP30, que quedan dos en almacén',
+      'Revisar el aula 2.1 tras el cambio de ordenador',
+    ]
+    for (const b of buenas) expect(fueraDeAlcance(b), b).toEqual([])
   })
 })
