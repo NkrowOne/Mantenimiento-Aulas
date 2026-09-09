@@ -37,16 +37,6 @@ export const SECCIONES: SeccionInfo[] = [
     detalle: 'Los hallazgos del periodo, redactados',
   },
   {
-    clave: 'revisiones',
-    etiqueta: 'Revisiones del periodo',
-    detalle: 'Cada revisión hecha: sala, hora, quién y cómo salió',
-  },
-  {
-    clave: 'eventos',
-    etiqueta: 'Diario del periodo',
-    detalle: 'Día a día: altas, cierres, material, inventarios y equipos',
-  },
-  {
     clave: 'edificios',
     etiqueta: 'Dónde está el trabajo',
     detalle: 'Reparto por edificio y cobertura de la ronda',
@@ -82,25 +72,42 @@ export const SECCIONES: SeccionInfo[] = [
     detalle: 'La mediana, la media y las cerradas en menos de 48 h. Desmárcala para que el informe no dé ese número',
   },
   {
-    clave: 'cierres',
-    etiqueta: 'Cada cierre, con sus días',
-    detalle: 'Uno por línea: cuándo se abrió, cuándo se cerró, cuánto llevó y qué se hizo. Es lo que sirve para justificar un tiempo',
-  },
-  {
     clave: 'equipo',
     etiqueta: 'Reparto del trabajo',
     detalle: 'Con nombres: revisiones y altas de cada persona',
     optativa: true,
   },
   {
-    clave: 'fotos',
-    etiqueta: 'Fotos del periodo',
-    detalle: 'Las de las revisiones y las de las incidencias, dentro del propio documento y diciendo de cuándo es cada una: cómo se encontró y cómo quedó',
-  },
-  {
     clave: 'recomendaciones',
     etiqueta: 'Qué conviene hacer',
     detalle: 'Las acciones que salen de los hallazgos',
+  },
+
+  /*
+   * A partir de aquí, los listados. Van al final del documento —detrás del
+   * corte «Detalle del periodo»— porque se consultan, no se leen de seguido:
+   * con un periodo largo, la tabla de revisiones y el diario son trescientas
+   * filas que antes se metían entre el análisis y las conclusiones.
+   */
+  {
+    clave: 'revisiones',
+    etiqueta: 'Revisiones del periodo',
+    detalle: 'Cada revisión hecha: sala, hora, quién y cómo salió',
+  },
+  {
+    clave: 'eventos',
+    etiqueta: 'Diario del periodo',
+    detalle: 'Día a día: altas, cierres, material, inventarios y equipos',
+  },
+  {
+    clave: 'cierres',
+    etiqueta: 'Cada cierre, con sus días',
+    detalle: 'Uno por línea: cuándo se abrió, cuándo se cerró, cuánto llevó y qué se hizo. Es lo que sirve para justificar un tiempo',
+  },
+  {
+    clave: 'fotos',
+    etiqueta: 'Fotos del periodo',
+    detalle: 'Las de las revisiones y las de las incidencias, dentro del propio documento y diciendo de cuándo es cada una: cómo se encontró y cómo quedó',
   },
 ]
 

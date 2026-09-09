@@ -1116,6 +1116,12 @@ Desde ahí salen dos botones:
   que se abre en cualquier navegador, sin conexión y sin nada instalado. Es lo
   que conviene guardar para archivar; no es el PDF.
 
+**El orden del documento.** Primero lo que se lee —las cifras, los gráficos,
+dónde está el trabajo y qué conviene hacer— y después, detrás del corte
+«Detalle del periodo», los listados completos: cada revisión, el diario, cada
+cierre y las fotos. Se consultan, no se leen de seguido: con un periodo largo
+son trescientas filas, y antes se metían entre el análisis y las conclusiones.
+
 El informe queda además **archivado** en la lista de abajo, y cada entrada lleva
 un distintivo con **cómo salió su análisis**:
 
