@@ -90,6 +90,7 @@ describe('el mapa', () => {
     expect(hojasDelAnyo(2027)).toEqual({
       material: 'Material Instalado 2027',
       bolsa: 'Bolsa 2027',
+      pcs: 'PCs STOCK 2027',
     })
   })
 })
@@ -131,7 +132,7 @@ function cabeceras(cambios: Record<string, string>): Record<string, string> {
 }
 
 describe.skipIf(!bytes)('contra el libro real', () => {
-  it('las cinco hojas del mapa son las cinco del libro', async () => {
+  it('las seis hojas del mapa son las seis del libro', async () => {
     const l = await abrirLibro(new Uint8Array(bytes!))
     expect(l.hojas.map((h) => h.nombre).sort()).toEqual(HOJAS.map((h) => h.nombre).sort())
   })

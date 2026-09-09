@@ -30,9 +30,17 @@
 
 import { supabase } from '@/lib/supabase'
 import { construirIndice } from '@/domain/cruce'
-import type { Catalogo } from '@/domain/cruce'
+import type { Catalogo, Indice } from '@/domain/cruce'
 import { corteDeAnyo } from '@/domain/anyo'
-import { hojaDeInventario, hojaDeMovimientos, hojaDeRevisiones, hojaDelParte } from '@/domain/hojasNuevas'
+import { pendientes } from '@/domain/dudas'
+import type { Duda, Respuestas } from '@/domain/dudas'
+import {
+  hojaDeInventario,
+  hojaDeMovimientos,
+  hojaDeRevisiones,
+  hojaDeUnidades,
+  hojaDelParte,
+} from '@/domain/hojasNuevas'
 import type { LineaDelParte } from '@/domain/hojasNuevas'
 import { escribirLibro } from '@/domain/libro'
 import type { EdicionDeHoja, HojaNueva } from '@/domain/libro'
@@ -42,6 +50,7 @@ import {
   ESTADO,
   MATERIAL_2025,
   MATERIAL_2026,
+  PCS_2026,
   hojaPorNombre,
   hojasDelAnyo,
 } from '@/domain/mapa'
@@ -52,12 +61,13 @@ import {
   sincronizarBolsa,
   sincronizarEstado,
   sincronizarPartes,
+  sincronizarUnidades,
 } from '@/domain/sincronizar'
-import type { Instantanea, Plan, Resumen } from '@/domain/sincronizar'
+import type { Alta, Instantanea, Plan, Resumen } from '@/domain/sincronizar'
 import { leerMaterial } from '@/domain/valores'
 import type { Valor } from '@/domain/valores'
 import { abrirLibro, celdasCombinadas, leerHoja } from '@/domain/xlsx'
-import type { Libro } from '@/domain/xlsx'
+import type { Cambio, FilaLeida, Libro } from '@/domain/xlsx'
 import { datosDeLaPasada } from './datosDeLaPasada'
 import type { DatosDeLaPasada } from './datosDeLaPasada'
 import { catalogoDelMaestro } from './catalogoDelMaestro'
@@ -75,6 +85,17 @@ export interface Analisis {
   resumenes: Resumen[]
   hojasNuevas: HojaNueva[]
   columnaRef: string
+  /** Lo que la pasada pregunta antes de aplicar, de todas las hojas. */
+  dudas: Duda[]
+  /** Lo que la persona ha contestado. Se vuelve a planificar con cada respuesta. */
+  respuestas: Respuestas
+  /** El maestro, para que la pantalla ofrezca salas en las dudas. */
+  catalogo: Catalogo
+  /**
+   * Lo que hizo falta leer para planificar, guardado para volver a planificar
+   * con otras respuestas sin volver a bajar el libro ni la base.
+   */
+  entrada: EntradaDeLaPasada
   /** Si alguna hoja no tiene la forma declarada, la pasada no puede empezar. */
   bloqueada: boolean
   /**
@@ -92,7 +113,15 @@ export interface Analisis {
 // 1 a 3 — Analizar
 // -----------------------------------------------------------------------------
 
-export async function analizar(fichero: File, hoy = new Date()): Promise<Analisis> {
+/** Lo leído del libro y de la base, que no cambia entre dos planificaciones. */
+export interface EntradaDeLaPasada {
+  filas: Map<string, FilaLeida[]>
+  combinadas: string[]
+  instantaneas: Map<string, Instantanea>
+  indice: Indice
+}
+
+export async function analizar(fichero: File, hoy = new Date(), respuestas: Respuestas = {}): Promise<Analisis> {
   const bytes = new Uint8Array(await fichero.arrayBuffer())
   const libro = await abrirLibro(bytes)
   const anyo = hoy.getFullYear()
@@ -116,47 +145,24 @@ export async function analizar(fichero: File, hoy = new Date()): Promise<Analisi
   const sha256 = await sha256De(bytes)
   const indice = construirIndice(catalogo as Catalogo)
 
-  const filasEstado = await leerHoja(libro, ESTADO.nombre)
-  const columnaRef = columnaParaLaRef(filasEstado, ESTADO.cabecera, 'Ref')
-
-  const planes: Plan[] = []
-
-  planes.push(
-    sincronizarEstado({
-      hoja: ESTADO,
-      filas: filasEstado,
-      salas: datos.salas,
-      indice,
-      columnaRef,
-      combinadas: await celdasCombinadas(libro, ESTADO.nombre),
-      instantanea: await instantaneaDe(ESTADO.nombre),
-    }),
-  )
-
-  for (const hoja of [MATERIAL_2026, MATERIAL_2025] as Hoja[]) {
+  // Todo lo que hay que leer se lee una vez. Contestar una duda vuelve a
+  // planificar, y volver a planificar no puede costar otra bajada de la base.
+  const filas = new Map<string, FilaLeida[]>()
+  for (const hoja of [ESTADO, MATERIAL_2026, MATERIAL_2025, BOLSA_2026, BOLSA_2025, PCS_2026]) {
     if (!libro.hojas.some((h) => h.nombre === hoja.nombre)) continue
-    planes.push(
-      sincronizarPartes({
-        hoja,
-        filas: await leerHoja(libro, hoja.nombre),
-        incidencias: datos.incidencias,
-        instantanea: await instantaneaDe(hoja.nombre),
-      }),
-    )
+    filas.set(hoja.nombre, await leerHoja(libro, hoja.nombre))
   }
+  const instantaneas = new Map<string, Instantanea>()
+  for (const nombre of filas.keys()) instantaneas.set(nombre, await instantaneaDe(nombre))
 
-  for (const hoja of [BOLSA_2026, BOLSA_2025] as Hoja[]) {
-    if (!libro.hojas.some((h) => h.nombre === hoja.nombre)) continue
-    planes.push(
-      sincronizarBolsa({
-        hoja,
-        filas: await leerHoja(libro, hoja.nombre),
-        articulos: datos.articulos,
-        resolver: datos.resolverArticulo,
-        instantanea: await instantaneaDe(hoja.nombre),
-      }),
-    )
+  const entrada: EntradaDeLaPasada = {
+    filas,
+    combinadas: await celdasCombinadas(libro, ESTADO.nombre),
+    instantaneas,
+    indice,
   }
+  const columnaRef = columnaParaLaRef(filas.get(ESTADO.nombre)!, ESTADO.cabecera, 'Ref')
+  const planes = planificar(entrada, datos, columnaRef, respuestas)
 
   // Las hojas de detalle se rehacen enteras cada pasada. No son un historial que
   // haya que ir completando: son la foto de lo que la base sabe hoy, y
@@ -173,6 +179,12 @@ export async function analizar(fichero: File, hoy = new Date()): Promise<Analisi
   })
   hojasNuevas.push(...corte.hojas)
 
+  // La hoja de PCs de repuesto, si el libro no la trae: se estrena con lo que
+  // la aplicación sabe. A partir de ahí es una hoja normal, con sus dos caras.
+  if (!libro.hojas.some((h) => h.nombre === PCS_2026.nombre)) {
+    hojasNuevas.push(hojaDeUnidades(PCS_2026, datos.unidades))
+  }
+
   return {
     libro,
     nombre: fichero.name,
@@ -184,10 +196,103 @@ export async function analizar(fichero: File, hoy = new Date()): Promise<Analisi
     resumenes: planes.map(resumir),
     hojasNuevas,
     columnaRef,
+    dudas: planes.flatMap((p) => p.dudas),
+    respuestas,
+    catalogo,
+    entrada,
     bloqueada: planes.some((p) => p.desajustes.length > 0),
     libroDesconocido: salida !== null && salida.sha256 !== sha256,
     ultimaSalida: salida?.cuando ?? null,
   }
+}
+
+/**
+ * Volver a planificar con otras respuestas. No lee nada: todo lo que hace falta
+ * está en `entrada`, y por eso contestar una duda es instantáneo.
+ */
+export function replanificar(a: Analisis, respuestas: Respuestas): Analisis {
+  const planes = planificar(a.entrada, a.datos, a.columnaRef, respuestas)
+  return {
+    ...a,
+    planes,
+    resumenes: planes.map(resumir),
+    dudas: planes.flatMap((p) => p.dudas),
+    respuestas,
+    bloqueada: planes.some((p) => p.desajustes.length > 0),
+  }
+}
+
+/** Las dudas que siguen sin contestar. Con alguna, la pasada no se aplica. */
+export function dudasPendientes(a: Analisis): Duda[] {
+  return pendientes(a.dudas, a.respuestas)
+}
+
+function planificar(
+  e: EntradaDeLaPasada,
+  datos: DatosDeLaPasada,
+  columnaRef: string,
+  respuestas: Respuestas,
+): Plan[] {
+  const planes: Plan[] = []
+  const inst = (hoja: string): Instantanea => e.instantaneas.get(hoja) ?? (() => undefined)
+
+  planes.push(
+    sincronizarEstado({
+      hoja: ESTADO,
+      filas: e.filas.get(ESTADO.nombre)!,
+      salas: datos.salas,
+      indice: e.indice,
+      columnaRef,
+      combinadas: e.combinadas,
+      instantanea: inst(ESTADO.nombre),
+      respuestas,
+    }),
+  )
+
+  for (const hoja of [MATERIAL_2026, MATERIAL_2025] as Hoja[]) {
+    const filas = e.filas.get(hoja.nombre)
+    if (!filas) continue
+    planes.push(
+      sincronizarPartes({
+        hoja,
+        filas,
+        incidencias: datos.incidencias,
+        instantanea: inst(hoja.nombre),
+        indice: e.indice,
+        respuestas,
+      }),
+    )
+  }
+
+  for (const hoja of [BOLSA_2026, BOLSA_2025] as Hoja[]) {
+    const filas = e.filas.get(hoja.nombre)
+    if (!filas) continue
+    planes.push(
+      sincronizarBolsa({
+        hoja,
+        filas,
+        articulos: datos.articulos,
+        resolver: datos.resolverArticulo,
+        instantanea: inst(hoja.nombre),
+        respuestas,
+      }),
+    )
+  }
+
+  const filasPcs = e.filas.get(PCS_2026.nombre)
+  if (filasPcs) {
+    planes.push(
+      sincronizarUnidades({
+        hoja: PCS_2026,
+        filas: filasPcs,
+        unidades: datos.unidades,
+        instantanea: inst(PCS_2026.nombre),
+        respuestas,
+      }),
+    )
+  }
+
+  return planes
 }
 
 /** El libro que salió de la última pasada, para saber si es éste el que se sube. */
@@ -225,6 +330,17 @@ export interface Aplicado {
   parteId: number
   aplicadas: number
   rechazadas: number
+  /** Las filas nuevas que entraron, con la clave que la base les puso. */
+  altas: AltaAplicada[]
+}
+
+export interface AltaAplicada {
+  hoja: string
+  fila: number
+  tipo: string
+  clave: string
+  /** El número del parte, cuando es un parte: hay que escribirlo en su fila. */
+  numero: string | null
 }
 
 /**
@@ -276,6 +392,12 @@ export function filasDeLaPasada(
 
 export async function aplicar(a: Analisis): Promise<Aplicado> {
   if (a.bloqueada) throw new Error('Hay hojas con la forma cambiada: la pasada no puede empezar')
+  const sinContestar = dudasPendientes(a)
+  if (sinContestar.length > 0) {
+    throw new Error(
+      `Quedan ${sinContestar.length} dudas sin contestar: la pasada no se aplica hasta que se contesten o se dejen como están`,
+    )
+  }
 
   const { data: ficheroId, error: eF } = await supabase.rpc('sync_registrar_fichero', {
     p_origen: ORIGEN,
@@ -290,6 +412,7 @@ export async function aplicar(a: Analisis): Promise<Aplicado> {
     origen: ORIGEN,
     disparo: 'manual',
     filas: filasDeLaPasada(a.planes),
+    altas: a.planes.flatMap((p) => p.altas.map((alta) => altaParaLaBase(p.hoja, alta, a))),
     hacia_la_base: ordenarParaElAlmacen(a.planes.flatMap((p) =>
       p.haciaLaBase.map((h) => ({
         hoja: p.hoja,
@@ -349,8 +472,72 @@ export async function aplicar(a: Analisis): Promise<Aplicado> {
   const { data, error } = await supabase.rpc('sync_aplicar', { p_plan: plan })
   if (error) throw new Error(`La pasada no se pudo aplicar: ${error.message}`)
 
-  const r = data as { parte_id: number; aplicadas: number; rechazadas: number }
-  return { parteId: r.parte_id, aplicadas: r.aplicadas, rechazadas: r.rechazadas }
+  const r = data as {
+    parte_id: number
+    aplicadas: number
+    rechazadas: number
+    altas?: Array<{ hoja: string; fila: number; tipo: string; clave: string; numero: string | null }>
+  }
+  return {
+    parteId: r.parte_id,
+    aplicadas: r.aplicadas,
+    rechazadas: r.rechazadas,
+    altas: (r.altas ?? []).map((x) => ({
+      hoja: x.hoja,
+      fila: Number(x.fila),
+      tipo: x.tipo,
+      clave: x.clave,
+      numero: x.numero ?? null,
+    })),
+  }
+}
+
+/**
+ * Un alta tal y como la entiende `sync_alta`.
+ *
+ * El material de un parte va partido y resuelto, como en las correcciones: el
+ * catálogo de alias vive en el navegador. Y las celdas van como texto, que es
+ * como la instantánea las guarda y las compara.
+ */
+function altaParaLaBase(hoja: string, alta: Alta, a: Analisis): Record<string, unknown> {
+  const celdas = Object.fromEntries(
+    Object.entries(alta.celdas).map(([letra, valor]) => [letra, paraLaInstantanea(valor)]),
+  )
+  const base = { hoja, fila: alta.fila, tipo: alta.tipo, celdas }
+  switch (alta.tipo) {
+    case 'incidencia': {
+      const h = hojaPorNombre(hoja)
+      return {
+        ...base,
+        sala_id: alta.salaId,
+        aula: alta.aula,
+        numero: alta.numero,
+        abierta: alta.abierta,
+        resuelta: alta.resuelta,
+        problema: alta.problema,
+        observacion: alta.observacion,
+        resolucion: alta.resolucion,
+        detalle: alta.material ? detalleDelMaterial(alta.material, a.datos.resolverArticulo) : [],
+        columna_numero: h?.identidad.tipo === 'incidencia' ? h.identidad.columna : 'D',
+      }
+    }
+    case 'articulo':
+      return {
+        ...base,
+        nombre: alta.nombre,
+        nombre_alternativo: alta.nombreAlternativo,
+        comprado: alta.comprado,
+      }
+    case 'unidad':
+      return {
+        ...base,
+        articulo: alta.articulo,
+        marca: alta.marca,
+        modelo: alta.modelo,
+        serial: alta.serial,
+        observaciones: alta.observaciones,
+      }
+  }
 }
 
 /**
@@ -388,7 +575,7 @@ function detalleDelMaterial(
 function entidadDe(hoja: string): string {
   const h = hojaPorNombre(hoja)
   if (!h) return 'sala'
-  return h.identidad.tipo === 'incidencia' ? 'incidencia' : h.identidad.tipo === 'articulo' ? 'articulo' : 'sala'
+  return h.identidad.tipo === 'sala' ? 'sala' : h.identidad.tipo
 }
 
 /**
@@ -443,12 +630,18 @@ function claveDe(p: Plan, fila: number): string {
 // 5 — Escribir el libro
 // -----------------------------------------------------------------------------
 
-export async function escribir(a: Analisis, cuando: string, parteId?: number): Promise<Uint8Array> {
+export async function escribir(
+  a: Analisis,
+  cuando: string,
+  parteId?: number,
+  altas: AltaAplicada[] = [],
+): Promise<Uint8Array> {
   const ediciones: EdicionDeHoja[] = a.planes
-    .filter((p) => p.celdas.length > 0 || p.insertar.length > 0 || p.borrar.length > 0)
-    .map((p) => ({
+    .map((p) => ({ plan: p, numeros: numerosDeLasAltas(p, altas) }))
+    .filter(({ plan: p, numeros }) => p.celdas.length > 0 || p.insertar.length > 0 || p.borrar.length > 0 || numeros.length > 0)
+    .map(({ plan: p, numeros }) => ({
       hoja: p.hoja,
-      celdas: p.celdas,
+      celdas: [...p.celdas, ...numeros],
       filas: { insertar: p.insertar, borrar: p.borrar },
     }))
 
@@ -499,6 +692,22 @@ export async function escribir(a: Analisis, cuando: string, parteId?: number): P
   }
 
   return bytes
+}
+
+/**
+ * El número que la base puso a cada parte nuevo, en la celda de su fila.
+ *
+ * Es la única celda que la pasada no sabe al planificar: el número lo pone la
+ * base al aplicar, y por eso llega aquí aparte y no en el plan. Sin esto, la
+ * pasada siguiente encontraría la fila sin número y la daría de alta otra vez.
+ */
+function numerosDeLasAltas(p: Plan, altas: AltaAplicada[]): Cambio[] {
+  const h = hojaPorNombre(p.hoja)
+  if (!h || h.identidad.tipo !== 'incidencia') return []
+  const columna = h.identidad.columna
+  return altas
+    .filter((x) => x.hoja === p.hoja && x.tipo === 'incidencia' && x.numero)
+    .map((x) => ({ celda: `${columna}${x.fila}`, valor: x.numero! }))
 }
 
 /** La última fila que existe en el XML de una hoja. Cero si solo hay cabecera. */
@@ -581,6 +790,14 @@ export function lineasDelParte(planes: Plan[]): LineaDelParte[] {
     for (const s of p.sinCruzar) {
       out.push({ hoja: p.hoja, celda: `${s.fila}`, que: 'Sin cruzar', detalle: s.motivo })
     }
+    for (const d of p.dudas) {
+      out.push({
+        hoja: p.hoja,
+        celda: `${d.fila}`,
+        que: 'Pendiente de decidir',
+        detalle: d.tipo === 'sala' ? `${d.texto} — ${d.motivo}` : `${d.texto} — ${d.detalle}`,
+      })
+    }
     // Y lo que la pasada HIZO por su cuenta: mudanzas, altas, bajas, filas que
     // cruzaron por número de serie, fórmulas devueltas. No está pendiente, pero
     // es lo primero que quiere saber quien abre el libro y ve que una sala ya no
@@ -608,6 +825,6 @@ export async function sha256De(bytes: Uint8Array): Promise<string> {
 }
 
 /** Las hojas que la pasada va a crear porque cambió el año. */
-export function hojasDelCorte(anyo: number): { material: string; bolsa: string } {
+export function hojasDelCorte(anyo: number): { material: string; bolsa: string; pcs: string } {
   return hojasDelAnyo(anyo)
 }

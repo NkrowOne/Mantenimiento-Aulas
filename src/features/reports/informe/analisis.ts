@@ -454,6 +454,19 @@ export function senales(d: ReportData, audiencia: Audiencia): Senal[] {
     })
   }
 
+  if (d.situacion.pcsDeRepuesto > 0) {
+    s.push({
+      clave: 'pcs-repuesto',
+      titulo: `${plural(d.situacion.pcsDeRepuesto, 'ordenador')} de repuesto en el almacén`,
+      cuerpo: dir
+        ? 'Listos para sustituir el ordenador de un aula el mismo día en que falla.'
+        : 'Con imagen y número de serie, listos para instalar en un aula sin esperar compra.',
+      tono: 'neutro',
+      peso: 9,
+      accion: dir ? 'Nada que decidir: es capacidad de respuesta.' : 'Instalarlos desde el almacén cuando un aula lo necesite.',
+    })
+  }
+
   return s.sort((a, b) => a.peso - b.peso)
 }
 

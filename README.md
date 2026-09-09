@@ -349,12 +349,22 @@ npm run informe:ia
 
   Funciona ya, desde **Datos → Sincronizar el Excel de SharePoint**: se sube el
   `.xlsx`, se ve hoja por hoja qué entraría y qué saldría, se aplica y se baja el
-  libro con todo lo que la aplicación sabe. Las cinco hojas de siempre —con las
-  revisiones, las horas, los partes y su material, y el consumo del almacén
-  repartido mes a mes— más cuatro nuevas para lo que no cabe en una celda:
-  `Revisiones`, `Movimientos de Almacén`, `Inventario por Sala` y
-  `Sincronización`. Las salas nuevas entran en el bloque de su edificio, las
-  archivadas salen, y en enero se crean solas las dos hojas del año.
+  libro con todo lo que la aplicación sabe. Las seis hojas —estado, partes y
+  bolsa del año, la de `PCs STOCK` con los ordenadores de repuesto por número
+  de serie, y las dos de 2025— con las revisiones, las horas, los partes y su
+  material, y el consumo del almacén repartido mes a mes, más cuatro nuevas para
+  lo que no cabe en una celda: `Revisiones`, `Movimientos de Almacén`,
+  `Inventario por Sala` y `Sincronización`. Las salas nuevas entran en el bloque
+  de su edificio, las archivadas salen, y en enero se crean solas las hojas del
+  año.
+
+  Lo que el libro tiene y la aplicación no, **entra**: un parte tecleado en la
+  hoja sin número se da de alta y vuelve con el número que le pone la base; un
+  artículo nuevo de la bolsa y un PC de repuesto nuevo entran también. Y lo que
+  la pasada no sabe decidir lo **pregunta antes de aplicar**: una fila de estado
+  sin código de aula, un parte cuya aula cruza con ocho salas, un número de serie
+  que crearía un equipo que la sala no tenía. Se contesta en la pantalla y la
+  pasada se recalcula; con dudas sin contestar no se sincroniza.
 
   Lo que no se puede leer no se interpreta: un `********` en la columna de horas
   o un `19/0672025` en la de fecha van a cuarentena con su motivo, y no entran en

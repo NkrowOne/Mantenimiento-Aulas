@@ -44,18 +44,20 @@
  * sincronización que se puede dejar corriendo y una que hay que vigilar.
  */
 
-import { resolverSala } from './cruce'
-import type { Indice } from './cruce'
+import { formasDeEscribir, resolverSala } from './cruce'
+import type { Indice, SalaConocida } from './cruce'
+import { idDeDuda } from './dudas'
+import type { Duda, Respuestas, SalaCandidata } from './dudas'
 import { canonizarFila, fusionarCelda, iguales } from './fusion'
 import type { Decision, Dueno, Valor } from './fusion'
-import { comprobarCabeceras, mesDe } from './mapa'
+import { TITULO_DE_SITUACION, comprobarCabeceras, equipoDe, mesDe } from './mapa'
 import type { Columna, Hoja } from './mapa'
 import { escribir, esVacio, leer, limpiar } from './valores'
 import type { FilaNueva } from './estructura'
 import { columnaANumero, numeroAColumna } from './xlsx'
 import type { Cambio, FilaLeida, ValorCelda } from './xlsx'
-import { filaDeArticulo, filaDeIncidencia, filaDeSala } from './volcado'
-import type { ArticuloVolcado, IncidenciaVolcada, SalaVolcada } from './volcado'
+import { filaDeArticulo, filaDeIncidencia, filaDeSala, filaDeUnidad, situacionDeUnidad } from './volcado'
+import type { ArticuloVolcado, IncidenciaVolcada, SalaVolcada, UnidadVolcada } from './volcado'
 
 // -----------------------------------------------------------------------------
 // Lo que sale de una pasada
@@ -116,6 +118,57 @@ export interface CeldaDeInstantanea {
   trasEscribir?: boolean
 }
 
+/**
+ * Una fila del libro que la aplicación no tiene y que **entra** como cosa nueva.
+ *
+ * No es una corrección de celda: es un parte, un artículo o un ordenador de
+ * repuesto enteros, que alguien tecleó en el libro y nunca pasaron a la
+ * aplicación. Hasta aquí se contaban como «sin cruzar» y se quedaban así para
+ * siempre; ahora entran, y lo que la base les asigne —el número del parte— se
+ * escribe de vuelta en su fila.
+ *
+ * `celdas` lleva lo que la fila decía, letra a letra, para que la base lo deje
+ * de antepasado bajo la clave nueva: sin eso la pasada siguiente encontraría la
+ * fila con número y sin instantánea, y volvería a decidir «primera pasada:
+ * manda la app» sobre cada celda.
+ */
+export type Alta =
+  | {
+      tipo: 'incidencia'
+      fila: number
+      /** La sala, si se supo. `null` es un parte sin aula, que existe. */
+      salaId: string | null
+      /** El aula tal y como la escribió quien la escribió: queda de alias. */
+      aula: string
+      /** El número que la fila traía, si traía. La base decide si lo respeta. */
+      numero: string | null
+      abierta: string | null
+      resuelta: string | null
+      problema: string
+      observacion: string | null
+      resolucion: string | null
+      material: string | null
+      celdas: Record<string, Valor>
+    }
+  | {
+      tipo: 'articulo'
+      fila: number
+      nombre: string
+      nombreAlternativo: string | null
+      comprado: number | null
+      celdas: Record<string, Valor>
+    }
+  | {
+      tipo: 'unidad'
+      fila: number
+      articulo: string
+      marca: string | null
+      modelo: string | null
+      serial: string
+      observaciones: string | null
+      celdas: Record<string, Valor>
+    }
+
 export interface Plan {
   hoja: string
   /** Lo que se escribe en el libro, con las direcciones de la hoja de entrada. */
@@ -128,6 +181,10 @@ export interface Plan {
   instantanea: CeldaDeInstantanea[]
   /** Filas del libro que no se pudieron emparejar con nada. Ni se tocan. */
   sinCruzar: Array<{ fila: number; motivo: string }>
+  /** Lo que la pasada pregunta antes de aplicar. Ver `dudas.ts`. */
+  dudas: Duda[]
+  /** Filas del libro que entran en la aplicación como cosa nueva. */
+  altas: Alta[]
   avisos: string[]
   /** Si la hoja no tiene la forma que declara el mapa, la pasada no empieza. */
   desajustes: Array<{ letra: string; esperada: string; encontrada: string }>
@@ -144,6 +201,8 @@ function planVacio(hoja: string): Plan {
     cuarentena: [],
     instantanea: [],
     sinCruzar: [],
+    dudas: [],
+    altas: [],
     avisos: [],
     desajustes: [],
   }
@@ -425,6 +484,8 @@ export interface EntradaDeEstado {
   /** Los rangos combinados de la hoja (`E67:E68`), de `celdasCombinadas`. */
   combinadas?: string[]
   instantanea?: Instantanea
+  /** Lo que la persona ya contestó a las dudas de una pasada anterior. */
+  respuestas?: Respuestas
 }
 
 export function sincronizarEstado(e: EntradaDeEstado): Plan {
@@ -438,6 +499,7 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
   if (plan.desajustes.length > 0) return plan
 
   const porMatricula = new Map(e.salas.map((s) => [norm(s.shortRef), s]))
+  const porId = new Map(e.salas.map((s) => [s.id, s]))
   const porSerialUnico = serialesUnicos(e.salas)
   const grupoDe = gruposDeFilas(e.filas, e.hoja, e.columnaRef, e.combinadas ?? [])
   const emparejadas: Array<Emparejada<SalaVolcada>> = []
@@ -473,25 +535,51 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
 
     const matricula = textoDe(f.celdas[e.columnaRef])
     const aula = dice('C')
-    if (matricula === '' && aula === '') {
+
+    // Lo que la persona contestó sobre esta fila, si la pasada anterior preguntó.
+    // Una respuesta «es esa sala» vale como si la fila llevara su matrícula.
+    const respuesta = e.respuestas?.[idDeDuda(e.hoja.nombre, f.fila)]
+    const contestada = respuesta?.tipo === 'sala' ? porId.get(respuesta.salaId) : undefined
+
+    if (matricula === '' && aula === '' && !contestada) {
       if (Object.values(f.celdas).some((v) => !esVacio(v as Valor))) {
         // Si continúa la sala de arriba —el segundo proyector de un aula que va
         // en dos filas— se dice, que no es lo mismo que una fila perdida: esa
         // sala existe, y su segundo equipo está en «Inventario por Sala».
         const deArriba = cabezaAnterior && grupoDe(cabezaAnterior.fila).includes(f.fila) ? cabezaAnterior : null
-        plan.sinCruzar.push({
-          fila: f.fila,
-          motivo: deArriba
-            ? `continúa la fila de «${deArriba.code}»: un segundo equipo de esa sala. Esta hoja enseña uno por tipo; los demás están en «Inventario por Sala»`
-            : 'la fila tiene datos pero no dice de qué aula: ni matrícula ni código',
-        })
+        if (deArriba) {
+          plan.sinCruzar.push({
+            fila: f.fila,
+            motivo: `continúa la fila de «${deArriba.code}»: un segundo equipo de esa sala. Esta hoja enseña uno por tipo; los demás están en «Inventario por Sala»`,
+          })
+        } else {
+          plan.sinCruzar.push({
+            fila: f.fila,
+            motivo: 'la fila tiene datos pero no dice de qué aula: ni matrícula ni código',
+          })
+          // Y se pregunta: «Sala Vip» con dos números de serie es una sala que
+          // alguien conoce, y contarla cada pasada no la va a cruzar nunca.
+          if (respuesta?.tipo !== 'ignorar') {
+            plan.dudas.push({
+              tipo: 'sala',
+              id: idDeDuda(e.hoja.nombre, f.fila),
+              hoja: e.hoja.nombre,
+              fila: f.fila,
+              que: 'estado',
+              texto: resumenDeFila(f, e.hoja, edificio, zona),
+              motivo: 'la fila no dice de qué aula es',
+              candidatas: [],
+            })
+          }
+        }
       }
       continue
     }
 
     const porRef = matricula !== '' ? porMatricula.get(norm(matricula)) : undefined
-    let cruce: ResultadoDelCruce =
-      matricula !== ''
+    let cruce: ResultadoDelCruce = contestada
+      ? { sala: contestada }
+      : matricula !== ''
         ? porRef
           ? { sala: porRef }
           : { motivo: `la matrícula «${matricula}» no existe en el maestro` }
@@ -524,6 +612,20 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
         // el libro y el porqué es lo que dice qué hacer con ello.
         motivo: matricula !== '' ? cruce.motivo : `«${aula}» de «${edificio}»: ${cruce.motivo}`,
       })
+      // Sin matrícula y sin cruce es una pregunta, no un veredicto: la sala
+      // puede existir con otro nombre, y quien mira la pantalla lo sabe.
+      if (matricula === '' && respuesta?.tipo !== 'ignorar') {
+        plan.dudas.push({
+          tipo: 'sala',
+          id: idDeDuda(e.hoja.nombre, f.fila),
+          hoja: e.hoja.nombre,
+          fila: f.fila,
+          que: 'estado',
+          texto: resumenDeFila(f, e.hoja, edificio, zona),
+          motivo: cruce.motivo,
+          candidatas: (cruce.candidatas ?? []).map(candidataDe),
+        })
+      }
       continue
     }
     const sala = cruce.sala
@@ -627,6 +729,8 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
     fechaDeMedida: (sala, lado, celdas) =>
       lado === 'base' ? (sala.revisiones[0] ?? null) : fechaDeCelda(celdas.D),
   })
+
+  retenerEquiposNuevos(plan, emparejadas, e.hoja, e.respuestas ?? {})
 
   // Las salas vivas que el libro no tiene: fila nueva en su bloque de edificio.
   const enLaHoja = new Set(emparejadas.map((p) => p.dato.id))
@@ -807,8 +911,8 @@ function letrasEntre(a: string, b: string): string[] {
 
 /** O la sala, o el motivo por el que no la hay. Nunca las dos ni ninguna. */
 type ResultadoDelCruce =
-  | { sala: SalaVolcada; motivo?: undefined }
-  | { sala?: undefined; motivo: string }
+  | { sala: SalaVolcada; motivo?: undefined; candidatas?: undefined }
+  | { sala?: undefined; motivo: string; candidatas?: SalaConocida[] }
 
 /**
  * El cruce por nombre, para la primera pasada y para las filas sin matrícula.
@@ -832,6 +936,7 @@ function salaPorCruce(
   if (r.estado === 'ambigua') {
     return {
       motivo: `${r.motivo}. Candidatas: ${r.candidatas.map((c) => `«${c.code}» (${c.shortRef})`).join(', ')}`,
+      candidatas: r.candidatas,
     }
   }
   if (r.estado === 'sin_cruce') return { motivo: r.motivo }
@@ -936,6 +1041,12 @@ export interface EntradaDePartes {
   filas: FilaLeida[]
   incidencias: IncidenciaVolcada[]
   instantanea?: Instantanea
+  /**
+   * El maestro, para saber de qué aula habla un parte que la aplicación no
+   * tiene. Sin él, un parte nuevo se pregunta siempre.
+   */
+  indice?: Indice
+  respuestas?: Respuestas
 }
 
 export function sincronizarPartes(e: EntradaDePartes): Plan {
@@ -958,15 +1069,20 @@ export function sincronizarPartes(e: EntradaDePartes): Plan {
     if (Object.values(f.celdas).every((v) => esVacio(v as Valor))) continue
 
     const numero = textoDe(f.celdas[colNumero])
-    if (numero === '') {
-      plan.sinCruzar.push({ fila: f.fila, motivo: 'el parte no lleva número de incidencia' })
-      continue
-    }
-    const inc = porNumero.get(norm(numero))
+    const inc = numero === '' ? undefined : porNumero.get(norm(numero))
     if (!inc) {
-      // Un parte del libro que la aplicación no conoce **no es un error**: es
-      // histórico que se tecleó aquí y nunca entró. Ni se toca ni se borra.
-      plan.sinCruzar.push({ fila: f.fila, motivo: `«${numero}» no está en la aplicación` })
+      // Un parte del libro que la aplicación no conoce no es un error: es un
+      // parte que se tecleó aquí. En una hoja viva **entra** —es lo que se pide
+      // de un registro con dos caras— y la base le pone número si no lo trae. En
+      // una hoja congelada se cuenta y se deja: es histórico ya rendido.
+      if (e.hoja.congelada) {
+        plan.sinCruzar.push({
+          fila: f.fila,
+          motivo: numero === '' ? 'el parte no lleva número de incidencia' : `«${numero}» no está en la aplicación`,
+        })
+      } else {
+        altaDeParte(plan, f, numero, e)
+      }
       continue
     }
     if (vistas.has(inc.id)) {
@@ -1027,11 +1143,243 @@ export function sincronizarPartes(e: EntradaDePartes): Plan {
   return plan
 }
 
+/**
+ * Un parte que está en el libro y no en la aplicación.
+ *
+ * Entra entero, con lo que la fila dice. Lo único que puede parar el alta es
+ * el aula: un parte habla de una sala, y si la referencia no cruza —«3.2» sin
+ * edificio cruza con ocho— no se elige por él. Se pregunta, y hasta que se
+ * conteste el parte espera; lo que sí se puede contestar es «no es de ninguna
+ * sala», que es un parte legítimo —118 del histórico son así.
+ *
+ * Sin problema descrito no hay parte: una fila con fecha y sin texto es una
+ * fila a medio escribir, y meterla en la aplicación sería inventar un título.
+ */
+function altaDeParte(plan: Plan, f: FilaLeida, numero: string, e: EntradaDePartes): void {
+  const col = (campo: string): Columna | undefined => e.hoja.columnas.find((c) => c.campo === campo)
+  const texto = (campo: string): string => {
+    const c = col(campo)
+    return c ? textoDe(f.celdas[c.letra]) : ''
+  }
+  const fecha = (campo: string): string | null => {
+    const c = col(campo)
+    if (!c) return null
+    const crudo = f.celdas[c.letra] ?? null
+    if (esVacio(crudo as Valor)) return null
+    const l = leer(crudo, 'fecha')
+    if (!l.ok) {
+      plan.cuarentena.push({
+        fila: f.fila,
+        letra: c.letra,
+        campo: c.campo,
+        destino: numero || `fila ${f.fila}`,
+        crudo,
+        motivo: l.motivo,
+      })
+      return null
+    }
+    return typeof l.valor === 'string' ? l.valor : null
+  }
+
+  const problema = texto('incidencia.problema')
+  if (problema === '') {
+    plan.sinCruzar.push({
+      fila: f.fila,
+      motivo: `${numero === '' ? 'el parte no lleva número' : `«${numero}» no está en la aplicación`} y tampoco dice cuál es el problema: no se puede dar de alta`,
+    })
+    return
+  }
+
+  const aula = texto('sala.code')
+  const id = idDeDuda(e.hoja.nombre, f.fila)
+  const respuesta = e.respuestas?.[id]
+  const describe = `${aula || 'sin aula'} · ${fecha('incidencia.abierta') ?? 'sin fecha'} · ${problema.slice(0, 80)}`
+
+  let salaId: string | null | undefined
+  if (respuesta?.tipo === 'ignorar') {
+    plan.sinCruzar.push({ fila: f.fila, motivo: 'parte nuevo del libro que se ha decidido no dar de alta' })
+    return
+  } else if (respuesta?.tipo === 'sala') {
+    salaId = respuesta.salaId
+  } else if (respuesta?.tipo === 'sin_sala') {
+    salaId = null
+  } else if (aula === '') {
+    salaId = undefined
+  } else if (e.indice) {
+    const r = resolverSala(e.indice, { tipo: 'parte', ref: aula })
+    if (r.estado === 'resuelta') {
+      salaId = r.sala.id
+    } else {
+      // Sin cruce, las candidatas: las salas que se llaman así en cualquier
+      // edificio. «3.2» a secas no cruza con nada —el cruce pide el edificio—
+      // pero quien contesta agradece ver las ocho «3.2» del campus en vez de
+      // buscarlas edificio a edificio.
+      const sueltas = r.estado === 'ambigua' ? r.candidatas : candidatasPorCodigo(e.indice, aula)
+      plan.dudas.push({
+        tipo: 'sala',
+        id,
+        hoja: e.hoja.nombre,
+        fila: f.fila,
+        que: 'parte',
+        texto: describe,
+        motivo: r.motivo,
+        candidatas: sueltas.map(candidataDe),
+      })
+      salaId = undefined
+    }
+  }
+
+  if (salaId === undefined) {
+    if (aula === '' || !e.indice) {
+      plan.dudas.push({
+        tipo: 'sala',
+        id,
+        hoja: e.hoja.nombre,
+        fila: f.fila,
+        que: 'parte',
+        texto: describe,
+        motivo: aula === '' ? 'el parte no dice de qué aula es' : 'no se pudo cruzar el aula con el maestro',
+        candidatas: [],
+      })
+    }
+    plan.sinCruzar.push({
+      fila: f.fila,
+      motivo: `parte nuevo del libro: espera a saber de qué aula es («${aula || 'sin aula'}»)`,
+    })
+    return
+  }
+
+  const celdas: Record<string, Valor> = {}
+  for (const c of e.hoja.columnas) {
+    const l = leer(f.celdas[c.letra] ?? null, c.tipo)
+    celdas[c.letra] = l.ok ? l.valor : ((f.celdas[c.letra] ?? null) as Valor)
+  }
+
+  plan.altas.push({
+    tipo: 'incidencia',
+    fila: f.fila,
+    salaId,
+    aula,
+    numero: numero === '' ? null : numero,
+    abierta: fecha('incidencia.abierta'),
+    resuelta: fecha('incidencia.resuelta'),
+    problema,
+    observacion: texto('incidencia.observacion') || null,
+    resolucion: texto('incidencia.resolucion') || null,
+    material: texto('incidencia.material') || null,
+    celdas,
+  })
+  plan.avisos.push(
+    `Fila ${f.fila}: parte nuevo del libro (${describe}). Entra en la aplicación${numero === '' ? ' y la base le pone número' : ` con el número «${numero}» si está libre`}.`,
+  )
+}
+
+/** Las salas vivas que se escriben como dice el texto, en cualquier edificio. */
+function candidatasPorCodigo(ix: Indice, texto: string): SalaConocida[] {
+  const out = new Map<string, SalaConocida>()
+  for (const forma of formasDeEscribir(texto)) {
+    for (const s of ix.porCodigoSuelto.get(forma) ?? []) if (s.active) out.set(s.id, s)
+  }
+  return [...out.values()].slice(0, 12)
+}
+
+/** Una sala del maestro, como se enseña en una duda. */
+function candidataDe(s: SalaConocida): SalaCandidata {
+  return { id: s.id, shortRef: s.shortRef, code: s.code, edificio: s.edificioNombre, zona: s.zona }
+}
+
+/**
+ * Lo que una fila de estado dice de sí misma, para preguntar por ella sin
+ * abrir el libro: el edificio y la planta que hereda y las celdas con dato,
+ * con su cabecera delante. Cinco como mucho: es una pregunta, no un volcado.
+ */
+function resumenDeFila(f: FilaLeida, hoja: Hoja, edificio: string, zona: string): string {
+  const partes: string[] = []
+  if (edificio) partes.push(edificio)
+  if (zona) partes.push(zona)
+  let n = 0
+  for (const c of hoja.columnas) {
+    if (c.letra === 'A' || c.letra === 'B') continue
+    const v = textoDe(f.celdas[c.letra])
+    if (v === '') continue
+    partes.push(`${c.cabecera.trim()}: ${v}`)
+    if (++n >= 5) break
+  }
+  return partes.join(' · ')
+}
+
+/**
+ * Los números de serie que crearían un equipo que la sala no tenía.
+ *
+ * `sync_aplicar_equipo` crea el equipo sin más cuando la sala no tiene ninguno
+ * de ese tipo, y no es lo que se pidió: un equipo nuevo en un aula es una cosa
+ * que se pregunta. Aquí se retienen esas celdas —el número de serie y el modelo
+ * del mismo aparato, que van juntos— hasta que alguien diga que sí. Un «no» las
+ * deja como están y se vuelve a preguntar en la pasada siguiente, que es lo que
+ * pasa con todo lo que no entra: la hoja lo sigue diciendo.
+ *
+ * Las que se retienen no dejan antepasado: con él, la pasada siguiente vería
+ * «nada cambió» y no volvería a preguntar.
+ */
+function retenerEquiposNuevos(
+  plan: Plan,
+  emparejadas: Array<Emparejada<SalaVolcada>>,
+  hoja: Hoja,
+  respuestas: Respuestas,
+): void {
+  const porFila = new Map(emparejadas.map((p) => [p.fila, p]))
+  const retenidas = new Set<string>()
+  const preguntas = new Map<string, { par: Emparejada<SalaVolcada>; tipo: string; celdas: HaciaLaBase[] }>()
+
+  for (const h of plan.haciaLaBase) {
+    const eq = equipoDe(h.campo)
+    if (!eq) continue
+    const par = porFila.get(h.fila)
+    if (!par) continue
+    if (par.dato.equipos.some((x) => norm(x.tipo) === norm(eq.tipo))) continue
+
+    const id = idDeDuda(hoja.nombre, h.fila, eq.tipo)
+    const r = respuestas[id]
+    if (r?.tipo === 'alta' && r.aceptar) continue
+
+    retenidas.add(`${h.fila}|${h.letra}`)
+    if (r?.tipo === 'alta') {
+      plan.avisos.push(
+        `${h.letra}${h.fila} (${eq.tipo}): «${par.destino}» no tiene ${eq.tipo.toLowerCase()} en la aplicación y se ha dicho que no se cree. Se queda como está.`,
+      )
+      continue
+    }
+    const q = preguntas.get(id) ?? { par, tipo: eq.tipo, celdas: [] }
+    q.celdas.push(h)
+    preguntas.set(id, q)
+  }
+
+  if (retenidas.size === 0) return
+  plan.haciaLaBase = plan.haciaLaBase.filter((h) => !retenidas.has(`${h.fila}|${h.letra}`))
+  plan.instantanea = plan.instantanea.filter((c) => !retenidas.has(`${c.fila}|${c.letra}`))
+
+  for (const [id, q] of preguntas) {
+    const dice = q.celdas
+      .map((h) => `${equipoDe(h.campo)?.campo === 'serial' ? 'n.º de serie' : 'modelo'} «${h.valor ?? ''}»`)
+      .join(', ')
+    plan.dudas.push({
+      tipo: 'alta',
+      id,
+      hoja: hoja.nombre,
+      fila: q.par.fila,
+      que: 'equipo',
+      texto: `${q.par.destino} (${q.par.dato.edificio}): ${q.tipo}`,
+      detalle: `La hoja dice ${dice} y la sala no tiene ningún ${q.tipo.toLowerCase()} en la aplicación. Si entra, se crea el equipo.`,
+    })
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Bolsa — una fila por artículo
 // -----------------------------------------------------------------------------
 
 export interface EntradaDeBolsa {
+  respuestas?: Respuestas
   hoja: Hoja
   filas: FilaLeida[]
   articulos: ArticuloVolcado[]
@@ -1082,7 +1430,7 @@ export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
 
     const id = e.resolver(nombre)
     if (!id || !porId.has(id)) {
-      plan.sinCruzar.push({ fila: f.fila, motivo: `«${nombre}» no está en el catálogo del almacén` })
+      altaDeArticulo(plan, f, nombre, e)
       continue
     }
     if (vistas.has(id)) {
@@ -1191,6 +1539,229 @@ export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
   return plan
 }
 
+/**
+ * Un artículo que la bolsa lleva y el almacén no.
+ *
+ * En la hoja viva se pregunta si entra; en la congelada se cuenta, como
+ * siempre. Entra con su nombre, su nombre alternativo y lo comprado del año, y
+ * los meses se cuadran en la pasada siguiente, cuando ya tenga fila en la base.
+ */
+function altaDeArticulo(plan: Plan, f: FilaLeida, nombre: string, e: EntradaDeBolsa): void {
+  const motivo = `«${nombre}» no está en el catálogo del almacén`
+  if (e.hoja.congelada) {
+    plan.sinCruzar.push({ fila: f.fila, motivo })
+    return
+  }
+  const id = idDeDuda(e.hoja.nombre, f.fila)
+  const r = e.respuestas?.[id]
+  if (r?.tipo === 'alta' && !r.aceptar) {
+    plan.sinCruzar.push({ fila: f.fila, motivo: `${motivo} y se ha decidido no darlo de alta` })
+    return
+  }
+  const col = (campo: string): Columna | undefined => e.hoja.columnas.find((c) => c.campo === campo)
+  const alternativo = col('articulo.nombreAlternativo')
+  const comprado = col('articulo.comprado')
+  const compradoLeido = comprado ? leer(f.celdas[comprado.letra] ?? null, 'numero') : null
+  const cantidad = compradoLeido?.ok && typeof compradoLeido.valor === 'number' ? compradoLeido.valor : null
+
+  if (!(r?.tipo === 'alta' && r.aceptar)) {
+    plan.sinCruzar.push({ fila: f.fila, motivo })
+    plan.dudas.push({
+      tipo: 'alta',
+      id,
+      hoja: e.hoja.nombre,
+      fila: f.fila,
+      que: 'articulo',
+      texto: nombre,
+      detalle: `La bolsa lo lista${cantidad !== null ? ` con ${cantidad} comprados` : ''} y el almacén no lo tiene. Si entra, se crea el artículo y se cuadra en la pasada siguiente.`,
+    })
+    return
+  }
+
+  const celdas: Record<string, Valor> = {}
+  for (const c of e.hoja.columnas) {
+    const l = leer(f.celdas[c.letra] ?? null, c.tipo)
+    celdas[c.letra] = l.ok ? l.valor : ((f.celdas[c.letra] ?? null) as Valor)
+  }
+  plan.altas.push({
+    tipo: 'articulo',
+    fila: f.fila,
+    nombre,
+    nombreAlternativo: alternativo ? textoDe(f.celdas[alternativo.letra]) || null : null,
+    comprado: cantidad,
+    celdas,
+  })
+  plan.avisos.push(`Fila ${f.fila}: «${nombre}» entra en el catálogo del almacén.`)
+}
+
+// -----------------------------------------------------------------------------
+// PCs de repuesto — una fila por ordenador
+// -----------------------------------------------------------------------------
+
+export interface EntradaDeUnidades {
+  hoja: Hoja
+  filas: FilaLeida[]
+  unidades: UnidadVolcada[]
+  instantanea?: Instantanea
+  respuestas?: Respuestas
+}
+
+/**
+ * La hoja de ordenadores de repuesto, por número de serie.
+ *
+ * Es la más sencilla de las cuatro formas: no hay bloques, no hay fórmulas y
+ * la identidad viene grabada en el aparato. Lo que la distingue es la columna
+ * «Situación», que no está en el mapa porque no se lee: la escribe la
+ * aplicación al final de la fila, con su cabecera si no la lleva, igual que la
+ * matrícula en la hoja de estado.
+ *
+ * Una unidad que la hoja tiene y la base no se pregunta antes de entrar; una
+ * que la base tiene y la hoja no se añade al final, instalada o no: la hoja es
+ * un registro, y un ordenador que se fue a un aula sigue siendo un ordenador
+ * que pasó por el almacén.
+ */
+export function sincronizarUnidades(e: EntradaDeUnidades): Plan {
+  const plan = planVacio(e.hoja.nombre)
+  const cabecera = e.filas.find((f) => f.fila === e.hoja.cabecera)
+  plan.desajustes = comprobarCabeceras(e.hoja, cabecera?.celdas ?? {}).map((d) => ({
+    letra: d.letra,
+    esperada: d.esperada,
+    encontrada: d.encontrada,
+  }))
+  if (plan.desajustes.length > 0) return plan
+
+  const colSerial = e.hoja.identidad.tipo === 'unidad' ? e.hoja.identidad.columna : 'D'
+  const colSituacion = numeroAColumna(columnaANumero(e.hoja.columnas[e.hoja.columnas.length - 1]!.letra) + 1)
+  const porSerial = new Map(e.unidades.map((u) => [serialNorm(u.serial), u]))
+  const emparejadas: Array<Emparejada<UnidadVolcada>> = []
+  const vistas = new Set<string>()
+
+  if (norm(textoDe(cabecera?.celdas[colSituacion])) !== norm(TITULO_DE_SITUACION)) {
+    plan.celdas.push({ celda: `${colSituacion}${e.hoja.cabecera}`, valor: TITULO_DE_SITUACION })
+  }
+
+  for (const f of e.filas) {
+    if (f.fila <= e.hoja.cabecera) continue
+    if (Object.values(f.celdas).every((v) => esVacio(v as Valor))) continue
+
+    const serial = textoDe(f.celdas[colSerial])
+    if (serial === '') {
+      plan.sinCruzar.push({ fila: f.fila, motivo: 'la fila no lleva número de serie' })
+      continue
+    }
+    const u = porSerial.get(serialNorm(serial))
+    if (!u) {
+      altaDeUnidad(plan, f, serial, e)
+      continue
+    }
+    if (vistas.has(u.id)) {
+      plan.sinCruzar.push({ fila: f.fila, motivo: `«${serial}» ya salió en una fila anterior` })
+      continue
+    }
+    vistas.add(u.id)
+    emparejadas.push({ fila: f.fila, celdas: f.celdas, leida: f, dato: u, clave: u.id, destino: serial })
+
+    // La situación es de la aplicación y se escribe siempre que cambie.
+    const situacion = situacionDeUnidad(u)
+    if (textoDe(f.celdas[colSituacion]) !== situacion) {
+      plan.celdas.push({ celda: `${colSituacion}${f.fila}`, valor: situacion })
+    }
+  }
+
+  fusionarFilas(plan, emparejadas, (u) => filaDeUnidad(u, e.hoja), {
+    hoja: e.hoja,
+    filas: e.filas,
+    instantanea: e.instantanea ?? SIN_INSTANTANEA,
+  })
+
+  if (e.hoja.congelada) return plan
+
+  const enLaHoja = new Set(emparejadas.map((p) => p.dato.id))
+  const ultima = ultimaFilaConDatos(e.filas, e.hoja.cabecera)
+  const nuevas = e.unidades
+    .filter((u) => !enLaHoja.has(u.id))
+    .sort(
+      (a, b) =>
+        a.articulo.localeCompare(b.articulo, 'es') ||
+        (a.modelo ?? '').localeCompare(b.modelo ?? '', 'es') ||
+        a.serial.localeCompare(b.serial, 'es'),
+    )
+
+  plan.insertar = nuevas.map((u) => {
+    const valores = filaDeUnidad(u, e.hoja)
+    const celdas: Cambio[] = []
+    for (const c of e.hoja.columnas) {
+      const dato = valores[c.letra] ?? null
+      const valor = escribir(dato, c.tipo)
+      if (valor === null) continue
+      celdas.push({ celda: `${c.letra}${ultima + 1}`, valor: valor as ValorCelda })
+      anotarCeldaNueva(plan, u.id, c.letra, dato)
+    }
+    celdas.push({ celda: `${colSituacion}${ultima + 1}`, valor: situacionDeUnidad(u) })
+    return { tras: ultima, celdas, estiloDe: ultima > e.hoja.cabecera ? ultima : undefined }
+  })
+  if (nuevas.length > 0) {
+    plan.avisos.push(`${nuevas.length} ordenadores de repuesto que el libro no tenía se añaden al final.`)
+  }
+
+  return plan
+}
+
+/** Un ordenador que la hoja lista y la base no conoce. Se pregunta antes de que entre. */
+function altaDeUnidad(plan: Plan, f: FilaLeida, serial: string, e: EntradaDeUnidades): void {
+  const col = (campo: string): Columna | undefined => e.hoja.columnas.find((c) => c.campo === campo)
+  const texto = (campo: string): string => {
+    const c = col(campo)
+    return c ? textoDe(f.celdas[c.letra]) : ''
+  }
+  const articulo = texto('unidad.articulo')
+  const modelo = texto('unidad.modelo')
+  const marca = texto('unidad.marca')
+  const describe = [articulo, marca, modelo].filter(Boolean).join(' ') || 'sin artículo'
+  const id = idDeDuda(e.hoja.nombre, f.fila)
+  const r = e.respuestas?.[id]
+
+  if (r?.tipo === 'alta' && !r.aceptar) {
+    plan.sinCruzar.push({ fila: f.fila, motivo: `«${serial}» no está en la aplicación y se ha decidido no darlo de alta` })
+    return
+  }
+  if (!(r?.tipo === 'alta' && r.aceptar)) {
+    plan.sinCruzar.push({ fila: f.fila, motivo: `«${serial}» no está en la aplicación` })
+    plan.dudas.push({
+      tipo: 'alta',
+      id,
+      hoja: e.hoja.nombre,
+      fila: f.fila,
+      que: 'unidad',
+      texto: `${describe} · ${serial}`,
+      detalle: 'La hoja de PCs lo lista y la aplicación no lo tiene. Si entra, queda en el almacén como ordenador de repuesto, disponible para instalar en un aula.',
+    })
+    return
+  }
+
+  const celdas: Record<string, Valor> = {}
+  for (const c of e.hoja.columnas) {
+    const l = leer(f.celdas[c.letra] ?? null, c.tipo)
+    celdas[c.letra] = l.ok ? l.valor : ((f.celdas[c.letra] ?? null) as Valor)
+  }
+  plan.altas.push({
+    tipo: 'unidad',
+    fila: f.fila,
+    articulo: articulo || 'Ordenador',
+    marca: marca || null,
+    modelo: modelo || null,
+    serial,
+    observaciones: texto('unidad.observaciones') || null,
+    celdas,
+  })
+  plan.avisos.push(`Fila ${f.fila}: «${describe} · ${serial}» entra en el almacén como ordenador de repuesto.`)
+}
+
+/** Un número de serie, comparable: mayúsculas y sin espacios ni guiones. */
+function serialNorm(s: string): string {
+  return s.toUpperCase().replace(/[\s\-_./]/g, '')
+}
+
 // -----------------------------------------------------------------------------
 
 /**
@@ -1278,6 +1849,10 @@ export interface Resumen {
   conflictos: number
   cuarentena: number
   sinCruzar: number
+  /** Filas del libro que entran en la aplicación como cosa nueva. */
+  altas: number
+  /** Preguntas que la pasada hace antes de aplicar. */
+  dudas: number
 }
 
 export function resumir(plan: Plan): Resumen {
@@ -1291,6 +1866,8 @@ export function resumir(plan: Plan): Resumen {
     conflictos: plan.conflictos.length,
     cuarentena: plan.cuarentena.length,
     sinCruzar: plan.sinCruzar.length,
+    altas: plan.altas.length,
+    dudas: plan.dudas.length,
   }
 }
 

@@ -110,6 +110,8 @@ export type Identidad =
   | { tipo: 'incidencia'; columna: string }
   /** Por el nombre del artículo, resuelto por alias. */
   | { tipo: 'articulo'; columna: string }
+  /** Por el número de serie de la unidad (`S4GM1899`). */
+  | { tipo: 'unidad'; columna: string }
 
 export interface Hoja {
   nombre: string
@@ -413,16 +415,56 @@ export const BOLSA_2025: Hoja = {
 }
 
 // -----------------------------------------------------------------------------
+// PCs de repuesto — una fila por ordenador, identificado por su número de serie
+// -----------------------------------------------------------------------------
 
-export const HOJAS: Hoja[] = [ESTADO, MATERIAL_2026, BOLSA_2026, MATERIAL_2025, BOLSA_2025]
+/**
+ * La hoja de ordenadores de repuesto: los tiny que están en el almacén con su
+ * número de serie, esperando a que un aula los necesite.
+ *
+ * Es distinta de la bolsa, y la diferencia es la que justifica que exista: la
+ * bolsa cuenta —«quedan 7 Ordenador Tiny M70Q»— y esta hoja **nombra**: cuál
+ * es cada uno. El día que un parte dice «se reemplaza por un PC de stock», la
+ * bolsa resta uno y esta hoja dice cuál fue y a qué aula se fue.
+ *
+ * La identidad es el número de serie, que es lo único que un ordenador lleva
+ * grabado. La columna «Situación» no está aquí: la escribe la aplicación al
+ * final de la fila —«En almacén», «Instalado en 2.1 C · 08/09/2026», «Baja»—
+ * y no se lee de vuelta, igual que la matrícula de la hoja de estado.
+ */
+function pcsDeRepuesto(anyo: number): Hoja {
+  return {
+    nombre: `PCs STOCK ${anyo}`,
+    anyo,
+    cabecera: 1,
+    identidad: { tipo: 'unidad', columna: 'D' },
+    columnas: [
+      { letra: 'A', cabecera: 'Articulo / Material', campo: 'unidad.articulo', dueno: 'ambos', tipo: 'texto' },
+      { letra: 'B', cabecera: 'Marca', campo: 'unidad.marca', dueno: 'ambos', tipo: 'texto' },
+      { letra: 'C', cabecera: 'Modelo', campo: 'unidad.modelo', dueno: 'ambos', tipo: 'texto' },
+      { letra: 'D', cabecera: 'Número de serie', campo: 'unidad.serial', dueno: 'ambos', tipo: 'texto' },
+      { letra: 'E', cabecera: 'Observaciones', campo: 'unidad.observaciones', dueno: 'ambos', tipo: 'texto' },
+    ],
+    nota: 'Los ordenadores de repuesto, uno por fila y por número de serie. La aplicación añade «Situación» al final.',
+  }
+}
+
+export const PCS_2026 = pcsDeRepuesto(2026)
+
+/** El título de la columna que la aplicación añade a la hoja de PCs. */
+export const TITULO_DE_SITUACION = 'Situación'
+
+// -----------------------------------------------------------------------------
+
+export const HOJAS: Hoja[] = [ESTADO, MATERIAL_2026, BOLSA_2026, PCS_2026, MATERIAL_2025, BOLSA_2025]
 
 export function hojaPorNombre(nombre: string): Hoja | undefined {
   return HOJAS.find((h) => h.nombre === nombre)
 }
 
-/** La hoja de partes y la de bolsa de un año, si el libro las lleva. */
-export function hojasDelAnyo(anyo: number): { material: string; bolsa: string } {
-  return { material: `Material Instalado ${anyo}`, bolsa: `Bolsa ${anyo}` }
+/** La hoja de partes, la de bolsa y la de PCs de un año, si el libro las lleva. */
+export function hojasDelAnyo(anyo: number): { material: string; bolsa: string; pcs: string } {
+  return { material: `Material Instalado ${anyo}`, bolsa: `Bolsa ${anyo}`, pcs: `PCs STOCK ${anyo}` }
 }
 
 export function columna(hoja: Hoja, letra: string): Columna | undefined {

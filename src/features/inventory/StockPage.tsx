@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { v7 as uuidv7 } from 'uuid'
 import { supabase } from '@/lib/supabase'
 import type { Role } from '@/domain/types'
+import { UnidadesDeAlmacen } from './UnidadesDeAlmacen'
 
 interface StockLevel {
   stock_item_id: string
@@ -472,6 +473,8 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
           </button>
         </div>
       )}
+
+      <UnidadesDeAlmacen role={role} />
     </div>
   )
 }

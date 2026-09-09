@@ -22,7 +22,7 @@
 import { supabase } from '@/lib/supabase'
 import { diaEnMadrid } from '@/domain/fechas'
 import { descargaEntera } from '@/sync/paginada'
-import type { ArticuloVolcado, IncidenciaVolcada, MovimientoVolcado, SalaVolcada } from '@/domain/volcado'
+import type { ArticuloVolcado, IncidenciaVolcada, MovimientoVolcado, SalaVolcada, UnidadVolcada } from '@/domain/volcado'
 import { compradoEn, consumoPorMes } from '@/domain/volcado'
 import type { EquipoParaHoja, MovimientoParaHoja, RevisionParaHoja } from '@/domain/hojasNuevas'
 import { escribirMaterial } from '@/domain/valores'
@@ -43,6 +43,8 @@ export interface DatosDeLaPasada {
   revisiones: RevisionParaHoja[]
   movimientos: MovimientoParaHoja[]
   equipos: EquipoParaHoja[]
+  /** Los ordenadores de repuesto, para la hoja «PCs STOCK». */
+  unidades: UnidadVolcada[]
 }
 
 interface FilaSala {
@@ -136,6 +138,18 @@ interface FilaMovimiento {
   by_user: string | null
   note: string | null
 }
+interface FilaUnidad {
+  id: string
+  articulo: string
+  brand: string | null
+  model: string | null
+  serial: string
+  notes: string | null
+  status: string
+  room_id: string | null
+  installed_at: string | null
+  retired_at: string | null
+}
 
 /**
  * Lee el estado entero.
@@ -157,6 +171,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     materialesD,
     articulosD,
     movimientosD,
+    unidadesD,
   ] = await Promise.all([
     descargaEntera<FilaSala>((d, h) =>
       supabase
@@ -224,6 +239,13 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
         .order('id')
         .range(d, h),
     ),
+    descargaEntera<FilaUnidad>((d, h) =>
+      supabase
+        .from('stock_units')
+        .select('id, articulo, brand, model, serial, notes, status, room_id, installed_at, retired_at')
+        .order('id')
+        .range(d, h),
+    ),
   ])
 
   const descargas: Array<[string, { data: unknown[] | null; completa: boolean; error: { message: string } | null }]> = [
@@ -238,6 +260,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     ['las incidencias', incidenciasD],
     ['el material de las incidencias', materialesD],
     ['el catálogo del almacén', articulosD],
+    ['los ordenadores de repuesto', unidadesD],
     ['los movimientos de almacén', movimientosD],
   ]
   for (const [que, d] of descargas) {
@@ -482,6 +505,28 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     nota: m.note,
   }))
 
+  // --- Ordenadores de repuesto, para su hoja ------------------------------
+  const unidades: UnidadVolcada[] = (unidadesD.data ?? []).map((u) => {
+    const sala = u.room_id ? salaPorId.get(u.room_id) : undefined
+    const estado = u.status === 'instalado' || u.status === 'baja' ? u.status : 'disponible'
+    return {
+      id: u.id,
+      articulo: u.articulo,
+      marca: u.brand,
+      modelo: u.model,
+      serial: u.serial,
+      observaciones: u.notes,
+      estado,
+      sala: sala ? `${sala.code} (${donde(sala.zone_id).edificio || '?'})` : null,
+      desde:
+        estado === 'instalado' && u.installed_at
+          ? diaEnMadrid(new Date(u.installed_at))
+          : estado === 'baja' && u.retired_at
+            ? diaEnMadrid(new Date(u.retired_at))
+            : null,
+    }
+  })
+
   return {
     salas,
     incidencias,
@@ -492,6 +537,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     revisiones,
     movimientos,
     equipos,
+    unidades,
   }
 }
 
