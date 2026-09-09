@@ -1147,11 +1147,26 @@ export function renderReport(
    */
   const tendenciaSola = tiene(o, 'tendencia') && !tiene(o, 'edificios')
 
-  const secciones: Array<[Seccion, string]> = [
+  /*
+   * EL ORDEN DEL DOCUMENTO, en dos mitades.
+   *
+   * Primero lo que se lee: las cifras, los gráficos, dónde está el trabajo, qué
+   * conviene hacer. Y después, detrás de un corte, los listados completos —cada
+   * revisión, cada movimiento, cada cierre y las fotos—, que es material de
+   * consulta y no de lectura.
+   *
+   * Estaban mezclados, y con un periodo largo eso deja el documento inservible
+   * para lo que se pide: la tabla de revisiones del periodo son ciento cincuenta
+   * filas, el diario otras tantas, y las dos se metían entre el análisis y el
+   * reparto por edificio. Quien abría el informe para ver cómo va el campus
+   * tenía que pasar seis páginas de tabla para llegar a la primera conclusión.
+   *
+   * Un informe se lee en el orden en que argumenta, y los anexos van detrás. Que
+   * es además como se lee cualquier informe que alguien firma.
+   */
+  const analisisDelPeriodo: Array<[Seccion, string]> = [
     ['actividad', seccionActividad(d)],
     ['analisis', seccionAnalisis(l)],
-    ['revisiones', seccionRevisiones(d)],
-    ['eventos', seccionEventos(d, tiene(o, 'revisiones'))],
     ['edificios', seccionEdificios(d, tiene(o, 'tendencia'), o.audiencia)],
     ['tendencia', tendenciaSola ? seccionTendencia(d) : ''],
     ['salas', seccionSalas(d, o.audiencia)],
@@ -1161,16 +1176,43 @@ export function renderReport(
     ['estancadas', o.audiencia === 'direccion' ? '' : seccionEstancadas(d)],
     ['materiales', seccionMateriales(d)],
     ['tiempos', seccionTiempos(d, o.audiencia)],
-    ['cierres', seccionCierres(d)],
     ['equipo', seccionEquipo(d)],
-    ['fotos', seccionFotos(d)],
     ['recomendaciones', seccionRecomendaciones(l, o.audiencia)],
   ]
 
-  const cuerpo = secciones
-    .filter(([clave, html]) => tiene(o, clave) && html)
-    .map(([, html]) => html)
-    .join('\n')
+  /** Los listados largos: se consultan, no se leen de seguido. */
+  const detalleDelPeriodo: Array<[Seccion, string]> = [
+    ['revisiones', seccionRevisiones(d)],
+    ['eventos', seccionEventos(d, tiene(o, 'revisiones'))],
+    ['cierres', seccionCierres(d)],
+    ['fotos', seccionFotos(d)],
+  ]
+
+  const pedidas = (lista: Array<[Seccion, string]>): string[] =>
+    lista.filter(([clave, html]) => tiene(o, clave) && html).map(([, html]) => html)
+
+  const arriba = pedidas(analisisDelPeriodo)
+  const abajo = pedidas(detalleDelPeriodo)
+
+  /*
+   * El corte solo si hay algo detrás, y sin salto de página forzado: en un parte
+   * diario los listados son cuatro filas, y una página en blanco para separar
+   * cuatro filas es peor que no separarlas. El rótulo con su regla ya dice
+   * dónde acaba lo que se lee.
+   */
+  const cuerpo = [
+    ...arriba,
+    ...(abajo.length
+      ? [
+          `
+  <section class="detalle-cab">
+    <h2>Detalle del periodo</h2>
+    <p>Los listados completos, para consultar: cada revisión, cada movimiento y cada cierre.</p>
+  </section>`,
+          ...abajo,
+        ]
+      : []),
+  ].join('\n')
 
   return `<!doctype html>
 <html lang="es">
@@ -1329,6 +1371,20 @@ export function renderReport(
      documento baja el tono. */
   .bloque { margin-top: 11mm; }
   .bloque.evitar { page-break-inside: avoid; }
+
+  /* ── El corte entre lo que se lee y lo que se consulta ──
+     Sin salto de página forzado, y con page-break-after evitado para que el
+     rótulo no se quede solo al pie de una página con su listado en la
+     siguiente, que es la forma más tonta de perder un encabezado. */
+  .detalle-cab {
+    margin-top: 14mm; padding-top: 3mm; border-top: 2px solid ${INK};
+    page-break-after: avoid; page-break-inside: avoid;
+  }
+  .detalle-cab h2 {
+    margin: 0; font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 15pt; font-weight: 600; color: ${INK}; letter-spacing: -0.01em;
+  }
+  .detalle-cab p { margin: 1.5mm 0 0; font-size: 9pt; color: ${MUTED}; }
   .rotulo {
     display: flex; align-items: baseline; gap: 3mm;
     border-bottom: 0.6pt solid ${LINE}; padding-bottom: 1.8mm; margin-bottom: 4.5mm;

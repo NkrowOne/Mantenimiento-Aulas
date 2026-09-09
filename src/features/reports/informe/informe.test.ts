@@ -206,6 +206,61 @@ function expedienteDePrueba(): ReportData {
 const opcionesCompletas = leerOpciones({ secciones: [...SECCIONES], audiencia: 'equipo' })
 
 /**
+ * El orden del documento: primero lo que se argumenta, después lo que se consulta.
+ *
+ * Los listados largos —cada revisión, el diario, cada cierre y las fotos— iban
+ * mezclados con el análisis, y con un periodo largo son trescientas filas entre
+ * la entradilla y la primera conclusión. Ahora van al final, detrás de un corte.
+ */
+describe('los listados van al final, detrás del análisis', () => {
+  const d = expedienteDePrueba()
+  const html = renderReport(d, lecturaCalculada(d, 'equipo'), opcionesCompletas, {
+    emitido: '31/07/2026, 9:14',
+  })
+  const donde = (texto: string): number => {
+    const i = html.indexOf(texto)
+    expect(i, `no está «${texto}»`).toBeGreaterThan(-1)
+    return i
+  }
+
+  it('el análisis y las conclusiones van antes que las tablas', () => {
+    expect(donde('Lo que dicen los datos')).toBeLessThan(donde('Detalle del periodo'))
+    expect(donde('Dónde está el trabajo')).toBeLessThan(donde('Detalle del periodo'))
+    expect(donde('Qué conviene hacer')).toBeLessThan(donde('Detalle del periodo'))
+  })
+
+  it('y las tablas largas, después del corte', () => {
+    const corte = donde('Detalle del periodo')
+    expect(donde('Revisiones del periodo')).toBeGreaterThan(corte)
+    expect(donde('Diario del periodo')).toBeGreaterThan(corte)
+    expect(donde('Cada cierre, con sus días')).toBeGreaterThan(corte)
+  })
+
+  it('sin ningún listado pedido no se imprime el corte, que no separaría nada', () => {
+    const soloAnalisis = renderReport(
+      d,
+      lecturaCalculada(d, 'equipo'),
+      leerOpciones({ secciones: ['resumen', 'analisis', 'edificios'], audiencia: 'equipo' }),
+      { emitido: '31/07/2026, 9:14' },
+    )
+    expect(soloAnalisis).toContain('Dónde está el trabajo')
+    expect(soloAnalisis).not.toContain('Detalle del periodo')
+  })
+
+  it('con un solo listado el corte sí sale: dice dónde acaba lo que se lee', () => {
+    const conDiario = renderReport(
+      d,
+      lecturaCalculada(d, 'equipo'),
+      leerOpciones({ secciones: ['resumen', 'analisis', 'eventos'], audiencia: 'equipo' }),
+      { emitido: '31/07/2026, 9:14' },
+    )
+    expect(conDiario.indexOf('Detalle del periodo')).toBeLessThan(
+      conDiario.indexOf('Diario del periodo'),
+    )
+  })
+})
+
+/**
  * El orden del trabajo: lo último, primero.
  *
  * Un informe de un trimestre no cabe entero —el diario se corta a ciento
