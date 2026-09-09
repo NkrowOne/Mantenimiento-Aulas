@@ -154,7 +154,7 @@ function DudaDeSala({
           )}
           <div className="flex flex-wrap items-center gap-2">
             <select
-              className="h-10 min-w-40 rounded-ctl border border-line bg-surface px-2 text-sm"
+              className="h-11 min-w-40 rounded-ctl border border-line bg-surface px-2 text-base"
               value={edificio}
               onChange={(e) => setEdificio(e.target.value)}
               aria-label="Edificio"
@@ -167,7 +167,7 @@ function DudaDeSala({
               ))}
             </select>
             <select
-              className="h-10 min-w-40 rounded-ctl border border-line bg-surface px-2 text-sm"
+              className="h-11 min-w-40 rounded-ctl border border-line bg-surface px-2 text-base"
               disabled={edificio === ''}
               value=""
               onChange={(e) => {
