@@ -83,17 +83,6 @@ export function seccionesPorDefecto(audiencia: Audiencia): Seccion[] {
 
 export interface Opciones {
   secciones: Seccion[]
-  /**
-   * Las fotos que NO van, por id de adjunto.
-   *
-   * De fuera y no de dentro: por defecto entran todas, y una lista de dentro
-   * vacía no se distingue de «no se eligió ninguna» —que es lo que manda un
-   * informe pedido sin abrir la rejilla, o pedido por una versión anterior de
-   * la pantalla, o por el worker—. Con la lista de fuera, no elegir es no
-   * quitar nada, que es lo que espera cualquiera que marque la sección de
-   * fotos y le dé a Generar.
-   */
-  fotosFuera: string[]
   /** Enseñar la variación contra el tramo anterior. Con datos de un solo día suele estorbar. */
   comparar: boolean
   /** Pedir la redacción a Gemini. En falso, sale la calculada aunque haya clave. */
@@ -104,9 +93,6 @@ export interface Opciones {
   /** Nota del que lo pide, impresa tal cual bajo el título. No pasa por la IA. */
   nota?: string
 }
-
-/** Ni el periodo más largo llega a tantas fotos: es un tope contra la basura. */
-const TOPE_FOTOS_FUERA = 2000
 
 /**
  * Lo que cabe en la instrucción para la IA.
@@ -134,21 +120,10 @@ export function leerOpciones(bruto: unknown): Opciones {
     (s) => audiencia !== 'direccion' || !VETADAS_PARA_DIRECCION.includes(s),
   )
 
-  /* Los identificadores se leen sin confiar: lo que no sea una cadena no puede
-     quitar ninguna foto, y una lista descomunal no puede hacer del filtro el
-     paso caro del informe. */
-  const fuera = Array.isArray(p['fotos_fuera'])
-    ? [...new Set(p['fotos_fuera'].filter((x): x is string => typeof x === 'string'))].slice(
-        0,
-        TOPE_FOTOS_FUERA,
-      )
-    : []
-
   return {
     // Un array vacío —o con solo nombres que no existen— es el informe completo,
     // no un informe en blanco: nadie pide un PDF con la portada y nada más.
     secciones: pedidas.length ? [...new Set(pedidas)] : seccionesPorDefecto(audiencia),
-    fotosFuera: fuera,
     comparar: p['comparar'] !== false,
     ia: p['ia'] !== false,
     audiencia,

@@ -156,7 +156,6 @@ export async function generarInforme(
       eleccion.rango,
       (leyendo) => avisar('datos', leyendo),
       tiene(opciones, 'fotos'),
-      new Set(opciones.fotosFuera),
     ),
     solicitante(),
   ])
@@ -311,9 +310,6 @@ async function archivar(
    */
   const huella = {
     secciones: opciones.secciones,
-    /* Cuáles se quitaron, no cuántas: el archivo tiene que poder decir por qué
-       falta la foto que alguien busca en un documento de hace medio año. */
-    ...(opciones.fotosFuera.length ? { fotos_fuera: opciones.fotosFuera } : {}),
     comparar: opciones.comparar,
     audiencia: opciones.audiencia,
     ia: redaccion.conIA,
