@@ -601,7 +601,7 @@ async function situacion(salas: FilaSala[]): Promise<Situacion> {
    * del Excel llevan abiertas desde 2025 por definición. Contarlas convertía
    * cientos de notas en «incidencias abiertas» de un informe firmado.
    */
-  const [abiertas, estancadas, lamparas, bajoMinimo] = await Promise.all([
+  const [abiertas, estancadas, lamparas, bajoMinimo, pcs] = await Promise.all([
     cuantas('las incidencias abiertas', (señal) =>
       supabase
         .from('incidents')
@@ -631,6 +631,11 @@ async function situacion(salas: FilaSala[]): Promise<Situacion> {
         .eq('below_threshold', true)
         .abortSignal(señal),
     ),
+    // Los PCs de repuesto: un servidor sin la migración de septiembre no tiene
+    // la tabla, y eso no puede tumbar el informe. Cero, y a seguir.
+    cuantas('los ordenadores de repuesto', (señal) =>
+      supabase.from('stock_units').select('*', head).eq('status', 'disponible').abortSignal(señal),
+    ).catch(() => 0),
   ])
 
   return {
@@ -653,6 +658,7 @@ async function situacion(salas: FilaSala[]): Promise<Situacion> {
     ).length,
     salasNuncaRevisadas: salas.filter((s) => s.last_inspection_at === null).length,
     articulosBajoMinimo: bajoMinimo,
+    pcsDeRepuesto: pcs,
   }
 }
 

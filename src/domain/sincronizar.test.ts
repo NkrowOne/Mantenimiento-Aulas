@@ -797,12 +797,13 @@ describe.skipIf(!bytes)('una pasada entera contra el libro real', () => {
     // Y la que no cruza es una sola, la de la errata del edificio: la fila 86
     // dice `EDIFICO E` y el maestro de esta prueba la dio de alta con la errata,
     // mientras que el cruce la corrige a `EDIFICIO E`. El motor no la adivina y
-    // lo explica, que es justo lo que tiene que hacer.
-    const sinAula = plan.sinCruzar.filter((s) => /no dice de qué aula/.test(s.motivo))
+    // lo explica, que es justo lo que tiene que hacer. Las filas sin aula y las
+    // de continuación —el segundo proyector de un aula de dos filas— no cuentan:
+    // se explican solas.
+    const explicadas = /no dice de qué aula|continúa la fila de/
+    const sinAula = plan.sinCruzar.filter((s) => explicadas.test(s.motivo))
     expect(plan.sinCruzar.length - sinAula.length).toBe(1)
-    expect(plan.sinCruzar.find((s) => !/no dice de qué aula/.test(s.motivo))!.motivo).toMatch(
-      /no cruza con ninguna sala/,
-    )
+    expect(plan.sinCruzar.find((s) => !explicadas.test(s.motivo))!.motivo).toMatch(/EDIFICO E/)
   })
 
   it('una segunda pasada sobre su propia salida no escribe NADA', async () => {
@@ -968,20 +969,23 @@ describe.skipIf(!bytes)('una pasada entera contra el libro real', () => {
       instantanea: SIN_INSTANTANEA,
     })
 
-    // El libro real tiene exactamente tres celdas con un número tecleado encima
-    // de la fórmula: N5, N8 y N9. Ni una más.
+    // El libro de septiembre de 2026 tiene ocho celdas con un número tecleado
+    // encima de la fórmula: N5, N8, N9 y N27 en «Total Instalado», y O27, O39,
+    // O45 y O46 en «Stock Disponible».
     //
-    // Y las tres llevan un total que la aplicación no sabe explicar —los doce
-    // meses en blanco, cero movimientos en la base—, así que **no se tocan**:
-    // devolverles la fórmula convertiría el 3, el 2 y el 1 en ceros, y esas seis
-    // unidades no están en ninguna otra celda del libro ni en la base.
+    // Con la aplicación sin movimientos —los doce meses a cero, nada comprado—
+    // ninguno de esos números se explica, así que **no se tocan**: devolverles
+    // la fórmula convertiría cada uno en un cero, y esas unidades no están en
+    // ninguna otra celda del libro ni en la base.
     const protegidas = plan.avisos.filter((a) => a.includes('no está en ningún otro sitio'))
-    expect(protegidas).toHaveLength(3)
+    const filasProtegidas = [...new Set(protegidas.map((a) => Number(/^[A-Z]+(\d+)/.exec(a)?.[1])))]
+    expect(protegidas).toHaveLength(8)
     expect(protegidas.join(' ')).toContain('N5')
+    expect(filasProtegidas.sort((a, b) => a - b)).toEqual([5, 8, 9, 27, 39, 45, 46])
 
-    // Ni el total ni los meses de esas tres filas.
-    for (const f of [5, 8, 9]) {
-      expect(plan.celdas.filter((c) => new RegExp(`^[B-N]${f}$`).test(c.celda))).toEqual([])
+    // Ni el total ni los meses ni el disponible de esas filas.
+    for (const f of filasProtegidas) {
+      expect(plan.celdas.filter((c) => new RegExp(`^[B-O]${f}$`).test(c.celda))).toEqual([])
     }
     // Y no se escribe ni una celda más de la columna N: las otras 40 filas ya
     // traen su fórmula del original y a una fórmula viva no se la toca.

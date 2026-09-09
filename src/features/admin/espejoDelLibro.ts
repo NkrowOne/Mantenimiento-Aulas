@@ -14,15 +14,16 @@
  */
 import { abrirLibro, leerHoja, columnaANumero, numeroAColumna, celdasCombinadas } from '@/domain/xlsx'
 import type { FilaLeida, ValorCelda, Libro } from '@/domain/xlsx'
-import { BOLSA_2025, BOLSA_2026, ESTADO, MATERIAL_2025, MATERIAL_2026 } from '@/domain/mapa'
+import { BOLSA_2025, BOLSA_2026, ESTADO, MATERIAL_2025, MATERIAL_2026, PCS_2026 } from '@/domain/mapa'
 import type { Hoja } from '@/domain/mapa'
 import { leer, leerMicrofono, limpiar } from '@/domain/valores'
 import type { Valor } from '@/domain/valores'
-import { sincronizarBolsa, sincronizarEstado, sincronizarPartes } from '@/domain/sincronizar'
+import { sincronizarBolsa, sincronizarEstado, sincronizarPartes, sincronizarUnidades } from '@/domain/sincronizar'
 import type { Instantanea, Plan } from '@/domain/sincronizar'
-import type { ArticuloVolcado, IncidenciaVolcada, SalaVolcada, EquipoVolcado } from '@/domain/volcado'
+import type { ArticuloVolcado, IncidenciaVolcada, SalaVolcada, EquipoVolcado, UnidadVolcada } from '@/domain/volcado'
 import { paraLaInstantanea } from '@/features/admin/pasada'
 import { construirIndice } from '@/domain/cruce'
+import type { Respuestas } from '@/domain/dudas'
 import type { Catalogo } from '@/domain/cruce'
 import { BUILDING_TYPOS } from '@/domain/normalize'
 
@@ -45,6 +46,10 @@ export interface Datos {
   incidencias: IncidenciaVolcada[]
   articulos: ArticuloVolcado[]
   resolver: (n: string) => string | null
+  /** Los ordenadores de repuesto, tal y como los lista la hoja de PCs. */
+  unidades: UnidadVolcada[]
+  /** Respuestas a las dudas, si la prueba quiere contestar alguna. */
+  respuestas?: Respuestas
   columnaRef: string
   /** Matrícula → fila del libro de la que salió. */
   filaDe: Map<string, number>
@@ -81,6 +86,8 @@ export function datosDelLibro(
   bolsa: FilaLeida[],
   /** Las hojas de 2025, si se quieren en el espejo: la base también las tiene. */
   viejas: { mat?: FilaLeida[]; bolsa?: FilaLeida[] } = {},
+  /** La hoja de PCs de repuesto, si el libro la trae. */
+  pcs: FilaLeida[] = [],
 ): Datos {
   let maxCol = 0
   for (const f of estado) for (const c of Object.keys(f.celdas)) maxCol = Math.max(maxCol, columnaANumero(c))
@@ -246,12 +253,32 @@ export function datosDelLibro(
       alias: [],
     })),
   }
+  // Los PCs de repuesto: una unidad por fila con número de serie, disponible.
+  const unidades: UnidadVolcada[] = []
+  for (const f of pcs) {
+    if (f.fila <= PCS_2026.cabecera) continue
+    const serial = txt(f.celdas.D)
+    if (serial === '') continue
+    unidades.push({
+      id: `u${unidades.length + 1}`,
+      articulo: txt(f.celdas.A) || 'Ordenador',
+      marca: txt(f.celdas.B) || null,
+      modelo: txt(f.celdas.C) || null,
+      serial,
+      observaciones: txt(f.celdas.E) || null,
+      estado: 'disponible',
+      sala: null,
+      desde: null,
+    })
+  }
+
   return {
     catalogo,
     salas,
     incidencias,
     articulos,
     resolver: (x) => porNombre.get(norm(x)) ?? null,
+    unidades,
     columnaRef,
     filaDe,
     llevaEdificio,
@@ -290,7 +317,8 @@ export async function pasada(
 ): Promise<{ planes: Plan[]; libro: Libro }> {
   const libro = await abrirLibro(bytes)
   const filas = new Map<string, FilaLeida[]>()
-  for (const h of [ESTADO, MATERIAL_2026, MATERIAL_2025, BOLSA_2026, BOLSA_2025]) {
+  for (const h of [ESTADO, MATERIAL_2026, MATERIAL_2025, BOLSA_2026, BOLSA_2025, PCS_2026]) {
+    if (!libro.hojas.some((x) => x.nombre === h.nombre)) continue
     filas.set(h.nombre, await leerHoja(libro, h.nombre))
   }
   const indice = construirIndice(catalogoDe(datos.salas))
@@ -309,7 +337,14 @@ export async function pasada(
   )
   for (const h of [MATERIAL_2026, MATERIAL_2025] as Hoja[]) {
     planes.push(
-      sincronizarPartes({ hoja: h, filas: filas.get(h.nombre)!, incidencias: datos.incidencias, instantanea: inst }),
+      sincronizarPartes({
+        hoja: h,
+        filas: filas.get(h.nombre)!,
+        incidencias: datos.incidencias,
+        instantanea: inst,
+        indice,
+        respuestas: datos.respuestas,
+      }),
     )
   }
   for (const h of [BOLSA_2026, BOLSA_2025] as Hoja[]) {
@@ -320,6 +355,17 @@ export async function pasada(
         articulos: datos.articulos,
         resolver: datos.resolver,
         instantanea: inst,
+      }),
+    )
+  }
+  if (filas.has(PCS_2026.nombre)) {
+    planes.push(
+      sincronizarUnidades({
+        hoja: PCS_2026,
+        filas: filas.get(PCS_2026.nombre)!,
+        unidades: datos.unidades,
+        instantanea: inst,
+        respuestas: datos.respuestas,
       }),
     )
   }

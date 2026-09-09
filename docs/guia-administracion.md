@@ -45,6 +45,12 @@ asigna la suya con dos toques. Cada asignación deja además ese texto como
 **alias** de la sala, así que la próxima importación —y el buscador— lo
 resuelven solos, y cierra su fila de cuarentena con autor.
 
+Aquí caen también los partes que entran desde el Excel de SharePoint cuando,
+al sincronizar, se contesta «no es de ninguna sala»: llegan con el texto de
+aula que llevaba la fila y se colocan igual. Lo normal es contestarlo en la
+propia pantalla de sincronizar, que ofrece las salas candidatas; esta bandeja
+es para lo que se dejó pasar.
+
 En la pestaña de Incidencias, la búsqueda entiende también salas y edificios de
 verdad: teclear `H` lista el histórico completo del edificio H —resueltas
 incluidas—, y `1.7 H` la sala, se escriba en el orden que se escriba.
@@ -862,6 +868,31 @@ where name in ('Lámpara proyector NP44', 'Cable HDMI fibra 15 m');
 ```
 
 Los artículos por debajo salen en rojo y en el panel.
+
+### PCs de repuesto — los ordenadores por número de serie
+
+Al final de la pestaña **Almacén** está la lista de ordenadores de repuesto:
+los tiny que esperan en el almacén, uno por número de serie. El almacén de
+arriba cuenta —«quedan 7 Ordenador Tiny M70Q»— y esta lista nombra: cuál es
+cada uno y dónde está. Es la misma lista que la hoja `PCs STOCK <año>` del
+Excel: lo que se da de alta aquí sale en la hoja al sincronizar, y lo que se
+teclea en la hoja entra aquí (la pasada lo pregunta antes).
+
+- **Nuevo PC** (supervisor): artículo, marca, modelo, número de serie y
+  observaciones. Si el número de serie ya es de un equipo instalado en un aula,
+  la unidad nace ya como «instalada» apuntando a él.
+- **Instalar en un aula** (cualquiera del personal): elige edificio y sala. La
+  aplicación crea el equipo en el aula con ese número de serie, retira el
+  ordenador que hubiera del mismo tipo (queda como sustitución en su
+  historial), descuenta una unidad del artículo del almacén y deja la unidad
+  como «Instalado en 2.1 C · 08/09/2026». Todo en una sola operación: no puede
+  quedar un ordenador en dos sitios.
+- **Dar de baja** (supervisor): para el que no va a instalarse.
+- Si un equipo que vino de aquí se retira después desde el aula con destino
+  «almacén», la unidad vuelve sola a «disponible»; con destino «baja», a
+  «baja».
+
+Los ordenadores disponibles salen en el informe como capacidad de respuesta.
 
 ## 5. Las placas de puerta
 

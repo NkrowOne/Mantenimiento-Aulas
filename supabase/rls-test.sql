@@ -3847,3 +3847,332 @@ begin;
     raise notice 'OK: el modelo sigue entrando sin estorbo';
   end $$;
 rollback;
+
+-- -----------------------------------------------------------------------------
+begin;
+\echo '=== 76. Lo que el libro tiene y la aplicación no: entra. Y los PCs de repuesto ==='
+-- Cuatro filas al final de «Material Instalado 2026» sin número, una hoja nueva
+-- «PCs STOCK 2026» con dos tiny por número de serie, y un parte que dice «se
+-- reemplaza por un PC de stock». Hasta aquí nada de eso entraba.
+  -- El escenario se monta como dueño, igual que en el bloque 20: montar salas
+  -- no es lo que se prueba.
+  do $$
+  declare
+    v_sala     uuid;
+    v_zona     uuid;
+    v_edificio uuid;
+    v_item     uuid;
+    v_tipo     uuid;
+  begin
+    insert into buildings (code, name, sort_order) values ('ZPC', 'EDIFICIO DE LOS PCS', 991)
+      returning id into v_edificio;
+    insert into zones (building_id, name, sort_order) values (v_edificio, 'PLANTA BAJA', 10)
+      returning id into v_zona;
+    insert into rooms (zone_id, code, name, kind) values (v_zona, '2.1', '2.1', 'aula')
+      returning id into v_sala;
+    v_tipo := public.asset_type_id('Ordenador');
+    if v_tipo is null then
+      insert into asset_types (name) values ('Ordenador') returning id into v_tipo;
+    end if;
+    insert into stock_items (name) values ('Cable de la prueba 21')
+      on conflict (name) do nothing;
+    select id into v_item from stock_items where name = 'Cable de la prueba 21';
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at)
+    values (gen_random_uuid(), v_item, 5, 'compra', now());
+    insert into stock_items (name, asset_type_id) values ('Ordenador Tiny M710Q', v_tipo)
+      on conflict (name) do update set asset_type_id = excluded.asset_type_id;
+    select id into v_item from stock_items where name = 'Ordenador Tiny M710Q';
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at)
+    values (gen_random_uuid(), v_item, 1, 'compra', now());
+    insert into assets (asset_type_id, room_id, serial, model, status)
+    values (v_tipo, v_sala, 'PC-VIEJO-21', 'M70Q', 'instalado');
+  end $$;
+
+  select test_as('44444444-4444-4444-4444-444444444444', 'admin');
+  do $$
+  declare
+    v_sala     uuid;
+    v_out      jsonb;
+    v_alta     jsonb;
+    v_numero   text;
+    v_inc      uuid;
+    v_item     uuid;
+    v_unidad   uuid;
+    v_unidad2  uuid;
+    v_n        int;
+    v_alias    text[];
+  begin
+    select r.id into v_sala from rooms r join zones z on z.id = r.zone_id
+      join buildings b on b.id = z.building_id where b.code = 'ZPC' and r.code = '2.1';
+    select id into v_item from stock_items where name = 'Cable de la prueba 21';
+
+    -- 1) Un parte sin número, con sala y material, entra por `sync_aplicar` y
+    --    vuelve con el número que la base le puso.
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'altas', jsonb_build_array(
+        jsonb_build_object(
+          'hoja', 'Material Instalado 2026', 'fila', 101, 'tipo', 'incidencia',
+          'sala_id', v_sala, 'aula', '2.1 ZPC', 'numero', null,
+          'abierta', '2026-09-08', 'resuelta', '2026-09-08',
+          'problema', 'El PC no arranca Windows',
+          'resolucion', 'Se reemplaza por un PC de stock Tiny Lenovo',
+          'detalle', jsonb_build_array(jsonb_build_object('articulo_id', v_item, 'cantidad', 2, 'texto', '2 Cable de la prueba 21')),
+          'columna_numero', 'D',
+          'celdas', jsonb_build_object('A', '2.1 ZPC', 'B', '2026-09-08', 'C', '2026-09-08', 'D', null,
+                                       'E', 'El PC no arranca Windows', 'F', 'Se reemplaza por un PC de stock Tiny Lenovo',
+                                       'G', '2 Cable de la prueba 21')
+        )
+      )
+    ));
+    if jsonb_array_length(v_out->'altas') <> 1 then
+      raise exception 'FALLO: la pasada no devolvió el alta: %', v_out;
+    end if;
+    v_alta := v_out->'altas'->0;
+    v_numero := v_alta->>'numero';
+    if v_numero is null or v_numero !~ '^I260908_\d{4}$' then
+      raise exception 'FALLO: el número del parte nuevo tendría que ser del 8 de septiembre y es «%»', v_numero;
+    end if;
+    select id into v_inc from incidents where external_ref = v_numero;
+    if v_inc is null then
+      raise exception 'FALLO: el parte no está en la base con su número';
+    end if;
+    if (select room_id from incidents where id = v_inc) <> v_sala then
+      raise exception 'FALLO: el parte no quedó en su sala';
+    end if;
+    if (select state from incidents where id = v_inc) <> 'resuelta' then
+      raise exception 'FALLO: un parte con fecha de resuelto entra resuelto';
+    end if;
+    if (select source from incidents where id = v_inc) <> 'sharepoint' then
+      raise exception 'FALLO: el parte no dice de dónde vino';
+    end if;
+    select coalesce(-sum(qty), 0) into v_n from stock_movements
+     where incident_id = v_inc and stock_item_id = v_item and kind = 'consumo';
+    if v_n <> 2 then
+      raise exception 'FALLO: el material del parte nuevo no descontó del almacén (descontó %)', v_n;
+    end if;
+    if not exists (select 1 from room_aliases where room_id = v_sala and alias_norm = public.norm_text('2.1 ZPC')) then
+      raise exception 'FALLO: el aula tal y como se escribió no quedó de alias';
+    end if;
+    if (select valor_base from sync_celdas where hoja = 'Material Instalado 2026' and ref = v_numero and columna = 'D') <> v_numero then
+      raise exception 'FALLO: el antepasado de la columna del número no dice el número';
+    end if;
+    if (select valor_base from sync_celdas where hoja = 'Material Instalado 2026' and ref = v_numero and columna = 'E') <> 'El PC no arranca Windows' then
+      raise exception 'FALLO: la fila nueva no dejó antepasado bajo su número';
+    end if;
+    raise notice 'OK: un parte sin número entra, se descuenta su material y vuelve con número (%)', v_numero;
+
+    -- 2) Un parte con número libre y bien formado se queda con el suyo.
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'altas', jsonb_build_array(
+        jsonb_build_object(
+          'hoja', 'Material Instalado 2026', 'fila', 102, 'tipo', 'incidencia',
+          'sala_id', null, 'aula', 'Lab Docente 5', 'numero', 'S260901_0075',
+          'abierta', '2026-09-01', 'problema', 'Sin sala y con número propio',
+          'columna_numero', 'D', 'celdas', jsonb_build_object('D', 'S260901_0075')
+        )
+      )
+    ));
+    if (v_out->'altas'->0->>'numero') <> 'S260901_0075' then
+      raise exception 'FALLO: el número libre que traía la fila no se respetó: %', v_out;
+    end if;
+    if (select room_id from incidents where external_ref = 'S260901_0075') is not null then
+      raise exception 'FALLO: un parte sin sala entra sin sala';
+    end if;
+    if not exists (select 1 from incidencias_sin_sala() where ref = 'S260901_0075' and aula_original = 'Lab Docente 5') then
+      raise exception 'FALLO: un parte sin sala no sale en «Incidencias sin sala» con su aula original';
+    end if;
+    raise notice 'OK: un parte con número libre lo conserva, y sin sala entra sin sala';
+
+    -- 3) Un número ya usado no se roba: manda el de la base.
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'altas', jsonb_build_array(
+        jsonb_build_object(
+          'hoja', 'Material Instalado 2026', 'fila', 103, 'tipo', 'incidencia',
+          'numero', 'S260901_0075', 'abierta', '2026-09-01', 'problema', 'Repite número',
+          'columna_numero', 'D', 'celdas', jsonb_build_object('D', 'S260901_0075')
+        )
+      )
+    ));
+    if (v_out->'altas'->0->>'numero') = 'S260901_0075' then
+      raise exception 'FALLO: dos partes nuevos con el mismo número';
+    end if;
+    raise notice 'OK: un número ya usado no se repite: la base pone otro (%)', v_out->'altas'->0->>'numero';
+
+    -- 4) Un artículo que la bolsa lista y el almacén no, con lo comprado.
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'altas', jsonb_build_array(
+        jsonb_build_object(
+          'hoja', 'Bolsa 2026', 'fila', 47, 'tipo', 'articulo',
+          'nombre', 'Pasta térmica de la prueba', 'nombre_alternativo', 'Pasta termica', 'comprado', 30,
+          'celdas', jsonb_build_object('A', 'Pasta térmica de la prueba', 'P', '30')
+        )
+      )
+    ));
+    select id into v_item from stock_items where name = 'Pasta térmica de la prueba';
+    if v_item is null then raise exception 'FALLO: el artículo nuevo no está'; end if;
+    if (v_out->'altas'->0->>'clave') <> v_item::text then
+      raise exception 'FALLO: la clave del artículo nuevo no es su id';
+    end if;
+    if (select on_hand from stock_levels where stock_item_id = v_item) <> 30 then
+      raise exception 'FALLO: lo comprado del artículo nuevo no entró como compra';
+    end if;
+    select aliases into v_alias from stock_items where id = v_item;
+    if not ('Pasta termica' = any (v_alias)) then
+      raise exception 'FALLO: el nombre alternativo no quedó de alias';
+    end if;
+    raise notice 'OK: un artículo nuevo entra con su alias y lo comprado';
+
+    -- 5) Dos PCs de repuesto por número de serie, desde la hoja.
+    select id into v_item from stock_items where name = 'Ordenador Tiny M710Q';
+
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'altas', jsonb_build_array(
+        jsonb_build_object('hoja', 'PCs STOCK 2026', 'fila', 3, 'tipo', 'unidad',
+          'articulo', 'Ordenador Tiny', 'marca', 'Lenovo ThinkCentre', 'modelo', 'M710Q', 'serial', 'S4GM1899',
+          'observaciones', 'Ordenador con imagen funcional de repuesto',
+          'celdas', jsonb_build_object('A', 'Ordenador Tiny', 'B', 'Lenovo ThinkCentre', 'C', 'M710Q', 'D', 'S4GM1899')),
+        jsonb_build_object('hoja', 'PCs STOCK 2026', 'fila', 4, 'tipo', 'unidad',
+          'articulo', 'Ordenador Tiny', 'marca', 'Lenovo ThinkCentre', 'modelo', 'M710Q', 'serial', 'S4DF5471',
+          'celdas', jsonb_build_object('D', 'S4DF5471'))
+      )
+    ));
+    if jsonb_array_length(v_out->'altas') <> 2 then
+      raise exception 'FALLO: las dos unidades no entraron: %', v_out;
+    end if;
+    select id into v_unidad  from stock_units where serial = 'S4GM1899';
+    select id into v_unidad2 from stock_units where serial = 'S4DF5471';
+    if v_unidad is null or v_unidad2 is null then raise exception 'FALLO: falta una unidad'; end if;
+    if (select stock_item_id from stock_units where id = v_unidad) <> v_item then
+      raise exception 'FALLO: la unidad no casó con «Ordenador Tiny M710Q» por artículo + modelo';
+    end if;
+    if (select status from stock_units where id = v_unidad) <> 'disponible' then
+      raise exception 'FALLO: una unidad nueva nace disponible';
+    end if;
+    -- Y volver a darla de alta con el mismo número (con espacios) no duplica.
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'altas', jsonb_build_array(
+        jsonb_build_object('hoja', 'PCs STOCK 2026', 'fila', 3, 'tipo', 'unidad',
+          'articulo', 'Ordenador Tiny', 'serial', ' S4GM-1899 ', 'celdas', '{}'::jsonb)
+      )
+    ));
+    if (select count(*) from stock_units where upper(regexp_replace(serial, '[\s\-_./]', '', 'g')) = 'S4GM1899') <> 1 then
+      raise exception 'FALLO: el mismo número de serie escrito con guion dio otra unidad';
+    end if;
+    raise notice 'OK: los PCs de repuesto entran por número de serie, casan con su artículo y no se duplican';
+  end $$;
+
+  -- 6) Instalar uno en el aula: crea el equipo, retira el anterior, descuenta.
+
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_sala   uuid;
+    v_unidad uuid;
+    v_equipo uuid;
+    v_previo uuid;
+    v_item   uuid;
+    v_n      int;
+  begin
+    select r.id into v_sala from rooms r join zones z on z.id = r.zone_id
+      join buildings b on b.id = z.building_id where b.code = 'ZPC' and r.code = '2.1';
+    select id into v_unidad from stock_units where serial = 'S4GM1899';
+    select id into v_previo from assets where serial = 'PC-VIEJO-21';
+    select id into v_item from stock_items where name = 'Ordenador Tiny M710Q';
+
+    v_equipo := public.stock_unit_instalar(v_unidad, v_sala, 'lo pone el técnico');
+
+    if (select room_id from assets where id = v_equipo) <> v_sala
+       or (select serial from assets where id = v_equipo) <> 'S4GM1899'
+       or (select status from assets where id = v_equipo) <> 'instalado' then
+      raise exception 'FALLO: el equipo no quedó instalado en el aula con su número';
+    end if;
+    if (select status from assets where id = v_previo) <> 'retirado' then
+      raise exception 'FALLO: el ordenador que había no se retiró';
+    end if;
+    if not exists (select 1 from asset_events where asset_id = v_previo and kind = 'sustitucion') then
+      raise exception 'FALLO: la sustitución no quedó en el historial del viejo';
+    end if;
+    if not exists (select 1 from asset_events where asset_id = v_equipo and kind = 'alta') then
+      raise exception 'FALLO: el alta del nuevo no quedó en el historial';
+    end if;
+    select count(*) into v_n from stock_movements
+     where stock_item_id = v_item and kind = 'consumo' and room_id = v_sala;
+    if v_n <> 1 then
+      raise exception 'FALLO: la unidad no se descontó del almacén (% movimientos)', v_n;
+    end if;
+    if (select status from stock_units where id = v_unidad) <> 'instalado'
+       or (select asset_id from stock_units where id = v_unidad) <> v_equipo
+       or (select room_id from stock_units where id = v_unidad) <> v_sala then
+      raise exception 'FALLO: la unidad no dice dónde está';
+    end if;
+    raise notice 'OK: instalar un PC de repuesto crea el equipo, retira el viejo y descuenta el almacén';
+
+    -- Y no se instala dos veces.
+    begin
+      perform public.stock_unit_instalar(v_unidad, v_sala, null);
+      raise exception 'FALLO: una unidad instalada se pudo instalar otra vez';
+    exception when others then
+      if sqlerrm like 'FALLO%' then raise; end if;
+    end;
+    raise notice 'OK: una unidad instalada no se instala dos veces';
+  end $$;
+
+  -- 7) Si el equipo se retira al almacén desde el aula, la unidad vuelve a
+  --    estar disponible; si se da de baja, la unidad también.
+  select test_as('44444444-4444-4444-4444-444444444444', 'admin');
+  do $$
+  declare
+    v_unidad uuid;
+    v_equipo uuid;
+    v_unidad2 uuid;
+    v_out    jsonb;
+  begin
+    select id, asset_id into v_unidad, v_equipo from stock_units where serial = 'S4GM1899';
+    update assets set status = 'retirado', room_id = null where id = v_equipo;
+    if (select status from stock_units where id = v_unidad) <> 'disponible' then
+      raise exception 'FALLO: el equipo volvió al almacén y la unidad no';
+    end if;
+    raise notice 'OK: retirar el equipo al almacén devuelve la unidad a disponible';
+
+    select id into v_unidad2 from stock_units where serial = 'S4DF5471';
+    perform public.stock_unit_baja(v_unidad2, 'no enciende');
+    if (select status from stock_units where id = v_unidad2) <> 'baja' then
+      raise exception 'FALLO: la baja no se aplicó';
+    end if;
+    begin
+      perform public.stock_unit_instalar(v_unidad2, (select room_id from stock_units where id = v_unidad), null);
+      raise exception 'FALLO: una unidad de baja se pudo instalar';
+    exception when others then
+      if sqlerrm like 'FALLO%' then raise; end if;
+    end;
+    raise notice 'OK: una unidad de baja no se instala';
+
+    -- 8) Una celda de la hoja de PCs, de vuelta: las observaciones entran, el
+    --    número de serie no se cambia desde una celda.
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'hacia_la_base', jsonb_build_array(
+        jsonb_build_object('entidad', 'unidad', 'hoja', 'PCs STOCK 2026', 'clave', v_unidad::text,
+                           'columna', 'E', 'campo', 'unidad.observaciones', 'valor', 'Imagen de julio'),
+        jsonb_build_object('entidad', 'unidad', 'hoja', 'PCs STOCK 2026', 'clave', v_unidad::text,
+                           'columna', 'D', 'campo', 'unidad.serial', 'valor', 'OTRO')
+      )
+    ));
+    if (v_out->>'aplicadas')::int <> 1 or (v_out->>'rechazadas')::int <> 1 then
+      raise exception 'FALLO: tendría que entrar la observación y rechazarse el número de serie: %', v_out;
+    end if;
+    if (select notes from stock_units where id = v_unidad) <> 'Imagen de julio' then
+      raise exception 'FALLO: las observaciones no se guardaron';
+    end if;
+    if (select serial from stock_units where id = v_unidad) <> 'S4GM1899' then
+      raise exception 'FALLO: el número de serie se cambió desde una celda';
+    end if;
+    raise notice 'OK: las celdas de la hoja de PCs vuelven, y el número de serie es identidad';
+  end $$;
+rollback;

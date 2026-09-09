@@ -90,6 +90,28 @@ export interface ArticuloVolcado {
   comprado: number | null
 }
 
+/**
+ * Un ordenador de repuesto: una unidad del almacén con número de serie.
+ *
+ * No es un artículo —el artículo cuenta, esto nombra— ni un equipo de sala —no
+ * está en ninguna, todavía—. Cuando se instala, la aplicación crea el equipo en
+ * el aula y esta unidad pasa a `instalado`, con la sala y la fecha; la hoja lo
+ * dice en «Situación» y la fila se queda, que para eso es un registro.
+ */
+export interface UnidadVolcada {
+  id: string
+  articulo: string
+  marca: string | null
+  modelo: string | null
+  serial: string
+  observaciones: string | null
+  estado: 'disponible' | 'instalado' | 'baja'
+  /** Dónde está, si está instalado: el código del aula y su edificio. */
+  sala: string | null
+  /** Fecha ISO (`2026-09-08`) de la instalación o de la baja, si la hubo. */
+  desde: string | null
+}
+
 // -----------------------------------------------------------------------------
 // Una sala
 // -----------------------------------------------------------------------------
@@ -228,6 +250,46 @@ export function filaDeArticulo(art: ArticuloVolcado, hoja: Hoja): Record<string,
   const out: Record<string, Valor> = {}
   for (const c of hoja.columnas) out[c.letra] = valorDeArticulo(art, c)
   return out
+}
+
+// -----------------------------------------------------------------------------
+// Un ordenador de repuesto
+// -----------------------------------------------------------------------------
+
+export function valorDeUnidad(u: UnidadVolcada, c: Columna): Valor {
+  switch (c.campo) {
+    case 'unidad.articulo':
+      return u.articulo
+    case 'unidad.marca':
+      return u.marca
+    case 'unidad.modelo':
+      return u.modelo
+    case 'unidad.serial':
+      return u.serial
+    case 'unidad.observaciones':
+      return u.observaciones
+    default:
+      return null
+  }
+}
+
+export function filaDeUnidad(u: UnidadVolcada, hoja: Hoja): Record<string, Valor> {
+  const out: Record<string, Valor> = {}
+  for (const c of hoja.columnas) out[c.letra] = valorDeUnidad(u, c)
+  return out
+}
+
+/** Lo que la columna «Situación» dice de una unidad, escrito para una persona. */
+export function situacionDeUnidad(u: UnidadVolcada): string {
+  const cuando = u.desde ? ` · ${fechaCorta(u.desde)}` : ''
+  if (u.estado === 'instalado') return `Instalado en ${u.sala ?? '?'}${cuando}`
+  if (u.estado === 'baja') return `Baja${cuando}`
+  return 'En almacén'
+}
+
+function fechaCorta(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso)
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso
 }
 
 // -----------------------------------------------------------------------------

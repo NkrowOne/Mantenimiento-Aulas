@@ -1,9 +1,11 @@
 import { useMutation } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 import { ofrecerFichero } from '@/lib/ficheros'
-import { analizar, aplicar, escribir, lineasDelParte } from './pasada'
+import { analizar, aplicar, dudasPendientes, escribir, lineasDelParte, replanificar } from './pasada'
 import type { Analisis } from './pasada'
-import type { Plan, Resumen as ResumenDeHoja } from '@/domain/sincronizar'
+import { Dudas } from './Dudas'
+import type { Respuesta } from '@/domain/dudas'
+import type { Alta, Plan, Resumen as ResumenDeHoja } from '@/domain/sincronizar'
 
 /**
  * Sincronizar el Excel de SharePoint, en los dos sentidos.
@@ -41,6 +43,13 @@ import type { Plan, Resumen as ResumenDeHoja } from '@/domain/sincronizar'
  * y la pasada tarda segundos. Así que el libro generado se queda aquí, en
  * memoria, y se entrega al pulsar, tantas veces como haga falta. El mismo botón
  * sirve para ver cómo quedaría el libro sin tocar la base.
+ *
+ * **Lo que la pasada no sabe, lo pregunta antes de aplicar.** Una fila de la
+ * hoja de estado con datos y sin código de aula, un parte nuevo cuya aula cruza
+ * con ocho salas, un número de serie que crearía un equipo que la sala no tenía,
+ * un ordenador de repuesto que la hoja de PCs lista y la aplicación no conoce:
+ * salen como dudas, se contestan aquí y la pasada se recalcula con la respuesta.
+ * Con dudas sin contestar no se sincroniza; ver el libro sí se puede.
  */
 export function SincronizarExcel(): React.ReactElement {
   const entrada = useRef<HTMLInputElement>(null)
@@ -70,22 +79,44 @@ export function SincronizarExcel(): React.ReactElement {
     mutationFn: async () => {
       if (!analisis) return
       const r = await aplicar(analisis)
-      const bytes = await escribir(analisis, ahora(), r.parteId)
+      // Con los números que la base puso a los partes nuevos: van a su fila.
+      const bytes = await escribir(analisis, ahora(), r.parteId, r.altas)
       setLibro({ nombre: conSufijo(analisis.nombre, 'sincronizado'), bytes, sincronizado: true })
       setEntregado(null)
       return r
     },
     onSuccess: (r) => {
       if (!r) return
+      const partes = r.altas.filter((x) => x.tipo === 'incidencia').length
+      const nuevas = r.altas.length
       setAplicado(
-        r.rechazadas === 0
-          ? `${r.aplicadas} celdas del Excel han entrado en la base.`
-          : `${r.aplicadas} celdas han entrado y ${r.rechazadas} han ido a la bandeja de choques.`,
+        [
+          r.rechazadas === 0
+            ? `${r.aplicadas} celdas del Excel han entrado en la base.`
+            : `${r.aplicadas} celdas han entrado y ${r.rechazadas} han ido a la bandeja de choques.`,
+          nuevas > 0
+            ? `${nuevas} filas nuevas del libro han entrado en la aplicación${partes > 0 ? `; los ${partes === 1 ? 'parte lleva' : `${partes} partes llevan`} ya su número en el libro` : ''}.`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
       )
       setFallo(null)
     },
     onError: (e: Error) => setFallo(e.message),
   })
+
+  /** Contestar una duda es volver a planificar: no toca ni la base ni el libro. */
+  const contestar = (id: string, respuesta: Respuesta | null): void => {
+    if (!analisis) return
+    const respuestas = { ...analisis.respuestas }
+    if (respuesta === null) delete respuestas[id]
+    else respuestas[id] = respuesta
+    setAnalisis(replanificar(analisis, respuestas))
+    setLibro(null)
+    setEntregado(null)
+    setAplicado(null)
+  }
 
   /**
    * El mismo libro que saldría de la pasada, sin la pasada: no entra nada en la
@@ -127,6 +158,7 @@ export function SincronizarExcel(): React.ReactElement {
   const ocupado = leer.isPending || sincronizar.isPending || previsualizar.isPending
 
   const total = analisis ? sumar(analisis.resumenes) : null
+  const pendientes = analisis ? dudasPendientes(analisis).length : 0
 
   return (
     <section>
@@ -152,7 +184,7 @@ export function SincronizarExcel(): React.ReactElement {
         <p className="mt-2 text-xs text-muted">
           {leer.isPending
             ? 'Leyendo el libro y el estado de la aplicación…'
-            : 'Se miran las cinco hojas del libro.'}
+            : 'Se miran las seis hojas del libro: estado, partes, bolsa y PCs de repuesto del año, y las dos de 2025.'}
         </p>
       </div>
 
@@ -180,6 +212,14 @@ export function SincronizarExcel(): React.ReactElement {
       {analisis && !analisis.bloqueada && total && (
         <>
           <Cabecera analisis={analisis} total={total} />
+          {analisis.dudas.length > 0 && (
+            <Dudas
+              dudas={analisis.dudas}
+              respuestas={analisis.respuestas}
+              catalogo={analisis.catalogo}
+              onContestar={contestar}
+            />
+          )}
           <div className="mt-4 space-y-3">
             {analisis.planes.map((p, i) => (
               <PorHoja key={p.hoja} plan={p} resumen={analisis.resumenes[i]!} />
@@ -190,10 +230,15 @@ export function SincronizarExcel(): React.ReactElement {
             <button
               type="button"
               className="key key-accent h-11 px-4"
-              disabled={ocupado}
+              disabled={ocupado || pendientes > 0}
+              title={pendientes > 0 ? 'Contesta las dudas antes de sincronizar' : undefined}
               onClick={() => sincronizar.mutate()}
             >
-              {sincronizar.isPending ? 'Sincronizando…' : 'Sincronizar'}
+              {sincronizar.isPending
+                ? 'Sincronizando…'
+                : pendientes > 0
+                  ? `Sincronizar (${pendientes} ${pendientes === 1 ? 'duda' : 'dudas'} sin contestar)`
+                  : 'Sincronizar'}
             </button>
             <button
               type="button"
@@ -315,9 +360,10 @@ function Cabecera({
   return (
     <div className="card mt-4 p-4">
       <p className="eyebrow">{analisis.nombre}</p>
-      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
         <Cifra n={total.celdasAlExcel} que="celdas al Excel" />
         <Cifra n={total.celdasALaBase} que="celdas a la base" />
+        <Cifra n={total.altas} que="filas del libro que entran" />
         <Cifra n={total.filasNuevas} que="filas nuevas" />
         <Cifra n={total.filasBorradas} que="filas que salen" />
       </div>
@@ -331,6 +377,8 @@ function Cabecera({
         Se añaden además las hojas <strong>Revisiones</strong>,{' '}
         <strong>Movimientos de Almacén</strong>, <strong>Inventario por Sala</strong> y{' '}
         <strong>Sincronización</strong>, que se rehacen enteras en cada pasada.
+        {analisis.hojasNuevas.some((h) => h.nombre.startsWith('PCs STOCK')) &&
+          ' El libro no traía la hoja de PCs de repuesto: se estrena con lo que la aplicación sabe.'}
       </p>
       {pendientes === 0 ? (
         <p className="mt-2 text-sm text-ok-ink">Nada queda pendiente de decidir.</p>
@@ -361,10 +409,12 @@ function PorHoja({ plan, resumen }: { plan: Plan; resumen: ResumenDeHoja }): Rea
     resumen.filasBorradas === 0 &&
     resumen.conflictos === 0 &&
     resumen.cuarentena === 0 &&
-    resumen.sinCruzar === 0
+    resumen.sinCruzar === 0 &&
+    resumen.altas === 0 &&
+    resumen.dudas === 0
 
   return (
-    <details className="card p-4" open={resumen.conflictos + resumen.cuarentena > 0}>
+    <details className="card p-4" open={resumen.conflictos + resumen.cuarentena + resumen.altas > 0}>
       <summary className="cursor-pointer text-sm font-semibold">
         {plan.hoja}
         <span className="ml-2 font-normal text-muted">
@@ -373,10 +423,12 @@ function PorHoja({ plan, resumen }: { plan: Plan; resumen: ResumenDeHoja }): Rea
             : [
                 resumen.celdasAlExcel > 0 && `${resumen.celdasAlExcel} al Excel`,
                 resumen.celdasALaBase > 0 && `${resumen.celdasALaBase} a la base`,
+                resumen.altas > 0 && `${resumen.altas} entran como nuevas`,
                 resumen.filasNuevas > 0 && `${resumen.filasNuevas} filas nuevas`,
                 resumen.filasBorradas > 0 && `${resumen.filasBorradas} salen`,
                 resumen.conflictos > 0 && `${resumen.conflictos} choques`,
                 resumen.cuarentena > 0 && `${resumen.cuarentena} sin leer`,
+                resumen.dudas > 0 && `${resumen.dudas} dudas`,
               ]
                 .filter(Boolean)
                 .join(' · ')}
@@ -426,6 +478,18 @@ function PorHoja({ plan, resumen }: { plan: Plan; resumen: ResumenDeHoja }): Rea
             <Tabla
               cabeceras={['Fila', 'Por qué']}
               filas={plan.sinCruzar.map((s) => [String(s.fila), s.motivo])}
+            />
+          </Bloque>
+        )}
+
+        {plan.altas.length > 0 && (
+          <Bloque
+            titulo={`Filas del libro que entran en la aplicación (${plan.altas.length})`}
+            explicacion="Estaban en el libro y la aplicación no las tenía. A un parte le pone número la base, y el número vuelve a su fila."
+          >
+            <Tabla
+              cabeceras={['Fila', 'Qué', 'Detalle']}
+              filas={plan.altas.map((a) => [String(a.fila), queEs(a), describirAlta(a)])}
             />
           </Bloque>
         )}
@@ -534,6 +598,7 @@ function sumar(resumenes: ResumenDeHoja[]): {
   filasBorradas: number
   conflictos: number
   cuarentena: number
+  altas: number
 } {
   return resumenes.reduce(
     (a, r) => ({
@@ -543,6 +608,7 @@ function sumar(resumenes: ResumenDeHoja[]): {
       filasBorradas: a.filasBorradas + r.filasBorradas,
       conflictos: a.conflictos + r.conflictos,
       cuarentena: a.cuarentena + r.cuarentena,
+      altas: a.altas + r.altas,
     }),
     {
       celdasAlExcel: 0,
@@ -551,8 +617,23 @@ function sumar(resumenes: ResumenDeHoja[]): {
       filasBorradas: 0,
       conflictos: 0,
       cuarentena: 0,
+      altas: 0,
     },
   )
+}
+
+function queEs(a: Alta): string {
+  if (a.tipo === 'incidencia') return 'Parte'
+  if (a.tipo === 'articulo') return 'Artículo del almacén'
+  return 'Ordenador de repuesto'
+}
+
+function describirAlta(a: Alta): string {
+  if (a.tipo === 'incidencia') {
+    return `${a.aula || 'sin aula'} · ${a.abierta ?? 'sin fecha'} · ${a.problema}${a.numero ? ` · ${a.numero}` : ''}`
+  }
+  if (a.tipo === 'articulo') return `${a.nombre}${a.comprado !== null ? ` · ${a.comprado} comprados` : ''}`
+  return `${[a.articulo, a.marca, a.modelo].filter(Boolean).join(' ')} · ${a.serial}`
 }
 
 function texto(v: unknown): string {

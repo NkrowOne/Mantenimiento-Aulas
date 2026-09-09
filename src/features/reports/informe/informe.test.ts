@@ -55,6 +55,7 @@ function expedienteDePrueba(): ReportData {
       salasSinRevisarHace6Meses: 12,
       salasNuncaRevisadas: 5,
       articulosBajoMinimo: 2,
+      pcsDeRepuesto: 2,
     },
     serieDiaria: [
       { dia: '2026-07-27', revisiones: 5, abiertas: 3, resueltas: 1 },

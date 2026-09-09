@@ -35,6 +35,10 @@
  */
 
 import type { Formato, HojaNueva } from './libro'
+import { TITULO_DE_SITUACION } from './mapa'
+import type { Hoja } from './mapa'
+import { situacionDeUnidad, valorDeUnidad } from './volcado'
+import type { UnidadVolcada } from './volcado'
 import type { ValorCelda } from './xlsx'
 import { fechaAExcel } from './valores'
 
@@ -269,6 +273,32 @@ export function hojaDeInventario(equipos: EquipoParaHoja[]): HojaNueva {
     anchos: [14, 22, 16, 16, 16, 26, 22, 12, 11, 14],
     formatos: formatos({ 8: 'fecha' }),
   }
+}
+
+// -----------------------------------------------------------------------------
+// PCs de repuesto, cuando el libro todavía no lleva la hoja
+// -----------------------------------------------------------------------------
+
+/**
+ * La hoja de ordenadores de repuesto estrenada desde la aplicación.
+ *
+ * Solo se usa la primera vez, cuando el libro no la trae: a partir de ahí es
+ * una hoja de las de dos caras y se sincroniza como las demás. Lleva las
+ * columnas del mapa y, al final, «Situación», que es la que la aplicación
+ * escribe siempre.
+ */
+export function hojaDeUnidades(hoja: Hoja, unidades: UnidadVolcada[]): HojaNueva {
+  const filas: ValorCelda[][] = [[...hoja.columnas.map((c) => c.cabecera as ValorCelda), TITULO_DE_SITUACION]]
+  const ordenadas = [...unidades].sort(
+    (a, b) =>
+      a.articulo.localeCompare(b.articulo, 'es') ||
+      (a.modelo ?? '').localeCompare(b.modelo ?? '', 'es') ||
+      a.serial.localeCompare(b.serial, 'es'),
+  )
+  for (const u of ordenadas) {
+    filas.push([...hoja.columnas.map((c) => valorDeUnidad(u, c) as ValorCelda), situacionDeUnidad(u)])
+  }
+  return { nombre: hoja.nombre, filas, anchos: [30, 20, 14, 28, 42, 34] }
 }
 
 // -----------------------------------------------------------------------------
