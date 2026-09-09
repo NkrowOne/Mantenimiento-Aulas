@@ -798,3 +798,7 @@ comment on function public.sync_aplicar(jsonb) is
 
 revoke all on function public.sync_aplicar(jsonb) from public, anon;
 grant execute on function public.sync_aplicar(jsonb) to authenticated;
+
+-- PostgREST cachea el esquema: sin esto, la tabla nueva no existe para la
+-- aplicación hasta que alguien reinicie el servicio.
+notify pgrst, 'reload schema';

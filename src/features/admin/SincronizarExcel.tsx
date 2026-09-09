@@ -380,6 +380,12 @@ function Cabecera({
         {analisis.hojasNuevas.some((h) => h.nombre.startsWith('PCs STOCK')) &&
           ' El libro no traía la hoja de PCs de repuesto: se estrena con lo que la aplicación sabe.'}
       </p>
+      {analisis.datos.sinUnidades && (
+        <p className="mt-2 text-sm text-warn-ink">
+          El servidor no tiene todavía la tabla de PCs de repuesto (falta aplicar la migración de
+          septiembre): la hoja «PCs STOCK» se deja como está y el resto se sincroniza igual.
+        </p>
+      )}
       {pendientes === 0 ? (
         <p className="mt-2 text-sm text-ok-ink">Nada queda pendiente de decidir.</p>
       ) : (
