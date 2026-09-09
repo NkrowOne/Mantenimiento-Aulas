@@ -40,7 +40,7 @@
  */
 
 import type { ReportData } from './tipos'
-import { MARCO_DEL_SERVICIO, fueraDeAlcance } from './contrato'
+import { MARCO_DEL_SERVICIO, fueraDeAlcance, sinPedirPermiso } from './contrato'
 import { type Lectura, type Senal, dias, porcentaje } from './analisis'
 
 /** El último Flash. `gemini-flash-latest` sigue al día solo; esto fija la versión. */
@@ -157,7 +157,8 @@ const POR_AUDIENCIA: Record<Audiencia, string> = {
 - No se dice cuántos días lleva abierta una incidencia, ni «estancadas», ni «sin cerrar desde hace», ni «las más antiguas», ni se señala una sala como problemática o poco fiable: hay aulas difíciles y eso no es noticia.
 - Los problemas reales sí se dicen, con su dato: una incidencia de gravedad alta, una lámpara a punto de fundirse, una pieza que se repite en la misma sala, un edificio que concentra lo abierto, un almacén por reponer. Se cuentan como algo que el servicio tiene visto y una decisión que conviene tomar.
 - Tono cordial y sereno. Sin triunfalismo: que va bien se demuestra con la cifra, no con adjetivos.
-- Las recomendaciones son decisiones de dirección —aprobar una compra, reforzar una ronda, priorizar un edificio—, no tareas de taller.`,
+- Las recomendaciones se escriben en la voz de quien hace el trabajo, porque el informe lo firma el servicio: «Sustituir las seis lámparas por debajo del 20 %», «Reforzar la ronda del edificio P». Nunca «Autorizar», «Aprobar» ni «Solicitar el visto bueno»: el aula es nuestro encargo y no se pide permiso para cumplirlo. Cuando hay un gasto de por medio se dice qué hace falta y por qué, que es lo que la universidad necesita para decidir.
+- Y son cosas de conjunto —una ronda, un edificio, una reposición—, no el parte de taller de cada avería.`,
 }
 
 /**
@@ -564,9 +565,21 @@ export async function redactar(
           .slice(0, 4)
           .map((h) => ({ titulo: limpia(h.titulo, 90).replace(/[.:]$/, ''), cuerpo: limpia(h.cuerpo, 600) }))
           .filter((h) => h.titulo && h.cuerpo),
+        /*
+         * Y la acción, en la voz de quien la hace. La instrucción lo dice y aun
+         * así se cuela, porque el modelo sabe que el informe lo lee la
+         * universidad y deduce que quien lee es quien decide: sale «Autorizar
+         * la sustitución de las seis lámparas» cuando sustituirlas es
+         * exactamente nuestro encargo. Se endereza la frase en vez de tirar el
+         * texto, que es lo que hacen los controles de más abajo: aquello son
+         * errores de fondo y esto es la misma recomendación dicha del revés.
+         */
         recomendaciones: (bruto.recomendaciones ?? [])
           .slice(0, 4)
-          .map((r) => ({ accion: limpia(r.accion, 140), porque: limpia(r.porque, 260) }))
+          .map((r) => ({
+            accion: sinPedirPermiso(limpia(r.accion, 140)),
+            porque: limpia(r.porque, 260),
+          }))
           .filter((r) => r.accion),
         origen: `redactado con ${o.modelo}, razonamiento ${o.thinking}`,
       }

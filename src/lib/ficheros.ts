@@ -21,7 +21,18 @@ export async function ofrecerFichero(nombre: string, blob: Blob): Promise<'compa
 
   if (navigator.canShare?.({ files: [fichero] })) {
     try {
-      await navigator.share({ files: [fichero], title: nombre })
+      /*
+       * SOLO `files`, y nada más. Iba con `title` —el nombre del fichero, para
+       * que la hoja de compartir dijera de qué se trata— y en el iPhone eso
+       * cambia lo que se comparte: Safari, en cuanto el reparto lleva un campo
+       * de texto al lado de los ficheros, ofrece la PÁGINA en vez del fichero.
+       * Quien pulsaba «Descargar PDF» recibía un enlace a la aplicación, lo
+       * mandaba por correo y al otro lado se abría la web, no el informe.
+       *
+       * El nombre no se pierde: va dentro del `File` y es el que sale en
+       * Archivos y en el adjunto del correo.
+       */
+      await navigator.share({ files: [fichero] })
       return 'compartido'
     } catch (err) {
       // Cancelar la hoja de compartir no es un fallo, pero tampoco ha guardado

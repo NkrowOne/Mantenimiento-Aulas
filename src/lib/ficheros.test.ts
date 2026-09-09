@@ -52,8 +52,16 @@ describe('ofrecerFichero', () => {
     await expect(ofrecerFichero('copia.json', blob)).resolves.toBe('compartido')
 
     expect(share).toHaveBeenCalledTimes(1)
-    const [{ files, title }] = share.mock.calls[0] as [{ files: File[]; title: string }]
-    expect(title).toBe('copia.json')
+    const [reparto] = share.mock.calls[0] as [Record<string, unknown>]
+    /*
+     * Solo `files`, y esto es la prueba de que sigue siendo solo `files`. Iba
+     * con `title` y en el iPhone eso cambia lo que se comparte: en cuanto el
+     * reparto lleva texto al lado de los ficheros, Safari ofrece la PÁGINA en
+     * vez del fichero, y quien pulsaba «Descargar PDF» mandaba por correo un
+     * enlace a la aplicación. El nombre no se pierde: va dentro del `File`.
+     */
+    expect(Object.keys(reparto)).toEqual(['files'])
+    const files = reparto['files'] as File[]
     expect(files.map((f) => f.name)).toEqual(['copia.json'])
     // Compartido es entregado: no se descarga además.
     expect(enlaces).toEqual([])

@@ -4,7 +4,7 @@ import { SECCIONES, leerOpciones } from './opciones'
 import { diasLargo, renderReport } from './plantilla'
 import { actividadDiaria } from './graficos'
 import { cifrasInventadas, configurarIA, expediente, formulasDelatoras, instruccion } from './ia'
-import { MARCO_DEL_SERVICIO, NIVELES, fueraDeAlcance } from './contrato'
+import { MARCO_DEL_SERVICIO, NIVELES, fueraDeAlcance, sinPedirPermiso } from './contrato'
 import { etiquetaDia, nombreComparacion, nombreDia, periodoAnterior } from '../periodos'
 import { inicioDelDia } from '@/domain/fechas'
 import type { ReportData } from './tipos'
@@ -584,11 +584,17 @@ describe('el informe para dirección', () => {
     expect(se.map((s) => s.peso)).toEqual([...se.map((s) => s.peso)].sort((a, b) => a - b))
   })
 
-  it('las recomendaciones son decisiones, no tareas de taller', () => {
+  /*
+   * De conjunto, y en la voz de quien hace el trabajo. Decían «Aprobar la
+   * compra de lámparas» —el informe pidiéndole permiso al cliente por algo que
+   * es literalmente nuestro encargo— y ahora dicen lo que vamos a hacer.
+   */
+  it('las recomendaciones son de conjunto y no piden permiso', () => {
     const l = lecturaCalculada(d, 'direccion')
     const acciones = l.recomendaciones.map((r) => r.accion)
-    expect(acciones.some((a) => /Aprobar la compra de lámparas/.test(a))).toBe(true)
+    expect(acciones.some((a) => /Pedir las lámparas de repuesto/.test(a))).toBe(true)
     expect(acciones.some((a) => /Repasar la lista de estancadas/.test(a))).toBe(false)
+    expect(acciones.some((a) => /^(Autorizar|Aprobar|Validar|Solicitar autorizaci)/.test(a))).toBe(false)
   })
 
   it('«Pendientes hoy» da el saldo y no los días', () => {
@@ -1033,5 +1039,65 @@ describe('el informe se escribe dentro del contrato', () => {
       'Revisar el aula 2.1 tras el cambio de ordenador',
     ]
     for (const b of buenas) expect(fueraDeAlcance(b), b).toEqual([])
+  })
+})
+
+/*
+ * Y en la voz de quien hace el trabajo.
+ *
+ * «Autorizar la sustitución de las seis lámparas» es lo que sale cuando al
+ * modelo se le dice que el informe lo lee la dirección de la universidad:
+ * deduce que quien lee es quien decide y convierte nuestro encargo en una
+ * petición de permiso. El cliente lo lee y entiende que nos está bloqueando.
+ */
+describe('las recomendaciones no piden permiso para el trabajo propio', () => {
+  it('endereza la frase y deja la acción en infinitivo', () => {
+    const casos: Array<[string, string]> = [
+      [
+        'Autorizar la sustitución de las 6 lámparas de proyector por debajo del 20 %',
+        'Sustituir las 6 lámparas de proyector por debajo del 20 %',
+      ],
+      ['Aprobar la reposición de lo que está por debajo del mínimo', 'Reponer lo que está por debajo del mínimo'],
+      ['Autorizar la compra de 12 cables HDMI de 3 m', 'Pedir 12 cables HDMI de 3 m'],
+      ['Validar el cambio de los proyectores del edificio H', 'Cambiar los proyectores del edificio H'],
+      [
+        'Solicitar autorización para sustituir el proyector del aula 1.7',
+        'Sustituir el proyector del aula 1.7',
+      ],
+      ['Dar el visto bueno a reforzar la ronda del edificio P', 'Reforzar la ronda del edificio P'],
+    ]
+    for (const [antes, despues] of casos) {
+      expect(sinPedirPermiso(antes), antes).toBe(despues)
+    }
+  })
+
+  /*
+   * Y no toca lo que ya está bien, que es la mitad del trabajo: una acción
+   * recortada de más dice otra cosa, y aquí se está reescribiendo un informe
+   * que va al cliente.
+   */
+  it('deja intacto lo que ya está en voz de quien hace', () => {
+    const buenas = [
+      'Sustituir las 6 lámparas de proyector por debajo del 20 % de vida',
+      'Priorizar el cierre de las 8 incidencias pendientes en el edificio P',
+      'Programar la revisión inicial de las 31 salas sin inspección registrada',
+      'Reponer lo que está por debajo del mínimo antes del próximo lunes',
+      'Repasar la lista de estancadas y cerrar o reasignar cada una.',
+    ]
+    for (const b of buenas) expect(sinPedirPermiso(b), b).toBe(b)
+  })
+
+  // Una fórmula que no está en la tabla sale tal cual: una frase rara con
+  // sentido es mejor que una recortada sin él.
+  it('no inventa cuando no entiende la fórmula del todo', () => {
+    const raro = 'Autorizar el despliegue de una segunda ronda semanal'
+    expect(sinPedirPermiso(raro)).toBe(raro)
+  })
+
+  it('la instrucción de dirección lo dice, y el marco también', () => {
+    const i = instruccion('direccion')
+    expect(i).toContain('en la voz de quien hace el trabajo')
+    expect(i).toContain('Nunca «Autorizar»')
+    expect(MARCO_DEL_SERVICIO).toContain('El servicio no se pide permiso a sí mismo')
   })
 })

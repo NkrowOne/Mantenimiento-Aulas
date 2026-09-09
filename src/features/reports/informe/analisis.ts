@@ -313,7 +313,7 @@ export function senales(d: ReportData, audiencia: Audiencia): Senal[] {
       tono: 'aviso',
       peso: dir ? 4 : 2,
       accion: dir
-        ? 'Aprobar la compra de lámparas de repuesto y cambiarlas fuera del horario de clase.'
+        ? 'Pedir las lámparas de repuesto y cambiarlas fuera del horario de clase.'
         : 'Pedir lámparas de repuesto y planificar el cambio fuera de horario de clase.',
     })
   }
@@ -449,7 +449,7 @@ export function senales(d: ReportData, audiencia: Audiencia): Senal[] {
       tono: 'aviso',
       peso: dir ? 6 : 5,
       accion: dir
-        ? 'Aprobar la reposición de lo que está por debajo del mínimo.'
+        ? 'Reponer lo que está por debajo del mínimo.'
         : 'Reponer lo que está por debajo del mínimo antes del próximo lunes.',
     })
   }

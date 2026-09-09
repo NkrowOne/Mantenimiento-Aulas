@@ -100,7 +100,7 @@ Qué entra en el encargo:
 - Horario de lunes a viernes de 7:00 a 21:00, presencial. Fines de semana solo en eventos puntuales.
 
 Qué NO es este servicio, y por tanto nunca se recomienda en este informe:
-- No decide compras ni inversiones: se puede decir que hace falta reponer algo o sustituir un equipo, y quien lo aprueba es la universidad.
+- No decide compras ni inversiones: se dice qué hace falta reponer o sustituir, con su cifra, y el gasto lo aprueba la universidad. Cambiar una lámpara o cerrar una incidencia no es eso: es el trabajo del servicio y no lo autoriza nadie.
 - No elige ni implanta herramientas: la de tickets la pone la universidad y ya está en uso.
 - No define ni renegocia los niveles de servicio, ni los plazos, ni las penalizaciones.
 - No decide la plantilla: cuánta gente hay en el servicio no es materia de un informe de periodo.
@@ -118,7 +118,8 @@ Cómo se mide lo que se hizo (compromiso del primer año, sobre el porcentaje de
 Cómo se escribe con esto delante:
 - Las recomendaciones son cosas que este servicio puede hacer la semana que viene, o decisiones que la universidad tiene que tomar y que el informe le pone delante con su dato. Nada más.
 - Un plazo solo se cita si el expediente trae la cifra. El compromiso es un porcentaje de casos al mes, no un «siempre»: no se declara incumplido un mes que el expediente no dice que lo esté.
-- No se propone cambiar el alcance, la herramienta, el contrato ni el equipo.`
+- No se propone cambiar el alcance, la herramienta, el contrato ni el equipo.
+- Este informe lo firma quien hace el trabajo, y las recomendaciones van en esa voz: «Sustituir las seis lámparas por debajo del 20 %», no «Autorizar la sustitución». El servicio no se pide permiso a sí mismo. Cuando hay un gasto de por medio se escribe qué hace falta y por qué, que es lo que la universidad necesita para decidir.`
 
 /**
  * Lo que se propone y no toca a este servicio.
@@ -175,4 +176,65 @@ export function fueraDeAlcance(texto: string): Array<{ que: string; dice: string
     if (m) out.push({ que, dice: m[0] })
   }
   return out
+}
+
+/**
+ * La misma recomendación, en la voz de quien hace el trabajo.
+ *
+ * «Autorizar la sustitución de las seis lámparas por debajo del 20 %» es lo que
+ * escribe un modelo al que se le ha dicho que el informe lo lee la dirección de
+ * la universidad: deduce que quien lee es quien decide, y convierte el trabajo
+ * del servicio en una petición de permiso. Pero cambiar una lámpara no lo
+ * autoriza nadie —es literalmente el encargo— y el cliente que lee «autorizar»
+ * entiende que está esperándonos a nosotros cuando somos nosotros los que
+ * vamos.
+ *
+ * Se arregla aquí y no tirando el texto, que es lo que hacen los otros
+ * controles de este informe, porque esto no es una recomendación fuera de
+ * alcance: es la misma recomendación, buena, dicha del revés. Perder por una
+ * palabra un análisis que por lo demás está bien sale más caro que darle la
+ * vuelta a la frase.
+ *
+ * Y solo se toca lo que se entiende del todo. Una fórmula que no esté en la
+ * tabla sale tal cual: una frase rara con sentido es mejor que una frase
+ * recortada sin él, y para eso está la instrucción, que es la defensa de
+ * verdad.
+ */
+const VERBO_DEL_NOMBRE: Record<string, string> = {
+  sustitución: 'Sustituir',
+  reposición: 'Reponer',
+  compra: 'Pedir',
+  adquisición: 'Pedir',
+  pedido: 'Pedir',
+  cambio: 'Cambiar',
+  renovación: 'Renovar',
+  reparación: 'Reparar',
+  instalación: 'Instalar',
+  retirada: 'Retirar',
+  revisión: 'Revisar',
+  limpieza: 'Limpiar',
+  ampliación: 'Ampliar',
+  priorización: 'Priorizar',
+  programación: 'Programar',
+  contratación: 'Contratar',
+}
+
+/** «Autorizar la sustitución de X» → el nombre y lo que viene detrás. */
+const PIDE_PERMISO = /^(?:autorizar|aprobar|validar)\s+(?:la|el|los|las)\s+([a-záéíóúüñ]+)\s+de\s+(.+)$/i
+
+/** «Solicitar autorización para sustituir X» → lo que viene detrás, ya en infinitivo. */
+const PIDE_PERMISO_SUELTO =
+  /^(?:solicitar\s+(?:la\s+)?autorizaci[oó]n\s+para|pedir\s+(?:el\s+)?visto\s+bueno\s+para|dar\s+(?:el\s+)?visto\s+bueno\s+a|someter\s+a\s+aprobaci[oó]n)\s+(.+)$/i
+
+export function sinPedirPermiso(accion: string): string {
+  const suelto = PIDE_PERMISO_SUELTO.exec(accion.trim())
+  if (suelto) {
+    const resto = suelto[1]!
+    return resto.charAt(0).toUpperCase() + resto.slice(1)
+  }
+
+  const m = PIDE_PERMISO.exec(accion.trim())
+  if (!m) return accion
+  const verbo = VERBO_DEL_NOMBRE[m[1]!.toLowerCase()]
+  return verbo ? `${verbo} ${m[2]!}` : accion
 }
