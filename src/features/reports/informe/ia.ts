@@ -41,6 +41,7 @@
 
 import type { ReportData } from './tipos'
 import { MARCO_DEL_SERVICIO, fueraDeAlcance, sinPedirPermiso } from './contrato'
+import { TOPE_ENFOQUE } from './opciones'
 import { type Lectura, type Senal, dias, porcentaje } from './analisis'
 
 /** El último Flash. `gemini-flash-latest` sigue al día solo; esto fija la versión. */
@@ -108,7 +109,7 @@ export function configurarIA(ajustes: Ajustes = {}): OpcionesIA | null {
       ? thinking
       : THINKING_POR_DEFECTO,
     audiencia: ajustes.audiencia === 'equipo' ? 'equipo' : 'direccion',
-    ...(ajustes.enfoque ? { enfoque: ajustes.enfoque.slice(0, 400) } : {}),
+    ...(ajustes.enfoque ? { enfoque: ajustes.enfoque.slice(0, TOPE_ENFOQUE) } : {}),
   }
 }
 
@@ -357,7 +358,21 @@ export function expediente(d: ReportData, se: Senal[], audiencia: Audiencia): st
   return l.join('\n')
 }
 
-function encargo(d: ReportData, se: Senal[], o: OpcionesIA): string {
+/*
+ * La instrucción va dentro de una lista de condiciones con guiones, y ahora
+ * puede traer varias líneas: sin sangrar, la segunda línea de lo que escribió
+ * una persona parece una condición más del sistema, y una frase suya suelta
+ * entre las nuestras es exactamente lo que no queremos que pase.
+ */
+function sangrada(texto: string): string {
+  return texto
+    .split('\n')
+    .map((l) => `  ${l.trim()}`)
+    .join('\n')
+    .trimEnd()
+}
+
+export function encargo(d: ReportData, se: Senal[], o: OpcionesIA): string {
   const paraQuien =
     o.audiencia === 'direccion'
       ? 'Es el informe para la dirección de la universidad: le interesa saber que el campus está atendido, qué ha mejorado y qué decisiones convienen (compras, refuerzos, prioridades).'
@@ -371,7 +386,11 @@ Con estas condiciones:
 - Los avisos calculados del final del expediente son el punto de partida, no un guion: agrúpalos si cuentan lo mismo, descarta el que no aporte y añade lo que veas tú en los datos.
 - La entradilla no repite la lista de indicadores. Los indicadores ya están impresos justo encima, con sus cifras y sus variaciones.
 - Entre dos hallazgos igual de ciertos, elige el que cambie una decisión.
-${o.enfoque ? `- Instrucción de quien pide el informe, que va por delante de lo anterior: ${o.enfoque}\n` : ''}
+${
+  o.enfoque
+    ? `- Instrucción de quien pide el informe, que va por delante de lo anterior:\n${sangrada(o.enfoque)}\n`
+    : ''
+}
 EXPEDIENTE
 ${expediente(d, se, o.audiencia)}`
 }

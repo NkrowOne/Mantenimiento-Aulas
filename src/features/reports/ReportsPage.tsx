@@ -6,6 +6,7 @@ import { EstadoIA, useEstadoIA } from './EstadoIA'
 import { AUDIENCIAS, SECCIONES, porDefectoDe, seccionesDe } from './secciones'
 import { type HuellaDeRedaccion, redaccionDe } from './redaccion'
 import { type Eleccion, motivoParaNoPedir } from './peticion'
+import { TOPE_ENFOQUE } from './informe/opciones'
 import {
   type Kind,
   type Rango,
@@ -442,18 +443,44 @@ export function ReportsPage(): React.ReactElement {
                 </p>
               </div>
 
+              {/*
+                El encargo a la IA, y una caja en la que quepa.
+
+                Era una línea de texto de 400 caracteres, y una línea pide una
+                frase: «mira el CRAI». Pero quien pide el informe suele tener
+                media página de contexto que no está en los datos —lo que se
+                habló en la reunión del lunes, la obra del edificio H, el
+                proveedor que va tarde— y con una caja de una línea o no lo
+                escribía o lo escribía a ciegas, sin ver lo que llevaba puesto.
+                Ahora cabe, se lee entera y se puede alargar. Los saltos de
+                línea llegan tal cual a la instrucción.
+              */}
               <label className="mt-4 block text-sm">
-                <span className="text-muted">En qué quieres que se fije (opcional)</span>
-                <input
-                  type="text"
+                <span className="text-muted">Qué quieres contarle a la IA (opcional)</span>
+                <textarea
                   value={enfoque}
-                  maxLength={400}
+                  maxLength={TOPE_ENFOQUE}
+                  rows={7}
                   onChange={(e) => setEnfoque(e.target.value)}
-                  placeholder="Céntrate en el edificio H y en el consumo de cable"
-                  className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-base"
+                  placeholder={
+                    'Céntrate en el edificio H, que arrastra la obra desde julio.\n' +
+                    'El consumo de cable HDMI es alto porque se cambió toda la planta 2.\n' +
+                    'Este informe lo lee el vicerrector: que se note lo que se ha cerrado.'
+                  }
+                  className="mt-1 min-h-[10rem] w-full resize-y rounded-ctl border border-line bg-surface p-3 text-base leading-relaxed"
                 />
-                <span className="mt-1 block text-xs text-muted">
-                  Va a la redacción del análisis. No cambia ninguna cifra.
+                <span className="mt-1 flex flex-wrap justify-between gap-x-3 text-xs text-muted">
+                  <span>
+                    Va a la redacción del análisis, por delante de lo demás. No cambia ninguna cifra.
+                  </span>
+                  {/* Lo que queda, y solo cuando ya importa: un contador en cero
+                      caracteres es ruido, y uno que aparece a falta de cien es
+                      un aviso a tiempo de que la frase se va a cortar. */}
+                  {enfoque.length > TOPE_ENFOQUE - 150 && (
+                    <span className={enfoque.length >= TOPE_ENFOQUE ? 'text-warn' : ''}>
+                      {TOPE_ENFOQUE - enfoque.length} caracteres
+                    </span>
+                  )}
                 </span>
               </label>
 

@@ -94,6 +94,21 @@ export interface Opciones {
   nota?: string
 }
 
+/**
+ * Lo que cabe en la instrucción para la IA.
+ *
+ * Eran 400 caracteres, que es una frase, porque el campo era una línea de
+ * texto y una línea de texto no invita a más. Pero quien pide el informe suele
+ * traer contexto que no está en ninguna tabla —la obra del edificio H, lo que
+ * se habló el lunes, el proveedor que va tarde— y eso es media página.
+ *
+ * El tope vive aquí y no en la pantalla porque hay dos recortes más abajo —el
+ * de la lectura del `params` y el de los ajustes de la IA— y tres números que
+ * tienen que ser el mismo acaban siendo tres números distintos. Con la caja
+ * midiendo contra esta constante, lo que se escribe es lo que llega.
+ */
+export const TOPE_ENFOQUE = 1500
+
 const es = (v: unknown): v is Seccion => SECCIONES.includes(v as Seccion)
 
 /** Lee lo que venga del `params` del RPC sin confiar en nada. */
@@ -113,7 +128,7 @@ export function leerOpciones(bruto: unknown): Opciones {
     ia: p['ia'] !== false,
     audiencia,
     ...(typeof p['enfoque'] === 'string' && p['enfoque'].trim()
-      ? { enfoque: p['enfoque'].trim().slice(0, 400) }
+      ? { enfoque: p['enfoque'].trim().slice(0, TOPE_ENFOQUE) }
       : {}),
     ...(typeof p['nota'] === 'string' && p['nota'].trim()
       ? { nota: p['nota'].trim().slice(0, 300) }
