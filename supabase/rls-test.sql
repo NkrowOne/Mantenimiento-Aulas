@@ -113,6 +113,93 @@ begin;
 rollback;
 
 \echo ''
+\echo '=== 4b. Un técnico SÍ pone el código de EasyVista, y solo eso ==='
+-- La única escritura sobre `incidents` que tiene un técnico después de abrirla:
+-- una columna, por RPC, también sobre una resuelta. El número del libro no se
+-- toca por ese camino, y un anónimo no llega.
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_id  uuid;
+    v_ref text;
+    v_out text;
+  begin
+    select id, external_ref into v_id, v_ref
+      from incidents where state = 'resuelta' order by opened_at limit 1;
+    if v_id is null then
+      raise notice 'SIN DATOS: no hay incidencias resueltas con las que probar';
+      return;
+    end if;
+
+    v_out := public.incidencia_poner_codigo_easyvista(v_id, '  i260916_0042 ');
+    if v_out <> 'I260916_0042' then
+      raise exception 'FALLO: el código no volvió normalizado: %', v_out;
+    end if;
+    if (select easyvista_ref from incidents where id = v_id) <> 'I260916_0042' then
+      raise exception 'FALLO: el código no se guardó en la incidencia';
+    end if;
+    if (select external_ref from incidents where id = v_id) is distinct from v_ref then
+      raise exception 'FALLO: poner el código de EasyVista tocó el número del libro';
+    end if;
+    raise notice 'OK: el técnico puso el código de EasyVista en una resuelta, normalizado';
+
+    -- Vacío lo quita.
+    perform public.incidencia_poner_codigo_easyvista(v_id, '   ');
+    if (select easyvista_ref from incidents where id = v_id) is not null then
+      raise exception 'FALLO: el texto vacío no quitó el código';
+    end if;
+    raise notice 'OK: con texto vacío el código se quita';
+
+    -- Y un código con espacios dentro no entra.
+    begin
+      perform public.incidencia_poner_codigo_easyvista(v_id, 'I26 0042');
+      raise exception 'FALLO: entró un código con espacios';
+    exception when others then
+      if sqlerrm like 'FALLO%' then raise; end if;
+      raise notice 'OK: un código con espacios se rechaza';
+    end;
+  end $$;
+rollback;
+
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  -- El cierre con código, por el asiento: es lo que viaja por la cola.
+  do $$
+  declare v_id uuid;
+  begin
+    select id into v_id from incidents where state = 'abierta' order by opened_at limit 1;
+    if v_id is null then
+      raise notice 'SIN DATOS: no hay incidencias abiertas con las que probar';
+      return;
+    end if;
+    insert into incident_resolutions (id, incident_id, resolution, resolved_at, resolved_by, easyvista_ref)
+    values (gen_random_uuid(), v_id, 'Cable HDMI nuevo', now(),
+            '11111111-1111-4111-8111-111111111111', ' s260916_0007 ');
+    if (select easyvista_ref from incidents where id = v_id) <> 'S260916_0007' then
+      raise exception 'FALLO: el cierre no llevó el código a la incidencia';
+    end if;
+    if (select state from incidents where id = v_id) <> 'resuelta' then
+      raise exception 'FALLO: el cierre con código no cerró';
+    end if;
+    raise notice 'OK: el código tecleado al cerrar llega a la incidencia';
+  end $$;
+rollback;
+
+begin;
+  select test_as(null, null);
+  do $$
+  begin
+    perform public.incidencia_poner_codigo_easyvista(
+      (select id from incidents limit 1), 'I260916_0042');
+    raise exception 'FALLO: un anónimo puso un código de EasyVista';
+  exception when others then
+    if sqlerrm like 'FALLO%' then raise; end if;
+    raise notice 'OK: sin sesión no se pone el código';
+  end $$;
+rollback;
+
+\echo ''
 \echo '=== 5. Un supervisor SÍ puede cerrar una incidencia ==='
 begin;
   select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');

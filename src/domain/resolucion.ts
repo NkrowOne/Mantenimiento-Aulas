@@ -22,6 +22,7 @@ import {
   type Incident,
   type IncidentResolution,
 } from './types'
+import { normalizarCodigoEasyVista, problemaDeCodigoEasyVista } from './easyvista'
 
 /**
  * Lo más corto que se acepta como explicación.
@@ -81,6 +82,12 @@ export interface EntradaCierre {
   ahora: string
   /** Un id nuevo, por lo mismo. */
   nuevoId: () => string
+  /**
+   * El ticket de EasyVista, si se tiene al cerrar. Opcional: muchas averías se
+   * cierran antes de que exista el ticket, y entonces se pone después desde la
+   * pestaña de Incidencias.
+   */
+  codigoEasyVista?: string
 }
 
 /**
@@ -96,12 +103,18 @@ export function cierreDeIncidencia(e: EntradaCierre): IncidentResolution {
   const problema = problemaDeExplicacion(e.explicacion)
   if (problema !== null) throw new Error(problema)
 
+  // El código, por la misma segunda capa: la base lo rechazaría horas después,
+  // en una cola que se vacía sola, y el cierre se quedaría sin subir.
+  const problemaCodigo = problemaDeCodigoEasyVista(e.codigoEasyVista ?? '')
+  if (problemaCodigo !== null) throw new Error(problemaCodigo)
+
   return {
     id: e.nuevoId(),
     incident_id: e.incidenciaId,
     resolution: e.explicacion.trim(),
     resolved_at: e.ahora,
     resolved_by: e.autor,
+    easyvista_ref: normalizarCodigoEasyVista(e.codigoEasyVista),
   }
 }
 
@@ -121,6 +134,10 @@ export function incidenciaCerrada(i: Incident, cierre: IncidentResolution): Inci
     resolution: cierre.resolution,
     resolved_at: cierre.resolved_at,
     resolved_by: cierre.resolved_by,
+    // El código tecleado al cerrar manda; sin él, se queda el que hubiera. Es
+    // la misma regla que aplica el disparador arriba. El `?? null` es para una
+    // fila espejada antes de que la columna existiera.
+    easyvista_ref: cierre.easyvista_ref ?? i.easyvista_ref ?? null,
   }
 }
 

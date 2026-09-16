@@ -42,12 +42,16 @@ import { TiraDeFotos } from '@/components/Fotos'
 import { MaterialUsado } from './MaterialUsado'
 import { PHOTO_ACCEPT, capturePhoto } from '@/lib/photos'
 import { cierreDeIncidencia, incidenciaCerrada, problemaDeExplicacion } from '@/domain/resolucion'
+import { problemaDeCodigoEasyVista } from '@/domain/easyvista'
 import { INCIDENT_KIND_LABELS, type IncidentKind } from '@/domain/types'
 
 export interface IncidenciaQueSeCierra {
   id: string
   title: string | null
   kind: IncidentKind
+  /** El ticket de EasyVista que ya tuviera, para no pedirlo dos veces. Opcional
+      porque una fila espejada antes de la columna llega sin él. */
+  easyvista_ref?: string | null
 }
 
 export function ResolverIncidencia({
@@ -80,7 +84,14 @@ export function ResolverIncidencia({
   onCancelar: () => void
 }): React.ReactElement {
   const ayudaId = useId()
+  const ayudaCodigoId = useId()
   const [texto, setTexto] = useState('')
+  /*
+   * El ticket de EasyVista, si se tiene al cerrar. Arranca con el que ya
+   * tuviera la incidencia —puesto al abrirla— para que cerrar no lo borre ni
+   * obligue a teclearlo otra vez; se puede cambiar aquí mismo.
+   */
+  const [codigo, setCodigo] = useState(incidencia.easyvista_ref ?? '')
   /** Se enseña al intentar enviar, no mientras se escribe: regañar por teclear
       despacio es la forma más rápida de que nadie termine una frase. */
   const [tocado, setTocado] = useState(false)
@@ -92,6 +103,7 @@ export function ResolverIncidencia({
   const fileInput = useRef<HTMLInputElement>(null)
 
   const problema = problemaDeExplicacion(texto)
+  const problemaCodigo = problemaDeCodigoEasyVista(codigo)
 
   async function elegirFoto(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = e.target.files?.[0]
@@ -140,6 +152,7 @@ export function ResolverIncidencia({
         autor,
         ahora: new Date().toISOString(),
         nuevoId: () => uuidv7(),
+        codigoEasyVista: codigo,
       })
 
       /*
@@ -168,7 +181,7 @@ export function ResolverIncidencia({
       onSubmit={(e) => {
         e.preventDefault()
         setTocado(true)
-        if (problema === null) cerrar.mutate()
+        if (problema === null && problemaCodigo === null) cerrar.mutate()
       }}
     >
       <p className="eyebrow">Resolver {etiqueta}</p>
@@ -207,6 +220,38 @@ export function ResolverIncidencia({
         <p id={ayudaId} className="mt-1 text-xs leading-relaxed text-muted">
           Obligatorio: lo leerá quien atienda la próxima avería de esta sala, y decide si es la
           misma o es otra.
+        </p>
+      )}
+
+      {/*
+        El ticket de EasyVista, aquí y opcional. Es el momento en que muchas
+        averías lo tienen por primera vez —se abrió desde el aula y el ticket
+        se creó después— y viaja dentro del asiento de cierre, por la cola, así
+        que también vale en un sótano. Si todavía no existe, se pone después
+        desde la lista de incidencias.
+      */}
+      <label className="mt-3 block text-sm">
+        <span className="text-muted">Código de EasyVista (opcional)</span>
+        <input
+          value={codigo}
+          onChange={(e) => setCodigo(e.target.value)}
+          autoCapitalize="characters"
+          autoCorrect="off"
+          spellCheck={false}
+          aria-invalid={tocado && problemaCodigo !== null}
+          aria-describedby={ayudaCodigoId}
+          placeholder="I260916_0042"
+          className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-base uppercase"
+        />
+      </label>
+      {tocado && problemaCodigo !== null ? (
+        <p id={ayudaCodigoId} role="alert" className="mt-1 text-sm text-crit">
+          {problemaCodigo}
+        </p>
+      ) : (
+        <p id={ayudaCodigoId} className="mt-1 text-xs leading-relaxed text-muted">
+          Si ya tiene ticket en EasyVista, ponlo aquí. Si no, se puede añadir después desde
+          Incidencias.
         </p>
       )}
 

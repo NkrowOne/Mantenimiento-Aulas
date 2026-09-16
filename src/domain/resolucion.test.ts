@@ -17,6 +17,7 @@ function incidencia(over: Partial<Incident> = {}): Incident {
     opened_from_inspection_id: null,
     check_key: null,
     external_ref: null,
+    easyvista_ref: null,
     title: 'Proyector: no da imagen',
     description: 'No da imagen',
     severity: 'alta',
@@ -86,7 +87,21 @@ describe('cierreDeIncidencia', () => {
       resolution: 'Lámpara nueva y filtro limpiado',
       resolved_at: '2026-08-18T10:30:00.000Z',
       resolved_by: 'tecnico-1',
+      easyvista_ref: null,
     })
+  })
+
+  // El ticket llega al cierre como se tecleó, y sale como se guarda: es lo que
+  // hace que el asiento diga lo mismo que la incidencia después de subir.
+  it('lleva el código de EasyVista normalizado, si se tecleó', () => {
+    expect(cierreDeIncidencia({ ...base, codigoEasyVista: ' i260916_0042 ' }).easyvista_ref).toBe(
+      'I260916_0042',
+    )
+    expect(cierreDeIncidencia({ ...base, codigoEasyVista: '   ' }).easyvista_ref).toBeNull()
+  })
+
+  it('se niega a cerrar con un código que la base rechazaría', () => {
+    expect(() => cierreDeIncidencia({ ...base, codigoEasyVista: 'I26 0042' })).toThrow(/espacios/)
   })
 
   it('se niega a cerrar sin explicación, con el mismo mensaje que se pinta', () => {
@@ -130,6 +145,27 @@ describe('incidenciaCerrada', () => {
     expect(cerrada.opened_at).toBe(original.opened_at)
     expect(cerrada.opened_by).toBe(original.opened_by)
     expect(cerrada.external_ref).toBe('I260728_0001')
+  })
+
+  // La misma regla que el disparador: el código del cierre manda, y sin código
+  // en el cierre se queda el que ya tuviera la incidencia.
+  it('el código de EasyVista del cierre manda, y sin él se conserva el que había', () => {
+    const conCodigo = cierreDeIncidencia({
+      incidenciaId: 'inc-1',
+      explicacion: 'Lámpara nueva y filtro limpiado',
+      autor: 'tecnico-1',
+      ahora: '2026-08-18T10:30:00.000Z',
+      nuevoId: () => 'cierre-2',
+      codigoEasyVista: 'I260916_0042',
+    })
+
+    expect(incidenciaCerrada(incidencia({ easyvista_ref: 'I260901_0001' }), conCodigo).easyvista_ref).toBe(
+      'I260916_0042',
+    )
+    expect(incidenciaCerrada(incidencia({ easyvista_ref: 'I260901_0001' }), cierre).easyvista_ref).toBe(
+      'I260901_0001',
+    )
+    expect(incidenciaCerrada(incidencia(), cierre).easyvista_ref).toBeNull()
   })
 })
 

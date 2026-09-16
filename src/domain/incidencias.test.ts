@@ -39,6 +39,7 @@ function incidencia(over: Partial<Incident>): Incident {
     opened_from_inspection_id: null,
     check_key: null,
     external_ref: null,
+    easyvista_ref: null,
     title: 'algo',
     description: null,
     severity: 'media',

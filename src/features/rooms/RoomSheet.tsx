@@ -57,7 +57,7 @@
  * medias.
  */
 
-import { useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { v7 as uuidv7 } from 'uuid'
@@ -65,9 +65,13 @@ import { db, enqueue } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { flush } from '@/sync/outbox'
 import { DoorPlate } from '@/components/DoorPlate'
+import { Tira, useFotos } from '@/components/Fotos'
+import { PHOTO_ACCEPT, comprimirFoto, encolarFoto, type FotoComprimida } from '@/lib/photos'
 import { RevisionesAnteriores } from '@/features/inspection/RevisionesAnteriores'
+import { CodigoEasyVista } from '@/features/incidents/CodigoEasyVista'
 import { ResolverIncidencia } from '@/features/incidents/ResolverIncidencia'
 import { useCierresEnCola } from '@/features/incidents/cierresEnCola'
+import { normalizarCodigoEasyVista, problemaDeCodigoEasyVista } from '@/domain/easyvista'
 import { equipoDeIncidencia, sePuedeResolver } from '@/domain/resolucion'
 import type { Correccion } from '@/features/inspection/useInspection'
 import { displayRoomCode } from '@/domain/normalize'
@@ -128,6 +132,20 @@ interface Reincidencia {
  */
 const TIPOS_REGISTRABLES: IncidentKind[] = ['incidencia', 'solicitud']
 
+/**
+ * Una foto hecha para una incidencia que todavía no existe.
+ *
+ * Se queda en memoria —comprimida y con su URL para la miniatura— hasta que se
+ * pulsa Guardar, que es cuando la incidencia tiene id y la foto puede
+ * encolarse a su nombre. Encolarla antes dejaba, al cancelar, una foto subida
+ * y enlazada a una incidencia que nunca llegó a existir.
+ */
+interface FotoEnEspera {
+  id: string
+  foto: FotoComprimida
+  url: string
+}
+
 /** Cómo se marca cada cosa en la línea de tiempo. Nunca solo el color. */
 const MARCA: Record<TimelineRow['kind'], { punto: string; texto: string }> = {
   incidencia: { punto: 'bg-crit', texto: 'Incidencia' },
@@ -185,11 +203,81 @@ export function RoomSheet({
   onInventario,
 }: Props): React.ReactElement {
   const qc = useQueryClient()
+  const ayudaCodigoId = useId()
   const [abierto, setAbierto] = useState(false)
   const [kind, setKind] = useState<IncidentKind>('incidencia')
   const [texto, setTexto] = useState('')
   const [codigo, setCodigo] = useState('')
+  /** Se enseña al intentar guardar, no mientras se teclea. */
+  const [tocado, setTocado] = useState(false)
   const [guardado, setGuardado] = useState<string | null>(null)
+
+  /*
+   * Las fotos de lo que se está registrando: lo que hay que ver antes de ir.
+   *
+   * Es lo que faltaba al abrir una incidencia: se describía con palabras, y
+   * quien la atendía llegaba al aula sin saber si «el cable está roto» es una
+   * clavija doblada o un tirado arrancado de la pared. Las fotos se hacen aquí
+   * mismo, se enseñan en la lista de incidencias y en esta ficha, y suben por la
+   * cola como las del cierre.
+   */
+  const [fotosNuevas, setFotosNuevas] = useState<FotoEnEspera[]>([])
+  const [fotoError, setFotoError] = useState<string | null>(null)
+  const [guardandoFoto, setGuardandoFoto] = useState(false)
+  const fileInput = useRef<HTMLInputElement>(null)
+
+  const problemaCodigo = problemaDeCodigoEasyVista(codigo)
+
+  async function elegirFoto(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setFotoError(null)
+
+    // Comprimir varios megapíxeles tarda. Sin esta señal el botón se queda mudo
+    // y se vuelve a pulsar pensando que no cogió la foto.
+    setGuardandoFoto(true)
+    const resultado = await comprimirFoto(file)
+    setGuardandoFoto(false)
+    if (fileInput.current) fileInput.current.value = ''
+
+    if (!resultado.ok) {
+      setFotoError(resultado.error)
+      return
+    }
+    setFotosNuevas((lista) => [
+      ...lista,
+      { id: uuidv7(), foto: resultado, url: URL.createObjectURL(resultado.blob) },
+    ])
+  }
+
+  /** Tira las fotos que esperaban, y sus URLs con ellas. */
+  function descartarFotos(): void {
+    setFotosNuevas((lista) => {
+      for (const f of lista) URL.revokeObjectURL(f.url)
+      return []
+    })
+  }
+
+  function quitarFoto(id: string): void {
+    setFotosNuevas((lista) => {
+      const fuera = lista.find((f) => f.id === id)
+      if (fuera) URL.revokeObjectURL(fuera.url)
+      return lista.filter((f) => f.id !== id)
+    })
+  }
+
+  // Al salir de la ficha con el formulario a medias, las URLs no se quedan
+  // vivas: son memoria del navegador que nadie más va a soltar.
+  const fotosVivas = useRef(fotosNuevas)
+  fotosVivas.current = fotosNuevas
+  useEffect(() => () => fotosVivas.current.forEach((f) => URL.revokeObjectURL(f.url)), [])
+
+  function cerrarFormulario(): void {
+    setAbierto(false)
+    setTocado(false)
+    descartarFotos()
+    setFotoError(null)
+  }
   /* Qué avería tiene abierto el formulario de cierre. Solo una: se cierra lo que
      se acaba de arreglar, no se despacha una lista. */
   const [resolviendo, setResolviendo] = useState<string | null>(null)
@@ -239,6 +327,25 @@ export function RoomSheet({
     .filter((i) => sePuedeResolver(i) && !cerradasEnCola.has(i.id))
     .sort((a, b) => a.opened_at.localeCompare(b.opened_at))
   const esperandoSubir = deLaSala.filter((i) => cerradasEnCola.has(i.id)).length
+
+  /*
+   * Las fotos de las averías abiertas, de una vez para toda la lista y
+   * repartidas por fila. Las que se hicieron en esta misma ficha y esperan
+   * cobertura salen de la cola del dispositivo con su sello de «sin subir».
+   */
+  // Por las CLAVES y no por el array: `abiertas` se recalcula en cada render y
+  // la consulta de fotos no tiene por qué enterarse si son las mismas.
+  const claveAbiertas = abiertas.map((i) => i.id).join(',')
+  const idsAbiertas = useMemo(
+    () => (claveAbiertas === '' ? [] : claveAbiertas.split(',')),
+    [claveAbiertas],
+  )
+  const { fotos: fotosDeAbiertas } = useFotos('incident', idsAbiertas)
+  const fotosPorIncidencia = useMemo(() => {
+    const porId = new Map<string, typeof fotosDeAbiertas>()
+    for (const f of fotosDeAbiertas) porId.set(f.entityId, [...(porId.get(f.entityId) ?? []), f])
+    return porId
+  }, [fotosDeAbiertas])
 
   /** Cómo se llama un equipo de esta sala. Es lo que nombra la avería. */
   const nombreDeEquipo = (assetId: string): string | null => {
@@ -313,6 +420,10 @@ export function RoomSheet({
    */
   const registrar = useMutation({
     mutationFn: async () => {
+      // Segunda capa: la pantalla ya lo enseña. La base lo rechazaría en la
+      // cola, horas después, y la incidencia se quedaría sin subir.
+      if (problemaCodigo !== null) throw new Error(problemaCodigo)
+
       const titulo = texto.trim()
       const fila: Incident = {
         id: uuidv7(),
@@ -320,7 +431,14 @@ export function RoomSheet({
         asset_id: null,
         opened_from_inspection_id: null,
         check_key: null,
-        external_ref: codigo.trim() || null,
+        /*
+         * El número del libro lo pone la base al insertar, y lo que traiga
+         * una sesión se descarta (`poner_ref_incidencia`). Esto mandaba aquí
+         * el código tecleado, que se perdía sin aviso; el ticket de EasyVista
+         * tiene su propia columna.
+         */
+        external_ref: null,
+        easyvista_ref: normalizarCodigoEasyVista(codigo),
         title: titulo || null,
         description: null,
         severity: 'media',
@@ -336,19 +454,29 @@ export function RoomSheet({
 
       await db.incidents.put(fila)
       await enqueue('incident', fila.id, fila)
+
+      /*
+       * Y sus fotos, ya a nombre de la incidencia. Detrás de la fila en la
+       * cola —la incidencia sube antes que sus adjuntos en la misma pasada— y
+       * cada una arranca su subida al encolarse.
+       */
+      for (const f of fotosNuevas) {
+        await encolarFoto(f.foto, 'incident', fila.id)
+      }
       void flush()
 
-      return titulo.length > 0
+      return { completo: titulo.length > 0, fotos: fotosNuevas.length }
     },
-    onSuccess: (completo) => {
+    onSuccess: ({ completo, fotos }) => {
+      const conFotos = fotos > 0 ? ` Con ${cuantos(fotos, 'foto', 'fotos')}.` : ''
       setGuardado(
         completo
-          ? `${INCIDENT_KIND_LABELS[kind]} registrada. Sube en cuanto haya cobertura.`
-          : `Guardado sin describir. Aparecerá en Incidencias para que lo completes.`,
+          ? `${INCIDENT_KIND_LABELS[kind]} registrada.${conFotos} Sube en cuanto haya cobertura.`
+          : `Guardado sin describir.${conFotos} Aparecerá en Incidencias para que lo completes.`,
       )
       setTexto('')
       setCodigo('')
-      setAbierto(false)
+      cerrarFormulario()
       void qc.invalidateQueries({ queryKey: ['room-timeline', room.id] })
       void qc.invalidateQueries({ queryKey: ['borradores'] })
     },
@@ -505,7 +633,7 @@ export function RoomSheet({
           </button>
           <button
             type="button"
-            onClick={() => setAbierto((v) => !v)}
+            onClick={() => (abierto ? cerrarFormulario() : setAbierto(true))}
             className="key key-quiet min-h-11 flex-1 px-3 text-sm"
           >
             {/* Dice qué abre, no «registrar algo». Los dos tipos que quedan
@@ -526,7 +654,8 @@ export function RoomSheet({
             className="card mt-3 p-4"
             onSubmit={(e) => {
               e.preventDefault()
-              registrar.mutate()
+              setTocado(true)
+              if (problemaCodigo === null) registrar.mutate()
             }}
           >
             <h2 className="eyebrow">
@@ -559,17 +688,84 @@ export function RoomSheet({
               className="mt-3 w-full rounded-ctl border border-line bg-surface p-3 text-base"
             />
 
-            {/* Los dos tipos que quedan pueden llevar ticket externo, así que el
-                campo ya no se esconde para ninguno. */}
+            {/*
+              La foto de lo que pasa, antes de que nadie vaya.
+
+              Se guarda al elegirla en memoria y se encola al pulsar Guardar,
+              a nombre de la incidencia recién creada. Cancelar tira las fotos
+              con el formulario: hasta que se guarda no son de nadie.
+            */}
+            <input
+              ref={fileInput}
+              type="file"
+              accept={PHOTO_ACCEPT}
+              onChange={(e) => void elegirFoto(e)}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => fileInput.current?.click()}
+              disabled={guardandoFoto}
+              className="key mt-3 flex h-touch w-full items-center justify-center gap-2 border-2 border-dashed border-line bg-transparent text-muted shadow-none"
+            >
+              <span aria-hidden className="text-lg leading-none">
+                +
+              </span>
+              {guardandoFoto ? 'Procesando la foto…' : 'Añadir foto de lo que pasa (opcional)'}
+            </button>
+            {fotoError && <p className="mt-2 text-sm text-crit">{fotoError}</p>}
+
+            {fotosNuevas.length > 0 && (
+              <ul className="scroll-x -mx-1 mt-2 flex gap-2 px-1 py-1">
+                {fotosNuevas.map((f, i) => (
+                  <li key={f.id} className="relative shrink-0">
+                    <img
+                      src={f.url}
+                      alt={`Foto ${i + 1} de la incidencia, todavía sin guardar`}
+                      className="h-20 w-20 rounded-tag border border-line object-cover"
+                    />
+                    {/* Quitarla sí se puede: todavía no está guardada en ningún
+                        sitio, así que no es borrar una prueba, es no hacerla. */}
+                    <button
+                      type="button"
+                      onClick={() => quitarFoto(f.id)}
+                      aria-label={`Quitar la foto ${i + 1}`}
+                      className="absolute -right-1 -top-1 flex h-7 w-7 items-center justify-center rounded-full border border-line bg-surface text-sm leading-none text-ink-2 shadow"
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {/* Los dos tipos que quedan pueden llevar ticket, así que el campo
+                no se esconde para ninguno. Y es el ticket de EasyVista, en SU
+                columna: el número del libro lo pone la base. */}
             <label className="mt-3 block text-sm">
-              <span className="text-muted">Código de ticket externo</span>
+              <span className="text-muted">Código de EasyVista (opcional)</span>
               <input
                 value={codigo}
                 onChange={(e) => setCodigo(e.target.value)}
-                placeholder="I260728_0001"
-                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-base"
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+                aria-invalid={tocado && problemaCodigo !== null}
+                aria-describedby={ayudaCodigoId}
+                placeholder="I260916_0042"
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-base uppercase"
               />
             </label>
+            {tocado && problemaCodigo !== null ? (
+              <p id={ayudaCodigoId} role="alert" className="mt-1 text-sm text-crit">
+                {problemaCodigo}
+              </p>
+            ) : (
+              <p id={ayudaCodigoId} className="mt-1 text-xs leading-relaxed text-muted">
+                Si el aviso ya tiene ticket en EasyVista. Si no, se pone al cerrarla o después,
+                desde Incidencias.
+              </p>
+            )}
 
             <p className="mt-3 text-xs leading-relaxed text-muted">
               Basta la sala para guardar. Lo demás se completa después, desde Incidencias.
@@ -646,6 +842,9 @@ export function RoomSheet({
                       <p className="mt-0.5 text-xs text-muted">
                         {i.kind !== 'incidencia' && <>{INCIDENT_KIND_LABELS[i.kind]} · </>}
                         {i.external_ref && <span className="font-mono">{i.external_ref} · </span>}
+                        {i.easyvista_ref && (
+                          <span className="font-mono">EasyVista {i.easyvista_ref} · </span>
+                        )}
                         abierta hace{' '}
                         {/* El mismo umbral que usa la pestaña de Incidencias y
                             el panel: una avería estancada se ve igual en las
@@ -661,6 +860,13 @@ export function RoomSheet({
                           {i.description}
                         </p>
                       )}
+                      {/* Las fotos de lo que pasa, para verlo antes de ponerse.
+                          Mientras el cierre está abierto las enseña él, con
+                          las que se hagan al cerrar al lado. */}
+                      {resolviendo !== i.id && (
+                        <Tira entityType="incident" fotos={fotosPorIncidencia.get(i.id) ?? []} />
+                      )}
+                      <CodigoEasyVista incidentId={i.id} codigo={i.easyvista_ref ?? null} />
                     </div>
 
                     <button

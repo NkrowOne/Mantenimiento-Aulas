@@ -45,6 +45,10 @@ const VALIDEZ_S = 3600
 
 export interface Foto {
   id: string
+  /** De qué revisión o incidencia es. Con varias en la misma consulta —la lista
+      de incidencias pide las de toda la página de una vez— es lo que permite
+      repartirlas por fila. */
+  entityId: string
   url: string
   takenAt: string
   /** Sigue en el dispositivo esperando cobertura. */
@@ -83,7 +87,7 @@ export function useFotos(entityType: QueuedPhoto['entityType'], ids: string[]): 
     queryFn: async (): Promise<Foto[]> => {
       const { data: adjuntos, error } = await supabase
         .from('attachments')
-        .select('id, storage_path, taken_at, hidden_at')
+        .select('id, entity_id, storage_path, taken_at, hidden_at')
         .eq('entity_type', entityType)
         .in('entity_id', ids)
         .order('taken_at', { ascending: true })
@@ -101,6 +105,7 @@ export function useFotos(entityType: QueuedPhoto['entityType'], ids: string[]): 
       return adjuntos
         .map((a) => ({
           id: a['id'] as string,
+          entityId: a['entity_id'] as string,
           url: porRuta.get(a['storage_path'] as string) ?? '',
           takenAt: a['taken_at'] as string,
           pendiente: false,
@@ -168,7 +173,14 @@ export function useFotos(entityType: QueuedPhoto['entityType'], ids: string[]): 
         urls.push(url)
         // Una foto que aún no ha subido no está en ningún informe todavía: no
         // hay nada de lo que retirarla.
-        nuevas.push({ id: p.id, url, takenAt: p.takenAt, pendiente: true, retirada: false })
+        nuevas.push({
+          id: p.id,
+          entityId: p.entityId,
+          url,
+          takenAt: p.takenAt,
+          pendiente: true,
+          retirada: false,
+        })
       }
 
       // La lectura es asíncrona: si el bloque se cerró mientras leía, lo que se
@@ -299,6 +311,28 @@ export function TiraDeFotos({
   entityType: QueuedPhoto['entityType']
   ids: string[]
 }): React.ReactElement | null {
+  const { fotos, sinConexion } = useFotos(entityType, ids)
+  return <Tira entityType={entityType} fotos={fotos} sinConexion={sinConexion} />
+}
+
+/**
+ * La tira, con las fotos ya en la mano.
+ *
+ * Separada de `TiraDeFotos` para la lista de incidencias: allí hay doscientas
+ * filas y cada una con su propia consulta serían doscientas peticiones de
+ * adjuntos y doscientas de firmas. La lista pide las de toda la página de una
+ * vez con `useFotos` y reparte por fila con esto.
+ */
+export function Tira({
+  entityType,
+  fotos,
+  sinConexion = false,
+}: {
+  entityType: QueuedPhoto['entityType']
+  fotos: Foto[]
+  /** Hay fotos arriba y no se pueden traer: se dice, en vez de no pintar nada. */
+  sinConexion?: boolean
+}): React.ReactElement | null {
   /*
    * La foto abierta se recuerda por IDENTIDAD, no por posición. La lista
    * cambia sola por debajo —una foto local que termina de subir se va de la
@@ -307,7 +341,6 @@ export function TiraDeFotos({
    * cierra, que es lo único honesto.
    */
   const [abiertaId, setAbiertaId] = useState<string | null>(null)
-  const { fotos, sinConexion } = useFotos(entityType, ids)
   const abierta = abiertaId === null ? -1 : fotos.findIndex((f) => f.id === abiertaId)
 
   if (fotos.length === 0) {
