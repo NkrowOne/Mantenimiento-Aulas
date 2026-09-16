@@ -233,6 +233,16 @@ describe('la hoja de estado', () => {
     const p = estado([fila(2, { Y: 'SALA-000001' })], [sala({ activa: false })])
     expect(p.borrar).toEqual([2])
     expect(p.avisos.join(' ')).toMatch(/archivada/)
+    // Y se cuenta como fila que sale, con su aula y su motivo, para la pantalla.
+    expect(p.filasQueSalen).toEqual([expect.objectContaining({ fila: 2, destino: '0.1P' })])
+    expect(p.filasQueSalen[0]!.motivo).toMatch(/archivada/)
+  })
+
+  it('la matrícula que se escribe se cuenta como celda al Excel, con su porqué', () => {
+    const p = estado([fila(2, { A: 'EDIFICIO P', C: '0.1P' })], [sala()])
+    expect(p.haciaElExcel).toContainEqual(
+      expect.objectContaining({ fila: 2, letra: 'Y', cabecera: 'Ref', destino: '0.1P', valor: 'SALA-000001' }),
+    )
   })
 
   it('dos filas para la misma sala: la segunda se cuenta y no se toca', () => {
@@ -260,6 +270,9 @@ describe('la hoja de estado', () => {
     // Detrás de la 2, que es la última del EDIFICIO P: no al final de la hoja.
     expect(p.insertar[0]!.tras).toBe(2)
     expect(p.avisos.join(' ')).toMatch(/entra en el bloque/)
+    expect(p.filasQueEntran).toEqual([
+      expect.objectContaining({ que: 'Sala', destino: '0.9P', donde: expect.stringContaining('EDIFICIO P') }),
+    ])
   })
 
   it('dentro de un bloque, la fila nueva no repite el nombre del edificio', () => {
@@ -424,6 +437,8 @@ function incidencia(over: Partial<IncidenciaVolcada> = {}): IncidenciaVolcada {
     observacion: null,
     resolucion: 'Se sustituye el cable',
     material: '1 Cable HDMI fibra 15 m',
+    esParte: true,
+    materialApuntado: [{ articuloId: 's1', cantidad: 1 }],
     ...over,
   }
 }
@@ -610,6 +625,87 @@ describe('la hoja de partes', () => {
     })
     expect(p.celdas).toEqual([])
     expect(p.insertar).toEqual([])
+  })
+
+  // Las «líneas raras con código»: la base numera también las observaciones y
+  // los borradores, y por ese número la hoja de partes los añadía al final como
+  // si fueran partes — una fila con un código y sin problema.
+  it('una observación o un borrador de la aplicación no se añaden a la hoja de partes', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES, fila(2, { D: 'I260102_0002' })],
+      incidencias: [
+        incidencia(),
+        incidencia({ id: 'obs', numero: 'I260315_0011', problema: 'El mando está en el cajón', esParte: false }),
+        incidencia({ id: 'borrador', numero: 'I260316_0001', problema: null, esParte: false }),
+      ],
+    })
+    expect(p.insertar).toEqual([])
+    expect(p.filasQueEntran).toEqual([])
+  })
+
+  it('y si una pasada anterior ya las escribió, salen del libro', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES, fila(2, { D: 'I260102_0002' }), fila(3, { D: 'I260315_0011', E: 'El mando está en el cajón' })],
+      incidencias: [incidencia(), incidencia({ id: 'obs', numero: 'I260315_0011', esParte: false })],
+    })
+    expect(p.borrar).toEqual([3])
+    expect(p.filasQueSalen).toEqual([expect.objectContaining({ fila: 3, destino: 'I260315_0011' })])
+    expect(p.filasQueSalen[0]!.motivo).toMatch(/observación/)
+    expect(p.sinCruzar).toEqual([])
+  })
+
+  it('en la hoja congelada se cuentan y se dejan, como todo lo demás', () => {
+    const cab = fila(1, Object.fromEntries(MATERIAL_2025.columnas.map((c) => [c.letra, c.cabecera])))
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2025,
+      filas: [cab, fila(2, { D: 'I250315_0011' })],
+      incidencias: [incidencia({ id: 'obs', numero: 'I250315_0011', esParte: false })],
+    })
+    expect(p.borrar).toEqual([])
+    expect(p.sinCruzar).toHaveLength(1)
+  })
+
+  it('cada parte nuevo que se añade se cuenta con su número y de qué habla', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES, fila(2, { D: 'I260102_0002' })],
+      incidencias: [incidencia(), incidencia({ id: 'i2', numero: 'I260315_0011', problema: 'Sin ratón' })],
+    })
+    expect(p.filasQueEntran).toEqual([
+      expect.objectContaining({ que: 'Parte', destino: 'I260315_0011', donde: expect.stringContaining('Sin ratón') }),
+    ])
+  })
+
+  it('lo que se escribe en la hoja se cuenta con su aula, su columna, lo que decía y por qué', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES, fila(2, { D: 'I260102_0002', A: '0.1 BC', G: '2 Cable HDMI' })],
+      incidencias: [incidencia()],
+    })
+    expect(p.haciaElExcel).toContainEqual({
+      fila: 2,
+      letra: 'G',
+      cabecera: 'Material Usado',
+      destino: 'I260102_0002',
+      antes: '2 Cable HDMI',
+      valor: '1 Cable HDMI fibra 15 m',
+      motivo: 'primera pasada: sin instantánea previa manda la app',
+    })
+    // Y las mismas celdas que el parcheador va a escribir, ni una más.
+    expect(p.haciaElExcel.map((h) => `${h.letra}${h.fila}`).sort()).toEqual(p.celdas.map((c) => c.celda).sort())
+  })
+
+  it('con «manda el Excel» elegido al cargar, la primera pasada entra en la base', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES, fila(2, { D: 'I260102_0002', G: '2 Cable HDMI' })],
+      incidencias: [incidencia()],
+      referencia: 'excel',
+    })
+    expect(p.haciaLaBase).toContainEqual(expect.objectContaining({ letra: 'G', valor: '2 Cable HDMI' }))
+    expect(p.celdas.some((c) => c.celda === 'G2')).toBe(false)
   })
 })
 

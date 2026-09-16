@@ -241,6 +241,8 @@ describe.skipIf(!RUTA)('la aplicación cambió y el libro lo dice', () => {
       observacion: null,
       resolucion: null,
       material: '2 Cable HDMI',
+      esParte: true,
+      materialApuntado: [],
     })
 
     // M12 — un parte que estaba abierto se resuelve. Uno cuya celda de fecha

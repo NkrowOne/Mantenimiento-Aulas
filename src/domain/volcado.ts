@@ -80,6 +80,22 @@ export interface IncidenciaVolcada {
   resolucion: string | null
   /** Ya escrito como lo escribe la gente: `2 Cable HDMI fibra 10 m`. */
   material: string | null
+  /**
+   * `false` si esto no es un parte: una observación —una nota de seguimiento,
+   * «el mando está en el cajón»— o un borrador a medio escribir. La base les
+   * pone número igual que a un parte, y por ese número la hoja de partes los
+   * emparejaba y los añadía al final como si lo fueran: filas con un código y
+   * sin problema, que es lo que se veía en el libro. No van a la hoja, y si ya
+   * están, salen.
+   */
+  esParte: boolean
+  /**
+   * Lo que el almacén ya tiene descontado por este parte, por artículo: los
+   * consumos menos las devoluciones, igual que lo cuenta la base. Es lo que
+   * permite decir **antes de aplicar** qué movimientos va a apuntar la pasada,
+   * porque la base solo mueve la diferencia con esto.
+   */
+  materialApuntado: Array<{ articuloId: string; cantidad: number }>
 }
 
 export interface ArticuloVolcado {

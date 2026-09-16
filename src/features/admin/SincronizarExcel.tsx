@@ -5,7 +5,9 @@ import { analizar, aplicar, dudasPendientes, escribir, lineasDelParte, replanifi
 import type { Analisis } from './pasada'
 import { Dudas } from './Dudas'
 import type { Respuesta } from '@/domain/dudas'
-import type { Alta, Plan, Resumen as ResumenDeHoja } from '@/domain/sincronizar'
+import { columnaDeCampo, hojaPorNombre } from '@/domain/mapa'
+import type { MovimientoPrevisto } from '@/domain/movimientos'
+import type { Alta, Plan, Referencia } from '@/domain/sincronizar'
 
 /**
  * Sincronizar el Excel de SharePoint, en los dos sentidos.
@@ -15,7 +17,23 @@ import type { Alta, Plan, Resumen as ResumenDeHoja } from '@/domain/sincronizar'
  * viaje de vuelta a SharePoint lo hace una persona, que es lo que permite que
  * esto funcione sin pedirle permiso a nadie.
  *
- * Cuatro cosas que esta pantalla promete y conviene que se lean aquí:
+ * Lo que esta pantalla promete y conviene que se lea aquí:
+ *
+ * **Se elige quién manda antes de subir el libro.** La fusión sabe decidir
+ * casi todo sola —si solo cambió un lado, gana ese lado—, pero hay dos casos en
+ * los que no puede: la primera pasada de un libro, que no tiene con qué
+ * comparar, y una celda que cambió en los dos sitios. Ahí decide lo que se
+ * eligió arriba: el Excel, la aplicación, o una persona más tarde. Se puede
+ * cambiar con el libro ya leído y la pasada se recalcula al momento.
+ *
+ * **Lo que va a pasar se enseña en cuatro montones, y siempre los mismos**: lo
+ * que se escribe en el Excel, lo que entra en la aplicación, lo que hay que
+ * decidir y lo que se deja como está. Primero en total, luego hoja por hoja y
+ * celda a celda, con de qué aula o parte es cada celda, qué dice hoy, qué va a
+ * decir y por qué. Antes se veía qué entraba en la base y cuánto se escribía
+ * en el libro; no qué. Y el almacén tiene su propio bloque: qué compras, qué
+ * consumos y qué devoluciones va a apuntar la pasada, y qué material **no** se
+ * va a descontar porque el catálogo no lo reconoce.
  *
  * **El fichero no sale de este ordenador.** Se abre, se cruza y se parchea en el
  * navegador. Lo único que viaja al servidor es el plan —qué celdas ganó el
@@ -53,6 +71,7 @@ import type { Alta, Plan, Resumen as ResumenDeHoja } from '@/domain/sincronizar'
  */
 export function SincronizarExcel(): React.ReactElement {
   const entrada = useRef<HTMLInputElement>(null)
+  const [referencia, setReferencia] = useState<Referencia | null>(null)
   const [analisis, setAnalisis] = useState<Analisis | null>(null)
   const [fallo, setFallo] = useState<string | null>(null)
   const [aplicado, setAplicado] = useState<string | null>(null)
@@ -61,7 +80,7 @@ export function SincronizarExcel(): React.ReactElement {
   const [entregando, setEntregando] = useState(false)
 
   const leer = useMutation({
-    mutationFn: (fichero: File) => analizar(fichero),
+    mutationFn: (fichero: File) => analizar(fichero, new Date(), {}, referencia),
     onSuccess: (a) => {
       setAnalisis(a)
       setFallo(null)
@@ -106,16 +125,27 @@ export function SincronizarExcel(): React.ReactElement {
     onError: (e: Error) => setFallo(e.message),
   })
 
+  /** Todo lo que vuelve a planificar deja obsoleto el libro que hubiera. */
+  const volverAPlanificar = (siguiente: Analisis): void => {
+    setAnalisis(siguiente)
+    setLibro(null)
+    setEntregado(null)
+    setAplicado(null)
+  }
+
   /** Contestar una duda es volver a planificar: no toca ni la base ni el libro. */
   const contestar = (id: string, respuesta: Respuesta | null): void => {
     if (!analisis) return
     const respuestas = { ...analisis.respuestas }
     if (respuesta === null) delete respuestas[id]
     else respuestas[id] = respuesta
-    setAnalisis(replanificar(analisis, respuestas))
-    setLibro(null)
-    setEntregado(null)
-    setAplicado(null)
+    volverAPlanificar(replanificar(analisis, respuestas))
+  }
+
+  /** Cambiar quién manda también: con el libro ya leído, la pasada se recalcula al momento. */
+  const elegirReferencia = (r: Referencia | null): void => {
+    setReferencia(r)
+    if (analisis) volverAPlanificar(replanificar(analisis, analisis.respuestas, r))
   }
 
   /**
@@ -157,7 +187,7 @@ export function SincronizarExcel(): React.ReactElement {
 
   const ocupado = leer.isPending || sincronizar.isPending || previsualizar.isPending
 
-  const total = analisis ? sumar(analisis.resumenes) : null
+  const total = analisis ? sumar(analisis.planes) : null
   const pendientes = analisis ? dudasPendientes(analisis).length : 0
 
   return (
@@ -169,7 +199,10 @@ export function SincronizarExcel(): React.ReactElement {
         la hoja entra en la base. El fichero no sale de este ordenador.
       </p>
 
+      <QuienManda referencia={referencia} disabled={ocupado} onElegir={elegirReferencia} />
+
       <div className="card mt-4 p-4">
+        <p className="eyebrow">2 · El libro</p>
         <input
           ref={entrada}
           type="file"
@@ -179,12 +212,12 @@ export function SincronizarExcel(): React.ReactElement {
             const f = e.target.files?.[0]
             if (f) leer.mutate(f)
           }}
-          className="block w-full text-base file:mr-3 file:h-10 file:rounded-ctl file:border-0 file:bg-accent-fill file:px-4 file:font-semibold file:text-accent-ink"
+          className="mt-2 block w-full text-base file:mr-3 file:h-10 file:rounded-ctl file:border-0 file:bg-accent-fill file:px-4 file:font-semibold file:text-accent-ink"
         />
         <p className="mt-2 text-xs text-muted">
           {leer.isPending
             ? 'Leyendo el libro y el estado de la aplicación…'
-            : 'Se miran las seis hojas del libro: estado, partes, bolsa y PCs de repuesto del año, y las dos de 2025.'}
+            : 'Se miran las seis hojas del libro: estado, partes, bolsa y PCs de repuesto del año, y las dos de 2025. Nada se escribe hasta que pulses «Sincronizar».'}
         </p>
       </div>
 
@@ -194,7 +227,7 @@ export function SincronizarExcel(): React.ReactElement {
 
       {analisis && !analisis.bloqueada && analisis.libroDesconocido && (
         <div className="card mt-4 border-warn p-4">
-          <h2 className="text-sm font-semibold text-warn-ink">
+          <h2 className="text-sm font-semibold text-warn">
             Este no es el libro que salió de la última sincronización
           </h2>
           <p className="mt-2 text-sm text-muted">
@@ -211,7 +244,8 @@ export function SincronizarExcel(): React.ReactElement {
 
       {analisis && !analisis.bloqueada && total && (
         <>
-          <Cabecera analisis={analisis} total={total} />
+          <Resumen analisis={analisis} total={total} />
+          <Almacen movimientos={analisis.movimientos} />
           {analisis.dudas.length > 0 && (
             <Dudas
               dudas={analisis.dudas}
@@ -220,9 +254,11 @@ export function SincronizarExcel(): React.ReactElement {
               onContestar={contestar}
             />
           )}
-          <div className="mt-4 space-y-3">
-            {analisis.planes.map((p, i) => (
-              <PorHoja key={p.hoja} plan={p} resumen={analisis.resumenes[i]!} />
+
+          <h2 className="eyebrow mt-6">4 · Hoja por hoja</h2>
+          <div className="mt-2 space-y-3">
+            {analisis.planes.map((p) => (
+              <PorHoja key={p.hoja} plan={p} />
             ))}
           </div>
 
@@ -253,7 +289,7 @@ export function SincronizarExcel(): React.ReactElement {
             </button>
           </div>
 
-          {aplicado && <p className="mt-3 text-sm text-ok-ink">{aplicado}</p>}
+          {aplicado && <p className="mt-3 text-sm text-ok">{aplicado}</p>}
 
           {libro && (
             <Entrega
@@ -266,6 +302,508 @@ export function SincronizarExcel(): React.ReactElement {
         </>
       )}
     </section>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// 1 · Quién manda
+// -----------------------------------------------------------------------------
+
+const OPCIONES: Array<{ id: Referencia | null; titulo: string; texto: string }> = [
+  {
+    id: null,
+    titulo: 'Que decida una persona',
+    texto: 'Sale como choque, no se toca ninguno de los dos lados y se ve aquí y en la hoja «Sincronización».',
+  },
+  {
+    id: 'excel',
+    titulo: 'Manda el Excel',
+    texto: 'Lo que dice la hoja entra en la aplicación.',
+  },
+  {
+    id: 'app',
+    titulo: 'Manda la aplicación',
+    texto: 'Lo que dice la aplicación se escribe en la hoja.',
+  },
+]
+
+/**
+ * La elección va ANTES del libro, y con número: es la primera decisión de la
+ * pasada y la que más cambia lo que sale. Con el libro ya leído se puede
+ * cambiar igual, y la pasada se recalcula.
+ */
+function QuienManda({
+  referencia,
+  disabled,
+  onElegir,
+}: {
+  referencia: Referencia | null
+  disabled: boolean
+  onElegir: (r: Referencia | null) => void
+}): React.ReactElement {
+  return (
+    <div className="card mt-4 p-4">
+      <p className="eyebrow">1 · Quién manda</p>
+      <h2 className="mt-1 text-sm font-semibold">
+        Si una celda es distinta en los dos lados y no se puede saber quién la cambió
+      </h2>
+      <p className="mt-1 text-xs leading-relaxed text-muted">
+        Pasa la primera vez que se sincroniza un libro —no hay con qué comparar— y cuando la
+        misma celda cambió en el Excel y en la aplicación. Si solo cambió un lado, gana ese lado,
+        se elija lo que se elija. Y las columnas con dueño fijo —los m², la fecha de revisión
+        anterior, las fórmulas— no cambian de dueño.
+      </p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-3" role="group" aria-label="Quién manda">
+        {OPCIONES.map((o) => {
+          const activa = referencia === o.id
+          return (
+            <button
+              key={o.id ?? 'preguntar'}
+              type="button"
+              aria-pressed={activa}
+              disabled={disabled}
+              onClick={() => onElegir(o.id)}
+              className={`key min-h-11 px-3 py-2 text-left text-sm ${activa ? 'key-accent' : 'key-quiet'}`}
+            >
+              <span className="block font-semibold">{o.titulo}</span>
+              <span className={`mt-0.5 block text-xs leading-snug ${activa ? '' : 'text-muted'}`}>{o.texto}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/** Cómo se dice la elección, en una frase corta, donde haga falta recordarla. */
+function nombreDeLaReferencia(r: Referencia | null): string {
+  if (r === 'excel') return 'manda el Excel'
+  if (r === 'app') return 'manda la aplicación'
+  return 'decide una persona: los choques se quedan sin tocar'
+}
+
+// -----------------------------------------------------------------------------
+// 3 · Qué va a pasar, en total
+// -----------------------------------------------------------------------------
+
+/** Los cuatro montones, sumados. Son los mismos cuatro que enseña cada hoja. */
+interface Totales {
+  alExcel: { celdas: number; filasNuevas: number; filasQueSalen: number }
+  aLaApp: { celdas: number; filasNuevas: number }
+  decidir: { dudas: number; choques: number; sinLeer: number }
+  igual: { sinCruzar: number; avisos: number }
+}
+
+function sumar(planes: Plan[]): Totales {
+  const t: Totales = {
+    alExcel: { celdas: 0, filasNuevas: 0, filasQueSalen: 0 },
+    aLaApp: { celdas: 0, filasNuevas: 0 },
+    decidir: { dudas: 0, choques: 0, sinLeer: 0 },
+    igual: { sinCruzar: 0, avisos: 0 },
+  }
+  for (const p of planes) {
+    t.alExcel.celdas += p.haciaElExcel.length
+    t.alExcel.filasNuevas += p.filasQueEntran.length
+    t.alExcel.filasQueSalen += p.filasQueSalen.length
+    t.aLaApp.celdas += p.haciaLaBase.length
+    t.aLaApp.filasNuevas += p.altas.length
+    t.decidir.dudas += p.dudas.length
+    t.decidir.choques += p.conflictos.length
+    t.decidir.sinLeer += p.cuarentena.length
+    t.igual.sinCruzar += p.sinCruzar.length
+    t.igual.avisos += p.avisos.length
+  }
+  return t
+}
+
+function Resumen({ analisis, total }: { analisis: Analisis; total: Totales }): React.ReactElement {
+  const porDecidir = total.decidir.dudas + total.decidir.choques + total.decidir.sinLeer
+  return (
+    <div className="card mt-4 p-4">
+      <p className="eyebrow">3 · Qué va a pasar</p>
+      <p className="mt-1 text-sm">
+        <span className="font-semibold">{analisis.nombre}</span>
+        <span className="text-muted"> · {nombreDeLaReferencia(analisis.referencia)}</span>
+      </p>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Monton tono="excel" titulo="Al Excel">
+          <Cifra n={total.alExcel.celdas} que="celdas que se escriben" />
+          <Cifra n={total.alExcel.filasNuevas} que="filas nuevas" />
+          <Cifra n={total.alExcel.filasQueSalen} que="filas que salen" />
+        </Monton>
+        <Monton tono="app" titulo="A la aplicación">
+          <Cifra n={total.aLaApp.celdas} que="celdas que entran" />
+          <Cifra n={total.aLaApp.filasNuevas} que="filas nuevas" />
+        </Monton>
+        <Monton tono="decidir" titulo="Hay que decidir">
+          <Cifra n={total.decidir.dudas} que="dudas" />
+          <Cifra n={total.decidir.choques} que="choques" />
+          <Cifra n={total.decidir.sinLeer} que="no se pueden leer" />
+        </Monton>
+        <Monton tono="igual" titulo="Se deja como está">
+          <Cifra n={total.igual.sinCruzar} que="filas sin cruzar" />
+          <Cifra n={total.igual.avisos} que="avisos" />
+        </Monton>
+      </div>
+
+      {analisis.hojasNuevas.length > 0 && (
+        <p className="mt-3 text-sm">
+          Se crean {analisis.hojasNuevas.map((h) => `«${h.nombre}»`).join(' y ')}: ha cambiado el
+          año.
+        </p>
+      )}
+      <p className="mt-3 text-sm text-muted">
+        Se rehacen además las hojas <strong>Revisiones</strong>,{' '}
+        <strong>Movimientos de Almacén</strong>, <strong>Inventario por Sala</strong> y{' '}
+        <strong>Sincronización</strong>, enteras, con lo que la aplicación sabe hoy.
+        {analisis.hojasNuevas.some((h) => h.nombre.startsWith('PCs STOCK')) &&
+          ' El libro no traía la hoja de PCs de repuesto: se estrena con lo que la aplicación sabe.'}
+      </p>
+      {analisis.datos.sinUnidades && (
+        <p className="mt-2 text-sm text-warn">
+          El servidor no tiene todavía la tabla de PCs de repuesto (falta aplicar la migración de
+          septiembre): la hoja «PCs STOCK» se deja como está y el resto se sincroniza igual.
+        </p>
+      )}
+      {porDecidir === 0 ? (
+        <p className="mt-2 text-sm text-ok">Nada queda pendiente de decidir.</p>
+      ) : (
+        <p className="mt-2 text-sm text-warn">
+          {porDecidir} cosas por decidir. Las dudas se contestan aquí abajo; los choques y lo que no
+          se puede leer no se tocan en ninguno de los dos lados, y salen listados en la hoja
+          «Sincronización» del libro.
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** Los cuatro tonos, y siempre con la palabra delante: el color solo acompaña. */
+const TONO: Record<'excel' | 'app' | 'decidir' | 'igual', string> = {
+  excel: 'border-accent text-accent',
+  app: 'border-ok text-ok',
+  decidir: 'border-warn text-warn',
+  igual: 'border-line text-muted',
+}
+
+function Monton({
+  tono,
+  titulo,
+  children,
+}: {
+  tono: keyof typeof TONO
+  titulo: string
+  children: React.ReactNode
+}): React.ReactElement {
+  return (
+    <div className={`border-l-2 pl-3 ${TONO[tono].split(' ')[0]}`}>
+      <p className={`eyebrow ${TONO[tono].split(' ')[1]}`}>{titulo}</p>
+      <div className="mt-1 space-y-1">{children}</div>
+    </div>
+  )
+}
+
+function Cifra({ n, que }: { n: number; que: string }): React.ReactElement {
+  return (
+    <p className={`text-sm ${n === 0 ? 'text-muted' : ''}`}>
+      <span className="font-mono text-base font-semibold tabular-nums">{n}</span> {que}
+    </p>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// El almacén: lo que se va a apuntar
+// -----------------------------------------------------------------------------
+
+const TIPO_DE_MOVIMIENTO: Record<MovimientoPrevisto['tipo'], { titulo: string; tono: keyof typeof TONO; texto: string }> = {
+  compra: {
+    titulo: 'Compras',
+    tono: 'app',
+    texto: 'Entran en el almacén. La diferencia entre lo que dice «Total Comprado» y lo que la aplicación ya tenía apuntado ese año.',
+  },
+  consumo: {
+    titulo: 'Salidas',
+    tono: 'app',
+    texto: 'Salen del almacén a nombre del parte, con su aula y con la fecha del parte. Solo la diferencia con lo que ese parte ya tenía descontado.',
+  },
+  devolucion: {
+    titulo: 'Devoluciones',
+    tono: 'app',
+    texto: 'Vuelven al almacén: la hoja baja la cantidad, o ya no cuenta ese artículo en el parte.',
+  },
+  sin_articulo: {
+    titulo: 'No se descuenta: artículo desconocido',
+    tono: 'decidir',
+    texto: 'El catálogo del almacén no reconoce el nombre. Se guarda el texto en el parte y no sale nada del almacén. Añade el alias en el catálogo y vuelve a subir el libro.',
+  },
+  no_entra: {
+    titulo: 'No entra',
+    tono: 'decidir',
+    texto: 'La hoja dice menos compras que la aplicación. Una compra no se deshace desde una celda: va a la bandeja para que alguien mire cuál sobra.',
+  },
+}
+
+function Almacen({ movimientos }: { movimientos: MovimientoPrevisto[] }): React.ReactElement {
+  const grupos = (Object.keys(TIPO_DE_MOVIMIENTO) as Array<MovimientoPrevisto['tipo']>)
+    .map((tipo) => ({ tipo, lista: movimientos.filter((m) => m.tipo === tipo) }))
+    .filter((g) => g.lista.length > 0)
+  const unidades = (lista: MovimientoPrevisto[]): number => lista.reduce((n, m) => n + m.cantidad, 0)
+
+  return (
+    <div className="card mt-4 p-4">
+      <p className="eyebrow">Almacén</p>
+      {grupos.length === 0 ? (
+        <p className="mt-1 text-sm text-muted">El almacén no se toca en esta pasada.</p>
+      ) : (
+        <>
+          <p className="mt-1 text-sm text-muted">
+            Lo que el almacén va a apuntar al sincronizar, calculado como lo calcula la base: solo
+            las diferencias.
+          </p>
+          <div className="mt-3 space-y-4">
+            {grupos.map(({ tipo, lista }) => {
+              const t = TIPO_DE_MOVIMIENTO[tipo]
+              return (
+                <Grupo
+                  key={tipo}
+                  tono={t.tono}
+                  titulo={`${t.titulo} (${lista.length}${lista.length !== unidades(lista) ? ` · ${unidades(lista)} unidades` : ''})`}
+                  explicacion={t.texto}
+                >
+                  <Tabla
+                    cabeceras={['Artículo', 'Unidades', 'De qué', 'Hoja · fila', 'Nota']}
+                    filas={lista.map((m) => [m.articulo, String(m.cantidad), m.destino, `${m.hoja} · ${m.fila}`, m.nota])}
+                  />
+                </Grupo>
+              )
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// 4 · Hoja por hoja
+// -----------------------------------------------------------------------------
+
+function PorHoja({ plan }: { plan: Plan }): React.ReactElement {
+  const alExcel = plan.haciaElExcel.length + plan.filasQueEntran.length + plan.filasQueSalen.length
+  const aLaApp = plan.haciaLaBase.length + plan.altas.length
+  const decidir = plan.conflictos.length + plan.cuarentena.length + plan.dudas.length
+  const igual = plan.sinCruzar.length
+  const nada = alExcel + aLaApp + decidir + igual === 0 && plan.avisos.length === 0
+  const hoja = hojaPorNombre(plan.hoja)
+  const cabeceraDe = (campo: string): string => (hoja ? columnaDeCampo(hoja, campo)?.cabecera.trim() : undefined) ?? campo
+
+  return (
+    <details className="card p-4" open={alExcel + aLaApp + decidir > 0}>
+      <summary className="cursor-pointer text-sm font-semibold">
+        {plan.hoja}
+        <span className="ml-2 font-normal text-muted">
+          {nada
+            ? 'sin cambios'
+            : [
+                alExcel > 0 && `${alExcel} al Excel`,
+                aLaApp > 0 && `${aLaApp} a la aplicación`,
+                decidir > 0 && `${decidir} por decidir`,
+                igual > 0 && `${igual} se quedan como están`,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+        </span>
+      </summary>
+
+      <div className="mt-3 space-y-5">
+        {alExcel > 0 && (
+          <Grupo
+            tono="excel"
+            titulo={`Al Excel (${alExcel})`}
+            explicacion="Lo que la aplicación escribe en esta hoja. Nada de esto toca la base."
+          >
+            {plan.haciaElExcel.length > 0 && (
+              <Subgrupo titulo={`Celdas (${plan.haciaElExcel.length})`}>
+                <Tabla
+                  cabeceras={['Celda', 'De qué', 'Columna', 'Dice hoy', 'Pasará a decir', 'Por qué']}
+                  filas={plan.haciaElExcel.map((h) => [
+                    `${h.letra}${h.fila}`,
+                    h.destino,
+                    h.cabecera,
+                    texto(h.antes),
+                    texto(h.valor),
+                    h.motivo,
+                  ])}
+                />
+              </Subgrupo>
+            )}
+            {plan.filasQueEntran.length > 0 && (
+              <Subgrupo titulo={`Filas nuevas (${plan.filasQueEntran.length})`}>
+                <Tabla
+                  cabeceras={['Qué', 'Cuál', 'Dónde']}
+                  filas={plan.filasQueEntran.map((f) => [f.que, f.destino, f.donde])}
+                />
+              </Subgrupo>
+            )}
+            {plan.filasQueSalen.length > 0 && (
+              <Subgrupo titulo={`Filas que salen (${plan.filasQueSalen.length})`}>
+                <Tabla
+                  cabeceras={['Fila', 'Cuál', 'Por qué']}
+                  filas={plan.filasQueSalen.map((f) => [String(f.fila), f.destino, f.motivo])}
+                />
+              </Subgrupo>
+            )}
+          </Grupo>
+        )}
+
+        {aLaApp > 0 && (
+          <Grupo
+            tono="app"
+            titulo={`A la aplicación (${aLaApp})`}
+            explicacion="Lo que se corrigió en la hoja y entra en la base. Queda anotado, celda a celda, como corrección hecha desde el Excel."
+          >
+            {plan.haciaLaBase.length > 0 && (
+              <Subgrupo titulo={`Celdas (${plan.haciaLaBase.length})`}>
+                <Tabla
+                  cabeceras={['Celda', 'De qué', 'Columna', 'Valor', 'Por qué']}
+                  filas={plan.haciaLaBase.map((h) => [
+                    `${h.letra}${h.fila}`,
+                    h.destino,
+                    cabeceraDe(h.campo),
+                    texto(h.valor),
+                    h.motivo,
+                  ])}
+                />
+              </Subgrupo>
+            )}
+            {plan.altas.length > 0 && (
+              <Subgrupo titulo={`Filas del libro que entran como nuevas (${plan.altas.length})`}>
+                <p className="mb-2 text-xs text-muted">
+                  Estaban en el libro y la aplicación no las tenía. A un parte le pone número la base,
+                  y el número vuelve a su fila.
+                </p>
+                <Tabla
+                  cabeceras={['Fila', 'Qué', 'Detalle']}
+                  filas={plan.altas.map((a) => [String(a.fila), queEs(a), describirAlta(a)])}
+                />
+              </Subgrupo>
+            )}
+          </Grupo>
+        )}
+
+        {decidir > 0 && (
+          <Grupo
+            tono="decidir"
+            titulo={`Hay que decidir (${decidir})`}
+            explicacion="No se toca ninguno de los dos lados hasta que alguien decida."
+          >
+            {plan.dudas.length > 0 && (
+              <p className="text-sm">
+                {plan.dudas.length} {plan.dudas.length === 1 ? 'duda' : 'dudas'} de esta hoja: se
+                contestan arriba, en el bloque de dudas.
+              </p>
+            )}
+            {plan.conflictos.length > 0 && (
+              <Subgrupo titulo={`Choques (${plan.conflictos.length})`}>
+                <p className="mb-2 text-xs text-muted">
+                  Los dos lados cambiaron desde la última sincronización, y a cosas distintas. Elige
+                  arriba quién manda o resuélvelos a mano en uno de los dos sitios.
+                </p>
+                <Tabla
+                  cabeceras={['Celda', 'De qué', 'Columna', 'Dice la aplicación', 'Dice la hoja']}
+                  filas={plan.conflictos.map((c) => [
+                    `${c.letra}${c.fila}`,
+                    c.destino,
+                    cabeceraDe(c.campo),
+                    texto(c.base),
+                    texto(c.excel),
+                  ])}
+                />
+              </Subgrupo>
+            )}
+            {plan.cuarentena.length > 0 && (
+              <Subgrupo titulo={`No se pueden leer (${plan.cuarentena.length})`}>
+                <p className="mb-2 text-xs text-muted">
+                  Ni entran en la base ni se pisan en la hoja. Un cero inventado en la columna de
+                  lámparas mandaría a alguien a un aula que está perfectamente.
+                </p>
+                <Tabla
+                  cabeceras={['Celda', 'De qué', 'Columna', 'Dice', 'Por qué']}
+                  filas={plan.cuarentena.map((q) => [
+                    `${q.letra}${q.fila}`,
+                    q.destino,
+                    cabeceraDe(q.campo),
+                    texto(q.crudo),
+                    q.motivo,
+                  ])}
+                />
+              </Subgrupo>
+            )}
+          </Grupo>
+        )}
+
+        {(igual > 0 || plan.avisos.length > 0) && (
+          <Grupo
+            tono="igual"
+            titulo={`Se deja como está${igual > 0 ? ` (${igual})` : ''}`}
+            explicacion="Filas que no se han podido emparejar con nada de la aplicación, y lo que la pasada decide por su cuenta. Nada de esto cambia."
+          >
+            {plan.sinCruzar.length > 0 && (
+              <Subgrupo titulo={`Filas sin cruzar (${plan.sinCruzar.length})`}>
+                <Tabla
+                  cabeceras={['Fila', 'Por qué']}
+                  filas={plan.sinCruzar.map((s) => [String(s.fila), s.motivo])}
+                />
+              </Subgrupo>
+            )}
+            {plan.avisos.length > 0 && (
+              <details className="text-sm">
+                <summary className="cursor-pointer text-xs font-semibold text-muted">
+                  Avisos ({plan.avisos.length}): lo que la pasada hace o cuenta por su cuenta
+                </summary>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+                  {plan.avisos.map((a, i) => (
+                    <li key={`${i}-${a.slice(0, 40)}`}>{a}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </Grupo>
+        )}
+      </div>
+    </details>
+  )
+}
+
+/** Un montón dentro de una hoja: el filete de color a la izquierda es el mismo que arriba. */
+function Grupo({
+  tono,
+  titulo,
+  explicacion,
+  children,
+}: {
+  tono: keyof typeof TONO
+  titulo: string
+  explicacion: string
+  children: React.ReactNode
+}): React.ReactElement {
+  const [borde, color] = TONO[tono].split(' ')
+  return (
+    <div className={`border-l-2 pl-3 ${borde}`}>
+      <h3 className={`text-sm font-semibold ${color}`}>{titulo}</h3>
+      {explicacion && <p className="mt-0.5 text-xs text-muted">{explicacion}</p>}
+      <div className="mt-2 space-y-3">{children}</div>
+    </div>
+  )
+}
+
+function Subgrupo({ titulo, children }: { titulo: string; children: React.ReactNode }): React.ReactElement {
+  return (
+    <div>
+      <h4 className="text-xs font-semibold">{titulo}</h4>
+      <div className="mt-1">{children}</div>
+    </div>
   )
 }
 
@@ -316,7 +854,7 @@ function Entrega({
       </button>
       <p className="mt-2 text-xs text-muted">{libro.nombre}</p>
       {entregado && (
-        <p className="mt-2 text-sm text-ok-ink">
+        <p className="mt-2 text-sm text-ok">
           {entregado === 'compartido'
             ? `Compartid${libro.sincronizado ? 'o' : 'a'}.`
             : `Descargad${libro.sincronizado ? 'o' : 'a'}.`}{' '}
@@ -333,7 +871,7 @@ function Bloqueada({ planes }: { planes: Plan[] }): React.ReactElement {
   const fuera = planes.flatMap((p) => p.desajustes.map((d) => ({ hoja: p.hoja, ...d })))
   return (
     <div className="card mt-4 border-crit p-4">
-      <h2 className="text-sm font-semibold text-crit-ink">
+      <h2 className="text-sm font-semibold text-crit">
         Una hoja no tiene la forma que la aplicación espera
       </h2>
       <p className="mt-2 text-sm text-muted">
@@ -349,221 +887,26 @@ function Bloqueada({ planes }: { planes: Plan[] }): React.ReactElement {
   )
 }
 
-function Cabecera({
-  analisis,
-  total,
-}: {
-  analisis: Analisis
-  total: ReturnType<typeof sumar>
-}): React.ReactElement {
-  const pendientes = total.conflictos + total.cuarentena
-  return (
-    <div className="card mt-4 p-4">
-      <p className="eyebrow">{analisis.nombre}</p>
-      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
-        <Cifra n={total.celdasAlExcel} que="celdas al Excel" />
-        <Cifra n={total.celdasALaBase} que="celdas a la base" />
-        <Cifra n={total.altas} que="filas del libro que entran" />
-        <Cifra n={total.filasNuevas} que="filas nuevas" />
-        <Cifra n={total.filasBorradas} que="filas que salen" />
-      </div>
-      {analisis.hojasNuevas.length > 0 && (
-        <p className="mt-3 text-sm">
-          Se crean {analisis.hojasNuevas.map((h) => `«${h.nombre}»`).join(' y ')}: ha cambiado el
-          año.
-        </p>
-      )}
-      <p className="mt-3 text-sm text-muted">
-        Se añaden además las hojas <strong>Revisiones</strong>,{' '}
-        <strong>Movimientos de Almacén</strong>, <strong>Inventario por Sala</strong> y{' '}
-        <strong>Sincronización</strong>, que se rehacen enteras en cada pasada.
-        {analisis.hojasNuevas.some((h) => h.nombre.startsWith('PCs STOCK')) &&
-          ' El libro no traía la hoja de PCs de repuesto: se estrena con lo que la aplicación sabe.'}
-      </p>
-      {analisis.datos.sinUnidades && (
-        <p className="mt-2 text-sm text-warn-ink">
-          El servidor no tiene todavía la tabla de PCs de repuesto (falta aplicar la migración de
-          septiembre): la hoja «PCs STOCK» se deja como está y el resto se sincroniza igual.
-        </p>
-      )}
-      {pendientes === 0 ? (
-        <p className="mt-2 text-sm text-ok-ink">Nada queda pendiente de decidir.</p>
-      ) : (
-        <p className="mt-2 text-sm text-warn-ink">
-          {pendientes} celdas quedan sin decidir. No se toca ninguno de los dos lados, y salen
-          listadas en la hoja «Sincronización» del libro.
-        </p>
-      )}
-    </div>
-  )
-}
-
-function Cifra({ n, que }: { n: number; que: string }): React.ReactElement {
-  return (
-    <div>
-      <p className="text-2xl font-semibold tabular-nums">{n}</p>
-      <p className="text-xs text-muted">{que}</p>
-    </div>
-  )
-}
-
-function PorHoja({ plan, resumen }: { plan: Plan; resumen: ResumenDeHoja }): React.ReactElement {
-  const nada =
-    resumen.celdasAlExcel === 0 &&
-    resumen.celdasALaBase === 0 &&
-    resumen.filasNuevas === 0 &&
-    resumen.filasBorradas === 0 &&
-    resumen.conflictos === 0 &&
-    resumen.cuarentena === 0 &&
-    resumen.sinCruzar === 0 &&
-    resumen.altas === 0 &&
-    resumen.dudas === 0
-
-  return (
-    <details className="card p-4" open={resumen.conflictos + resumen.cuarentena + resumen.altas > 0}>
-      <summary className="cursor-pointer text-sm font-semibold">
-        {plan.hoja}
-        <span className="ml-2 font-normal text-muted">
-          {nada
-            ? 'sin cambios'
-            : [
-                resumen.celdasAlExcel > 0 && `${resumen.celdasAlExcel} al Excel`,
-                resumen.celdasALaBase > 0 && `${resumen.celdasALaBase} a la base`,
-                resumen.altas > 0 && `${resumen.altas} entran como nuevas`,
-                resumen.filasNuevas > 0 && `${resumen.filasNuevas} filas nuevas`,
-                resumen.filasBorradas > 0 && `${resumen.filasBorradas} salen`,
-                resumen.conflictos > 0 && `${resumen.conflictos} choques`,
-                resumen.cuarentena > 0 && `${resumen.cuarentena} sin leer`,
-                resumen.dudas > 0 && `${resumen.dudas} dudas`,
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-        </span>
-      </summary>
-
-      <div className="mt-3 space-y-4">
-        {plan.conflictos.length > 0 && (
-          <Bloque
-            titulo={`Choques (${plan.conflictos.length})`}
-            explicacion="Los dos lados cambiaron desde la última sincronización y a cosas distintas. No se toca ninguno: decide una persona."
-          >
-            <Tabla
-              cabeceras={['Celda', 'Dónde', 'Dice la aplicación', 'Dice la hoja']}
-              filas={plan.conflictos.map((c) => [
-                `${c.letra}${c.fila}`,
-                c.destino,
-                texto(c.base),
-                texto(c.excel),
-              ])}
-            />
-          </Bloque>
-        )}
-
-        {plan.cuarentena.length > 0 && (
-          <Bloque
-            titulo={`No se pueden leer (${plan.cuarentena.length})`}
-            explicacion="Ni entran en la base ni se pisan en la hoja. Un cero inventado en la columna de lámparas mandaría a alguien a un aula que está perfectamente."
-          >
-            <Tabla
-              cabeceras={['Celda', 'Dónde', 'Dice', 'Por qué']}
-              filas={plan.cuarentena.map((q) => [
-                `${q.letra}${q.fila}`,
-                q.destino,
-                texto(q.crudo),
-                q.motivo,
-              ])}
-            />
-          </Bloque>
-        )}
-
-        {plan.sinCruzar.length > 0 && (
-          <Bloque
-            titulo={`Filas sin cruzar (${plan.sinCruzar.length})`}
-            explicacion="No se han podido emparejar con nada de la aplicación. Se dejan exactamente como están."
-          >
-            <Tabla
-              cabeceras={['Fila', 'Por qué']}
-              filas={plan.sinCruzar.map((s) => [String(s.fila), s.motivo])}
-            />
-          </Bloque>
-        )}
-
-        {plan.altas.length > 0 && (
-          <Bloque
-            titulo={`Filas del libro que entran en la aplicación (${plan.altas.length})`}
-            explicacion="Estaban en el libro y la aplicación no las tenía. A un parte le pone número la base, y el número vuelve a su fila."
-          >
-            <Tabla
-              cabeceras={['Fila', 'Qué', 'Detalle']}
-              filas={plan.altas.map((a) => [String(a.fila), queEs(a), describirAlta(a)])}
-            />
-          </Bloque>
-        )}
-
-        {plan.haciaLaBase.length > 0 && (
-          <Bloque
-            titulo={`Entran en la base (${plan.haciaLaBase.length})`}
-            explicacion="Lo que se corrigió en la hoja y la aplicación no había tocado."
-          >
-            <Tabla
-              cabeceras={['Celda', 'Dónde', 'Qué', 'Valor', 'Por qué']}
-              filas={plan.haciaLaBase.map((h) => [
-                `${h.letra}${h.fila}`,
-                h.destino,
-                h.campo,
-                texto(h.valor),
-                h.motivo,
-              ])}
-            />
-          </Bloque>
-        )}
-
-        {plan.avisos.length > 0 && (
-          <Bloque titulo={`Avisos (${plan.avisos.length})`} explicacion="">
-            <ul className="list-disc space-y-1 pl-5 text-sm">
-              {plan.avisos.slice(0, 25).map((a) => (
-                <li key={a}>{a}</li>
-              ))}
-            </ul>
-            {plan.avisos.length > 25 && (
-              <p className="mt-2 text-xs text-muted">y {plan.avisos.length - 25} más.</p>
-            )}
-          </Bloque>
-        )}
-      </div>
-    </details>
-  )
-}
-
-function Bloque({
-  titulo,
-  explicacion,
-  children,
-}: {
-  titulo: string
-  explicacion: string
-  children: React.ReactNode
-}): React.ReactElement {
-  return (
-    <div>
-      <h3 className="text-sm font-semibold">{titulo}</h3>
-      {explicacion && <p className="mt-1 text-xs text-muted">{explicacion}</p>}
-      <div className="mt-2">{children}</div>
-    </div>
-  )
-}
-
+/**
+ * Una tabla que empieza corta y se abre entera si se pide.
+ *
+ * Se enseñan las primeras filas y se dice cuántas quedan: una tabla de 276 filas
+ * dentro de una pantalla de administración no la lee nadie de una vez, y hacerla
+ * scroll infinito esconde el resumen, que es lo que de verdad hay que mirar. Pero
+ * «y 251 más» sin forma de verlas era esconder justo lo que se venía a
+ * comprobar: el botón las abre todas.
+ */
 function Tabla({
   cabeceras,
   filas,
+  tope = 25,
 }: {
   cabeceras: string[]
   filas: string[][]
+  tope?: number
 }): React.ReactElement {
-  // Se enseñan las primeras y se dice cuántas quedan: una tabla de 276 filas
-  // dentro de una pantalla de administración no la lee nadie, y hacerla scroll
-  // infinito esconde el resumen, que es lo que de verdad hay que mirar.
-  const tope = 25
+  const [todas, setTodas] = useState(false)
+  const visibles = todas ? filas : filas.slice(0, tope)
   return (
     <div className="scroll-x">
       <table className="w-full text-left text-sm">
@@ -577,7 +920,7 @@ function Tabla({
           </tr>
         </thead>
         <tbody>
-          {filas.slice(0, tope).map((f, i) => (
+          {visibles.map((f, i) => (
             <tr key={`${f[0]}-${i}`} className="border-t border-hair">
               {f.map((v, j) => (
                 <td key={j} className="py-1 pr-4 align-top">
@@ -589,44 +932,19 @@ function Tabla({
         </tbody>
       </table>
       {filas.length > tope && (
-        <p className="mt-2 text-xs text-muted">y {filas.length - tope} más.</p>
+        <button
+          type="button"
+          className="key key-quiet mt-2 h-9 px-3 text-xs"
+          onClick={() => setTodas((v) => !v)}
+        >
+          {todas ? `Ver solo las ${tope} primeras` : `Ver las ${filas.length} (quedan ${filas.length - tope} más)`}
+        </button>
       )}
     </div>
   )
 }
 
 // -----------------------------------------------------------------------------
-
-function sumar(resumenes: ResumenDeHoja[]): {
-  celdasAlExcel: number
-  celdasALaBase: number
-  filasNuevas: number
-  filasBorradas: number
-  conflictos: number
-  cuarentena: number
-  altas: number
-} {
-  return resumenes.reduce(
-    (a, r) => ({
-      celdasAlExcel: a.celdasAlExcel + r.celdasAlExcel,
-      celdasALaBase: a.celdasALaBase + r.celdasALaBase,
-      filasNuevas: a.filasNuevas + r.filasNuevas,
-      filasBorradas: a.filasBorradas + r.filasBorradas,
-      conflictos: a.conflictos + r.conflictos,
-      cuarentena: a.cuarentena + r.cuarentena,
-      altas: a.altas + r.altas,
-    }),
-    {
-      celdasAlExcel: 0,
-      celdasALaBase: 0,
-      filasNuevas: 0,
-      filasBorradas: 0,
-      conflictos: 0,
-      cuarentena: 0,
-      altas: 0,
-    },
-  )
-}
 
 function queEs(a: Alta): string {
   if (a.tipo === 'incidencia') return 'Parte'
@@ -643,7 +961,8 @@ function describirAlta(a: Alta): string {
 }
 
 function texto(v: unknown): string {
-  if (v === null || v === undefined) return '(vacío)'
+  if (v === null || v === undefined || v === '') return '(vacío)'
+  if (typeof v === 'boolean') return v ? 'SÍ' : 'NO'
   return String(v)
 }
 

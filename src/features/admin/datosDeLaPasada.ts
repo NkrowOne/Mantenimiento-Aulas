@@ -25,6 +25,8 @@ import { descargaEntera } from '@/sync/paginada'
 import type { ArticuloVolcado, IncidenciaVolcada, MovimientoVolcado, SalaVolcada, UnidadVolcada } from '@/domain/volcado'
 import { compradoEn, consumoPorMes } from '@/domain/volcado'
 import type { EquipoParaHoja, MovimientoParaHoja, RevisionParaHoja } from '@/domain/hojasNuevas'
+import { comprobacionesLegibles } from '@/domain/revisiones'
+import type { CheckResult } from '@/domain/types'
 import { escribirMaterial } from '@/domain/valores'
 
 // -----------------------------------------------------------------------------
@@ -112,9 +114,12 @@ interface FilaIncidencia {
   id: string
   room_id: string | null
   external_ref: string | null
-  title: string
+  /** Nulo en un borrador: para guardarlo basta la sala. */
+  title: string | null
   description: string | null
   state: string
+  /** `incidencia`, `solicitud` u `observacion`. Solo las dos primeras son partes. */
+  kind: string
   opened_at: string
   resolved_at: string | null
   resolution: string | null
@@ -137,7 +142,10 @@ interface FilaMovimiento {
   kind: string
   occurred_at: string
   incident_id: string | null
+  /** Dónde se gastó, cuando se apuntó sin parte —desde el aula— o el parte no tiene sala. */
+  room_id: string | null
   by_user: string | null
+  source: string
   note: string | null
 }
 interface FilaUnidad {
@@ -220,7 +228,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     descargaEntera<FilaIncidencia>((d, h) =>
       supabase
         .from('incidents')
-        .select('id, room_id, external_ref, title, description, state, opened_at, resolved_at, resolution')
+        .select('id, room_id, external_ref, title, description, state, kind, opened_at, resolved_at, resolution')
         .order('id')
         .range(d, h),
     ),
@@ -237,7 +245,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     descargaEntera<FilaMovimiento>((d, h) =>
       supabase
         .from('stock_movements')
-        .select('stock_item_id, qty, kind, occurred_at, incident_id, by_user, note')
+        .select('stock_item_id, qty, kind, occurred_at, incident_id, room_id, by_user, source, note')
         .order('id')
         .range(d, h),
     ),
@@ -307,6 +315,14 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     const l = equiposPorSala.get(a.room_id) ?? []
     l.push(a)
     equiposPorSala.set(a.room_id, l)
+  }
+
+  // Cómo se llama cada aparato, retirados incluidos: una revisión de marzo
+  // habla del proyector que se quitó en junio, y la hoja tiene que poder
+  // decir «Proyector» y no una clave.
+  const nombreDelEquipo = new Map<string, string>()
+  for (const a of equiposD.data ?? []) {
+    nombreDelEquipo.set(a.id, a.label || nombreDelTipo(a.asset_type_id))
   }
 
   // --- Revisiones ------------------------------------------------------------
@@ -401,7 +417,10 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
         resultado: r.overall,
         horasProyector: medidaDe(checks, 'h'),
         lampara: medidaDe(checks, '%'),
-        comprobaciones: checks.length > 0 ? checks.map((c) => `${c.check_key}: ${c.result}`).join(' · ') : null,
+        comprobaciones: comprobacionesLegibles(
+          checks.map((c) => ({ check_key: c.check_key, result: c.result as CheckResult })),
+          (id) => nombreDelEquipo.get(id) ?? null,
+        ),
         incidenciasAbiertas: abiertasPorSala.get(s.id) ?? 0,
         notas: r.notes,
       })
@@ -422,11 +441,19 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
 
   const movimientosPorArticulo = new Map<string, MovimientoVolcado[]>()
   const saldos = new Map<string, number>()
+  // Y lo que cada parte tiene descontado, por artículo: consumos menos
+  // devoluciones, que es exactamente lo que la base mira antes de mover nada.
+  const descontadoPorParte = new Map<string, Map<string, number>>()
   for (const m of movimientosD.data ?? []) {
     const l = movimientosPorArticulo.get(m.stock_item_id) ?? []
     l.push({ stockItemId: m.stock_item_id, qty: m.qty, kind: m.kind, occurredAt: m.occurred_at })
     movimientosPorArticulo.set(m.stock_item_id, l)
     saldos.set(m.stock_item_id, (saldos.get(m.stock_item_id) ?? 0) + m.qty)
+    if (m.incident_id && (m.kind === 'consumo' || m.kind === 'devolucion')) {
+      const porArticulo = descontadoPorParte.get(m.incident_id) ?? new Map<string, number>()
+      porArticulo.set(m.stock_item_id, (porArticulo.get(m.stock_item_id) ?? 0) - m.qty)
+      descontadoPorParte.set(m.incident_id, porArticulo)
+    }
   }
 
   const articulos: ArticuloVolcado[] = articulosFilas
@@ -464,6 +491,13 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     incidencias.push({
       id: i.id,
       numero: i.external_ref,
+      // Una observación es una nota de seguimiento y un borrador está a medio
+      // escribir: la base les pone número como a un parte, y no lo son. La hoja
+      // de partes los reconoce por el número y los saca; no los añade.
+      esParte: i.kind !== 'observacion' && i.state !== 'borrador',
+      materialApuntado: [...(descontadoPorParte.get(i.id) ?? new Map<string, number>()).entries()]
+        .filter(([, cantidad]) => cantidad > 0)
+        .map(([articuloId, cantidad]) => ({ articuloId, cantidad })),
       salaCode: i.room_id ? (salaPorId.get(i.room_id)?.code ?? '') : '',
       // En Madrid, y no por gusto: la base está en `Europe/Madrid`, así que una
       // corrección de la hoja entra como `'2026-02-19'::date::timestamptz`, o
@@ -472,7 +506,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
       // alguien corrigió a mano se movía un día ella sola.
       abierta: diaEnMadrid(new Date(i.opened_at)),
       resuelta: i.resolved_at ? diaEnMadrid(new Date(i.resolved_at)) : null,
-      problema: i.title,
+      problema: i.title ?? null,
       observacion: i.description,
       resolucion: i.resolution,
       material:
@@ -509,8 +543,16 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     cantidad: m.qty,
     tipo: m.kind,
     incidencia: m.incident_id ? (numeroDeIncidencia.get(m.incident_id) ?? null) : null,
-    sala: m.incident_id ? (salaDeIncidencia.get(m.incident_id) ?? null) : null,
-    quien: m.by_user ? (perfiles.get(m.by_user) ?? null) : null,
+    // El aula del propio movimiento primero: el material que se apunta desde
+    // la ficha del aula lleva la sala y no siempre un parte, y sin esto esas
+    // filas salían sin aula en la hoja.
+    sala:
+      (m.room_id ? (salaPorId.get(m.room_id)?.code ?? null) : null) ??
+      (m.incident_id ? (salaDeIncidencia.get(m.incident_id) ?? null) : null) ??
+      null,
+    // Lo que entró por el Excel no lo hizo nadie de la aplicación, y la hoja
+    // tiene que decirlo: una columna «Quién» vacía se lee como un dato perdido.
+    quien: m.by_user ? (perfiles.get(m.by_user) ?? null) : m.source === 'sharepoint' ? 'Excel' : null,
     nota: m.note,
   }))
 

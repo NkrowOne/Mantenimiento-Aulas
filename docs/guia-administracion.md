@@ -6,11 +6,28 @@ aplicación; nada requiere tocar código.
 
 ---
 
+## 0. La pestaña Datos, por secciones
+
+Todo lo de administración vive en la pestaña **Datos** (solo la ven los
+administradores), y va en cinco secciones, arriba del todo. Se abre una cada
+vez, y la aplicación recuerda en cada navegador cuál fue la última:
+
+| Sección | Qué hay |
+|---|---|
+| **Usuarios** | Altas, roles y códigos de acceso (apartado 2) |
+| **Por decidir** | Lo que crece solo con cada ronda: retiradas por autorizar, equipos y tipos sin validar, y la auditoría de inventario (catálogo de equipos) |
+| **Maestro** | Equipamiento por defecto, el maestro de salas y edificios, y los edificios sin identificar (apartados 1 y 3) |
+| **Excel** | Sincronizar el libro de SharePoint (apartado 4b) |
+| **Importación** | Recuperar una copia, incidencias sin sala y la cuarentena (apartado 1) |
+
+---
+
 ## 1. Confirmar los nombres dudosos
 
 Es lo primero que conviene hacer tras desplegar. El importador **no adivina**:
 lo que no pudo interpretar con confianza quedó marcado, y sale en la pestaña
-**Datos** (solo visible para administradores).
+**Datos**: los edificios en la sección **Maestro**, las incidencias sin sala y
+la cuarentena en **Importación**.
 
 ### Edificios sin identificar
 
@@ -893,6 +910,56 @@ teclea en la hoja entra aquí (la pasada lo pregunta antes).
   «baja».
 
 Los ordenadores disponibles salen en el informe como capacidad de respuesta.
+
+## 4b. El Excel de SharePoint
+
+En **Datos → Excel** se sube el libro de SharePoint, se ve **qué va a pasar
+antes de que pase**, se aplica y se baja el mismo fichero con todo lo que la
+aplicación sabe. El diseño entero está en
+[`sincronizacion-sharepoint.md`](sincronizacion-sharepoint.md); esto es lo que
+hay que saber para usarlo.
+
+**1 · Quién manda.** Antes de subir el libro se elige qué pasa cuando una celda
+es distinta en los dos lados y no se puede saber quién la cambió —la primera
+vez que se sincroniza un libro, y cuando la misma celda cambió en el Excel y en
+la aplicación—:
+
+- **Que decida una persona**: sale como choque y no se toca ninguno de los dos
+  lados. Es lo de siempre.
+- **Manda el Excel**: lo que dice la hoja entra en la aplicación. Para cuando
+  se acaba de corregir el Excel a mano y es el inventario bueno.
+- **Manda la aplicación**: lo que dice la aplicación se escribe en la hoja.
+  Para cuando el Excel lleva meses sin tocarse.
+
+Si solo cambió un lado, gana ese lado se elija lo que se elija: elegir «manda
+el Excel» no borra lo que un técnico cerró ayer en el aula. Se puede cambiar
+con el libro ya leído y la pasada se recalcula al momento.
+
+**2 · El libro.** Se sube el `.xlsx`. No se escribe nada hasta pulsar
+«Sincronizar».
+
+**3 · Qué va a pasar.** Siempre los mismos cuatro montones, primero en total y
+luego hoja por hoja:
+
+| Montón | Qué es |
+|---|---|
+| **Al Excel** | Celdas que la aplicación va a escribir en la hoja —con de qué aula o parte son, qué dicen hoy, qué van a decir y por qué—, filas nuevas y filas que salen |
+| **A la aplicación** | Celdas corregidas en la hoja que entran en la base, y filas del libro que entran como nuevas (un parte tecleado, un artículo, un PC de repuesto) |
+| **Hay que decidir** | Dudas (se contestan ahí mismo), choques y celdas que no se pueden leer. Nada de esto se toca hasta que alguien decida |
+| **Se deja como está** | Filas que no cruzan con nada, y los avisos de lo que la pasada hace por su cuenta |
+
+Y el bloque **Almacén**, con lo que se va a apuntar si se sincroniza,
+calculado como lo calcula la base: compras (la diferencia entre «Total
+Comprado» y lo que la aplicación ya tenía ese año), salidas a nombre del parte
+y de su aula (solo la diferencia con lo que ese parte ya tenía descontado),
+devoluciones, y —en ámbar— el material que **no** se va a descontar porque el
+catálogo no reconoce el nombre. Si sale ahí, añade el alias en el catálogo del
+almacén antes de sincronizar.
+
+**Lo que no va a la hoja de partes.** Las observaciones —notas de seguimiento—
+y los borradores llevan número como un parte, pero no lo son: no se añaden a
+`Material Instalado`, y si una pasada anterior los escribió, la siguiente saca
+esas filas del libro y lo dice en «Filas que salen».
 
 ## 5. Las placas de puerta
 

@@ -19,6 +19,7 @@ import { rangoDeTipo } from './inventory'
 import {
   LEGACY_CHECK_LABELS,
   ROOM_CHECK_LABELS,
+  assetIdFromCheckKey,
   type CheckKey,
   type CheckResult,
   type InspectionCheck,
@@ -198,6 +199,35 @@ export function etiquetaDeComprobacion(c: ComprobacionDetalle): string {
   if (fija) return fija
 
   return LEGACY_CHECK_LABELS[c.check_key] ?? c.check_key
+}
+
+/**
+ * Las comprobaciones de una revisión en una frase, para la hoja «Revisiones»
+ * del Excel: `Proyector: correcto · Cámara: falla · Red: no aplica`.
+ *
+ * Con el nombre del aparato y no con la clave. La hoja salía con
+ * `asset:018f3a…: ok`, que es la clave interna de la comprobación: para quien
+ * abre el libro son renglones de códigos que no dicen de qué aparato hablan.
+ * El nombre lo resuelve quien llama —tiene el inventario entero, retirados
+ * incluidos— y el vocabulario fijo se resuelve aquí, igual que en la ficha.
+ */
+export function comprobacionesLegibles(
+  checks: Array<{ check_key: CheckKey; result: CheckResult }>,
+  nombreDeEquipo: (assetId: string) => string | null,
+): string | null {
+  if (checks.length === 0) return null
+  const resultado: Record<CheckResult, string> = { ok: 'correcto', incidencia: 'falla', na: 'no aplica' }
+  return checks
+    .map((c) => {
+      const assetId = assetIdFromCheckKey(c.check_key)
+      const nombre =
+        (assetId !== null ? nombreDeEquipo(assetId) : null) ??
+        ROOM_CHECK_LABELS[c.check_key as RoomCheckKey] ??
+        LEGACY_CHECK_LABELS[c.check_key] ??
+        (assetId !== null ? 'Equipo retirado' : c.check_key)
+      return `${nombre}: ${resultado[c.result] ?? c.result}`
+    })
+    .join(' · ')
 }
 
 /** La letra pequeña de la fila: modelo, serie y si el equipo ya no está. */

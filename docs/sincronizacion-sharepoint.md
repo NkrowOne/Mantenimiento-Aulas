@@ -249,6 +249,33 @@ otra manera de decir «se pierden ediciones y nadie sabe cuáles». Por eso la
 instantánea no es un detalle de implementación: es lo que hace que la
 bidireccionalidad sea segura.
 
+### Quién manda cuando no se puede saber: se elige al cargar
+
+La tabla deja dos casos sin respuesta: la **primera pasada** de un libro —no
+hay antepasado, así que no se sabe quién cambió cada celda— y el **choque**
+—cambiaron los dos—. Hasta ahora el primero lo resolvía «manda la app» a secas
+y el segundo iba a la bandeja. Pero quien sube el libro suele saber cuál de los
+dos inventarios es el bueno ese día: si se acaba de corregir el Excel a mano,
+es el Excel; si el Excel lleva meses sin tocarse, es la aplicación.
+
+Así que la pantalla lo pregunta **antes del libro**, y con el libro ya leído se
+puede cambiar y la pasada se recalcula al momento:
+
+| Elección | Primera pasada y choques |
+|---|---|
+| **Que decida una persona** (por defecto) | Primera pasada: manda la app. Choque: no se toca ninguno de los dos lados y sale aquí y en la hoja `Sincronización` |
+| **Manda el Excel** | Lo que dice la hoja entra en la base |
+| **Manda la aplicación** | Lo que dice la aplicación se escribe en la hoja |
+
+Y solo esos dos casos. Lo que la fusión **sí** sabe decidir no cambia con la
+elección: si solo un lado se movió desde la última pasada, gana ese lado.
+Elegir «manda el Excel» no puede revertir en la base una avería que un técnico
+cerró ayer en el aula y que la hoja no ha visto todavía. Tampoco cambian de
+dueño las columnas que lo tienen fijo —los m², la fecha de revisión anterior,
+las fórmulas— ni la regla del hueco: el vacío nunca gana. Cada celda decidida
+así queda anotada con el porqué («primera pasada: se eligió que mande el
+Excel»), en la pantalla y en `import_fixes`.
+
 ### Lo que se puede editar en cada sitio
 
 | Dato | Editable en el Excel | Editable en la app | Nota |
@@ -629,7 +656,7 @@ el informe del viernes.
 | 1 | **Hecho.** Lector de los dos libros + cruce contra el maestro, en seco: `npm run cruce:excel`. Resuelve por matrícula, alias, edificio+código y auditoría de edificios desaparecidos; cuenta y explica cada fila que no cruza. No escribe nada | ✅ con los ficheros de hoy |
 | 2 | **Hecho.** Migración del apartado 10 + las cuatro tablas de sincronización + la instantánea + la fusión a tres bandas (`src/domain/fusion.ts`, 30 pruebas) + los choques a `import_quarantine`. Sigue sin escribir nada: devuelve decisiones | ✅ |
 | 3 | **Hecho** (la columna `Ref`; las hojas como tablas de Excel, no: no hace falta para identificar filas). La columna va **al final**, no la primera — insertarla a la izquierda obliga a reescribir cada fórmula, el rango del autofiltro y los cuatro formatos condicionales | ✅ |
-| **3b** | **Hecho.** La pantalla (`Sincronizar el Excel de SharePoint`, en administración) hace el viaje entero **en los dos sentidos**: subir → previsualizar hoja por hoja → aplicar a la base → descargar el libro sincronizado. La instantánea se guarda de verdad (`sync_celdas`, por matrícula y no por número de fila) y la vuelta entra en una transacción con `sync_aplicar` | ✅ |
+| **3b** | **Hecho.** La pantalla (`Datos → Excel`) hace el viaje entero **en los dos sentidos**: elegir quién manda → subir → previsualizar → aplicar a la base → descargar el libro sincronizado. La previsualización va en cuatro montones, siempre los mismos —al Excel, a la aplicación, hay que decidir, se deja como está—, en total y hoja por hoja, celda a celda con de qué aula o parte es, qué dice hoy, qué va a decir y por qué; y el almacén tiene su bloque: qué compras, salidas y devoluciones va a apuntar la pasada y qué material no se descuenta porque el catálogo no lo reconoce. La instantánea se guarda de verdad (`sync_celdas`, por matrícula y no por número de fila) y la vuelta entra en una transacción con `sync_aplicar` | ✅ |
 | **3c** | **Hecho.** Las cinco hojas, no solo la de estado: partes con su material, bolsa con el consumo repartido mes a mes y las fórmulas pisadas devueltas a su sitio. Filas nuevas insertadas en el bloque de su edificio, filas de salas archivadas fuera, y el corte de año creando `Material Instalado <año>` y `Bolsa <año>` con el saldo de apertura | ✅ |
 | **3d** | **Hecho.** Cuatro hojas nuevas para lo que no cabe en una celda: `Revisiones` (una fila por revisión con hora, autor y comprobaciones), `Movimientos de Almacén` (con el saldo detrás), `Inventario por Sala` (que sí puede enseñar un aula con dos proyectores) y `Sincronización` (los choques y la cuarentena, dentro del propio libro) | ✅ |
 | **3e** | **Hecho.** Lo que el libro tiene y la aplicación no, entra: partes sin número (o con un número que la aplicación no conoce) se dan de alta con `sync_alta`, la base les pone número y la pasada lo escribe en su fila; artículos nuevos de la bolsa y PCs de repuesto nuevos, igual. Y las **dudas**: una fila de estado sin código de aula, un parte cuya aula no cruza o cruza con varias, un número de serie que crearía un equipo que la sala no tenía, se preguntan en la pantalla antes de aplicar (`src/domain/dudas.ts`), la respuesta vuelve a la pasada y con dudas sin contestar no se sincroniza | ✅ |
@@ -672,6 +699,16 @@ Tres decisiones de dueño que salen de este libro y no de la teoría:
   llevan el número de serie del aparato y 4 un modelo escrito a mano. Se parten
   por la forma del valor: escribir una encima de la otra pierde 37 series o 32
   respuestas, y no hay manera de elegir cuál de las dos pérdidas es la buena.
+
+Y dos cosas que la hoja de partes **no** recibe, aunque lleven número: las
+**observaciones** —una nota de seguimiento, «el mando está en el cajón»— y los
+**borradores** a medio escribir. La base les pone número igual que a un parte
+(`poner_ref_incidencia` numera cada fila de `incidents`), y por ese número la
+pasada los añadía al final de `Material Instalado <año>` como si fueran partes:
+filas con un código y sin problema. Ya no entran, y si una pasada anterior las
+escribió, la siguiente las saca del libro y lo dice. Por lo mismo, la hoja
+`Revisiones` escribe las comprobaciones con el nombre del aparato —«Proyector:
+correcto · Cámara: falla»— y no con su clave interna `asset:<uuid>`.
 
 Y una regla que atraviesa todo: **lo que no se puede leer no se interpreta**. Un
 `********` en la columna de horas es un vacío escrito a mano; un `19/0672025` en
