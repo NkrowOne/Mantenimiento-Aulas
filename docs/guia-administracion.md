@@ -10,15 +10,28 @@ aplicación; nada requiere tocar código.
 
 Todo lo de administración vive en la pestaña **Datos** (solo la ven los
 administradores), y va en cinco secciones, arriba del todo. Se abre una cada
-vez, y la aplicación recuerda en cada navegador cuál fue la última:
+vez, y la aplicación recuerda en cada navegador cuál fue la última. Se entra
+en **Por decidir**, que es la del día a día:
 
 | Sección | Qué hay |
 |---|---|
-| **Usuarios** | Altas, roles y códigos de acceso (apartado 2) |
-| **Por decidir** | Lo que crece solo con cada ronda: retiradas por autorizar, equipos y tipos sin validar, y la auditoría de inventario (catálogo de equipos) |
-| **Maestro** | Equipamiento por defecto, el maestro de salas y edificios, y los edificios sin identificar (apartados 1 y 3) |
+| **Por decidir** | Lo que crece solo con cada ronda: retiradas por autorizar, equipos y tipos sin validar, y los duplicados del inventario |
+| **Maestro** | Salas y edificios, edificios sin identificar y equipamiento por defecto (apartados 1 y 3) |
 | **Excel** | Sincronizar el libro de SharePoint (apartado 4b) |
-| **Importación** | Recuperar una copia, incidencias sin sala y la cuarentena (apartado 1) |
+| **Importación** | Incidencias sin sala, la cuarentena y recuperar una copia (apartado 1) |
+| **Usuarios** | Roles y bajas, y cómo se da de alta a alguien (apartado 2) |
+
+**El trabajo está contado antes de entrar.** Cada pestaña lleva al lado
+cuántas cosas esperan una decisión, y cada sección repite la cifra junto a su
+título. En *Por decidir* hay además cuatro baldosas arriba: lo que espera aquí,
+lo que espera en el maestro, lo que espera en importación, y cuántos días hace
+de la última sincronización del Excel; las tres últimas llevan a su sección.
+
+Todas las secciones se leen igual: título con su recuento, una frase de qué es
+y qué pasa con lo que se decide ahí, y el cuerpo. Cuando no hay nada que hacer
+lo dicen con una marca en verde, no con una lista vacía. Lo que no se deshace
+(dar de baja a alguien, fusionar edificios, dar por revisadas cien filas de la
+cuarentena) pide confirmación antes.
 
 ---
 
@@ -719,7 +732,7 @@ select at, by_user, old_data->>'name', new_data->>'name'
 from audit_log where table_name = 'rooms' order by at desc limit 20;
 ```
 
-### Auditoría de inventario — el mismo aparato apuntado dos veces
+### Duplicados y cifras del inventario — el mismo aparato apuntado dos veces
 
 El síntoma con el que se llega aquí: alguien teclea «Monitor Atril», la
 aplicación guarda «Monitor Atril 2», y en la lista de la sala no aparece ningún
@@ -729,14 +742,15 @@ el servidor —que no puede rechazar la fila sin perder el trabajo— la guardó
 el siguiente número libre. Desde entonces cada choque de esos queda además
 **registrado** con el par identificado, así que la bandeja no adivina: enseña.
 
-En `Auditoría de inventario` hay dos cosas:
+En `Datos → Por decidir → Duplicados y cifras del inventario` hay dos cosas:
 
-- **El resumen del servidor**: cuántos equipos, incidencias, revisiones y salas
-  hay de verdad en la base. Si un iPad enseña menos, ese dispositivo no ha
-  terminado de descargar — se arregla sincronizando, no re-apuntando equipos.
 - **Los posibles duplicados**: pares de la misma sala, mismo tipo y mismo nombre
   base, con lo que cuelga de cada lado (revisiones, incidencias, eventos).
-  Decide siempre una persona, y hay tres salidas:
+  Decide siempre una persona, y hay tres salidas (tabla de abajo).
+- **Las cifras del servidor**, plegadas debajo: cuántos equipos, incidencias,
+  revisiones y salas hay de verdad en la base. Si un iPad enseña menos, ese
+  dispositivo no ha terminado de descargar — se arregla sincronizando, no
+  re-apuntando equipos.
 
 | | Qué hace |
 |---|---|

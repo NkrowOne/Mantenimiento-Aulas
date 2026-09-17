@@ -8,6 +8,7 @@ import type { Respuesta } from '@/domain/dudas'
 import { columnaDeCampo, hojaPorNombre } from '@/domain/mapa'
 import type { MovimientoPrevisto } from '@/domain/movimientos'
 import type { Alta, Plan, Referencia } from '@/domain/sincronizar'
+import { Seccion } from './Seccion'
 
 /**
  * Sincronizar el Excel de SharePoint, en los dos sentidos.
@@ -191,19 +192,28 @@ export function SincronizarExcel(): React.ReactElement {
   const pendientes = analisis ? dudasPendientes(analisis).length : 0
 
   return (
-    <section>
-      <h1 className="text-xl font-semibold">Sincronizar el Excel de SharePoint</h1>
-      <p className="mt-1 text-sm text-muted">
-        Sube el libro y baja el mismo fichero con todo lo que la aplicación sabe: revisiones,
-        horas, salidas de material, entradas y movimientos del almacén. Lo que hayas corregido en
-        la hoja entra en la base. El fichero no sale de este ordenador.
-      </p>
-
+    <Seccion
+      id="sec-excel"
+      titulo="Sincronizar el Excel de SharePoint"
+      texto="Sube el libro y baja el mismo fichero con todo lo que la aplicación sabe: revisiones, horas, salidas de material, entradas y movimientos del almacén. Lo que hayas corregido en la hoja entra en la base. El fichero no sale de este ordenador."
+      pendientes={pendientes}
+      acciones={
+        analisis ? (
+          <button type="button" className="key key-quiet min-h-11 px-3 text-sm" onClick={limpiar}>
+            Empezar de nuevo
+          </button>
+        ) : undefined
+      }
+    >
       <QuienManda referencia={referencia} disabled={ocupado} onElegir={elegirReferencia} />
 
       <div className="card mt-4 p-4">
         <p className="eyebrow">2 · El libro</p>
+        <label htmlFor="excel-libro" className="sr-only">
+          Libro de Excel de SharePoint
+        </label>
         <input
+          id="excel-libro"
           ref={entrada}
           type="file"
           accept=".xlsx"
@@ -284,9 +294,6 @@ export function SincronizarExcel(): React.ReactElement {
             >
               {previsualizar.isPending ? 'Preparando el libro…' : 'Ver cómo quedaría el libro'}
             </button>
-            <button type="button" className="key key-quiet h-11 px-4" onClick={limpiar}>
-              Empezar de nuevo
-            </button>
           </div>
 
           {aplicado && <p className="mt-3 text-sm text-ok">{aplicado}</p>}
@@ -301,7 +308,7 @@ export function SincronizarExcel(): React.ReactElement {
           )}
         </>
       )}
-    </section>
+    </Seccion>
   )
 }
 

@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { pullMaster } from '@/sync/pull'
 import { displayRoomCode } from '@/domain/normalize'
+import { Cargando, EstadoVacio, FalloDeCarga, Nota, Seccion, mensajeDe } from './Seccion'
+import { useRefrescarPendientes } from './pendientes'
 
 /**
  * La auditoría del inventario: los números de verdad y los duplicados por decidir.
@@ -89,6 +91,7 @@ function Lado({
 
 export function AuditoriaInventario(): React.ReactElement {
   const qc = useQueryClient()
+  const refrescar = useRefrescarPendientes()
   const [nota, setNota] = useState<string | null>(null)
 
   const { data: resumen } = useQuery({
@@ -100,7 +103,7 @@ export function AuditoriaInventario(): React.ReactElement {
     },
   })
 
-  const { data: pares, isPending, isError } = useQuery({
+  const { data: pares, isPending, isError, error, refetch } = useQuery({
     queryKey: ['auditoria-duplicados'],
     queryFn: async (): Promise<ParDuplicado[]> => {
       const { data, error } = await supabase.rpc('auditoria_duplicados')
@@ -113,6 +116,7 @@ export function AuditoriaInventario(): React.ReactElement {
     setNota(mensaje)
     void qc.invalidateQueries({ queryKey: ['auditoria-duplicados'] })
     void qc.invalidateQueries({ queryKey: ['auditoria-inventario'] })
+    refrescar()
     // El espejo del propio dispositivo también tiene que enterarse: el
     // duplicado retirado desaparece de la sala en la siguiente descarga.
     void pullMaster()
@@ -146,102 +150,35 @@ export function AuditoriaInventario(): React.ReactElement {
 
   const ocupado = fusionar.isPending || descartar.isPending
 
+  /* Las cifras del servidor, en el orden en que se comparan con un dispositivo:
+     primero los equipos, luego lo demás. `—` cuando el servidor no las ha dado. */
+  const cifras: Array<[string, number | undefined]> = [
+    ['Equipos instalados', resumen?.equipos?.['instalados']],
+    ['Averiados', resumen?.equipos?.['averiados']],
+    ['Retirados', resumen?.equipos?.['retirados']],
+    ['Sin sala', resumen?.equipos?.['sin_sala']],
+    ['Sin validar', resumen?.equipos?.['sin_validar']],
+    ['Tipos vivos', resumen?.tipos?.['vivos']],
+    ['Incidencias abiertas', resumen?.incidencias?.['abiertas']],
+    ['En curso', resumen?.incidencias?.['en_curso']],
+    ['Resueltas', resumen?.incidencias?.['resueltas']],
+    ['Revisiones cerradas', resumen?.revisiones?.['cerradas']],
+    ['Salas activas', resumen?.salas?.['activas']],
+    ['Choques sin resolver', resumen?.choques_sin_resolver],
+  ]
+
   return (
-    <section aria-labelledby="sec-auditoria" className="mt-8">
-      <div className="section-head">
-        <h2 id="sec-auditoria" className="eyebrow">
-          Auditoría de inventario
-        </h2>
-        {(pares?.length ?? 0) > 0 && (
-          <span className="rounded-tag bg-warn-tint px-2 py-0.5 text-xs font-semibold text-warn">
-            {pares!.length} por decidir
-          </span>
-        )}
-      </div>
+    <Seccion
+      id="sec-auditoria"
+      titulo="Duplicados y cifras del inventario"
+      texto="Dos filas que parecen el mismo aparato: misma sala, mismo tipo y mismo nombre base. Nacen cuando un dispositivo con el espejo atrasado vuelve a apuntar un equipo que ya existía. Fusionar no borra nada: el duplicado queda retirado, su serie y su modelo viajan al que se queda, y sus revisiones e incidencias se conservan."
+      pendientes={pares?.length ?? 0}
+    >
+      {isPending && <Cargando texto="Buscando pares sospechosos…" />}
+      {isError && <FalloDeCarga que="los duplicados" error={error} onReintentar={() => void refetch()} />}
+      {pares && pares.length === 0 && <EstadoVacio titulo="Ningún duplicado por decidir" />}
 
-      {/* Los números del servidor, que son los de verdad. Contra ellos se
-          compara lo que enseñe cualquier dispositivo. */}
-      {resumen && (
-        <div className="card p-4">
-          <p className="text-sm font-medium">Lo que hay en la base, contado por el servidor</p>
-          <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-3">
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Equipos instalados</dt>
-              <dd className="font-mono">{resumen.equipos?.['instalados'] ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Averiados</dt>
-              <dd className="font-mono">{resumen.equipos?.['averiados'] ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Retirados</dt>
-              <dd className="font-mono">{resumen.equipos?.['retirados'] ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Sin sala</dt>
-              <dd className="font-mono">{resumen.equipos?.['sin_sala'] ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Sin validar</dt>
-              <dd className="font-mono">{resumen.equipos?.['sin_validar'] ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Tipos vivos</dt>
-              <dd className="font-mono">{resumen.tipos?.['vivos'] ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Incidencias abiertas</dt>
-              <dd className="font-mono">{resumen.incidencias?.['abiertas'] ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">En curso</dt>
-              <dd className="font-mono">{resumen.incidencias?.['en_curso'] ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Resueltas</dt>
-              <dd className="font-mono">{resumen.incidencias?.['resueltas'] ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Revisiones cerradas</dt>
-              <dd className="font-mono">{resumen.revisiones?.['cerradas'] ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Salas activas</dt>
-              <dd className="font-mono">{resumen.salas?.['activas'] ?? '—'}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Choques sin resolver</dt>
-              <dd className="font-mono">{resumen.choques_sin_resolver ?? '—'}</dd>
-            </div>
-          </dl>
-          <p className="mt-2 text-xs text-muted">
-            Si un dispositivo enseña menos que esto, no ha terminado de descargar: se arregla
-            sincronizando, no re-apuntando equipos.
-          </p>
-        </div>
-      )}
-
-      <div className="mt-4">
-        <p className="text-sm font-medium">Posibles duplicados</p>
-        <p className="mt-1 max-w-prose text-sm text-muted">
-          Dos filas que parecen el mismo aparato: misma sala, mismo tipo y mismo nombre base.
-          Suelen nacer cuando un dispositivo con el espejo atrasado vuelve a apuntar un equipo que
-          ya existía. Fusionar no borra nada: el duplicado queda retirado, su serie y su modelo
-          viajan al que se queda, y todas sus revisiones e incidencias se conservan.
-        </p>
-
-        {isPending && <p className="mt-3 text-sm text-muted">Buscando pares sospechosos…</p>}
-        {isError && (
-          <p className="mt-3 text-sm text-crit">
-            No se ha podido leer la auditoría. Hace falta conexión y ser coordinador.
-          </p>
-        )}
-
-        {!isPending && !isError && (pares?.length ?? 0) === 0 && (
-          <p className="mt-3 text-sm text-muted">Ningún duplicado pendiente de decidir.</p>
-        )}
-
-        <ul className="mt-3 space-y-3">
+      <ul className="space-y-3">
           {(pares ?? []).map((p) => (
             <li key={`${p.dup_id}-${p.bueno_id}`} className="card p-4">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -307,20 +244,32 @@ export function AuditoriaInventario(): React.ReactElement {
             </li>
           ))}
         </ul>
-      </div>
 
-      {(fusionar.isError || descartar.isError) && (
-        <p role="alert" className="mt-3 text-sm text-crit">
-          {[fusionar.error, descartar.error].find(Boolean) instanceof Error
-            ? ([fusionar.error, descartar.error].find(Boolean) as Error).message
-            : 'No se ha podido aplicar.'}
+      <Nota
+        texto={fusionar.isError || descartar.isError ? mensajeDe(fusionar.error ?? descartar.error) : nota}
+        tono={fusionar.isError || descartar.isError ? 'crit' : 'ok'}
+      />
+
+      {/* Los números del servidor, que son los de verdad. Contra ellos se
+          compara lo que enseñe cualquier dispositivo. Plegados: se consultan
+          cuando un iPad enseña menos de lo que debería, no cada vez. */}
+      <details className="card mt-4 p-4" open={!isPending && (pares?.length ?? 0) === 0}>
+        <summary className="cursor-pointer text-sm font-medium">
+          Lo que hay en la base, contado por el servidor
+        </summary>
+        <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm sm:grid-cols-3">
+          {cifras.map(([que, n]) => (
+            <div key={que} className="flex justify-between gap-2 border-b border-line-soft pb-1">
+              <dt className="text-muted">{que}</dt>
+              <dd className="font-mono tabular">{n ?? '—'}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="mt-3 text-xs text-muted">
+          Si un dispositivo enseña menos que esto, no ha terminado de descargar: se arregla
+          sincronizando, no re-apuntando equipos.
         </p>
-      )}
-      {nota && !ocupado && (
-        <p aria-live="polite" className="mt-3 text-sm text-ok">
-          {nota}
-        </p>
-      )}
-    </section>
+      </details>
+    </Seccion>
   )
 }

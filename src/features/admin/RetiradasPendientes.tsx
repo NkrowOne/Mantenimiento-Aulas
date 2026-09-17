@@ -2,7 +2,10 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { pullMaster } from '@/sync/pull'
+import { fechaCorta } from '@/domain/fechas'
 import { REMOVAL_DESTINO_LABELS, type RemovalDestino } from '@/domain/types'
+import { Cargando, EstadoVacio, FalloDeCarga, Nota, Seccion, mensajeDe } from './Seccion'
+import { useRefrescarPendientes } from './pendientes'
 
 /**
  * Las retiradas que esperan un sí o un no.
@@ -52,6 +55,7 @@ const RESULTADO: Record<string, string> = {
 
 export function RetiradasPendientes(): React.ReactElement {
   const qc = useQueryClient()
+  const refrescar = useRefrescarPendientes()
   const [nota, setNota] = useState<string | null>(null)
 
   const { data, isPending, isError, error, refetch } = useQuery({
@@ -83,6 +87,7 @@ export function RetiradasPendientes(): React.ReactElement {
       void qc.invalidateQueries({ queryKey: ['asset-removals'] })
       // El almacén cambia con esto, y la sala también.
       void qc.invalidateQueries({ queryKey: ['stock'] })
+      refrescar()
       void pullMaster()
     },
   })
@@ -90,39 +95,17 @@ export function RetiradasPendientes(): React.ReactElement {
   const filas = data ?? []
 
   return (
-    <section aria-labelledby="sec-retiradas" className="mt-8">
-      <div className="section-head">
-        <h2 id="sec-retiradas" className="eyebrow">
-          Retiradas por autorizar
-        </h2>
-      </div>
-      <p className="text-sm text-muted">
-        Equipos que alguien quiere sacar de una sala. Hasta que se autoricen siguen ahí y siguen
-        contando en las revisiones.
-      </p>
+    <Seccion
+      id="sec-retiradas"
+      titulo="Retiradas por autorizar"
+      texto="Equipos que alguien quiere sacar de una sala. Hasta que se autoricen siguen ahí y siguen contando en las revisiones. Autorizar retira el equipo, lo apunta en el historial de la sala y, si vuelve al almacén, suma su unidad."
+      pendientes={filas.length}
+    >
+      {isPending && <Cargando />}
+      {isError && <FalloDeCarga que="las retiradas" error={error} onReintentar={() => void refetch()} />}
+      {data && filas.length === 0 && <EstadoVacio titulo="Ninguna retirada por autorizar" />}
 
-      {isPending && <p className="mt-3 text-sm text-muted">Cargando…</p>}
-
-      {isError && (
-        <div className="card mt-3 p-4">
-          <p className="text-sm text-crit">
-            No se han podido leer: {error instanceof Error ? error.message : ''}
-          </p>
-          <button
-            type="button"
-            onClick={() => void refetch()}
-            className="key key-quiet mt-3 min-h-11 px-3 text-sm"
-          >
-            Reintentar
-          </button>
-        </div>
-      )}
-
-      {data && filas.length === 0 && (
-        <p className="mt-3 text-sm text-muted">Ninguna pendiente.</p>
-      )}
-
-      <ul className="mt-3 space-y-3">
+      <ul className="space-y-3">
         {filas.map((f) => {
           const detalle = [f.model, f.serial].filter(Boolean).join(' · ')
           const alAlmacen = f.destino === 'almacen'
@@ -153,11 +136,7 @@ export function RetiradasPendientes(): React.ReactElement {
               </p>
 
               <p className="mt-1 text-xs text-muted">
-                {[
-                  f.requested_by_name,
-                  new Date(f.requested_at).toLocaleDateString('es-ES'),
-                  f.reason ? `«${f.reason}»` : null,
-                ]
+                {[f.requested_by_name, fechaCorta(f.requested_at), f.reason ? `«${f.reason}»` : null]
                   .filter(Boolean)
                   .join(' · ')}
               </p>
@@ -208,16 +187,7 @@ export function RetiradasPendientes(): React.ReactElement {
         })}
       </ul>
 
-      {decidir.isError && (
-        <p className="mt-3 text-sm text-crit">
-          {decidir.error instanceof Error ? decidir.error.message : 'No se ha podido aplicar.'}
-        </p>
-      )}
-      {nota && !decidir.isPending && !decidir.isError && (
-        <p aria-live="polite" className="mt-3 text-sm text-ok">
-          {nota}
-        </p>
-      )}
-    </section>
+      <Nota texto={decidir.isError ? mensajeDe(decidir.error) : nota} tono={decidir.isError ? 'crit' : 'ok'} />
+    </Seccion>
   )
 }

@@ -17,6 +17,7 @@ import {
   type SalaDelMaestro,
 } from './FilaDeEdificio'
 import { PapeleraDelMaestro, useEdificiosArchivados } from './PapeleraDelMaestro'
+import { Cargando, FalloDeCarga, Nota, Seccion, mensajeDe } from './Seccion'
 
 /**
  * Altas, bajas y nomenclatura de salas y edificios.
@@ -69,7 +70,7 @@ export function MaestroSalas(): React.ReactElement {
 
   /* Solo los vivos: los archivados tienen su sitio, y mezclarlos aquí sería
      ofrecer «añadir sala» sobre un edificio que el servidor va a rechazar. */
-  const { data: edificios } = useQuery({
+  const { data: edificios, isPending, isError, error, refetch } = useQuery({
     queryKey: ['maestro', 'buildings'],
     queryFn: async (): Promise<EdificioDelMaestro[]> => {
       const { data, error } = await supabase
@@ -168,19 +169,22 @@ export function MaestroSalas(): React.ReactElement {
   const salasDe = (buildingId: string): SalaDelMaestro[] =>
     (salas ?? []).filter((s) => s.building_id === buildingId)
 
-  return (
-    <section aria-labelledby="sec-maestro" className="mt-8">
-      <div className="section-head">
-        <h2 id="sec-maestro" className="eyebrow">
-          Salas y edificios
-        </h2>
-      </div>
-      <p className="text-sm text-muted">
-        El maestro se toca desde aquí y desde la lista de «Revisar», manteniendo pulsada la fila. Una
-        sala nueva nace con matrícula, QR y el equipamiento por defecto de su edificio.
-      </p>
+  const nSalas = salas?.length ?? 0
 
-      <ul className="mt-3 space-y-2">
+  return (
+    <Seccion
+      id="sec-maestro"
+      titulo="Salas y edificios"
+      texto={
+        edificios && salas
+          ? `${edificios.length} ${edificios.length === 1 ? 'edificio' : 'edificios'} y ${nSalas} ${nSalas === 1 ? 'sala activa' : 'salas activas'}. Se tocan desde aquí y desde la lista de «Revisar», manteniendo pulsada la fila. Una sala nueva nace con matrícula, QR y el equipamiento por defecto de su edificio.`
+          : 'El maestro se toca desde aquí y desde la lista de «Revisar», manteniendo pulsada la fila. Una sala nueva nace con matrícula, QR y el equipamiento por defecto de su edificio.'
+      }
+    >
+      {isPending && <Cargando texto="Cargando el maestro…" />}
+      {isError && <FalloDeCarga que="los edificios" error={error} onReintentar={() => void refetch()} />}
+
+      <ul className="space-y-2">
         {(edificios ?? []).map((b) => (
           <FilaDeEdificio
             key={b.id}
@@ -240,24 +244,10 @@ export function MaestroSalas(): React.ReactElement {
 
       <PapeleraDelMaestro onHecho={anotar} />
 
-      {alta.isError && (
-        <p className="mt-3 text-sm text-crit">
-          {alta.error instanceof Error ? alta.error.message : 'No se ha podido aplicar.'}
-        </p>
-      )}
-      {/* La región viva se monta SIEMPRE y solo le cambia el texto. Montada a la
-          vez que su contenido —que es como estaba: el `<p>` no existía hasta que
-          había nota— VoiceOver se salta el anuncio con frecuencia, y entonces
-          quien no ve la pantalla no se entera de nada. Vacía no ocupa: se va con
-          `sr-only` hasta que hay algo que decir. */}
-      <p
-        aria-live="polite"
-        className={
-          nota && !alta.isPending && !alta.isError ? 'mt-3 text-sm text-ok' : 'sr-only'
-        }
-      >
-        {nota && !alta.isPending && !alta.isError ? nota : ''}
-      </p>
+      <Nota
+        texto={alta.isError ? mensajeDe(alta.error) : alta.isPending ? null : nota}
+        tono={alta.isError ? 'crit' : 'ok'}
+      />
 
       {/* La hoja se monta con `key` para que cambiar de fila la reinicie: sin
           eso, el formulario se abriría relleno con el código de la sala anterior
@@ -288,6 +278,6 @@ export function MaestroSalas(): React.ReactElement {
           }}
         />
       )}
-    </section>
+    </Seccion>
   )
 }
