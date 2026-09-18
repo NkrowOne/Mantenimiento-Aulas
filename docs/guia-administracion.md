@@ -9,7 +9,7 @@ aplicación; nada requiere tocar código.
 ## 0. La pestaña Datos, por secciones
 
 Todo lo de administración vive en la pestaña **Datos** (solo la ven los
-administradores), y va en cinco secciones, arriba del todo. Se abre una cada
+administradores), y va en seis secciones, arriba del todo. Se abre una cada
 vez, y la aplicación recuerda en cada navegador cuál fue la última. Se entra
 en **Por decidir**, que es la del día a día:
 
@@ -19,13 +19,16 @@ en **Por decidir**, que es la del día a día:
 | **Maestro** | Salas y edificios, edificios sin identificar y equipamiento por defecto (apartados 1 y 3) |
 | **Excel** | Sincronizar el libro de SharePoint (apartado 4b) |
 | **Importación** | Incidencias sin sala, la cuarentena y recuperar una copia (apartado 1) |
+| **Actividad** | Quién cambió qué y cuándo: la auditoría, leída con palabras (apartado 3 bis) |
 | **Usuarios** | Roles y bajas, y cómo se da de alta a alguien (apartado 2) |
 
-**El trabajo está contado antes de entrar.** Cada pestaña lleva al lado
-cuántas cosas esperan una decisión, y cada sección repite la cifra junto a su
-título. En *Por decidir* hay además cuatro baldosas arriba: lo que espera aquí,
-lo que espera en el maestro, lo que espera en importación, y cuántos días hace
-de la última sincronización del Excel; las tres últimas llevan a su sección.
+**El trabajo está contado antes de entrar.** La pestaña «Datos» de la barra de
+abajo lleva un número con todo lo que espera una decisión, así se ve desde
+cualquier pantalla. Dentro, cada sección lleva el suyo, y repite la cifra junto
+a su título. En *Por decidir* hay además cuatro baldosas arriba: lo que espera
+aquí, lo que espera en el maestro, lo que espera en importación, y cuántos
+días hace de la última sincronización del Excel; las tres últimas llevan a su
+sección. El número se vuelve a contar con cada decisión y cada cinco minutos.
 
 Todas las secciones se leen igual: título con su recuento, una frase de qué es
 y qué pasa con lo que se decide ahí, y el cuerpo. Cuando no hay nada que hacer
@@ -724,13 +727,35 @@ update asset_types set aliases = aliases || 'proyeltor'
  where id = public.asset_type_id('Proyector');
 ```
 
-Todo cambio en `rooms`, `buildings`, `stock_items`, `assets`, `incidents` y
-`profiles` **queda auditado** con autor y valores anterior y posterior:
+Todo cambio en `rooms`, `buildings`, `zones`, `stock_items`, `assets`,
+`asset_types`, `asset_removals`, `asset_defaults`, `incidents` y `profiles`
+**queda auditado** con autor y valores anterior y posterior:
 
 ```sql
 select at, by_user, old_data->>'name', new_data->>'name'
 from audit_log where table_name = 'rooms' order by at desc limit 20;
 ```
+
+### 3 bis. Actividad — quién cambió qué
+
+Esa misma auditoría se lee sin SQL en `Datos → Actividad`. Cada cambio sale
+con su hora, la persona, qué era (la sala con su código, el equipo con su
+etiqueta y su sala, la incidencia con su número) y cada campo con lo que decía
+y lo que dice, en las palabras de la aplicación: «Sala: — → H 1.7», «Estado:
+Instalado → Averiado». Las altas y las bajas salen marcadas en verde y en rojo.
+
+- Se filtra por periodo (última semana por defecto), por qué (salas, equipos,
+  incidencias…) y por quién. Cien cambios por página; «Ver más antiguos» sigue.
+- Los nombres salen del espejo del dispositivo. Lo que ya no existe —una sala
+  borrada en una fusión— sale abreviado (`#7f3a9c1e`), y se busca por ese
+  prefijo en `audit_log` si hace falta.
+- **No están** las revisiones, los movimientos del almacén ni los eventos de
+  equipo: son tablas que solo crecen y su propio histórico ya es el registro
+  (Historial, Almacén y la ficha de cada sala).
+- Se omiten los cambios que la base hace sola —fecha de última revisión y de
+  último inventario de la sala, orden de la lista— y el pie dice cuántos se
+  han omitido. Un cambio que solo tocó eso no aparece.
+- Es solo lectura. Lo que se descubre aquí se corrige en su sección.
 
 ### Duplicados y cifras del inventario — el mismo aparato apuntado dos veces
 

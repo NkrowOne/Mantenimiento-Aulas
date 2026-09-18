@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { StatTile } from '@/components/StatTile'
 import { fechaCorta } from '@/domain/fechas'
+import { Actividad } from './Actividad'
 import { AssetTypeTray } from './AssetTypeTray'
 import { AuditoriaInventario } from './AuditoriaInventario'
 import { EquipoPorDefecto } from './EquipoPorDefecto'
@@ -24,7 +25,7 @@ import { porSeccion, usePendientesDeDatos, useRefrescarPendientes } from './pend
  * de salas, el Excel, los edificios sin identificar, las copias, las
  * incidencias sin sala y la cuarentena. Todo amontonado en la última pestaña,
  * y quien venía a sincronizar el Excel pasaba antes por el alta de usuarios y
- * por el maestro entero. Cinco secciones, cada una con lo que se viene a hacer
+ * por el maestro entero. Seis secciones, cada una con lo que se viene a hacer
  * en ella:
  *
  *  1. **Por decidir** — lo único que crece solo: cada ronda de revisiones deja
@@ -37,12 +38,15 @@ import { porSeccion, usePendientesDeDatos, useRefrescarPendientes } from './pend
  *     una pantalla larga y con sus propias decisiones.
  *  4. **Importación** — las copias, las incidencias sin sala y la cuarentena:
  *     importante, y se hace una vez.
- *  5. **Usuarios** — roles y bajas. Lo que se viene a buscar cuando algo va
+ *  5. **Actividad** — quién cambió qué y cuándo. Se abre cuando algo ha
+ *     desaparecido o no cuadra; es la auditoría, leída con palabras.
+ *  6. **Usuarios** — roles y bajas. Lo que se viene a buscar cuando algo va
  *     mal, y por eso está al final y no al principio: no es trabajo diario.
  *
  * **Y el trabajo está contado antes de entrar.** Cada sección lleva al lado
- * cuántas cosas esperan decisión, y las cuatro baldosas de arriba lo resumen
- * y llevan a la sección que toca. Sin eso, saber si había una retirada por
+ * cuántas cosas esperan decisión, las cuatro baldosas de arriba lo resumen
+ * y llevan a la sección que toca, y la suma va pegada a «Datos» en la barra
+ * de abajo (`PendientesEnLaBarra`). Sin eso, saber si había una retirada por
  * autorizar exigía abrir la sección y bajar hasta ella.
  *
  * Solo se monta la sección abierta. Cada una lee lo suyo del servidor, y
@@ -50,13 +54,14 @@ import { porSeccion, usePendientesDeDatos, useRefrescarPendientes } from './pend
  * sección se recuerda en este navegador: quien sincroniza el Excel los viernes
  * no tiene que volver a buscar la pestaña cada viernes.
  */
-type Seccion = 'pendientes' | 'maestro' | 'excel' | 'importacion' | 'usuarios'
+type Seccion = 'pendientes' | 'maestro' | 'excel' | 'importacion' | 'actividad' | 'usuarios'
 
 const SECCIONES: Array<{ id: Seccion; titulo: string; texto: string }> = [
-  { id: 'pendientes', titulo: 'Por decidir', texto: 'Retiradas, equipos y tipos sin validar, y la auditoría de duplicados' },
-  { id: 'maestro', titulo: 'Maestro', texto: 'Salas, edificios, equipamiento por defecto y edificios sin identificar' },
+  { id: 'pendientes', titulo: 'Por decidir', texto: 'Retiradas, equipos y tipos sin validar, y los duplicados del inventario' },
+  { id: 'maestro', titulo: 'Maestro', texto: 'Salas, edificios, edificios sin identificar y equipamiento por defecto' },
   { id: 'excel', titulo: 'Excel', texto: 'Sincronizar el libro de SharePoint en los dos sentidos' },
-  { id: 'importacion', titulo: 'Importación', texto: 'Recuperar una copia, incidencias sin sala y cuarentena' },
+  { id: 'importacion', titulo: 'Importación', texto: 'Incidencias sin sala, cuarentena y recuperar una copia' },
+  { id: 'actividad', titulo: 'Actividad', texto: 'Quién cambió qué y cuándo' },
   { id: 'usuarios', titulo: 'Usuarios', texto: 'Roles, bajas y cómo se da de alta a alguien' },
 ]
 
@@ -238,6 +243,8 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
             <RecuperarCopia />
           </>
         )}
+
+        {seccion === 'actividad' && <Actividad />}
 
         {seccion === 'usuarios' && <UsersPage yo={yo} />}
       </div>

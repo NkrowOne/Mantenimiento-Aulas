@@ -116,6 +116,12 @@ export async function contarPendientes(): Promise<PendientesDeDatos> {
   }
 }
 
+/** Todo lo que espera una decisión, sumado: el número de la barra de abajo. */
+export function totalPendientes(p: PendientesDeDatos): number {
+  const s = porSeccion(p)
+  return s.pendientes + s.maestro + s.importacion
+}
+
 export function usePendientesDeDatos(): PendientesDeDatos {
   const { data } = useQuery({
     queryKey: CLAVE_PENDIENTES,

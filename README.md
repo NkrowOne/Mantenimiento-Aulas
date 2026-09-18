@@ -325,7 +325,7 @@ npm run informe:ia
 | Incidencias, almacén y depuración de datos | ✅ la pestaña es la lista de trabajo; lo que se apuntó en cada revisión se lee en la ficha del aula |
 | Resolver una avería desde el aula | ✅ se elige cuál de las abiertas —proyector, pantalla 2—, la explicación es obligatoria, y la foto y el material gastado son opcionales; se firma sin cobertura y sube por la cola |
 | Abrir una incidencia con foto, y el ticket de EasyVista | ✅ la foto de lo que pasa se hace al registrar y se ve en la lista antes de ir; el código de EasyVista tiene columna propia y se pone al abrir, al cerrar o después, también sobre una resuelta |
-| Panel de administración: validar equipos, agrupar el catálogo, equipamiento por defecto y alta/baja de salas y edificios | ✅ en cinco secciones —Usuarios, Por decidir, Maestro, Excel, Importación— y no en una sola página |
+| Panel de administración: validar equipos, agrupar el catálogo, equipamiento por defecto y alta/baja de salas y edificios | ✅ en seis secciones —Por decidir, Maestro, Excel, Importación, Actividad, Usuarios— con el trabajo pendiente contado en la barra de abajo y en cada sección, y la auditoría legible en «Actividad» |
 | Retirada de equipo con autorización: baja o vuelta al almacén | ✅ |
 | Inventario de una sala o de un edificio en PDF | ✅ marca, modelo, serie y las fechas de alta, cambio y baja; se imprime desde el navegador y avisa —en el papel— cuando la hoja se ha hecho sin servidor |
 | Informes desde la propia aplicación | ✅ documento renderizado y revisado en un navegador real; se imprime a PDF y se archiva en HTML autocontenido |
