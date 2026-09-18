@@ -124,6 +124,9 @@ export function incidenciasDeRevision(entrada: EntradaIncidencias): Incident[] {
       opened_from_inspection_id: entrada.inspection.id,
       check_key: check.check_key,
       external_ref: null,
+      // El ticket de EasyVista, si llega, se pone después: en la revisión se
+      // está delante del aparato, no delante de EasyVista.
+      easyvista_ref: null,
       title: tituloDeIncidencia(entrada.etiquetaDe(check.check_key), nota),
       description: nota || null,
       // La revisión siempre deja una gravedad puesta; el `?? 'media'` es para una

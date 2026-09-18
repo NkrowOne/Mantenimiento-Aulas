@@ -3,8 +3,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
+import { Tira, useFotos } from '@/components/Fotos'
 import { displayRoomCode, norm } from '@/domain/normalize'
 import { salasQueCasan, type SalaBuscable } from './busqueda'
+import { CodigoEasyVista } from './CodigoEasyVista'
 import { MaterialUsado } from './MaterialUsado'
 import { ResolverIncidencia } from './ResolverIncidencia'
 import { useCierresEnCola } from './cierresEnCola'
@@ -26,6 +28,8 @@ interface IncidentRow {
   opened_at: string
   resolved_at: string | null
   external_ref: string | null
+  /** El ticket de EasyVista, si alguien lo ha puesto ya. */
+  easyvista_ref: string | null
   room_id: string | null
   /** Salió de una revisión: un equipo marcado «Falla» en el aula. */
   opened_from_inspection_id: string | null
@@ -200,7 +204,7 @@ export function IncidentsPage(): React.ReactElement {
       if (buscado) {
         const t = buscado.replace(/[,()*"\\]/g, ' ')
         q = q.or(
-          `title.ilike.*${t}*,description.ilike.*${t}*,external_ref.ilike.*${t}*${filtroSalas}`,
+          `title.ilike.*${t}*,description.ilike.*${t}*,external_ref.ilike.*${t}*,easyvista_ref.ilike.*${t}*${filtroSalas}`,
         )
       } else if (!showResolved) {
         q = q.neq('state', 'resuelta')
@@ -268,9 +272,11 @@ export function IncidentsPage(): React.ReactElement {
       if (buscado) {
         const t = buscado.replace(/[,()*"\\]/g, ' ')
         // El texto O la sala: `room_id.in.(…)` sale de resolver lo tecleado
-        // contra el espejo local. Es lo que hace verdad al placeholder.
+        // contra el espejo local. Es lo que hace verdad al placeholder. Y el
+        // ticket de EasyVista entra en la búsqueda: es lo que alguien tiene
+        // delante cuando llama preguntando por «la I260916_0042».
         q = q.or(
-          `title.ilike.*${t}*,description.ilike.*${t}*,external_ref.ilike.*${t}*${filtroSalas}`,
+          `title.ilike.*${t}*,description.ilike.*${t}*,external_ref.ilike.*${t}*,easyvista_ref.ilike.*${t}*${filtroSalas}`,
         )
       } else if (!showResolved) {
         q = q.neq('state', 'resuelta')
@@ -300,9 +306,30 @@ export function IncidentsPage(): React.ReactElement {
         // la clase de detalle que hace que nadie vuelva a usar el buscador.
         norm(i.description ?? '').includes(q) ||
         norm(i.external_ref ?? '').includes(q) ||
+        norm(i.easyvista_ref ?? '').includes(q) ||
         norm(i.room_id ? (salas?.get(i.room_id) ?? '') : '').includes(q),
     )
   }, [incidents, query, salas, idsDeSala])
+
+  /*
+   * Las fotos de la página, de una vez.
+   *
+   * Es para lo que se hacen al abrir: que quien va a atender la avería vea
+   * qué hay antes de moverse. Una consulta de adjuntos y una de firmas para
+   * toda la lista, y se reparten por fila; doscientas tiras con su propia
+   * consulta serían cuatrocientas peticiones al abrir la pestaña.
+   */
+  const claveVisibles = visibles.map((i) => i.id).join(',')
+  const idsVisibles = useMemo(
+    () => (claveVisibles === '' ? [] : claveVisibles.split(',')),
+    [claveVisibles],
+  )
+  const { fotos } = useFotos('incident', idsVisibles)
+  const fotosPorIncidencia = useMemo(() => {
+    const porId = new Map<string, typeof fotos>()
+    for (const f of fotos) porId.set(f.entityId, [...(porId.get(f.entityId) ?? []), f])
+    return porId
+  }, [fotos])
 
   /*
    * Empezar una incidencia. **Cerrarla ya no pasa por aquí.**
@@ -438,6 +465,12 @@ export function IncidentsPage(): React.ReactElement {
                       <span className="font-mono text-muted">sin sala · </span>
                     )}
                     {i.external_ref && <span className="font-mono">{i.external_ref} · </span>}
+                    {/* El ticket de EasyVista, al lado del número del libro y
+                        con su nombre delante: son dos números con la misma
+                        pinta y sin la palabra no se sabe cuál es cuál. */}
+                    {i.easyvista_ref && (
+                      <span className="font-mono">EasyVista {i.easyvista_ref} · </span>
+                    )}
                     {/* La gravedad, en palabras: es lo que decide qué se atiende
                         primero, y «alta» a secas no dice qué está en juego.
 
@@ -473,6 +506,17 @@ export function IncidentsPage(): React.ReactElement {
                     <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-muted">
                       {i.description}
                     </p>
+                  )}
+                  {/* Lo que se fotografió al abrirla (y al cerrarla): se ve
+                      aquí, antes de ir. Mientras el cierre está abierto las
+                      enseña él, con las nuevas al lado. */}
+                  {resolviendo !== i.id && (
+                    <Tira entityType="incident" fotos={fotosPorIncidencia.get(i.id) ?? []} />
+                  )}
+                  {/* El ticket de EasyVista se pone o se cambia desde aquí, y
+                      también en una resuelta: es la puerta de «a posteriori». */}
+                  {!esperandoSubir && (
+                    <CodigoEasyVista incidentId={i.id} codigo={i.easyvista_ref} />
                   )}
                 </div>
 

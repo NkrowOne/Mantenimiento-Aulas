@@ -49,7 +49,7 @@ import type { Indice, SalaConocida } from './cruce'
 import { idDeDuda } from './dudas'
 import type { Duda, Respuestas, SalaCandidata } from './dudas'
 import { canonizarFila, fusionarCelda, iguales } from './fusion'
-import type { Decision, Dueno, Valor } from './fusion'
+import type { Decision, Dueno, Referencia, Valor } from './fusion'
 import { TITULO_DE_SITUACION, comprobarCabeceras, equipoDe, mesDe } from './mapa'
 import type { Columna, Hoja } from './mapa'
 import { escribir, esVacio, leer, limpiar } from './valores'
@@ -82,6 +82,46 @@ export interface Conflicto {
   base: Valor
   excel: Valor
   antepasado: Valor | undefined
+  motivo: string
+}
+
+/**
+ * Una celda que se va a escribir en el libro, contada para una persona.
+ *
+ * `celdas` ya lleva lo mismo —dirección y valor— pero en el idioma del
+ * parcheador: `M87` y `0340985RL`. Quien mira la pantalla antes de sincronizar
+ * quiere saber **de qué aula, qué columna, qué decía y por qué cambia**, y eso
+ * es esto. Va aparte y no sustituye a `celdas` porque el editor del libro no
+ * necesita saber nada de aulas.
+ */
+export interface HaciaElExcel {
+  fila: number
+  letra: string
+  /** La cabecera de la columna, o qué es la celda cuando no es una del mapa. */
+  cabecera: string
+  /** La sala, el parte o el artículo del que es la fila. */
+  destino: string
+  /** Lo que la celda dice hoy. */
+  antes: Valor
+  /** Lo que va a decir. */
+  valor: Valor
+  motivo: string
+}
+
+/** Una fila que la pasada añade al libro. */
+export interface FilaQueEntra {
+  /** «Sala», «Parte», «Artículo», «Ordenador de repuesto». */
+  que: string
+  /** Cómo se llama: el código del aula, el número del parte, el nombre del artículo. */
+  destino: string
+  /** Dónde va y con qué. */
+  donde: string
+}
+
+/** Una fila del libro que la pasada quita. */
+export interface FilaQueSale {
+  fila: number
+  destino: string
   motivo: string
 }
 
@@ -175,6 +215,10 @@ export interface Plan {
   celdas: Cambio[]
   insertar: FilaNueva[]
   borrar: number[]
+  /** Las mismas escrituras que `celdas`, `insertar` y `borrar`, dichas para una persona. */
+  haciaElExcel: HaciaElExcel[]
+  filasQueEntran: FilaQueEntra[]
+  filasQueSalen: FilaQueSale[]
   haciaLaBase: HaciaLaBase[]
   conflictos: Conflicto[]
   cuarentena: EnCuarentena[]
@@ -196,6 +240,9 @@ function planVacio(hoja: string): Plan {
     celdas: [],
     insertar: [],
     borrar: [],
+    haciaElExcel: [],
+    filasQueEntran: [],
+    filasQueSalen: [],
     haciaLaBase: [],
     conflictos: [],
     cuarentena: [],
@@ -265,6 +312,8 @@ interface Opciones<T> {
   /** La fecha de la medida en cada lado, para las columnas de tipo `medida`. */
   fechaDeMedida?: (dato: T, lado: 'base' | 'excel', celdas: Record<string, ValorCelda>) => string | null
   instantanea: Instantanea
+  /** Quién manda donde la fusión no sabe decidir. Se eligió al cargar el libro. */
+  referencia?: Referencia
 }
 
 /**
@@ -346,6 +395,7 @@ function fusionarFilas<T>(
         tipo: c.tipo,
         medidaBase: c.dueno === 'medida' ? op.fechaDeMedida?.(par.dato, 'base', par.celdas) : undefined,
         medidaExcel: c.dueno === 'medida' ? op.fechaDeMedida?.(par.dato, 'excel', par.celdas) : undefined,
+        referencia: op.referencia,
       })
 
       repartir(
@@ -404,6 +454,15 @@ function repartir<T>(
       }
 
       plan.celdas.push({ celda: `${c.letra}${par.fila}`, valor: valor as ValorCelda, ...formatoDe(c) })
+      plan.haciaElExcel.push({
+        fila: par.fila,
+        letra: c.letra,
+        cabecera: c.cabecera.trim(),
+        destino: par.destino,
+        antes: excel,
+        valor: decision.valor,
+        motivo: decision.motivo,
+      })
       plan.instantanea.push({
         clave: par.clave,
         fila: par.fila,
@@ -486,6 +545,8 @@ export interface EntradaDeEstado {
   instantanea?: Instantanea
   /** Lo que la persona ya contestó a las dudas de una pasada anterior. */
   respuestas?: Respuestas
+  /** Quién manda donde la fusión no sabe decidir. Se eligió al cargar el libro. */
+  referencia?: Referencia
 }
 
 export function sincronizarEstado(e: EntradaDeEstado): Plan {
@@ -518,6 +579,15 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
   const tituloActual = textoDe(cabecera?.celdas[e.columnaRef])
   if (norm(tituloActual) !== norm(TITULO_DE_LA_REF)) {
     plan.celdas.push({ celda: `${e.columnaRef}${e.hoja.cabecera}`, valor: TITULO_DE_LA_REF })
+    plan.haciaElExcel.push({
+      fila: e.hoja.cabecera,
+      letra: e.columnaRef,
+      cabecera: TITULO_DE_LA_REF,
+      destino: 'la cabecera',
+      antes: tituloActual || null,
+      valor: TITULO_DE_LA_REF,
+      motivo: 'el título de la columna de matrículas, para que la pasada siguiente la encuentre',
+    })
   }
 
   // El edificio y la planta se arrastran hacia abajo: en la hoja solo se
@@ -648,9 +718,14 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
       const grupo = grupoDe(f.fila)
       plan.borrar.push(...grupo)
       conservarCabeceraDeBloque(f, e.filas, plan)
+      const continuacion = grupo.length > 1 ? ` con sus ${grupo.length - 1} filas de continuación` : ''
+      plan.filasQueSalen.push({
+        fila: f.fila,
+        destino: sala.code,
+        motivo: `está archivada en la aplicación${continuacion}`,
+      })
       plan.avisos.push(
-        `Fila ${f.fila}: «${sala.code}» está archivada en la aplicación; su fila sale del libro` +
-          (grupo.length > 1 ? ` con sus ${grupo.length - 1} filas de continuación.` : '.'),
+        `Fila ${f.fila}: «${sala.code}» está archivada en la aplicación; su fila sale del libro${continuacion}.`,
       )
       continue
     }
@@ -659,6 +734,15 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
     // dependa de que nadie ordene la hoja.
     if (matricula === '') {
       plan.celdas.push({ celda: `${e.columnaRef}${f.fila}`, valor: sala.shortRef })
+      plan.haciaElExcel.push({
+        fila: f.fila,
+        letra: e.columnaRef,
+        cabecera: TITULO_DE_LA_REF,
+        destino: sala.code,
+        antes: null,
+        valor: sala.shortRef,
+        motivo: 'la matrícula de la sala: es lo que reconoce la fila aunque se ordene la hoja',
+      })
     } else if (norm(matricula) !== norm(sala.shortRef)) {
       plan.avisos.push(`Fila ${f.fila}: la matrícula escrita no es la que sale del cruce. No se pisa.`)
     }
@@ -702,6 +786,11 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
       } else {
         plan.borrar.push(f.fila)
         conservarCabeceraDeBloque(f, e.filas, plan)
+        plan.filasQueSalen.push({
+          fila: f.fila,
+          destino: sala.code,
+          motivo: `se muda de «${edificio}» a «${sala.edificio}»: vuelve a entrar en el bloque de su edificio`,
+        })
         plan.avisos.push(
           `Fila ${f.fila}: «${sala.code}» se muda de «${edificio}» a «${sala.edificio}»: su fila cambia de bloque.`,
         )
@@ -726,6 +815,7 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
     hoja: e.hoja,
     filas: e.filas,
     instantanea: e.instantanea ?? SIN_INSTANTANEA,
+    referencia: e.referencia,
     fechaDeMedida: (sala, lado, celdas) =>
       lado === 'base' ? (sala.revisiones[0] ?? null) : fechaDeCelda(celdas.D),
   })
@@ -862,11 +952,30 @@ function conservarCabeceraDeBloque(f: FilaLeida, filas: FilaLeida[], plan: Plan)
     (x) => x.fila > f.fila && !plan.borrar.includes(x.fila) && Object.values(x.celdas).some((v) => !esVacio(v as Valor)),
   )
   if (!siguiente) return
+  const motivo = 'la fila que abría el bloque sale del libro: el rótulo pasa a la siguiente'
   if (a !== '' && textoDe(siguiente.celdas.A) === '') {
     plan.celdas.push({ celda: `A${siguiente.fila}`, valor: a })
+    plan.haciaElExcel.push({
+      fila: siguiente.fila,
+      letra: 'A',
+      cabecera: 'EDIFICIO',
+      destino: textoDe(siguiente.celdas.C) || `fila ${siguiente.fila}`,
+      antes: null,
+      valor: a,
+      motivo,
+    })
   }
   if (b !== '' && textoDe(siguiente.celdas.B) === '') {
     plan.celdas.push({ celda: `B${siguiente.fila}`, valor: b })
+    plan.haciaElExcel.push({
+      fila: siguiente.fila,
+      letra: 'B',
+      cabecera: 'PLANTA/MÓDULO',
+      destino: textoDe(siguiente.celdas.C) || `fila ${siguiente.fila}`,
+      antes: null,
+      valor: b,
+      motivo,
+    })
   }
 }
 
@@ -1023,6 +1132,13 @@ function filasNuevasDeSalas(nuevas: SalaVolcada[], e: EntradaDeEstado, plan: Pla
     }
     celdas.push({ celda: `${e.columnaRef}${destino + 1}`, valor: sala.shortRef })
 
+    plan.filasQueEntran.push({
+      que: 'Sala',
+      destino: sala.code,
+      donde: abreBloque
+        ? `abre bloque al final: «${sala.edificio}» no estaba en la hoja`
+        : `en el bloque de «${sala.edificio}»${abrePlanta ? `, abriendo la planta «${sala.zona}»` : ''}`,
+    })
     plan.avisos.push(
       abreBloque
         ? `«${sala.code}» abre bloque: «${sala.edificio}» no estaba en la hoja.`
@@ -1047,6 +1163,8 @@ export interface EntradaDePartes {
    */
   indice?: Indice
   respuestas?: Respuestas
+  /** Quién manda donde la fusión no sabe decidir. Se eligió al cargar el libro. */
+  referencia?: Referencia
 }
 
 export function sincronizarPartes(e: EntradaDePartes): Plan {
@@ -1090,6 +1208,23 @@ export function sincronizarPartes(e: EntradaDePartes): Plan {
       continue
     }
     vistas.add(inc.id)
+
+    // Una fila que la aplicación reconoce por su número y que no es un parte:
+    // una observación o un borrador. La escribió la propia sincronización —una
+    // persona no teclea el número que la base inventa— así que en la hoja viva
+    // sale del libro; en la congelada se cuenta y se deja, como todo lo demás.
+    if (!inc.esParte) {
+      const queEs = inc.problema ? 'una observación de la aplicación, no un parte' : 'un borrador sin describir, no un parte'
+      if (e.hoja.congelada) {
+        plan.sinCruzar.push({ fila: f.fila, motivo: `«${numero}» es ${queEs}` })
+      } else {
+        plan.borrar.push(f.fila)
+        plan.filasQueSalen.push({ fila: f.fila, destino: numero, motivo: `es ${queEs}: la fila la escribió la sincronización` })
+        plan.avisos.push(`Fila ${f.fila}: «${numero}» es ${queEs}; su fila sale del libro.`)
+      }
+      continue
+    }
+
     emparejadas.push({
       fila: f.fila,
       celdas: f.celdas,
@@ -1104,6 +1239,7 @@ export function sincronizarPartes(e: EntradaDePartes): Plan {
     hoja: e.hoja,
     filas: e.filas,
     instantanea: e.instantanea ?? SIN_INSTANTANEA,
+    referencia: e.referencia,
   })
 
   if (e.hoja.congelada) return plan
@@ -1120,8 +1256,11 @@ export function sincronizarPartes(e: EntradaDePartes): Plan {
   const ultima = ultimaFilaConDatos(e.filas, e.hoja.cabecera)
   const delAnyo = (i: IncidenciaVolcada): boolean =>
     e.hoja.anyo === undefined || (i.abierta !== null && Number(i.abierta.slice(0, 4)) === e.hoja.anyo)
+  // Y solo los partes de verdad: una observación o un borrador llevan número
+  // igual que un parte, pero en la hoja de partes son una fila con un código y
+  // sin problema, que es lo que había que dejar de escribir.
   const nuevos = e.incidencias
-    .filter((i) => !enLaHoja.has(i.id) && delAnyo(i))
+    .filter((i) => i.esParte && !enLaHoja.has(i.id) && delAnyo(i))
     .sort((a, b) => (a.abierta ?? '').localeCompare(b.abierta ?? '') || a.numero.localeCompare(b.numero))
 
   plan.insertar = nuevos.map((inc) => {
@@ -1134,6 +1273,11 @@ export function sincronizarPartes(e: EntradaDePartes): Plan {
       celdas.push({ celda: `${c.letra}${ultima + 1}`, valor: valor as ValorCelda, ...formatoDe(c) })
       anotarCeldaNueva(plan, inc.numero, c.letra, dato)
     }
+    plan.filasQueEntran.push({
+      que: 'Parte',
+      destino: inc.numero,
+      donde: `al final · ${inc.salaCode || 'sin aula'} · ${inc.abierta ?? 'sin fecha'} · ${(inc.problema ?? '').slice(0, 80)}`,
+    })
     return { tras: ultima, celdas, estiloDe: ultima }
   })
   if (nuevos.length > 0) {
@@ -1386,6 +1530,8 @@ export interface EntradaDeBolsa {
   /** Resuelve un nombre escrito como sea al id del artículo. Sale de la base. */
   resolver: (nombre: string) => string | null
   instantanea?: Instantanea
+  /** Quién manda donde la fusión no sabe decidir. Se eligió al cargar el libro. */
+  referencia?: Referencia
 }
 
 /**
@@ -1452,6 +1598,7 @@ export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
     hoja: e.hoja,
     filas: e.filas,
     instantanea: e.instantanea ?? SIN_INSTANTANEA,
+    referencia: e.referencia,
   })
 
   if (e.hoja.congelada) return plan
@@ -1487,7 +1634,17 @@ export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
         continue
       }
 
-      plan.celdas.push({ celda: `${c.letra}${par.fila}`, valor: c.formula.replace(/\{f\}/g, String(par.fila)) })
+      const formula = c.formula.replace(/\{f\}/g, String(par.fila))
+      plan.celdas.push({ celda: `${c.letra}${par.fila}`, valor: formula })
+      plan.haciaElExcel.push({
+        fila: par.fila,
+        letra: c.letra,
+        cabecera: c.cabecera.trim(),
+        destino: par.destino,
+        antes: escrito.ok ? escrito.valor : ((par.celdas[c.letra] ?? null) as Valor),
+        valor: formula,
+        motivo: 'llevaba un número escrito a mano encima de la fórmula: se le devuelve la fórmula, que da lo mismo',
+      })
       plan.avisos.push(
         `${c.letra}${par.fila} (${c.cabecera}) llevaba un número escrito a mano encima de la fórmula: se le devuelve la fórmula, que da lo mismo.`,
       )
@@ -1502,6 +1659,7 @@ export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
       const fila = Number(/\d+$/.exec(cambio.celda)?.[0] ?? 0)
       return !filasQueNoSeTocan.has(fila)
     })
+    plan.haciaElExcel = plan.haciaElExcel.filter((h) => !filasQueNoSeTocan.has(h.fila))
   }
 
   const enLaHoja = new Set(emparejadas.map((p) => p.dato.id))
@@ -1530,6 +1688,11 @@ export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
       celdas.push({ celda: `${c.letra}${destino + 1}`, valor: valor as ValorCelda, ...formatoDe(c) })
       anotarCeldaNueva(plan, art.id, c.letra, dato)
     }
+    plan.filasQueEntran.push({
+      que: 'Artículo',
+      destino: art.nombre,
+      donde: `al final de la bolsa, con sus fórmulas${art.comprado ? ` · ${art.comprado} comprados` : ''}`,
+    })
     return { tras: destino, celdas, estiloDe: destino }
   })
   if (nuevos.length > 0) {
@@ -1604,6 +1767,8 @@ export interface EntradaDeUnidades {
   unidades: UnidadVolcada[]
   instantanea?: Instantanea
   respuestas?: Respuestas
+  /** Quién manda donde la fusión no sabe decidir. Se eligió al cargar el libro. */
+  referencia?: Referencia
 }
 
 /**
@@ -1638,6 +1803,15 @@ export function sincronizarUnidades(e: EntradaDeUnidades): Plan {
 
   if (norm(textoDe(cabecera?.celdas[colSituacion])) !== norm(TITULO_DE_SITUACION)) {
     plan.celdas.push({ celda: `${colSituacion}${e.hoja.cabecera}`, valor: TITULO_DE_SITUACION })
+    plan.haciaElExcel.push({
+      fila: e.hoja.cabecera,
+      letra: colSituacion,
+      cabecera: TITULO_DE_SITUACION,
+      destino: 'la cabecera',
+      antes: textoDe(cabecera?.celdas[colSituacion]) || null,
+      valor: TITULO_DE_SITUACION,
+      motivo: 'el título de la columna que la aplicación escribe con la situación de cada ordenador',
+    })
   }
 
   for (const f of e.filas) {
@@ -1665,6 +1839,15 @@ export function sincronizarUnidades(e: EntradaDeUnidades): Plan {
     const situacion = situacionDeUnidad(u)
     if (textoDe(f.celdas[colSituacion]) !== situacion) {
       plan.celdas.push({ celda: `${colSituacion}${f.fila}`, valor: situacion })
+      plan.haciaElExcel.push({
+        fila: f.fila,
+        letra: colSituacion,
+        cabecera: TITULO_DE_SITUACION,
+        destino: serial,
+        antes: textoDe(f.celdas[colSituacion]) || null,
+        valor: situacion,
+        motivo: 'la situación del ordenador la dice la aplicación: dónde está y desde cuándo',
+      })
     }
   }
 
@@ -1672,6 +1855,7 @@ export function sincronizarUnidades(e: EntradaDeUnidades): Plan {
     hoja: e.hoja,
     filas: e.filas,
     instantanea: e.instantanea ?? SIN_INSTANTANEA,
+    referencia: e.referencia,
   })
 
   if (e.hoja.congelada) return plan
@@ -1698,6 +1882,11 @@ export function sincronizarUnidades(e: EntradaDeUnidades): Plan {
       anotarCeldaNueva(plan, u.id, c.letra, dato)
     }
     celdas.push({ celda: `${colSituacion}${ultima + 1}`, valor: situacionDeUnidad(u) })
+    plan.filasQueEntran.push({
+      que: 'Ordenador de repuesto',
+      destino: u.serial,
+      donde: `al final · ${[u.articulo, u.marca, u.modelo].filter(Boolean).join(' ')} · ${situacionDeUnidad(u)}`,
+    })
     return { tras: ultima, celdas, estiloDe: ultima > e.hoja.cabecera ? ultima : undefined }
   })
   if (nuevas.length > 0) {
@@ -1900,4 +2089,4 @@ export function mesesEscritos(plan: Plan, hoja: Hoja): number[] {
   return [...meses].sort((a, b) => a - b)
 }
 
-export type { Dueno }
+export type { Dueno, Referencia }

@@ -6,6 +6,7 @@ import { SyncChip } from '@/components/SyncChip'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { LockScreen } from '@/features/auth/LockScreen'
 import { Diagnostico } from '@/features/admin/Diagnostico'
+import { PendientesEnLaBarra } from '@/features/admin/PendientesEnLaBarra'
 import { InspectionPage } from '@/features/inspection/InspectionPage'
 import type { Correccion } from '@/features/inspection/useInspection'
 import { RoomListPage } from '@/features/rooms/RoomListPage'
@@ -1219,6 +1220,10 @@ export function App(): React.ReactElement {
                 }`}
               >
                 {t.label}
+                {/* Solo aquí y no en cada pestaña: es la única cuyo trabajo
+                    crece solo sin que nadie lo vea, y la barra ya ha filtrado
+                    por rol, así que el contador no se le pide a un técnico. */}
+                {t.id === 'datos' && <PendientesEnLaBarra />}
               </button>
             </li>
           ))}

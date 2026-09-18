@@ -82,6 +82,12 @@ Dos cosas viven aquí:
   «Volver» —o Escape— aterrizas donde estabas en la lista.
 - **«Incidencia o solicitud»**, para registrar sin estar revisando: una avería
   que ves de paso, o un trabajo que hay que pedir —«instalar una cámara»—.
+  **Hazle una foto** con «Añadir foto de lo que pasa»: quien vaya a atenderla
+  la ve en la pestaña de Incidencias antes de moverse, y sabe si «el cable
+  está roto» es una clavija doblada o un tirado arrancado. Puedes hacer
+  varias, y quitar una antes de guardar; una vez guardada ya es de la
+  incidencia. Y si el aviso ya tiene **ticket en EasyVista**, ponlo en su
+  casilla: si no lo tienes todavía, se añade al cerrar o después.
 
 > **Un equipo que no funciona no se apunta aquí.** Se marca en la revisión, en su
 > propia línea: así la incidencia queda pegada a ese aparato, con su número de
@@ -288,6 +294,19 @@ tienes el cable en la mano.
 **Y si no has gastado nada, cierras sin más.** Lo único que no se puede saltar
 es la frase de qué has hecho; la foto y el material son opcionales de verdad —el
 botón de cerrar no espera a ninguno de los dos.
+
+**El código de EasyVista** tiene su casilla en el mismo formulario. Si la
+avería ya lo tenía, sale puesto; si te lo acaban de dar, lo escribes ahí y
+viaja con el cierre, también sin cobertura. Y si llega días después, con la
+avería ya resuelta, no pasa nada: en la pestaña de Incidencias cada fila tiene
+el botón **«Poner el código de EasyVista»** —o «EasyVista I260916_0042 ·
+cambiar» si ya lo tiene—, que funciona igual en las abiertas y en las
+resueltas. Eso sí necesita cobertura: se teclea mirando EasyVista, que es una
+pantalla con red.
+
+> El código de EasyVista no es el número que la aplicación pone sola al abrir
+> («I260916_0003»). Ese es el del libro y no se toca; el de EasyVista va al
+> lado, con la palabra delante, y se busca igual desde el buscador.
 
 > Apuntar el material es lo que hace que el informe sepa dónde se va el
 > almacén. No hace falta cerrar la avería para apuntarlo: si has cambiado una

@@ -194,6 +194,53 @@ describe('la primera pasada no puede parar la sincronización', () => {
   })
 })
 
+describe('quién manda se elige al cargar el libro', () => {
+  // Los dos casos que la fusión no sabe decidir sola: sin antepasado y con los
+  // dos lados cambiados. Ahí, y solo ahí, decide lo que se eligió.
+  it('primera pasada con «manda el Excel»: entra la hoja en la base', () => {
+    const r = fusionarCelda(celda({ base: 'EPSON X2', excel: 'BENQ', referencia: 'excel' }))
+    expect(r).toMatchObject({ tipo: 'hacia_la_base', valor: 'BENQ' })
+    if (r.tipo === 'hacia_la_base') expect(r.motivo).toContain('mande el Excel')
+  })
+
+  it('primera pasada con «manda la aplicación»: se escribe la hoja, y lo dice', () => {
+    const r = fusionarCelda(celda({ base: 'EPSON X2', excel: 'BENQ', referencia: 'app' }))
+    expect(r).toMatchObject({ tipo: 'hacia_el_excel', valor: 'EPSON X2' })
+    if (r.tipo === 'hacia_el_excel') expect(r.motivo).toContain('mande la aplicación')
+  })
+
+  it('un choque deja de serlo: gana quien se eligió', () => {
+    const excel = fusionarCelda(celda({ base: 'EPSON X2', excel: 'BENQ', antepasado: 'EPSON', referencia: 'excel' }))
+    expect(excel).toMatchObject({ tipo: 'hacia_la_base', valor: 'BENQ' })
+    const app = fusionarCelda(celda({ base: 'EPSON X2', excel: 'BENQ', antepasado: 'EPSON', referencia: 'app' }))
+    expect(app).toMatchObject({ tipo: 'hacia_el_excel', valor: 'EPSON X2' })
+  })
+
+  it('pero lo que la fusión sí sabe decidir no cambia: si solo se movió un lado, gana ese lado', () => {
+    // Elegir «manda el Excel» no puede revertir en la base lo que un técnico
+    // cerró ayer en el aula y la hoja todavía no ha visto.
+    const soloApp = fusionarCelda(celda({ base: 'EPSON X2', excel: 'EPSON', antepasado: 'EPSON', referencia: 'excel' }))
+    expect(soloApp).toMatchObject({ tipo: 'hacia_el_excel', valor: 'EPSON X2' })
+    const soloExcel = fusionarCelda(celda({ base: 'EPSON', excel: 'BENQ', antepasado: 'EPSON', referencia: 'app' }))
+    expect(soloExcel).toMatchObject({ tipo: 'hacia_la_base', valor: 'BENQ' })
+  })
+
+  it('ni las columnas con dueño fijo: los m² siguen siendo del Excel y la penúltima revisión de la app', () => {
+    expect(fusionarCelda(celda({ base: 50, excel: 62.5, dueno: 'solo_excel', referencia: 'app' }))).toMatchObject({
+      tipo: 'hacia_la_base',
+      valor: 62.5,
+    })
+    expect(
+      fusionarCelda(celda({ base: '2025-06-23', excel: '2024-01-01', dueno: 'solo_app', referencia: 'excel' })),
+    ).toMatchObject({ tipo: 'hacia_el_excel', valor: '2025-06-23' })
+  })
+
+  it('ni un hueco: el vacío nunca gana, se haya elegido lo que se haya elegido', () => {
+    const r = fusionarCelda(celda({ base: 'EPSON', excel: null, referencia: 'excel' }))
+    expect(r).toMatchObject({ tipo: 'hacia_el_excel', valor: 'EPSON' })
+  })
+})
+
 describe('la forma de teclear no decide', () => {
   it('`12,50` de la hoja y `12.5` de la base son la misma medición', () => {
     expect(iguales('12,50', 12.5)).toBe(true)

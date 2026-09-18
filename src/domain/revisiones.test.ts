@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   agruparEnVisitas,
   checksDeSemilla,
+  comprobacionesLegibles,
   detalleDeComprobacion,
   etiquetaDeComprobacion,
   ordenarComprobaciones,
@@ -11,6 +12,40 @@ import {
   type RevisionResumen,
 } from './revisiones'
 import { assetCheckKey } from './types'
+
+describe('las comprobaciones, en una frase para el Excel', () => {
+  const nombres = new Map([['a1', 'Proyector'], ['a2', 'Pantalla 2']])
+  const nombreDe = (id: string): string | null => nombres.get(id) ?? null
+
+  it('lleva el nombre del aparato, no la clave interna', () => {
+    // La hoja salía con «asset:018f…: ok»: renglones de códigos que no dicen de
+    // qué aparato hablan.
+    const frase = comprobacionesLegibles(
+      [
+        { check_key: assetCheckKey('a1'), result: 'ok' },
+        { check_key: assetCheckKey('a2'), result: 'incidencia' },
+        { check_key: 'red', result: 'na' },
+      ],
+      nombreDe,
+    )
+    expect(frase).toBe('Proyector: correcto · Pantalla 2: falla · Red: no aplica')
+    expect(frase).not.toContain('asset:')
+  })
+
+  it('un equipo que ya no está en el inventario no sale como uuid', () => {
+    expect(comprobacionesLegibles([{ check_key: assetCheckKey('fuera'), result: 'ok' }], nombreDe)).toBe(
+      'Equipo retirado: correcto',
+    )
+  })
+
+  it('las claves de antes del inventario se leen como entonces', () => {
+    expect(comprobacionesLegibles([{ check_key: 'pantallas', result: 'ok' }], nombreDe)).toBe('Pantallas: correcto')
+  })
+
+  it('sin comprobaciones no hay frase', () => {
+    expect(comprobacionesLegibles([], nombreDe)).toBeNull()
+  })
+})
 
 const revision = (p: Partial<RevisionResumen> & { id: string }): RevisionResumen => ({
   room_id: 'sala',

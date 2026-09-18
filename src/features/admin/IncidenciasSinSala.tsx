@@ -5,6 +5,8 @@ import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaCorta } from '@/domain/fechas'
+import { Cargando, EstadoVacio, FalloDeCarga, Nota, Seccion, mensajeDe } from './Seccion'
+import { useRefrescarPendientes } from './pendientes'
 
 /**
  * Las incidencias importadas que quedaron sin sala, y su camino de vuelta.
@@ -15,6 +17,10 @@ import { fechaCorta } from '@/domain/fechas'
  * traía el Excel y ponerles su sala con dos toques. Cada asignación además
  * ENSEÑA: el texto original queda como alias de la sala, así que la próxima
  * importación —y el buscador— lo resuelven solos.
+ *
+ * Agrupadas por el texto del aula: las 118 son unas veinte aulas escritas de
+ * formas distintas, y «0.1 BC» aparece doce veces. Asignar el grupo entero de
+ * una vez es doce decisiones que son la misma.
  */
 
 interface SinSala {
@@ -33,14 +39,16 @@ interface SalaElegible {
   etiqueta: string
 }
 
-function Fila({
-  fila,
+function Grupo({
+  aula,
+  filas,
   salas,
   edificios,
   ocupado,
   onAsignar,
 }: {
-  fila: SinSala
+  aula: string | null
+  filas: SinSala[]
   salas: SalaElegible[]
   edificios: Array<{ id: string; code: string; name: string }>
   ocupado: boolean
@@ -52,21 +60,32 @@ function Fila({
   const delEdificio = salas.filter((s) => s.buildingId === buildingId)
 
   return (
-    <li className="py-3">
+    <li className="card p-4">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         {/* El texto de aula del Excel, delante y destacado: es el dato con el
             que se decide, y el que se convertirá en alias al asignar. */}
-        <span className="font-mono text-sm font-semibold">
-          {fila.aula_original ?? '(sin aula en la cuarentena)'}
+        <span className="rounded-tag bg-raised px-2 py-0.5 font-mono text-sm font-semibold">
+          {aula ?? '(sin aula en la cuarentena)'}
         </span>
         <span className="text-xs text-muted">
-          {fechaCorta(fila.abierta_el)}
-          {fila.ref ? ` · ${fila.ref}` : ''} · {fila.estado}
+          {filas.length === 1 ? '1 incidencia' : `${filas.length} incidencias`}
         </span>
       </div>
-      <p className="mt-0.5 text-sm">{fila.titulo}</p>
 
-      <div className="mt-2 flex flex-wrap items-center gap-2">
+      <ul className="mt-2 divide-y divide-line-soft">
+        {filas.slice(0, 5).map((f) => (
+          <li key={f.incidencia} className="py-1.5 text-sm">
+            <span className="text-xs text-muted">
+              {fechaCorta(f.abierta_el)}
+              {f.ref ? ` · ${f.ref}` : ''} · {f.estado} ·{' '}
+            </span>
+            {f.titulo}
+          </li>
+        ))}
+        {filas.length > 5 && <li className="py-1.5 text-xs text-muted">y {filas.length - 5} más.</li>}
+      </ul>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         <select
           value={buildingId}
           onChange={(e) => {
@@ -74,7 +93,7 @@ function Fila({
             setRoomId('')
           }}
           aria-label="Edificio de la sala"
-          className="h-10 rounded-ctl border border-line bg-surface px-2 text-base"
+          className="h-11 rounded-ctl border border-line bg-surface px-2 text-base"
         >
           <option value="">Edificio…</option>
           {edificios.map((b) => (
@@ -89,7 +108,7 @@ function Fila({
           onChange={(e) => setRoomId(e.target.value)}
           disabled={!buildingId}
           aria-label="Sala que le corresponde"
-          className="h-10 rounded-ctl border border-line bg-surface px-2 text-base disabled:opacity-40"
+          className="h-11 rounded-ctl border border-line bg-surface px-2 text-base disabled:opacity-40"
         >
           <option value="">{buildingId ? 'Sala…' : '—'}</option>
           {delEdificio.map((s) => (
@@ -103,9 +122,9 @@ function Fila({
           type="button"
           disabled={!roomId || ocupado}
           onClick={() => onAsignar(roomId)}
-          className="key key-accent h-10 px-3 text-sm"
+          className="key key-accent min-h-11 px-3 text-sm"
         >
-          Asignar
+          {filas.length === 1 ? 'Asignar' : `Asignar las ${filas.length}`}
         </button>
       </div>
     </li>
@@ -114,13 +133,14 @@ function Fila({
 
 export function IncidenciasSinSala(): React.ReactElement {
   const qc = useQueryClient()
+  const refrescar = useRefrescarPendientes()
   const [nota, setNota] = useState<string | null>(null)
 
-  const { data: filas, isPending } = useQuery({
+  const { data: filas, isPending, isError, error, refetch } = useQuery({
     queryKey: ['incidencias-sin-sala'],
     queryFn: async (): Promise<SinSala[]> => {
-      const { data, error } = await supabase.rpc('incidencias_sin_sala')
-      if (error) throw error
+      const { data, error: err } = await supabase.rpc('incidencias_sin_sala')
+      if (err) throw err
       return (data ?? []) as SinSala[]
     },
   })
@@ -144,72 +164,69 @@ export function IncidenciasSinSala(): React.ReactElement {
   }, [])
 
   const asignar = useMutation({
-    mutationFn: async (input: { fila: SinSala; roomId: string }): Promise<string> => {
-      const { data, error } = await supabase.rpc('asignar_sala_a_incidencia', {
-        p_incidencia: input.fila.incidencia,
-        p_room: input.roomId,
-        p_alias: input.fila.aula_original,
-      })
-      if (error) throw error
-      return (data as string) ?? ''
+    mutationFn: async (input: { filas: SinSala[]; roomId: string }): Promise<string> => {
+      let etiqueta = ''
+      // Una a una y en orden: la función del servidor asigna una incidencia y
+      // deja el alias; con el grupo entero la primera lo deja y las demás lo
+      // encuentran ya puesto.
+      for (const fila of input.filas) {
+        const { data, error: err } = await supabase.rpc('asignar_sala_a_incidencia', {
+          p_incidencia: fila.incidencia,
+          p_room: input.roomId,
+          p_alias: fila.aula_original,
+        })
+        if (err) throw err
+        etiqueta = (data as string) ?? etiqueta
+      }
+      return etiqueta
     },
     onSuccess: (etiqueta, input) => {
+      const aula = input.filas[0]?.aula_original ?? input.filas[0]?.titulo ?? ''
       setNota(
-        `Asignada a ${etiqueta}. «${input.fila.aula_original ?? input.fila.titulo}» queda de alias: la próxima importación acertará sola.`,
+        `${input.filas.length === 1 ? 'Asignada' : `${input.filas.length} asignadas`} a ${etiqueta}. «${aula}» queda de alias: la próxima importación acertará sola.`,
       )
       void qc.invalidateQueries({ queryKey: ['incidencias-sin-sala'] })
       void qc.invalidateQueries({ queryKey: ['incidents'] })
       void qc.invalidateQueries({ queryKey: ['quarantine'] })
+      refrescar()
     },
   })
 
+  // Por el texto del aula, con las más numerosas primero: son las que más
+  // trabajo quitan de una vez.
+  const grupos = new Map<string, SinSala[]>()
+  for (const f of filas ?? []) {
+    const clave = f.aula_original ?? ''
+    grupos.set(clave, [...(grupos.get(clave) ?? []), f])
+  }
+  const ordenados = [...grupos.entries()].sort((a, b) => b[1].length - a[1].length)
+
   return (
-    <section aria-labelledby="sec-sin-sala" className="mt-8">
-      <div className="section-head">
-        <h2 id="sec-sin-sala" className="eyebrow">
-          Incidencias sin sala
-        </h2>
-        {(filas?.length ?? 0) > 0 && (
-          <span className="rounded-tag bg-warn-tint px-2 py-0.5 text-xs font-semibold text-warn">
-            {filas!.length}
-          </span>
-        )}
-      </div>
-      <p className="max-w-prose text-sm text-muted">
-        El histórico las trajo con aulas que el maestro no conoce, y se guardaron sin sala en vez
-        de inventarles una. Sin su sala no salen en ninguna ficha ni cuentan en ningún edificio:
-        asignarla aquí las devuelve a todas las vistas, y el texto original queda de alias para que
-        la próxima importación acierte sola.
-      </p>
+    <Seccion
+      id="sec-sin-sala"
+      titulo="Incidencias sin sala"
+      texto="El histórico las trajo con aulas que el maestro no conoce, y se guardaron sin sala en vez de inventarles una. Sin su sala no salen en ninguna ficha ni cuentan en ningún edificio. Asignarla las devuelve a todas las vistas, y el texto original queda de alias para que la próxima importación acierte sola."
+      pendientes={filas?.length ?? 0}
+    >
+      {isPending && <Cargando texto="Buscando incidencias sin sala…" />}
+      {isError && <FalloDeCarga que="las incidencias sin sala" error={error} onReintentar={() => void refetch()} />}
+      {filas && filas.length === 0 && <EstadoVacio titulo="Todas las incidencias tienen su sala" />}
 
-      {isPending && <p className="mt-3 text-sm text-muted">Buscando huérfanas…</p>}
-      {!isPending && (filas?.length ?? 0) === 0 && (
-        <p className="mt-3 text-sm text-muted">Ninguna: todas las incidencias tienen su sala.</p>
-      )}
-
-      <ul className="mt-3 divide-y divide-line">
-        {(filas ?? []).map((f) => (
-          <Fila
-            key={f.incidencia}
-            fila={f}
+      <ul className="space-y-3">
+        {ordenados.map(([aula, lista]) => (
+          <Grupo
+            key={aula || '(sin aula)'}
+            aula={aula || null}
+            filas={lista}
             salas={maestro?.salas ?? []}
             edificios={maestro?.edificios ?? []}
             ocupado={asignar.isPending}
-            onAsignar={(roomId) => asignar.mutate({ fila: f, roomId })}
+            onAsignar={(roomId) => asignar.mutate({ filas: lista, roomId })}
           />
         ))}
       </ul>
 
-      {asignar.isError && (
-        <p role="alert" className="mt-3 text-sm text-crit">
-          {asignar.error instanceof Error ? asignar.error.message : 'No se ha podido asignar.'}
-        </p>
-      )}
-      {nota && !asignar.isPending && (
-        <p aria-live="polite" className="mt-3 text-sm text-ok">
-          {nota}
-        </p>
-      )}
-    </section>
+      <Nota texto={asignar.isError ? mensajeDe(asignar.error, 'No se ha podido asignar.') : nota} tono={asignar.isError ? 'crit' : 'ok'} />
+    </Seccion>
   )
 }

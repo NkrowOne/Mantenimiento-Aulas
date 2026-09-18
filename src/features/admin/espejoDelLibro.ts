@@ -183,6 +183,10 @@ export function datosDelLibro(
       observacion: null,
       resolucion: (val(f.celdas.F, 'texto') as string) ?? null,
       material: (val(f.celdas.G, 'texto') as string) ?? null,
+      // Lo que está en la hoja de partes es un parte, y el espejo no sabe qué
+      // tiene descontado el almacén: es un libro, no una base.
+      esParte: true,
+      materialApuntado: [],
     })
   }
 
@@ -204,6 +208,8 @@ export function datosDelLibro(
       observacion: (val(f.celdas.F, 'texto') as string) ?? null,
       resolucion: (val(f.celdas.G, 'texto') as string) ?? null,
       material: (val(f.celdas.H, 'texto') as string) ?? null,
+      esParte: true,
+      materialApuntado: [],
     })
   }
 

@@ -130,7 +130,9 @@ function DudaDeSala({
       </p>
 
       {contestada ? (
-        <p className="mt-2 flex flex-wrap items-center gap-2 text-sm text-ok-ink">
+        // `text-ok` y no `text-ok-ink`: el «ink» es el texto DENTRO de una tecla
+        // verde, casi blanco, y sobre el fondo normal no se veía.
+        <p className="mt-2 flex flex-wrap items-center gap-2 text-sm text-ok">
           {contestada}
           <button type="button" className="key key-quiet h-9 px-3 text-xs" onClick={() => onContestar(null)}>
             Cambiar
@@ -250,7 +252,7 @@ function DudaDeAlta({
       </p>
       <p className="mt-1 text-xs text-muted">{duda.detalle}</p>
       {respuesta ? (
-        <p className="mt-2 flex flex-wrap items-center gap-2 text-sm text-ok-ink">
+        <p className="mt-2 flex flex-wrap items-center gap-2 text-sm text-ok">
           {respuesta.tipo === 'alta' && respuesta.aceptar ? 'Entra.' : 'No entra: se queda como está.'}
           <button type="button" className="key key-quiet h-9 px-3 text-xs" onClick={() => onContestar(null)}>
             Cambiar

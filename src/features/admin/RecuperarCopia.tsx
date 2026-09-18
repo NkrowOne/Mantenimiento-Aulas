@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { flush } from '@/sync/outbox'
 import { cuantoTrae, importarPendientes, leerCopia } from '@/sync/rescate'
+import { Nota, Seccion } from './Seccion'
 
 /**
  * El otro extremo de la salida de emergencia.
@@ -63,14 +64,11 @@ export function RecuperarCopia(): React.ReactElement {
   }
 
   return (
-    <section>
-      <h2 className="text-xl font-semibold">Recuperar trabajo de un dispositivo</h2>
-      <p className="mt-1 text-sm text-muted">
-        Para cuando un iPad no consigue subir su cola. El técnico pulsa «Guardar copia de lo
-        pendiente» en la lámpara de sincronización y manda el fichero; aquí se vuelve a encolar y
-        se sube con esta sesión. Importar dos veces la misma copia no duplica nada.
-      </p>
-
+    <Seccion
+      id="sec-recuperar-copia"
+      titulo="Recuperar trabajo de un dispositivo"
+      texto="Para cuando un iPad no consigue subir su cola. El técnico pulsa «Guardar copia de lo pendiente» en la lámpara de sincronización y manda el fichero; aquí se vuelve a encolar y se sube con esta sesión. Importar dos veces la misma copia no duplica nada."
+    >
       <input
         ref={input}
         type="file"
@@ -82,20 +80,19 @@ export function RecuperarCopia(): React.ReactElement {
         }}
       />
 
-      <button
-        type="button"
-        disabled={trabajando}
-        onClick={() => input.current?.click()}
-        className="key key-accent mt-4 min-h-11 px-4 text-sm"
-      >
-        {trabajando ? 'Recuperando…' : 'Elegir fichero de copia'}
-      </button>
+      <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
+        <p className="text-sm text-muted">Un fichero <span className="font-mono">.json</span> de la lámpara de sincronización.</p>
+        <button
+          type="button"
+          disabled={trabajando}
+          onClick={() => input.current?.click()}
+          className="key key-accent min-h-11 px-4 text-sm"
+        >
+          {trabajando ? 'Recuperando…' : 'Elegir fichero de copia'}
+        </button>
+      </div>
 
-      {parte && (
-        <p aria-live="polite" className={`mt-3 text-sm ${mal ? 'text-crit' : 'text-muted'}`}>
-          {parte}
-        </p>
-      )}
-    </section>
+      <Nota texto={parte} tono={mal ? 'crit' : 'ok'} />
+    </Seccion>
   )
 }

@@ -6,11 +6,44 @@ aplicación; nada requiere tocar código.
 
 ---
 
+## 0. La pestaña Datos, por secciones
+
+Todo lo de administración vive en la pestaña **Datos** (solo la ven los
+administradores), y va en seis secciones, arriba del todo. Se abre una cada
+vez, y la aplicación recuerda en cada navegador cuál fue la última. Se entra
+en **Por decidir**, que es la del día a día:
+
+| Sección | Qué hay |
+|---|---|
+| **Por decidir** | Lo que crece solo con cada ronda: retiradas por autorizar, equipos y tipos sin validar, y los duplicados del inventario |
+| **Maestro** | Salas y edificios, edificios sin identificar y equipamiento por defecto (apartados 1 y 3) |
+| **Excel** | Sincronizar el libro de SharePoint (apartado 4b) |
+| **Importación** | Incidencias sin sala, la cuarentena y recuperar una copia (apartado 1) |
+| **Actividad** | Quién cambió qué y cuándo: la auditoría, leída con palabras (apartado 3 bis) |
+| **Usuarios** | Roles y bajas, y cómo se da de alta a alguien (apartado 2) |
+
+**El trabajo está contado antes de entrar.** La pestaña «Datos» de la barra de
+abajo lleva un número con todo lo que espera una decisión, así se ve desde
+cualquier pantalla. Dentro, cada sección lleva el suyo, y repite la cifra junto
+a su título. En *Por decidir* hay además cuatro baldosas arriba: lo que espera
+aquí, lo que espera en el maestro, lo que espera en importación, y cuántos
+días hace de la última sincronización del Excel; las tres últimas llevan a su
+sección. El número se vuelve a contar con cada decisión y cada cinco minutos.
+
+Todas las secciones se leen igual: título con su recuento, una frase de qué es
+y qué pasa con lo que se decide ahí, y el cuerpo. Cuando no hay nada que hacer
+lo dicen con una marca en verde, no con una lista vacía. Lo que no se deshace
+(dar de baja a alguien, fusionar edificios, dar por revisadas cien filas de la
+cuarentena) pide confirmación antes.
+
+---
+
 ## 1. Confirmar los nombres dudosos
 
 Es lo primero que conviene hacer tras desplegar. El importador **no adivina**:
 lo que no pudo interpretar con confianza quedó marcado, y sale en la pestaña
-**Datos** (solo visible para administradores).
+**Datos**: los edificios en la sección **Maestro**, las incidencias sin sala y
+la cuarentena en **Importación**.
 
 ### Edificios sin identificar
 
@@ -694,15 +727,37 @@ update asset_types set aliases = aliases || 'proyeltor'
  where id = public.asset_type_id('Proyector');
 ```
 
-Todo cambio en `rooms`, `buildings`, `stock_items`, `assets`, `incidents` y
-`profiles` **queda auditado** con autor y valores anterior y posterior:
+Todo cambio en `rooms`, `buildings`, `zones`, `stock_items`, `assets`,
+`asset_types`, `asset_removals`, `asset_defaults`, `incidents` y `profiles`
+**queda auditado** con autor y valores anterior y posterior:
 
 ```sql
 select at, by_user, old_data->>'name', new_data->>'name'
 from audit_log where table_name = 'rooms' order by at desc limit 20;
 ```
 
-### Auditoría de inventario — el mismo aparato apuntado dos veces
+### 3 bis. Actividad — quién cambió qué
+
+Esa misma auditoría se lee sin SQL en `Datos → Actividad`. Cada cambio sale
+con su hora, la persona, qué era (la sala con su código, el equipo con su
+etiqueta y su sala, la incidencia con su número) y cada campo con lo que decía
+y lo que dice, en las palabras de la aplicación: «Sala: — → H 1.7», «Estado:
+Instalado → Averiado». Las altas y las bajas salen marcadas en verde y en rojo.
+
+- Se filtra por periodo (última semana por defecto), por qué (salas, equipos,
+  incidencias…) y por quién. Cien cambios por página; «Ver más antiguos» sigue.
+- Los nombres salen del espejo del dispositivo. Lo que ya no existe —una sala
+  borrada en una fusión— sale abreviado (`#7f3a9c1e`), y se busca por ese
+  prefijo en `audit_log` si hace falta.
+- **No están** las revisiones, los movimientos del almacén ni los eventos de
+  equipo: son tablas que solo crecen y su propio histórico ya es el registro
+  (Historial, Almacén y la ficha de cada sala).
+- Se omiten los cambios que la base hace sola —fecha de última revisión y de
+  último inventario de la sala, orden de la lista— y el pie dice cuántos se
+  han omitido. Un cambio que solo tocó eso no aparece.
+- Es solo lectura. Lo que se descubre aquí se corrige en su sección.
+
+### Duplicados y cifras del inventario — el mismo aparato apuntado dos veces
 
 El síntoma con el que se llega aquí: alguien teclea «Monitor Atril», la
 aplicación guarda «Monitor Atril 2», y en la lista de la sala no aparece ningún
@@ -712,14 +767,15 @@ el servidor —que no puede rechazar la fila sin perder el trabajo— la guardó
 el siguiente número libre. Desde entonces cada choque de esos queda además
 **registrado** con el par identificado, así que la bandeja no adivina: enseña.
 
-En `Auditoría de inventario` hay dos cosas:
+En `Datos → Por decidir → Duplicados y cifras del inventario` hay dos cosas:
 
-- **El resumen del servidor**: cuántos equipos, incidencias, revisiones y salas
-  hay de verdad en la base. Si un iPad enseña menos, ese dispositivo no ha
-  terminado de descargar — se arregla sincronizando, no re-apuntando equipos.
 - **Los posibles duplicados**: pares de la misma sala, mismo tipo y mismo nombre
   base, con lo que cuelga de cada lado (revisiones, incidencias, eventos).
-  Decide siempre una persona, y hay tres salidas:
+  Decide siempre una persona, y hay tres salidas (tabla de abajo).
+- **Las cifras del servidor**, plegadas debajo: cuántos equipos, incidencias,
+  revisiones y salas hay de verdad en la base. Si un iPad enseña menos, ese
+  dispositivo no ha terminado de descargar — se arregla sincronizando, no
+  re-apuntando equipos.
 
 | | Qué hace |
 |---|---|
@@ -893,6 +949,56 @@ teclea en la hoja entra aquí (la pasada lo pregunta antes).
   «baja».
 
 Los ordenadores disponibles salen en el informe como capacidad de respuesta.
+
+## 4b. El Excel de SharePoint
+
+En **Datos → Excel** se sube el libro de SharePoint, se ve **qué va a pasar
+antes de que pase**, se aplica y se baja el mismo fichero con todo lo que la
+aplicación sabe. El diseño entero está en
+[`sincronizacion-sharepoint.md`](sincronizacion-sharepoint.md); esto es lo que
+hay que saber para usarlo.
+
+**1 · Quién manda.** Antes de subir el libro se elige qué pasa cuando una celda
+es distinta en los dos lados y no se puede saber quién la cambió —la primera
+vez que se sincroniza un libro, y cuando la misma celda cambió en el Excel y en
+la aplicación—:
+
+- **Que decida una persona**: sale como choque y no se toca ninguno de los dos
+  lados. Es lo de siempre.
+- **Manda el Excel**: lo que dice la hoja entra en la aplicación. Para cuando
+  se acaba de corregir el Excel a mano y es el inventario bueno.
+- **Manda la aplicación**: lo que dice la aplicación se escribe en la hoja.
+  Para cuando el Excel lleva meses sin tocarse.
+
+Si solo cambió un lado, gana ese lado se elija lo que se elija: elegir «manda
+el Excel» no borra lo que un técnico cerró ayer en el aula. Se puede cambiar
+con el libro ya leído y la pasada se recalcula al momento.
+
+**2 · El libro.** Se sube el `.xlsx`. No se escribe nada hasta pulsar
+«Sincronizar».
+
+**3 · Qué va a pasar.** Siempre los mismos cuatro montones, primero en total y
+luego hoja por hoja:
+
+| Montón | Qué es |
+|---|---|
+| **Al Excel** | Celdas que la aplicación va a escribir en la hoja —con de qué aula o parte son, qué dicen hoy, qué van a decir y por qué—, filas nuevas y filas que salen |
+| **A la aplicación** | Celdas corregidas en la hoja que entran en la base, y filas del libro que entran como nuevas (un parte tecleado, un artículo, un PC de repuesto) |
+| **Hay que decidir** | Dudas (se contestan ahí mismo), choques y celdas que no se pueden leer. Nada de esto se toca hasta que alguien decida |
+| **Se deja como está** | Filas que no cruzan con nada, y los avisos de lo que la pasada hace por su cuenta |
+
+Y el bloque **Almacén**, con lo que se va a apuntar si se sincroniza,
+calculado como lo calcula la base: compras (la diferencia entre «Total
+Comprado» y lo que la aplicación ya tenía ese año), salidas a nombre del parte
+y de su aula (solo la diferencia con lo que ese parte ya tenía descontado),
+devoluciones, y —en ámbar— el material que **no** se va a descontar porque el
+catálogo no reconoce el nombre. Si sale ahí, añade el alias en el catálogo del
+almacén antes de sincronizar.
+
+**Lo que no va a la hoja de partes.** Las observaciones —notas de seguimiento—
+y los borradores llevan número como un parte, pero no lo son: no se añaden a
+`Material Instalado`, y si una pasada anterior los escribió, la siguiente saca
+esas filas del libro y lo dice en «Filas que salen».
 
 ## 5. Las placas de puerta
 

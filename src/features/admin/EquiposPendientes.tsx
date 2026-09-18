@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { pullMaster } from '@/sync/pull'
+import { fechaCorta } from '@/domain/fechas'
+import { Cargando, EstadoVacio, FalloDeCarga, Nota, Seccion, mensajeDe } from './Seccion'
+import { useRefrescarPendientes } from './pendientes'
 
 /**
  * Los equipos que alguien apuntó desde un aula y nadie ha mirado todavía.
@@ -19,9 +22,6 @@ import { pullMaster } from '@/sync/pull'
  *  - Y por eso la segunda salida no es «corregir» sino «retirar»: si el equipo
  *    ya no está —se lo llevaron, se apuntó dos veces—, sale del inventario y se
  *    queda en el histórico de la sala, que es donde tiene que quedarse.
- *
- * Va la primera del panel, por delante del catálogo, porque es lo único de esta
- * pantalla que crece solo: cada ronda de revisiones deja equipos aquí.
  */
 
 interface Pendiente {
@@ -46,6 +46,7 @@ const LIMITE = 300
 
 export function EquiposPendientes(): React.ReactElement {
   const qc = useQueryClient()
+  const refrescar = useRefrescarPendientes()
   const [nota, setNota] = useState<string | null>(null)
 
   const { data, isPending, isError, error, refetch } = useQuery({
@@ -133,6 +134,7 @@ export function EquiposPendientes(): React.ReactElement {
     onSuccess: (mensaje) => {
       setNota(mensaje)
       void qc.invalidateQueries({ queryKey: ['assets'] })
+      refrescar()
       // El espejo de este dispositivo se entera ahora y no en el próximo
       // refresco: quien administra suele tener la aplicación abierta en Revisar,
       // y ver ahí el equipo que acaba de retirar es media pantalla de confianza.
@@ -152,40 +154,14 @@ export function EquiposPendientes(): React.ReactElement {
   }
 
   return (
-    <section aria-labelledby="sec-equipos-pendientes" className="mt-8">
-      <div className="section-head">
-        <h2 id="sec-equipos-pendientes" className="eyebrow">
-          Equipos sin validar
-        </h2>
-      </div>
-      <p className="text-sm text-muted">
-        Apuntados desde un aula. Ya cuentan en las revisiones; esto solo confirma que están.
-      </p>
-
-      {isPending && <p className="mt-3 text-sm text-muted">Cargando…</p>}
-
-      {isError && (
-        <div className="card mt-3 p-4">
-          <p className="text-sm text-crit">
-            No se han podido leer: {error instanceof Error ? error.message : ''}
-          </p>
-          <button
-            type="button"
-            onClick={() => void refetch()}
-            className="key key-quiet mt-3 min-h-11 px-3 text-sm"
-          >
-            Reintentar
-          </button>
-        </div>
-      )}
-
-      {data && pendientes.length === 0 && (
-        <p className="mt-3 text-sm text-muted">Nada pendiente de validar.</p>
-      )}
-
-      {data && pendientes.length > 0 && (
-        <>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+    <Seccion
+      id="sec-equipos-pendientes"
+      titulo="Equipos sin validar"
+      texto="Apuntados desde un aula. Ya cuentan en las revisiones; esto solo confirma que están. «No está» lo borra de la sala, o lo retira si alguna revisión ya lo comprobó."
+      pendientes={pendientes.length}
+      acciones={
+        data && pendientes.length > 0 ? (
+          <>
             <button
               type="button"
               disabled={act.isPending}
@@ -199,102 +175,103 @@ export function EquiposPendientes(): React.ReactElement {
               Validar los {pendientes.length}
             </button>
             {pendientes.length === LIMITE && (
-              <span className="text-xs text-muted">
-                Se muestran los {LIMITE} más recientes. Valida estos y vuelve a entrar.
-              </span>
+              <span className="text-xs text-muted">Se muestran los {LIMITE} más recientes.</span>
             )}
-          </div>
+          </>
+        ) : undefined
+      }
+    >
+      {isPending && <Cargando />}
+      {isError && <FalloDeCarga que="los equipos sin validar" error={error} onReintentar={() => void refetch()} />}
+      {data && pendientes.length === 0 && (
+        <EstadoVacio titulo="Todo el inventario apuntado está validado" />
+      )}
 
-          <ul className="mt-3 space-y-3">
-            {[...porSala].map(([roomId, equipos]) => {
-              const sala = data.salas.get(roomId)
+      {data && pendientes.length > 0 && (
+        <ul className="space-y-3">
+          {[...porSala].map(([roomId, equipos]) => {
+            const sala = data.salas.get(roomId)
 
-              return (
-                <li key={roomId} className="card p-4">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <span className="font-medium">
-                      {sala
-                        ? `${sala.building_code} · ${sala.room_code}`
-                        : 'Equipos sin sala asignada'}
-                      {sala && sala.room_name !== sala.room_code && (
-                        <span className="ml-2 text-sm font-normal text-muted">{sala.room_name}</span>
-                      )}
-                    </span>
-                    <button
-                      type="button"
-                      disabled={act.isPending}
-                      onClick={() =>
-                        act.mutate({ kind: 'confirmar', ids: equipos.map((e) => e.id) })
-                      }
-                      className="key key-accent min-h-11 px-3 text-sm"
-                    >
-                      Validar {equipos.length === 1 ? 'el equipo' : `los ${equipos.length}`}
-                    </button>
-                  </div>
+            return (
+              <li key={roomId} className="card p-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="font-medium">
+                    {sala ? (
+                      <>
+                        <span className="rounded-tag bg-raised px-2 py-0.5 font-mono text-sm font-semibold text-accent">
+                          {sala.building_code} {sala.room_code}
+                        </span>
+                        {sala.room_name !== sala.room_code && (
+                          <span className="ml-2 text-sm font-normal text-muted">{sala.room_name}</span>
+                        )}
+                      </>
+                    ) : (
+                      'Equipos sin sala asignada'
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={act.isPending}
+                    onClick={() => act.mutate({ kind: 'confirmar', ids: equipos.map((e) => e.id) })}
+                    className="key key-accent min-h-11 px-3 text-sm"
+                  >
+                    Validar {equipos.length === 1 ? 'el equipo' : `los ${equipos.length}`}
+                  </button>
+                </div>
 
-                  <ul className="mt-2 divide-y divide-line-soft">
-                    {equipos.map((e) => {
-                      const detalle = [e.model, e.serial].filter(Boolean).join(' · ')
-                      const autor = e.created_by ? data.quien.get(e.created_by) : null
+                <ul className="mt-2 divide-y divide-line-soft">
+                  {equipos.map((e) => {
+                    const detalle = [e.model, e.serial].filter(Boolean).join(' · ')
+                    const autor = e.created_by ? data.quien.get(e.created_by) : null
 
-                      return (
-                        <li key={e.id} className="flex items-center gap-2 py-2">
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium">
-                              {e.label ?? data.tipos.get(e.asset_type_id) ?? 'Equipo'}
-                            </span>
-                            <span className="block truncate text-xs text-muted">
-                              {[
-                                data.tipos.get(e.asset_type_id),
-                                detalle || 'sin modelo ni serie',
-                                autor,
-                                e.created_at ? new Date(e.created_at).toLocaleDateString('es-ES') : null,
-                              ]
-                                .filter(Boolean)
-                                .join(' · ')}
-                            </span>
+                    return (
+                      <li key={e.id} className="flex items-center gap-2 py-2">
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">
+                            {e.label ?? data.tipos.get(e.asset_type_id) ?? 'Equipo'}
                           </span>
+                          <span className="block truncate text-xs text-muted">
+                            {[
+                              data.tipos.get(e.asset_type_id),
+                              detalle || 'sin modelo ni serie',
+                              autor,
+                              e.created_at ? fechaCorta(e.created_at) : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </span>
+                        </span>
 
-                          <button
-                            type="button"
-                            disabled={act.isPending}
-                            onClick={() => {
-                              // Borra el equipo de la sala. Se confirma por lo
-                              // mismo que en el aula: no hay botón de deshacer
-                              // al lado.
-                              if (
-                                confirm(
-                                  `¿Borrar «${e.label ?? 'este equipo'}» de la sala? No se autoriza y desaparece del inventario.`,
-                                )
-                              ) {
-                                act.mutate({ kind: 'descartar', id: e.id })
-                              }
-                            }}
-                            className="key key-quiet min-h-11 shrink-0 px-3 text-xs text-muted"
-                          >
-                            No está
-                          </button>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                </li>
-              )
-            })}
-          </ul>
-        </>
+                        <button
+                          type="button"
+                          disabled={act.isPending}
+                          onClick={() => {
+                            // Borra el equipo de la sala. Se confirma por lo
+                            // mismo que en el aula: no hay botón de deshacer
+                            // al lado.
+                            if (
+                              confirm(
+                                `¿Borrar «${e.label ?? 'este equipo'}» de la sala? No se autoriza y desaparece del inventario.`,
+                              )
+                            ) {
+                              act.mutate({ kind: 'descartar', id: e.id })
+                            }
+                          }}
+                          className="key key-quiet min-h-11 shrink-0 px-3 text-xs text-muted"
+                        >
+                          No está
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </li>
+            )
+          })}
+        </ul>
       )}
 
-      {act.isError && (
-        <p className="mt-3 text-sm text-crit">
-          {act.error instanceof Error ? act.error.message : 'No se ha podido aplicar.'}
-        </p>
-      )}
-      {nota && !act.isPending && !act.isError && (
-        <p aria-live="polite" className="mt-3 text-sm text-ok">
-          {nota}
-        </p>
-      )}
-    </section>
+      <Nota texto={act.isError ? mensajeDe(act.error) : nota} tono={act.isError ? 'crit' : 'ok'} />
+    </Seccion>
   )
 }

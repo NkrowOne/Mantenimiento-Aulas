@@ -56,6 +56,8 @@ import {
 } from '@/domain/mapa'
 import type { Hoja } from '@/domain/mapa'
 import { columnaParaLaRef } from '@/domain/preparar'
+import { movimientosPrevistos } from '@/domain/movimientos'
+import type { MovimientoPrevisto } from '@/domain/movimientos'
 import {
   resumir,
   sincronizarBolsa,
@@ -63,7 +65,7 @@ import {
   sincronizarPartes,
   sincronizarUnidades,
 } from '@/domain/sincronizar'
-import type { Alta, Instantanea, Plan, Resumen } from '@/domain/sincronizar'
+import type { Alta, Instantanea, Plan, Referencia, Resumen } from '@/domain/sincronizar'
 import { leerMaterial } from '@/domain/valores'
 import type { Valor } from '@/domain/valores'
 import { abrirLibro, celdasCombinadas, leerHoja } from '@/domain/xlsx'
@@ -89,6 +91,14 @@ export interface Analisis {
   dudas: Duda[]
   /** Lo que la persona ha contestado. Se vuelve a planificar con cada respuesta. */
   respuestas: Respuestas
+  /**
+   * Quién manda donde la fusión no sabe decidir: el Excel, la aplicación, o
+   * nadie —se pregunta—. Se elige al cargar y se puede cambiar; cambiarlo es
+   * volver a planificar, como contestar una duda.
+   */
+  referencia: Referencia | null
+  /** Lo que el almacén va a apuntar si la pasada se aplica. Ver `movimientos.ts`. */
+  movimientos: MovimientoPrevisto[]
   /** El maestro, para que la pantalla ofrezca salas en las dudas. */
   catalogo: Catalogo
   /**
@@ -121,7 +131,12 @@ export interface EntradaDeLaPasada {
   indice: Indice
 }
 
-export async function analizar(fichero: File, hoy = new Date(), respuestas: Respuestas = {}): Promise<Analisis> {
+export async function analizar(
+  fichero: File,
+  hoy = new Date(),
+  respuestas: Respuestas = {},
+  referencia: Referencia | null = null,
+): Promise<Analisis> {
   const bytes = new Uint8Array(await fichero.arrayBuffer())
   const libro = await abrirLibro(bytes)
   const anyo = hoy.getFullYear()
@@ -162,7 +177,7 @@ export async function analizar(fichero: File, hoy = new Date(), respuestas: Resp
     indice,
   }
   const columnaRef = columnaParaLaRef(filas.get(ESTADO.nombre)!, ESTADO.cabecera, 'Ref')
-  const planes = planificar(entrada, datos, columnaRef, respuestas)
+  const planes = planificar(entrada, datos, columnaRef, respuestas, referencia)
 
   // Las hojas de detalle se rehacen enteras cada pasada. No son un historial que
   // haya que ir completando: son la foto de lo que la base sabe hoy, y
@@ -198,6 +213,8 @@ export async function analizar(fichero: File, hoy = new Date(), respuestas: Resp
     columnaRef,
     dudas: planes.flatMap((p) => p.dudas),
     respuestas,
+    referencia,
+    movimientos: movimientosDe(planes, datos),
     catalogo,
     entrada,
     bloqueada: planes.some((p) => p.desajustes.length > 0),
@@ -207,19 +224,35 @@ export async function analizar(fichero: File, hoy = new Date(), respuestas: Resp
 }
 
 /**
- * Volver a planificar con otras respuestas. No lee nada: todo lo que hace falta
- * está en `entrada`, y por eso contestar una duda es instantáneo.
+ * Volver a planificar con otras respuestas, o con otra referencia. No lee
+ * nada: todo lo que hace falta está en `entrada`, y por eso contestar una duda
+ * —o cambiar quién manda— es instantáneo.
  */
-export function replanificar(a: Analisis, respuestas: Respuestas): Analisis {
-  const planes = planificar(a.entrada, a.datos, a.columnaRef, respuestas)
+export function replanificar(
+  a: Analisis,
+  respuestas: Respuestas,
+  referencia: Referencia | null = a.referencia,
+): Analisis {
+  const planes = planificar(a.entrada, a.datos, a.columnaRef, respuestas, referencia)
   return {
     ...a,
     planes,
     resumenes: planes.map(resumir),
     dudas: planes.flatMap((p) => p.dudas),
     respuestas,
+    referencia,
+    movimientos: movimientosDe(planes, a.datos),
     bloqueada: planes.some((p) => p.desajustes.length > 0),
   }
+}
+
+function movimientosDe(planes: Plan[], datos: DatosDeLaPasada): MovimientoPrevisto[] {
+  return movimientosPrevistos({
+    planes,
+    incidencias: datos.incidencias,
+    articulos: datos.articulos,
+    resolver: datos.resolverArticulo,
+  })
 }
 
 /** Las dudas que siguen sin contestar. Con alguna, la pasada no se aplica. */
@@ -232,9 +265,11 @@ function planificar(
   datos: DatosDeLaPasada,
   columnaRef: string,
   respuestas: Respuestas,
+  referenciaElegida: Referencia | null,
 ): Plan[] {
   const planes: Plan[] = []
   const inst = (hoja: string): Instantanea => e.instantaneas.get(hoja) ?? (() => undefined)
+  const referencia = referenciaElegida ?? undefined
 
   planes.push(
     sincronizarEstado({
@@ -246,6 +281,7 @@ function planificar(
       combinadas: e.combinadas,
       instantanea: inst(ESTADO.nombre),
       respuestas,
+      referencia,
     }),
   )
 
@@ -260,6 +296,7 @@ function planificar(
         instantanea: inst(hoja.nombre),
         indice: e.indice,
         respuestas,
+        referencia,
       }),
     )
   }
@@ -275,6 +312,7 @@ function planificar(
         resolver: datos.resolverArticulo,
         instantanea: inst(hoja.nombre),
         respuestas,
+        referencia,
       }),
     )
   }
@@ -290,6 +328,7 @@ function planificar(
         unidades: datos.unidades,
         instantanea: inst(PCS_2026.nombre),
         respuestas,
+        referencia,
       }),
     )
   }
@@ -468,6 +507,9 @@ export async function aplicar(a: Analisis): Promise<Aplicado> {
       conflictos: a.resumenes.reduce((n, r) => n + r.conflictos, 0),
       descuadres: a.planes.reduce((n, p) => n + p.avisos.filter((x) => x.includes('descuadre')).length, 0),
       altas: a.resumenes.reduce((n, r) => n + r.filasNuevas, 0),
+      // Quién mandó donde la fusión no supo decidir. La base no lo usa; queda
+      // en el plan por si algún día hay que explicar una pasada.
+      referencia: a.referencia ?? 'preguntar',
     },
   }
 
@@ -529,6 +571,10 @@ function altaParaLaBase(hoja: string, alta: Alta, a: Analisis): Record<string, u
         nombre: alta.nombre,
         nombre_alternativo: alta.nombreAlternativo,
         comprado: alta.comprado,
+        // El año de la bolsa: lo comprado es lo comprado ESE año, y la compra
+        // con la que entra el artículo tiene que fecharse dentro de él, igual
+        // que el cuadre de una celda. Sin el año la base la fechaba hoy.
+        anyo: hojaPorNombre(hoja)?.anyo ?? null,
       }
     case 'unidad':
       return {

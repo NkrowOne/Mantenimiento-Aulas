@@ -113,6 +113,93 @@ begin;
 rollback;
 
 \echo ''
+\echo '=== 4b. Un técnico SÍ pone el código de EasyVista, y solo eso ==='
+-- La única escritura sobre `incidents` que tiene un técnico después de abrirla:
+-- una columna, por RPC, también sobre una resuelta. El número del libro no se
+-- toca por ese camino, y un anónimo no llega.
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_id  uuid;
+    v_ref text;
+    v_out text;
+  begin
+    select id, external_ref into v_id, v_ref
+      from incidents where state = 'resuelta' order by opened_at limit 1;
+    if v_id is null then
+      raise notice 'SIN DATOS: no hay incidencias resueltas con las que probar';
+      return;
+    end if;
+
+    v_out := public.incidencia_poner_codigo_easyvista(v_id, '  i260916_0042 ');
+    if v_out <> 'I260916_0042' then
+      raise exception 'FALLO: el código no volvió normalizado: %', v_out;
+    end if;
+    if (select easyvista_ref from incidents where id = v_id) <> 'I260916_0042' then
+      raise exception 'FALLO: el código no se guardó en la incidencia';
+    end if;
+    if (select external_ref from incidents where id = v_id) is distinct from v_ref then
+      raise exception 'FALLO: poner el código de EasyVista tocó el número del libro';
+    end if;
+    raise notice 'OK: el técnico puso el código de EasyVista en una resuelta, normalizado';
+
+    -- Vacío lo quita.
+    perform public.incidencia_poner_codigo_easyvista(v_id, '   ');
+    if (select easyvista_ref from incidents where id = v_id) is not null then
+      raise exception 'FALLO: el texto vacío no quitó el código';
+    end if;
+    raise notice 'OK: con texto vacío el código se quita';
+
+    -- Y un código con espacios dentro no entra.
+    begin
+      perform public.incidencia_poner_codigo_easyvista(v_id, 'I26 0042');
+      raise exception 'FALLO: entró un código con espacios';
+    exception when others then
+      if sqlerrm like 'FALLO%' then raise; end if;
+      raise notice 'OK: un código con espacios se rechaza';
+    end;
+  end $$;
+rollback;
+
+begin;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  -- El cierre con código, por el asiento: es lo que viaja por la cola.
+  do $$
+  declare v_id uuid;
+  begin
+    select id into v_id from incidents where state = 'abierta' order by opened_at limit 1;
+    if v_id is null then
+      raise notice 'SIN DATOS: no hay incidencias abiertas con las que probar';
+      return;
+    end if;
+    insert into incident_resolutions (id, incident_id, resolution, resolved_at, resolved_by, easyvista_ref)
+    values (gen_random_uuid(), v_id, 'Cable HDMI nuevo', now(),
+            '11111111-1111-4111-8111-111111111111', ' s260916_0007 ');
+    if (select easyvista_ref from incidents where id = v_id) <> 'S260916_0007' then
+      raise exception 'FALLO: el cierre no llevó el código a la incidencia';
+    end if;
+    if (select state from incidents where id = v_id) <> 'resuelta' then
+      raise exception 'FALLO: el cierre con código no cerró';
+    end if;
+    raise notice 'OK: el código tecleado al cerrar llega a la incidencia';
+  end $$;
+rollback;
+
+begin;
+  select test_as(null, null);
+  do $$
+  begin
+    perform public.incidencia_poner_codigo_easyvista(
+      (select id from incidents limit 1), 'I260916_0042');
+    raise exception 'FALLO: un anónimo puso un código de EasyVista';
+  exception when others then
+    if sqlerrm like 'FALLO%' then raise; end if;
+    raise notice 'OK: sin sesión no se pone el código';
+  end $$;
+rollback;
+
+\echo ''
 \echo '=== 5. Un supervisor SÍ puede cerrar una incidencia ==='
 begin;
   select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
@@ -4174,5 +4261,81 @@ begin;
       raise exception 'FALLO: el número de serie se cambió desde una celda';
     end if;
     raise notice 'OK: las celdas de la hoja de PCs vuelven, y el número de serie es identidad';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 77. Lo que entra del Excel al almacén lleva su aula y su año ==='
+-- El consumo de un parte que viene de «Material Usado» sale del almacén con la
+-- sala del parte —es la columna con la que el informe reparte el material por
+-- edificio—, y la compra con la que entra un artículo nuevo de la bolsa se
+-- fecha dentro del año de esa bolsa, no hoy.
+begin;
+  select test_as('44444444-4444-4444-8444-444444444444', 'admin');
+  do $$
+  declare
+    v_inc   uuid;
+    v_ref   text;
+    v_sala  uuid;
+    v_item  uuid;
+    v_out   jsonb;
+    v_room  uuid;
+    v_anyo  int;
+  begin
+    -- Un parte con sala y con un número que no se repite: la corrección de una
+    -- celda se aplica por número, y uno repetido va a cuarentena a propósito.
+    select i.id, i.external_ref, i.room_id into v_inc, v_ref, v_sala
+      from incidents i
+     where i.room_id is not null and i.external_ref is not null
+       and not exists (select 1 from incidents o where o.external_ref = i.external_ref and o.id <> i.id)
+     order by i.opened_at limit 1;
+    if v_inc is null then
+      raise notice 'SIN DATOS: no hay partes con sala con los que probar';
+      return;
+    end if;
+
+    -- Un artículo nuevo de la bolsa de 2025, con lo comprado: entra por el alta.
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas', 'disparo', 'prueba',
+      'altas', jsonb_build_array(jsonb_build_object(
+        'hoja', 'Bolsa 2025', 'fila', 40, 'tipo', 'articulo',
+        'nombre', 'Artículo nuevo de la prueba del aula', 'comprado', 5, 'anyo', 2025,
+        'celdas', '{}'::jsonb))
+    ));
+    if (v_out->>'rechazadas')::int <> 0 then
+      raise exception 'FALLO: el alta del artículo de la prueba no entró: %', v_out;
+    end if;
+    v_item := (v_out->'altas'->0->>'clave')::uuid;
+
+    select extract(year from (occurred_at at time zone 'Europe/Madrid'))::int into v_anyo
+      from stock_movements where stock_item_id = v_item and kind = 'compra';
+    if v_anyo <> 2025 then
+      raise exception 'FALLO: la compra del artículo nuevo se fechó en % y la bolsa era de 2025', v_anyo;
+    end if;
+    raise notice 'OK: la compra con la que entra un artículo nuevo se fecha en el año de su bolsa';
+
+    -- Y el material de un parte, según el Excel: dos unidades de ese artículo.
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas', 'disparo', 'prueba',
+      'hacia_la_base', jsonb_build_array(jsonb_build_object(
+        'hoja', 'Material Instalado 2026', 'fila', 2, 'entidad', 'incidencia', 'clave', v_ref,
+        'columna', 'G', 'campo', 'incidencia.material',
+        'valor', '2 Artículo nuevo de la prueba del aula', 'motivo', 'prueba',
+        'detalle', jsonb_build_array(jsonb_build_object(
+          'articulo_id', v_item, 'cantidad', 2, 'texto', '2 Artículo nuevo de la prueba del aula'))))
+    ));
+    if (v_out->>'rechazadas')::int <> 0 then
+      raise exception 'FALLO: el material del parte de la prueba no entró: %', v_out;
+    end if;
+
+    select room_id into v_room from stock_movements
+     where incident_id = v_inc and stock_item_id = v_item and kind = 'consumo' limit 1;
+    if v_room is null then
+      raise exception 'FALLO: el consumo del Excel no se apuntó o no lleva aula';
+    end if;
+    if v_room <> v_sala then
+      raise exception 'FALLO: el consumo del Excel lleva otra aula (% frente a %)', v_room, v_sala;
+    end if;
+    raise notice 'OK: el consumo que entra del Excel lleva el aula de su parte';
   end $$;
 rollback;

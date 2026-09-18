@@ -23,7 +23,9 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { norm } from '@/domain/normalize'
 import type { Role } from '@/domain/types'
+import { Cargando, EstadoVacio, FalloDeCarga, Nota, Seccion, mensajeDe } from './Seccion'
 
 interface Perfil {
   id: string
@@ -39,9 +41,14 @@ const ROLES: Array<{ value: Role; label: string; que: string }> = [
   { value: 'admin', label: 'Admin', que: 'Además edifica el maestro y gestiona usuarios.' },
 ]
 
+/** A partir de cuántas personas hace falta buscar en vez de leer. */
+const CON_BUSCADOR = 8
+
 export function UsersPage({ yo }: { yo: string | null }): React.ReactElement {
   const qc = useQueryClient()
   const [tocado, setTocado] = useState<string | null>(null)
+  const [busqueda, setBusqueda] = useState('')
+  const [verBajas, setVerBajas] = useState(false)
 
   const { data: perfiles, isPending, isError, error, refetch } = useQuery({
     queryKey: ['perfiles'],
@@ -69,36 +76,61 @@ export function UsersPage({ yo }: { yo: string | null }): React.ReactElement {
     },
   })
 
-  const admins = (perfiles ?? []).filter((p) => p.role === 'admin' && p.active).length
+  const todos = perfiles ?? []
+  const admins = todos.filter((p) => p.role === 'admin' && p.active).length
+  const bajas = todos.filter((p) => !p.active).length
+  const q = norm(busqueda)
+  const visibles = todos.filter(
+    (p) => (verBajas || p.active) && (q === '' || norm(p.full_name).includes(q) || norm(p.email).includes(q)),
+  )
 
   return (
-    <section aria-labelledby="sec-usuarios" className="mt-8">
-      <div className="section-head">
-        <h2 id="sec-usuarios" className="eyebrow">
-          Usuarios y roles
-        </h2>
-      </div>
+    <Seccion
+      id="sec-usuarios"
+      titulo="Usuarios y roles"
+      texto={
+        todos.length > 0
+          ? `${todos.length - bajas} ${todos.length - bajas === 1 ? 'persona activa' : 'personas activas'}, ${admins} con rol de administrador${bajas > 0 ? `, ${bajas} de baja` : ''}. El rol decide qué pestañas ve cada uno.`
+          : 'El rol decide qué pestañas ve cada uno.'
+      }
+      acciones={
+        todos.length > CON_BUSCADOR ? (
+          <>
+            <input
+              type="search"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar por nombre o correo"
+              aria-label="Buscar usuario"
+              className="h-11 w-56 rounded-ctl border border-line bg-surface px-3 text-base"
+            />
+            {bajas > 0 && (
+              <label className="flex items-center gap-2 text-sm text-muted">
+                <input type="checkbox" checked={verBajas} onChange={(e) => setVerBajas(e.target.checked)} className="size-5 accent-accent" />
+                Ver bajas
+              </label>
+            )}
+          </>
+        ) : bajas > 0 ? (
+          <label className="flex items-center gap-2 text-sm text-muted">
+            <input type="checkbox" checked={verBajas} onChange={(e) => setVerBajas(e.target.checked)} className="size-5 accent-accent" />
+            Ver bajas
+          </label>
+        ) : undefined
+      }
+    >
+      {isPending && <Cargando />}
+      {isError && <FalloDeCarga que="los usuarios" error={error} onReintentar={() => void refetch()} />}
 
-      {isPending && <p className="text-sm text-muted">Cargando…</p>}
-
-      {isError && (
-        <div className="card p-4">
-          <p className="text-sm text-crit">
-            No se han podido leer los usuarios: {error instanceof Error ? error.message : ''}
-          </p>
-          <button
-            type="button"
-            onClick={() => void refetch()}
-            className="key key-quiet mt-3 min-h-11 px-3 text-sm"
-          >
-            Reintentar
-          </button>
-        </div>
+      {perfiles && visibles.length === 0 && (
+        <p className="text-sm text-muted">
+          {q ? `Nadie se llama «${busqueda}».` : 'No hay nadie activo.'}
+        </p>
       )}
 
-      {perfiles && (
-        <ul className="divide-y divide-line-soft border-y border-line bg-surface">
-          {perfiles.map((p) => {
+      {perfiles && visibles.length > 0 && (
+        <ul className="divide-y divide-line-soft rounded-card border border-line bg-surface">
+          {visibles.map((p) => {
             const soyYo = p.id === yo
             /*
              * El último administrador no se puede degradar ni desactivar.
@@ -112,7 +144,7 @@ export function UsersPage({ yo }: { yo: string | null }): React.ReactElement {
             const ultimoAdmin = p.role === 'admin' && p.active && admins <= 1
 
             return (
-              <li key={p.id} className="px-4 py-4">
+              <li key={p.id} className={`px-4 py-4 ${p.active ? '' : 'opacity-70'}`}>
                 <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
                   <span className="font-medium">{p.full_name}</span>
                   {soyYo && (
@@ -122,7 +154,7 @@ export function UsersPage({ yo }: { yo: string | null }): React.ReactElement {
                   )}
                   {!p.active && (
                     <span className="rounded-tag bg-raised px-2 py-0.5 text-[0.6875rem] text-muted">
-                      desactivado
+                      de baja
                     </span>
                   )}
                 </div>
@@ -152,17 +184,20 @@ export function UsersPage({ yo }: { yo: string | null }): React.ReactElement {
                   <button
                     type="button"
                     disabled={cambiar.isPending || ultimoAdmin}
-                    onClick={() => cambiar.mutate({ id: p.id, patch: { active: !p.active } })}
+                    onClick={() => {
+                      if (p.active && !confirm(`¿Dar de baja a ${p.full_name}? No podrá entrar hasta que se reactive; lo que hizo se conserva.`)) return
+                      cambiar.mutate({ id: p.id, patch: { active: !p.active } })
+                    }}
                     className="key key-quiet ml-auto min-h-11 px-3 text-xs text-muted"
                   >
-                    {p.active ? 'Desactivar' : 'Reactivar'}
+                    {p.active ? 'Dar de baja' : 'Reactivar'}
                   </button>
                 </div>
 
                 {ultimoAdmin && (
                   <p className="mt-2 text-xs text-muted">
                     Es el único administrador activo. Nombra a otro antes de cambiarle el rol o
-                    desactivarlo, o nadie podrá volver a entrar en esta pantalla.
+                    darlo de baja, o nadie podrá volver a entrar en esta pantalla.
                   </p>
                 )}
 
@@ -179,33 +214,45 @@ export function UsersPage({ yo }: { yo: string | null }): React.ReactElement {
         </ul>
       )}
 
-      {cambiar.isError && (
-        <p className="mt-2 text-sm text-crit">
-          {cambiar.error instanceof Error ? cambiar.error.message : 'No se ha podido guardar.'}
-        </p>
-      )}
+      {perfiles && perfiles.length === 0 && <EstadoVacio titulo="Todavía no hay nadie dado de alta" />}
+
+      <Nota texto={cambiar.isError ? mensajeDe(cambiar.error, 'No se ha podido guardar.') : null} tono="crit" />
 
       {/*
-        La frontera, dicha en voz alta.
-        Sin esto, la pantalla parece incompleta y alguien acabará buscando el
-        botón de «nuevo usuario» que no existe. No existe por una razón, y la
-        razón cabe en dos líneas.
+        Qué hace cada rol, a la vista y no solo en el `title` de un botón: es lo
+        que se consulta antes de decidir, y en un iPad no hay dónde posar el
+        ratón. Y la frontera, dicha en voz alta: sin esto la pantalla parece
+        incompleta y alguien acabará buscando el botón de «nuevo usuario» que
+        no existe. No existe por una razón, y la razón cabe en dos líneas.
       */}
-      <div className="card mt-4 p-4">
-        <p className="text-sm font-medium">Dar de alta a alguien nuevo</p>
-        <p className="mt-1 text-sm text-muted">
-          Se hace desde la terminal del servicio, no desde aquí: crear una cuenta exige la clave de
-          servicio, que se salta RLS entera, y en el navegador convertiría cualquier sesión robada
-          en el control del sistema completo.
-        </p>
-        <p className="mt-2 font-mono text-xs text-ink-2">
-          alta crear correo@ejemplo.es &quot;Nombre Apellido&quot; tecnico
-        </p>
-        <p className="mt-2 text-xs text-muted">
-          Escribe siempre el rol: sin él entra como técnico, y es el descuido que deja a un
-          administrador sin sus pestañas sin que nadie se entere.
-        </p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className="card p-4">
+          <p className="text-sm font-medium">Qué puede hacer cada rol</p>
+          <dl className="mt-2 space-y-1.5 text-sm">
+            {ROLES.map((r) => (
+              <div key={r.value} className="flex gap-2">
+                <dt className="w-24 shrink-0 font-medium">{r.label}</dt>
+                <dd className="text-muted">{r.que}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+        <div className="card p-4">
+          <p className="text-sm font-medium">Dar de alta a alguien nuevo</p>
+          <p className="mt-1 text-sm text-muted">
+            Se hace desde la terminal del servicio, no desde aquí: crear una cuenta exige la clave de
+            servicio, que en el navegador convertiría cualquier sesión robada en el control del
+            sistema completo.
+          </p>
+          <p className="mt-2 rounded-ctl bg-sunken px-3 py-2 font-mono text-xs text-ink-2">
+            alta crear correo@ejemplo.es &quot;Nombre Apellido&quot; tecnico
+          </p>
+          <p className="mt-2 text-xs text-muted">
+            Escribe siempre el rol: sin él entra como técnico, y es el descuido que deja a un
+            administrador sin sus pestañas sin que nadie se entere.
+          </p>
+        </div>
       </div>
-    </section>
+    </Seccion>
   )
 }

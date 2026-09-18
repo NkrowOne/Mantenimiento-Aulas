@@ -374,8 +374,15 @@ export interface Incident {
    * registra a mano desde la ficha de la sala y en todo lo importado.
    */
   check_key: string | null
-  /** El `I260203_0051` que ya usáis hoy en el Excel y en ServiceNow. */
+  /** El `I260203_0051` del libro. Lo pone la base al insertar; el cliente lo manda nulo. */
   external_ref: string | null
+  /**
+   * El ticket de EasyVista, si se tiene. Aparte del número del libro a
+   * propósito: aquel lo pone la base y es la clave de la hoja de SharePoint;
+   * este lo escribe el personal cuando lo tiene — al abrir, al cerrar o días
+   * después, con la avería ya resuelta.
+   */
+  easyvista_ref: string | null
   /** Nulo mientras sea borrador: para guardar basta la sala. */
   title: string | null
   description: string | null
@@ -412,6 +419,9 @@ export interface IncidentResolution {
   /** Reloj del dispositivo: cuándo se arregló, aunque suba el lunes. */
   resolved_at: string
   resolved_by: string | null
+  /** El ticket de EasyVista tecleado al cerrar, si se tecleó. Viaja en el asiento
+      para poder cerrar con código desde un aula sin cobertura. */
+  easyvista_ref: string | null
 }
 
 export interface StockItem {

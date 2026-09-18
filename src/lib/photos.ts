@@ -36,11 +36,37 @@ export interface PhotoResult {
   error?: string
 }
 
+/** Una foto ya comprimida que todavía no es de nadie. */
+export interface FotoComprimida {
+  ok: true
+  blob: Blob
+  /** El reloj del dispositivo al elegirla: es la hora que se guarda. */
+  takenAt: string
+}
+
+export type ResultadoCompresion = FotoComprimida | { ok: false; error: string }
+
 export async function capturePhoto(
   file: File,
   entityType: 'inspection' | 'incident',
   entityId: string,
 ): Promise<PhotoResult> {
+  const foto = await comprimirFoto(file)
+  if (!foto.ok) return foto
+  return { ok: true, id: await encolarFoto(foto, entityType, entityId) }
+}
+
+/**
+ * Comprime la foto y la devuelve **sin encolarla**.
+ *
+ * Es la primera mitad de `capturePhoto`, separada para la foto que se hace
+ * ANTES de que exista lo que retrata: el formulario de abrir una incidencia
+ * genera el id al guardar, y encolar la foto antes de eso dejaba, si se
+ * cancelaba, una foto subida y enlazada a una incidencia que no existe. Esta
+ * se queda en memoria hasta que se pulsa Guardar, y si se cancela no queda
+ * nada en ninguna parte.
+ */
+export async function comprimirFoto(file: File): Promise<ResultadoCompresion> {
   /*
    * Mientras la foto viaja de la cámara a Dexie, la aplicación no puede
    * recargarse: la vuelta de la cámara es también una vuelta a primer plano, y
@@ -53,17 +79,13 @@ export async function capturePhoto(
   const { retenerRecarga } = await import('@/sw')
   const soltar = retenerRecarga()
   try {
-    return await guardarFoto(file, entityType, entityId)
+    return await comprimir(file)
   } finally {
     soltar()
   }
 }
 
-async function guardarFoto(
-  file: File,
-  entityType: 'inspection' | 'incident',
-  entityId: string,
-): Promise<PhotoResult> {
+async function comprimir(file: File): Promise<ResultadoCompresion> {
   const kind = await sniffType(file)
   if (kind === 'heic') {
     return {
@@ -92,8 +114,22 @@ async function guardarFoto(
     return { ok: false, error: 'La foto salió vacía. Repítela.' }
   }
 
+  return { ok: true, blob, takenAt: new Date().toISOString() }
+}
+
+/**
+ * Encola una foto ya comprimida para su revisión o incidencia y arranca la
+ * subida. Es la segunda mitad de `capturePhoto`.
+ *
+ * @returns el id de la foto, que es también el nombre del objeto en Storage.
+ */
+export async function encolarFoto(
+  foto: FotoComprimida,
+  entityType: 'inspection' | 'incident',
+  entityId: string,
+): Promise<string> {
+  const { blob, takenAt } = foto
   const id = uuidv7()
-  const takenAt = new Date().toISOString()
 
   /*
    * Los bytes primero y en su propia tabla, la fila de estado después.
@@ -148,5 +184,5 @@ async function guardarFoto(
    */
   void flush()
 
-  return { ok: true, id }
+  return id
 }

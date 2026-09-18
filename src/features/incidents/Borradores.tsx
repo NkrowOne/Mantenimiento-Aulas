@@ -31,6 +31,7 @@ import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaCorta } from '@/domain/fechas'
+import { normalizarCodigoEasyVista, problemaDeCodigoEasyVista } from '@/domain/easyvista'
 import { INCIDENT_KIND_LABELS, type IncidentKind } from '@/domain/types'
 
 interface Borrador {
@@ -38,7 +39,8 @@ interface Borrador {
   room_id: string | null
   kind: IncidentKind
   title: string | null
-  external_ref: string | null
+  /** El ticket de EasyVista, si se puso al guardar el borrador. */
+  easyvista_ref: string | null
   opened_at: string
 }
 
@@ -96,7 +98,7 @@ export function Borradores(): React.ReactElement | null {
     queryFn: async (): Promise<Borrador[]> => {
       const { data, error } = await supabase
         .from('incidents')
-        .select('id, room_id, kind, title, external_ref, opened_at')
+        .select('id, room_id, kind, title, easyvista_ref, opened_at')
         .eq('state', 'borrador')
         // Las más antiguas primero: son las que hay que despachar.
         .order('opened_at', { ascending: true })
@@ -107,11 +109,19 @@ export function Borradores(): React.ReactElement | null {
 
   const completar = useMutation({
     mutationFn: async (input: { id: string; title: string; ref: string }) => {
+      /*
+       * El ticket de EasyVista va a SU columna. Esto escribía `external_ref`,
+       * que es el número del libro: lo pone la base al abrir y el técnico no
+       * lo toca, así que lo tecleado aquí se perdía sin aviso.
+       */
+      const problema = problemaDeCodigoEasyVista(input.ref)
+      if (problema !== null) throw new Error(problema)
+
       const { error } = await supabase
         .from('incidents')
         .update({
           title: input.title.trim(),
-          external_ref: input.ref.trim() || null,
+          easyvista_ref: normalizarCodigoEasyVista(input.ref),
           state: 'abierta',
         })
         .eq('id', input.id)
@@ -187,8 +197,11 @@ export function Borradores(): React.ReactElement | null {
                   <input
                     value={ref}
                     onChange={(e) => setRef(e.target.value)}
-                    placeholder="Código de ticket (opcional)"
-                    className="mt-2 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-base"
+                    autoCapitalize="characters"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    placeholder="Código de EasyVista (opcional)"
+                    className="mt-2 h-11 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-base uppercase"
                   />
                 )}
                 {completar.isError && (
@@ -221,7 +234,7 @@ export function Borradores(): React.ReactElement | null {
                 onClick={() => {
                   setEditando(b.id)
                   setTitulo(b.title ?? '')
-                  setRef(b.external_ref ?? '')
+                  setRef(b.easyvista_ref ?? '')
                 }}
                 className="key key-quiet mt-2 min-h-11 px-3 text-sm"
               >

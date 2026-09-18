@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { pullMaster } from '@/sync/pull'
 import { faltantesPorDefecto } from '@/domain/defaults'
 import type { AssetDefault, AssetType, Building } from '@/domain/types'
+import { Nota, Seccion, mensajeDe } from './Seccion'
 
 /**
  * El equipamiento que una sala lleva por defecto.
@@ -177,18 +178,15 @@ export function EquipoPorDefecto(): React.ReactElement {
       nombreTipo(a.asset_type_id).localeCompare(nombreTipo(b.asset_type_id), 'es'),
   )
 
-  return (
-    <section aria-labelledby="sec-defecto" className="mt-8">
-      <div className="section-head">
-        <h2 id="sec-defecto" className="eyebrow">
-          Equipamiento por defecto
-        </h2>
-      </div>
-      <p className="text-sm text-muted">
-        Lo que se le pone a una sala nueva nada más crearla. Lo del edificio manda sobre lo global.
-      </p>
+  const fallo = guardar.error ?? quitar.error ?? aplicar.error
 
-      <ul className="mt-3 divide-y divide-line-soft border-y border-line bg-surface">
+  return (
+    <Seccion
+      id="sec-defecto"
+      titulo="Equipamiento por defecto"
+      texto="Lo que se le pone a una sala nueva nada más crearla. Lo declarado para un edificio manda sobre lo global. Aplicarlo a las salas que ya existen es aparte y dice cuántos equipos crearía antes de hacerlo."
+    >
+      <ul className="divide-y divide-line-soft rounded-card border border-line bg-surface">
         {ordenados.map((d) => (
           <li key={d.id} className="flex items-center gap-3 px-4 py-3">
             <span className="w-10 shrink-0 rounded-tag bg-raised py-1 text-center font-mono text-xs font-semibold text-accent">
@@ -215,7 +213,11 @@ export function EquipoPorDefecto(): React.ReactElement {
             <button
               type="button"
               disabled={quitar.isPending}
-              onClick={() => quitar.mutate(d.id)}
+              onClick={() => {
+              if (confirm(`¿Quitar «${nombreTipo(d.asset_type_id)}» del equipamiento por defecto? Los equipos ya creados se quedan en sus salas.`)) {
+                quitar.mutate(d.id)
+              }
+            }}
               className="key key-quiet min-h-11 shrink-0 px-3 text-xs text-muted"
             >
               Quitar
@@ -300,8 +302,8 @@ export function EquipoPorDefecto(): React.ReactElement {
         <p className="mt-2 text-xs text-muted">
           Se elige del catálogo, no se escribe: desde aquí se instala en todas las salas a la vez.
           Los que salen como <span className="text-warn">sin validar</span> los creó alguien desde un
-          aula y se pueden declarar igual — conviene revisarlos antes en la bandeja de tipos, un poco
-          más arriba.
+          aula y se pueden declarar igual — conviene revisarlos antes en «Por decidir», en la
+          bandeja de tipos.
         </p>
       </div>
 
@@ -353,18 +355,7 @@ export function EquipoPorDefecto(): React.ReactElement {
         </p>
       </div>
 
-      {(guardar.isError || quitar.isError || aplicar.isError) && (
-        <p className="mt-3 text-sm text-crit">
-          {[guardar.error, quitar.error, aplicar.error].find(Boolean) instanceof Error
-            ? ([guardar.error, quitar.error, aplicar.error].find(Boolean) as Error).message
-            : 'No se ha podido guardar.'}
-        </p>
-      )}
-      {nota && !guardar.isPending && !aplicar.isPending && (
-        <p aria-live="polite" className="mt-3 text-sm text-ok">
-          {nota}
-        </p>
-      )}
-    </section>
+      <Nota texto={fallo ? mensajeDe(fallo, 'No se ha podido guardar.') : nota} tono={fallo ? 'crit' : 'ok'} />
+    </Seccion>
   )
 }

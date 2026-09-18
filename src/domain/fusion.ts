@@ -65,6 +65,29 @@ import { norm } from './normalize'
  */
 export type Dueno = 'ambos' | 'solo_excel' | 'solo_app' | 'medida' | 'formula'
 
+/**
+ * Quién manda cuando la fusión no puede decidir sola.
+ *
+ * La tabla de arriba deja dos casos sin respuesta: la primera pasada —no hay
+ * antepasado, así que no se sabe quién cambió— y el choque —cambiaron los dos—.
+ * Hasta aquí, el primero lo resolvía «manda la app» a secas y el segundo iba a
+ * la bandeja. Pero quien sube el libro suele saber cuál de los dos inventarios
+ * es el bueno ese día: si se acaba de corregir el Excel a mano, es el Excel; si
+ * el Excel lleva meses sin tocarse, es la aplicación. Se elige **al cargar**, y
+ * solo decide esos dos casos:
+ *
+ *  - `excel` → en los dos, gana la hoja y entra en la base.
+ *  - `app`   → en los dos, gana la aplicación y se escribe en la hoja.
+ *
+ * Lo que la fusión SÍ sabe decidir no cambia con esto: si solo un lado se
+ * movió desde la última pasada, gana ese lado, se haya elegido lo que se haya
+ * elegido. Elegir «manda el Excel» no puede revertir en la base una avería que
+ * un técnico cerró ayer en el aula y que la hoja no ha visto todavía. Y las
+ * columnas con dueño fijo —m², la penúltima revisión, las fórmulas— tampoco:
+ * su dirección no es una opinión.
+ */
+export type Referencia = 'excel' | 'app'
+
 /** Lo que cabe en una celda una vez leída. */
 export type Valor = string | number | boolean | null
 
@@ -93,6 +116,8 @@ export interface Celda {
   /** Solo para `dueno: 'medida'`: cuándo se tomó cada lectura. */
   medidaBase?: string | null
   medidaExcel?: string | null
+  /** Quién manda si no se puede decidir. Sin ella: primera pasada manda la app, y un choque se pregunta. */
+  referencia?: Referencia
 }
 
 // -----------------------------------------------------------------------------
@@ -279,14 +304,25 @@ export function fusionarCelda(c: Celda): Decision {
   }
 
   // Primera pasada: no hay antepasado, así que no se puede saber quién cambió.
-  // Manda la app, que es la política por defecto, y queda anotado. Mandar todo a
+  // Manda quien se eligió al cargar el libro y, sin elegir, la app, que es la
+  // política por defecto; en los dos casos queda anotado. Mandar todo a
   // cuarentena aquí sería paralizar la primera sincronización entera por no
   // tener una información que solo puede existir a partir de la segunda.
   if (c.antepasado === undefined) {
+    if (c.referencia === 'excel') {
+      return {
+        tipo: 'hacia_la_base',
+        valor: c.excel,
+        motivo: 'primera pasada: se eligió que mande el Excel',
+      }
+    }
     return {
       tipo: 'hacia_el_excel',
       valor: c.base,
-      motivo: 'primera pasada: sin instantánea previa manda la app',
+      motivo:
+        c.referencia === 'app'
+          ? 'primera pasada: se eligió que mande la aplicación'
+          : 'primera pasada: sin instantánea previa manda la app',
     }
   }
 
@@ -300,8 +336,23 @@ export function fusionarCelda(c: Celda): Decision {
     return { tipo: 'hacia_la_base', valor: c.excel, motivo: 'solo cambió en el Excel' }
   }
 
-  // Los dos cambiaron a cosas distintas. Nadie pierde su trabajo: se paran los
-  // dos lados y decide una persona desde la bandeja de administración.
+  // Los dos cambiaron a cosas distintas. Si al cargar se dijo quién manda, se
+  // le hace caso y queda anotado el porqué; si no, nadie pierde su trabajo: se
+  // paran los dos lados y decide una persona desde la bandeja de administración.
+  if (c.referencia === 'excel') {
+    return {
+      tipo: 'hacia_la_base',
+      valor: c.excel,
+      motivo: 'los dos lados cambiaron: se eligió que mande el Excel',
+    }
+  }
+  if (c.referencia === 'app') {
+    return {
+      tipo: 'hacia_el_excel',
+      valor: c.base,
+      motivo: 'los dos lados cambiaron: se eligió que mande la aplicación',
+    }
+  }
   return {
     tipo: 'conflicto',
     motivo: 'los dos lados cambiaron desde la última sincronización',

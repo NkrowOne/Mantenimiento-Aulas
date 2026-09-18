@@ -90,6 +90,8 @@ function incidencia(over: Partial<IncidenciaVolcada> = {}): IncidenciaVolcada {
     observacion: null,
     resolucion: 'Se sustituye el cable',
     material: '1 Cable HDMI fibra 15 m',
+    esParte: true,
+    materialApuntado: [],
     ...over,
   }
 }

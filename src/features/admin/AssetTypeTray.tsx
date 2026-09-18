@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { pullMaster } from '@/sync/pull'
 import type { AssetType } from '@/domain/types'
+import { Cargando, EstadoVacio, Nota, Seccion, mensajeDe } from './Seccion'
+import { useRefrescarPendientes } from './pendientes'
 
 /**
  * Bandeja de tipos de equipo sin validar.
@@ -31,7 +33,9 @@ import type { AssetType } from '@/domain/types'
  */
 export function AssetTypeTray(): React.ReactElement {
   const qc = useQueryClient()
+  const refrescar = useRefrescarPendientes()
   const [renaming, setRenaming] = useState<Record<string, string>>({})
+  const [nota, setNota] = useState<string | null>(null)
   /** Los marcados para agrupar. */
   const [marcados, setMarcados] = useState<Set<string>>(new Set())
   const [destino, setDestino] = useState('')
@@ -79,6 +83,7 @@ export function AssetTypeTray(): React.ReactElement {
 
   const invalidate = (): void => {
     void qc.invalidateQueries({ queryKey: ['asset-types'] })
+    refrescar()
     // Renombrar y agrupar cambian las etiquetas de los equipos en las salas, así
     // que el espejo de este dispositivo deja de ser cierto en el momento en que
     // se pulsa.
@@ -87,9 +92,9 @@ export function AssetTypeTray(): React.ReactElement {
 
   const act = useMutation({
     mutationFn: async (input:
-      | { kind: 'confirm'; id: string }
+      | { kind: 'confirm'; id: string; name: string }
       | { kind: 'rename'; id: string; name: string }
-      | { kind: 'group'; ids: string[]; into: string; name: string | null }) => {
+      | { kind: 'group'; ids: string[]; into: string; name: string | null }): Promise<string> => {
       const { error } =
         input.kind === 'confirm'
           ? await supabase.rpc('confirm_asset_type', { p_id: input.id })
@@ -101,16 +106,20 @@ export function AssetTypeTray(): React.ReactElement {
                 p_name: input.name,
               })
       if (error) throw error
+      return input.kind === 'confirm'
+        ? `«${input.name}» validado.`
+        : input.kind === 'rename'
+          ? `Corregido a «${input.name}». El nombre viejo queda de alias y las etiquetas de las salas se actualizan.`
+          : `${input.ids.length} tipos agrupados en uno. Los nombres absorbidos quedan de alias.`
     },
-    onSuccess: () => {
+    onSuccess: (mensaje) => {
       setMarcados(new Set())
       setDestino('')
       setNombreFinal('')
+      setNota(mensaje)
       invalidate()
     },
   })
-
-  if (!pending) return <p className="text-sm text-muted">Cargando el catálogo…</p>
 
   const marcar = (id: string): void =>
     setMarcados((s) => {
@@ -120,47 +129,47 @@ export function AssetTypeTray(): React.ReactElement {
       return next
     })
 
-  const seleccionados = pending.filter((t) => marcados.has(t.id))
+  const lista = pending ?? []
+  const seleccionados = lista.filter((t) => marcados.has(t.id))
   /* Puede sobrevivir uno de los marcados —lo normal, porque todos son
      propuestas— o un tipo que ya estaba en el catálogo. */
   const destinos = [...seleccionados, ...(confirmed ?? [])]
   const tipoDestino = destinos.find((t) => t.id === destino) ?? null
 
   return (
-    <section aria-labelledby="sec-tipos" className="mt-8">
-      <div className="section-head">
-        <h2 id="sec-tipos" className="eyebrow">
-          Tipos de equipo sin validar
-        </h2>
-      </div>
-      <p className="text-sm text-muted">
-        Creados desde un aula. Se están usando ya; esto solo ordena el catálogo.
-      </p>
+    <Seccion
+      id="sec-tipos"
+      titulo="Tipos de equipo sin validar"
+      texto="Creados desde un aula. Se están usando ya; esto solo ordena el catálogo. Confirmar lo da por bueno; corregir el nombre deja el viejo de alias; marcar varios permite agruparlos en uno."
+      pendientes={lista.length}
+    >
+      {!pending && <Cargando texto="Cargando el catálogo…" />}
+      {pending && lista.length === 0 && <EstadoVacio titulo="Todo el catálogo está validado" />}
 
-      {pending.length === 0 && <p className="mt-3 text-sm text-muted">Nada pendiente de validar.</p>}
-
-      <ul className="mt-3 divide-y divide-line">
-        {pending.map((type) => (
-          <li key={type.id} className="py-3">
+      {lista.length > 0 && (
+      <ul className="divide-y divide-line-soft rounded-card border border-line bg-surface">
+        {lista.map((type) => (
+          <li key={type.id} className="px-4 py-3">
             <label className="flex items-baseline gap-2">
               <input
                 type="checkbox"
                 checked={marcados.has(type.id)}
                 onChange={() => marcar(type.id)}
+                aria-label={`Marcar ${type.name} para agrupar`}
                 className="size-5 shrink-0 self-center accent-accent"
               />
               <span className="font-medium">{type.name}</span>
-              <span className="rounded-tag bg-warn-tint px-1.5 py-0.5 text-xs font-medium text-warn">
-                Sin validar
+              <span className="text-xs text-muted">
+                {usage?.[type.id] ?? 0} {usage?.[type.id] === 1 ? 'equipo' : 'equipos'} en salas
               </span>
-              <span className="text-xs text-muted">{usage?.[type.id] ?? 0} en salas</span>
             </label>
 
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => act.mutate({ kind: 'confirm', id: type.id })}
-                className="key key-accent h-10 px-3 text-sm"
+                disabled={act.isPending}
+                onClick={() => act.mutate({ kind: 'confirm', id: type.id, name: type.name })}
+                className="key key-accent min-h-11 px-3 text-sm"
               >
                 Confirmar
               </button>
@@ -170,11 +179,11 @@ export function AssetTypeTray(): React.ReactElement {
                 value={renaming[type.id] ?? type.name}
                 onChange={(e) => setRenaming((r) => ({ ...r, [type.id]: e.target.value }))}
                 aria-label={`Nombre corregido de ${type.name}`}
-                className="h-10 min-w-40 flex-1 rounded-ctl border border-line bg-surface px-2 text-base"
+                className="h-11 min-w-40 flex-1 rounded-ctl border border-line bg-surface px-2 text-base"
               />
               <button
                 type="button"
-                disabled={(renaming[type.id] ?? type.name).trim() === type.name}
+                disabled={act.isPending || (renaming[type.id] ?? type.name).trim() === type.name}
                 onClick={() =>
                   act.mutate({
                     kind: 'rename',
@@ -182,7 +191,7 @@ export function AssetTypeTray(): React.ReactElement {
                     name: (renaming[type.id] ?? type.name).trim(),
                   })
                 }
-                className="key key-quiet h-10 px-3 text-sm"
+                className="key key-quiet min-h-11 px-3 text-sm"
               >
                 Corregir nombre
               </button>
@@ -190,6 +199,7 @@ export function AssetTypeTray(): React.ReactElement {
           </li>
         ))}
       </ul>
+      )}
 
       {/*
         El panel de agrupar aparece solo cuando hay algo marcado.
@@ -288,17 +298,17 @@ export function AssetTypeTray(): React.ReactElement {
         </div>
       )}
 
-      {act.isError && (
-        <p className="mt-3 text-sm text-crit">
-          {act.error instanceof Error
-            ? act.error.message
-            : 'No se pudo aplicar. Solo un coordinador puede tocar el catálogo.'}
-        </p>
-      )}
+      <Nota
+        texto={act.isError ? mensajeDe(act.error, 'No se pudo aplicar. Solo un administrador puede tocar el catálogo.') : nota}
+        tono={act.isError ? 'crit' : 'ok'}
+      />
 
-      <details className="mt-6">
-        <summary className="cursor-pointer text-sm text-muted">
-          Catálogo confirmado ({confirmed?.length ?? 0})
+      <details className="card mt-4 p-4">
+        <summary className="cursor-pointer text-sm font-medium">
+          Catálogo validado
+          <span className="ml-2 font-normal text-muted">
+            {confirmed?.length ?? 0} {confirmed?.length === 1 ? 'tipo' : 'tipos'}
+          </span>
         </summary>
         <ul className="mt-2 divide-y divide-line-soft text-sm">
           {(confirmed ?? []).map((type) => (
@@ -309,11 +319,13 @@ export function AssetTypeTray(): React.ReactElement {
                   <span className="ml-2 text-xs text-muted">también: {type.aliases.join(', ')}</span>
                 )}
               </span>
-              <span className="shrink-0 text-xs text-muted">{usage?.[type.id] ?? 0}</span>
+              <span className="shrink-0 font-mono text-xs text-muted" title="Equipos en salas">
+                {usage?.[type.id] ?? 0}
+              </span>
             </li>
           ))}
         </ul>
       </details>
-    </section>
+    </Seccion>
   )
 }
