@@ -218,6 +218,13 @@
 
   .scroll-x {
     @apply overflow-x-auto;
+    /*
+     * Solo a lo ancho. Con `overflow-x: auto` a secas, el eje vertical pasa a
+     * `auto` también, y el carril de secciones de «Datos» —cuyos botones
+     * solapan el filete con un `-mb-px`— sobresale un píxel: en el teléfono el
+     * carril se movía arriba y abajo bajo el dedo en vez de deslizar de lado.
+     */
+    overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
   }
 

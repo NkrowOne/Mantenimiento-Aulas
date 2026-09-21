@@ -73,6 +73,14 @@ import { Seccion } from './Seccion'
  * salen como dudas, se contestan aquí y la pasada se recalcula con la respuesta.
  * Con dudas sin contestar no se sincroniza; ver el libro sí se puede.
  */
+/** Una lectura que se canceló mientras corría: su resultado no es de nadie. */
+class LecturaCancelada extends Error {
+  constructor() {
+    super('Lectura cancelada')
+    this.name = 'LecturaCancelada'
+  }
+}
+
 export function SincronizarExcel(): React.ReactElement {
   const entrada = useRef<HTMLInputElement>(null)
   const qc = useQueryClient()
@@ -93,10 +101,22 @@ export function SincronizarExcel(): React.ReactElement {
   const [entregado, setEntregado] = useState<'compartido' | 'descargado' | null>(null)
   const [entregando, setEntregando] = useState(false)
 
+  /*
+   * Qué lectura es la que vale. Cada lectura lleva su número; «Cancelar» sube
+   * el contador, y una lectura que termine después de eso ya no es de nadie:
+   * ni pinta su análisis ni enseña su error. Sin esto, cancelar era imposible
+   * —el selector de fichero se queda deshabilitado mientras se lee— y una
+   * lectura que se quedaba colgada por la red dejaba la pantalla inservible
+   * hasta salir y volver a entrar.
+   */
+  const lectura = useRef(0)
   const leer = useMutation({
-    mutationFn: ({ fichero, respuestas = {} }: { fichero: File; respuestas?: Respuestas }) => {
+    mutationFn: async ({ fichero, respuestas = {} }: { fichero: File; respuestas?: Respuestas }) => {
       ultimoFichero.current = fichero
-      return analizar(fichero, new Date(), respuestas, referencia, corte)
+      const mia = ++lectura.current
+      const a = await analizar(fichero, new Date(), respuestas, referencia, corte)
+      if (mia !== lectura.current) throw new LecturaCancelada()
+      return a
     },
     onSuccess: (a) => {
       setAnalisis(a)
@@ -106,10 +126,17 @@ export function SincronizarExcel(): React.ReactElement {
       setEntregado(null)
     },
     onError: (e: Error) => {
+      if (e instanceof LecturaCancelada) return
       setAnalisis(null)
       setFallo(e.message)
     },
   })
+
+  const cancelarLectura = (): void => {
+    lectura.current++
+    leer.reset()
+    if (entrada.current) entrada.current.value = ''
+  }
 
   const sincronizar = useMutation({
     mutationFn: async () => {
@@ -268,19 +295,37 @@ export function SincronizarExcel(): React.ReactElement {
           id="excel-libro"
           ref={entrada}
           type="file"
-          accept=".xlsx"
+          // El tipo MIME además de la extensión: el selector de Android filtra
+          // por lo que el proveedor del fichero declara, y con la extensión
+          // sola un libro venido de Drive o de SharePoint salía en gris.
+          accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           disabled={ocupado}
           onChange={(e) => {
             const f = e.target.files?.[0]
+            // Vaciar el selector nada más coger el fichero: si no, volver a
+            // elegir EL MISMO libro —corregido y guardado con el mismo nombre—
+            // no dispara `onChange` y parece que no hace nada.
+            e.target.value = ''
             if (f) leer.mutate({ fichero: f })
           }}
           className="mt-2 block w-full text-base file:mr-3 file:h-10 file:rounded-ctl file:border-0 file:bg-accent-fill file:px-4 file:font-semibold file:text-accent-ink"
         />
-        <p className="mt-2 text-xs text-muted">
-          {leer.isPending
-            ? 'Leyendo el libro y el estado de la aplicación…'
-            : 'Se miran las seis hojas del libro: estado, partes, bolsa y PCs de repuesto del año, y las dos de 2025. Nada se escribe hasta que pulses «Sincronizar».'}
-        </p>
+        {leer.isPending ? (
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <p role="status" className="text-xs text-muted">
+              Leyendo el libro y el estado de la aplicación… Con poca cobertura puede tardar un
+              minuto.
+            </p>
+            <button type="button" onClick={cancelarLectura} className="key key-quiet min-h-10 px-3 text-sm">
+              Cancelar
+            </button>
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-muted">
+            Se miran las seis hojas del libro: estado, partes, bolsa y PCs de repuesto del año, y
+            las dos de 2025. Nada se escribe hasta que pulses «Sincronizar».
+          </p>
+        )}
       </div>
 
       {fallo && <p className="mt-3 rounded-ctl bg-crit-fill p-3 text-sm text-crit-ink">{fallo}</p>}
