@@ -276,6 +276,16 @@ las fórmulas— ni la regla del hueco: el vacío nunca gana. Cada celda decidid
 así queda anotada con el porqué («primera pasada: se eligió que mande el
 Excel»), en la pantalla y en `import_fixes`.
 
+Y un **corte**, opcional, al lado de la elección (`Celda.corte`): un día desde
+el que manda la aplicación en lo que **ella** cambió, se haya elegido lo que se
+haya elegido. Es la forma de decir «el libro es el inventario de partida y lo
+trabajado en la aplicación desde el 9/9 se aplica encima»: en los dos casos
+que la fusión no decide sola, si la aplicación cambió el dato el día del corte
+o después —`Celda.cambioEnLaApp`: el equipo más reciente de ese tipo, la
+última revisión de la sala para lo que se toca en una revisión, la apertura o
+el cierre del parte—, gana la aplicación; sin fecha, o antes del corte, manda
+lo elegido. Los artículos no llevan fecha y no entran.
+
 ### Lo que se puede editar en cada sitio
 
 | Dato | Editable en el Excel | Editable en la app | Nota |
@@ -756,6 +766,17 @@ y que el código respeta desde entonces:
   «Sin aula» (`esSinSala`) en la hoja de partes es la respuesta, no la duda:
   el parte entra sin sala, y en las pasadas siguientes esa celda se compara
   como el blanco que es y no se escribe.
+- **El corte** (`corte`, en `Celda`, en las entradas de las cuatro hojas y en
+  `Analisis`): desde un día manda la aplicación en lo que ella cambió. Ver el
+  apartado «Quién manda cuando no se puede saber».
+- **Con «manda el Excel», el libro muda salas de edificio** (`laMudaElLibro`):
+  si la celda del edificio ya no dice lo que decía en la última pasada, la
+  fila se queda y la celda viaja a la base, donde `sync_mover_sala` mueve la
+  sala llevándose su planta —y la crea en el edificio de destino si no la
+  tiene—; una planta que la hoja nombra en un edificio que existe también se
+  crea. Si la celda sigue igual —fue la aplicación la que movió la sala—, la
+  fila se muda en el libro, como siempre. Es lo que colocó las aulas DOT en el
+  Edificio Central y las MSI en su planta 2 desde el libro reformateado.
 
 ---
 

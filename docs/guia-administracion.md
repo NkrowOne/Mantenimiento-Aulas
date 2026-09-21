@@ -990,6 +990,24 @@ ese día. De agosto en adelante, la bolsa, los partes y el almacén hablan de lo
 mismo. Un parte cuya aula dice «Varias aulas», «Almacén» o «Sin aula» entra
 sin sala y no se pregunta: es un parte de regularización.
 
+**1c · El corte: desde un día manda la aplicación en lo que ella cambió.**
+Debajo de «quién manda» hay una fecha. Es para el caso más corriente: el libro
+es el inventario de partida y lo trabajado en la aplicación desde la última
+sincronización —revisiones, partes cerrados, equipos instalados— tiene que
+quedarse aunque choque con la hoja. Con la fecha puesta (la pantalla recuerda
+cuándo fue la última sincronización), lo que la aplicación cambió ese día o
+después gana en la primera pasada y en los choques; lo demás sigue lo elegido
+arriba. Lo que la fusión ya sabe decidir sola no cambia: si solo se movió un
+lado, gana ese lado. Los artículos del almacén no llevan fecha de cambio y no
+entran en el corte.
+
+Y una cosa más cuando manda el Excel: si el libro cambia el **edificio** de una
+sala —y es el libro el que lo ha cambiado desde la última pasada—, la sala se
+muda en la aplicación, y se lleva su planta (si el edificio de destino no la
+tiene, se crea). Si fue la aplicación la que movió la sala, la fila se muda en
+el libro, como siempre. Una planta nueva en un edificio que existe también se
+crea desde la celda; un edificio nuevo, no: hay que crearlo en el maestro.
+
 **2 · El libro.** Se sube el `.xlsx`. No se escribe nada hasta pulsar
 «Sincronizar».
 

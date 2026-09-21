@@ -10,6 +10,7 @@ import type { Respuesta, Respuestas } from '@/domain/dudas'
 import { columnaDeCampo, hojaPorNombre } from '@/domain/mapa'
 import type { MovimientoPrevisto } from '@/domain/movimientos'
 import type { Alta, Plan, Referencia } from '@/domain/sincronizar'
+import { fechaCorta } from '@/domain/fechas'
 import { Seccion } from './Seccion'
 
 /**
@@ -83,6 +84,8 @@ export function SincronizarExcel(): React.ReactElement {
    */
   const ultimoFichero = useRef<File | null>(null)
   const [referencia, setReferencia] = useState<Referencia | null>(null)
+  /** El corte: desde este día manda la aplicación en lo que ella cambió. `null` es sin corte. */
+  const [corte, setCorte] = useState<string | null>(null)
   const [analisis, setAnalisis] = useState<Analisis | null>(null)
   const [fallo, setFallo] = useState<string | null>(null)
   const [aplicado, setAplicado] = useState<string | null>(null)
@@ -93,7 +96,7 @@ export function SincronizarExcel(): React.ReactElement {
   const leer = useMutation({
     mutationFn: ({ fichero, respuestas = {} }: { fichero: File; respuestas?: Respuestas }) => {
       ultimoFichero.current = fichero
-      return analizar(fichero, new Date(), respuestas, referencia)
+      return analizar(fichero, new Date(), respuestas, referencia, corte)
     },
     onSuccess: (a) => {
       setAnalisis(a)
@@ -182,7 +185,13 @@ export function SincronizarExcel(): React.ReactElement {
   /** Cambiar quién manda también: con el libro ya leído, la pasada se recalcula al momento. */
   const elegirReferencia = (r: Referencia | null): void => {
     setReferencia(r)
-    if (analisis) volverAPlanificar(replanificar(analisis, analisis.respuestas, r))
+    if (analisis) volverAPlanificar(replanificar(analisis, analisis.respuestas, r, corte))
+  }
+
+  /** Y el corte igual: con el libro leído, la pasada se recalcula al momento. */
+  const elegirCorte = (c: string | null): void => {
+    setCorte(c)
+    if (analisis) volverAPlanificar(replanificar(analisis, analisis.respuestas, referencia, c))
   }
 
   /**
@@ -241,7 +250,14 @@ export function SincronizarExcel(): React.ReactElement {
         ) : undefined
       }
     >
-      <QuienManda referencia={referencia} disabled={ocupado} onElegir={elegirReferencia} />
+      <QuienManda
+        referencia={referencia}
+        corte={corte}
+        ultimaSalida={analisis?.ultimaSalida ?? null}
+        disabled={ocupado}
+        onElegir={elegirReferencia}
+        onCorte={elegirCorte}
+      />
 
       <div className="card mt-4 p-4">
         <p className="eyebrow">2 · El libro</p>
@@ -378,12 +394,19 @@ const OPCIONES: Array<{ id: Referencia | null; titulo: string; texto: string }> 
  */
 function QuienManda({
   referencia,
+  corte,
+  ultimaSalida,
   disabled,
   onElegir,
+  onCorte,
 }: {
   referencia: Referencia | null
+  corte: string | null
+  /** Cuándo salió el último libro de la aplicación, si se sabe: el corte natural. */
+  ultimaSalida: string | null
   disabled: boolean
   onElegir: (r: Referencia | null) => void
+  onCorte: (c: string | null) => void
 }): React.ReactElement {
   return (
     <div className="card mt-4 p-4">
@@ -415,15 +438,54 @@ function QuienManda({
           )
         })}
       </div>
+
+      {referencia !== 'app' && (
+        <div className="mt-4">
+          <label htmlFor="excel-corte" className="block text-sm font-semibold">
+            Desde este día manda la aplicación en lo que ella cambió
+          </label>
+          <p className="mt-1 text-xs leading-relaxed text-muted">
+            Para cuando el libro es el inventario de partida y lo trabajado en la aplicación desde
+            un día —revisiones, partes cerrados, equipos instalados— tiene que quedarse aunque
+            choque con la hoja. Lo que la aplicación cambió ese día o después gana; el resto sigue
+            lo elegido arriba. Sin fecha, no hay corte.
+            {ultimaSalida ? ` La última sincronización fue el ${fechaCorta(ultimaSalida)}.` : ''}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input
+              id="excel-corte"
+              type="date"
+              className="h-10 min-w-40 rounded-ctl border border-line bg-surface px-2 text-sm"
+              value={corte ?? ''}
+              disabled={disabled}
+              onChange={(ev) => onCorte(ev.target.value || null)}
+            />
+            {corte && (
+              <button
+                type="button"
+                className="key key-quiet min-h-10 px-3 text-sm"
+                disabled={disabled}
+                onClick={() => onCorte(null)}
+              >
+                Sin corte
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 /** Cómo se dice la elección, en una frase corta, donde haga falta recordarla. */
-function nombreDeLaReferencia(r: Referencia | null): string {
-  if (r === 'excel') return 'manda el Excel'
-  if (r === 'app') return 'manda la aplicación'
-  return 'decide una persona: los choques se quedan sin tocar'
+function nombreDeLaReferencia(r: Referencia | null, corte: string | null = null): string {
+  const base =
+    r === 'excel'
+      ? 'manda el Excel'
+      : r === 'app'
+        ? 'manda la aplicación'
+        : 'decide una persona: los choques se quedan sin tocar'
+  return corte && r !== 'app' ? `${base} · desde el ${fechaCorta(corte)} manda la aplicación en lo que cambió` : base
 }
 
 // -----------------------------------------------------------------------------
@@ -467,7 +529,7 @@ function Resumen({ analisis, total }: { analisis: Analisis; total: Totales }): R
       <p className="eyebrow">3 · Qué va a pasar</p>
       <p className="mt-1 text-sm">
         <span className="font-semibold">{analisis.nombre}</span>
-        <span className="text-muted"> · {nombreDeLaReferencia(analisis.referencia)}</span>
+        <span className="text-muted"> · {nombreDeLaReferencia(analisis.referencia, analisis.corte)}</span>
       </p>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

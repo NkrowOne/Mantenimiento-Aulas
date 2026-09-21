@@ -324,3 +324,48 @@ describe('el parte de la pasada', () => {
     })
   })
 })
+
+describe('el corte: desde un día manda la aplicación en lo que ella cambió', () => {
+  // «El inventario del libro es la base y lo trabajado en la aplicación desde el
+  // 9/9 se aplica encima»: el corte decide donde la fusión no sabe —primera
+  // pasada y choque— y solo si la aplicación cambió el dato ese día o después.
+  it('sin antepasado, lo que la aplicación cambió después del corte no lo pisa el Excel', () => {
+    const r = fusionarCelda(
+      celda({ base: 'SN-NUEVO', excel: 'SN-VIEJO', referencia: 'excel', corte: '2026-09-09', cambioEnLaApp: '2026-09-15' }),
+    )
+    expect(r).toMatchObject({ tipo: 'hacia_el_excel', valor: 'SN-NUEVO' })
+    if (r.tipo === 'hacia_el_excel') expect(r.motivo).toContain('después del corte')
+  })
+
+  it('lo que cambió antes del corte sigue la regla elegida', () => {
+    const r = fusionarCelda(
+      celda({ base: 'SN-NUEVO', excel: 'SN-VIEJO', referencia: 'excel', corte: '2026-09-09', cambioEnLaApp: '2026-07-01' }),
+    )
+    expect(r).toMatchObject({ tipo: 'hacia_la_base', valor: 'SN-VIEJO' })
+  })
+
+  it('un choque después del corte deja de serlo: gana la aplicación, se haya elegido lo que se haya elegido', () => {
+    const conExcel = fusionarCelda(
+      celda({ base: 'B', excel: 'C', antepasado: 'A', referencia: 'excel', corte: '2026-09-09', cambioEnLaApp: '2026-09-09T08:00:00Z' }),
+    )
+    expect(conExcel).toMatchObject({ tipo: 'hacia_el_excel', valor: 'B' })
+    const sinElegir = fusionarCelda(
+      celda({ base: 'B', excel: 'C', antepasado: 'A', corte: '2026-09-09', cambioEnLaApp: '2026-09-10' }),
+    )
+    expect(sinElegir).toMatchObject({ tipo: 'hacia_el_excel', valor: 'B' })
+  })
+
+  it('sin fecha en la aplicación, el corte no decide', () => {
+    const r = fusionarCelda(
+      celda({ base: 'B', excel: 'C', antepasado: 'A', referencia: 'excel', corte: '2026-09-09', cambioEnLaApp: null }),
+    )
+    expect(r).toMatchObject({ tipo: 'hacia_la_base', valor: 'C' })
+  })
+
+  it('y lo que la fusión sabe decidir sola no cambia: si solo se movió el Excel, gana el Excel aunque la sala se revisara ayer', () => {
+    const r = fusionarCelda(
+      celda({ base: 'A', excel: 'C', antepasado: 'A', referencia: 'excel', corte: '2026-09-09', cambioEnLaApp: '2026-09-20' }),
+    )
+    expect(r).toMatchObject({ tipo: 'hacia_la_base', valor: 'C' })
+  })
+})
