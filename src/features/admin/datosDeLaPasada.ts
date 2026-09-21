@@ -22,6 +22,7 @@
 import { supabase } from '@/lib/supabase'
 import { diaEnMadrid } from '@/domain/fechas'
 import { descargaEntera } from '@/sync/paginada'
+import { señalConTope } from '@/features/reports/informe/espera'
 import type { ArticuloVolcado, IncidenciaVolcada, MovimientoVolcado, SalaVolcada, UnidadVolcada } from '@/domain/volcado'
 import { compradoEn, consumoPorMes } from '@/domain/volcado'
 import { arranqueDelAnyo } from '@/domain/mapa'
@@ -171,6 +172,19 @@ interface FilaUnidad {
  * `anyo` decide qué se reparte en las columnas de mes de la hoja `Bolsa`: el
  * consumo del año en curso, no el de siempre.
  */
+/**
+ * Ninguna petición de la pasada puede quedarse esperando para siempre.
+ *
+ * Son una docena de descargas paginadas y, sin plazo, bastaba con que UNA no
+ * contestase —un 4G que se cae a mitad, un pool agotado— para que «Leyendo el
+ * libro…» no terminara nunca: el selector de fichero se queda deshabilitado
+ * mientras tanto, y desde el teléfono parecía que la pantalla se había roto.
+ * Un minuto por petición es de sobra para mil filas; lo que no llega en un
+ * minuto no va a llegar, y el fallo se dice y se puede reintentar.
+ */
+const PLAZO_MS = 60_000
+const plazo = (): AbortSignal => señalConTope(PLAZO_MS)
+
 export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
   const [
     salasD,
@@ -194,64 +208,64 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
           'id, short_ref, code, name, active, zone_id, projector_hours, lamp_pct, botonera_estado, capabilities',
         )
         .order('id')
-        .range(d, h),
+        .range(d, h).abortSignal(plazo()),
     ),
     descargaEntera<FilaZona>((d, h) =>
-      supabase.from('zones').select('id, name, building_id').order('id').range(d, h),
+      supabase.from('zones').select('id, name, building_id').order('id').range(d, h).abortSignal(plazo()),
     ),
     descargaEntera<FilaEdificio>((d, h) =>
-      supabase.from('buildings').select('id, name, code, active').order('id').range(d, h),
+      supabase.from('buildings').select('id, name, code, active').order('id').range(d, h).abortSignal(plazo()),
     ),
     descargaEntera<FilaEquipo>((d, h) =>
       supabase
         .from('assets')
         .select('id, room_id, asset_type_id, serial, model, status, label, created_at')
         .order('id')
-        .range(d, h),
+        .range(d, h).abortSignal(plazo()),
     ),
     descargaEntera<FilaTipo>((d, h) =>
-      supabase.from('asset_types').select('id, name, merged_into').order('id').range(d, h),
+      supabase.from('asset_types').select('id, name, merged_into').order('id').range(d, h).abortSignal(plazo()),
     ),
     descargaEntera<FilaRevision>((d, h) =>
       supabase
         .from('inspections')
         .select('id, room_id, by_user, occurred_at, status, overall, notes, source')
         .order('id')
-        .range(d, h),
+        .range(d, h).abortSignal(plazo()),
     ),
     descargaEntera<FilaCheck>((d, h) =>
       supabase
         .from('inspection_checks')
         .select('inspection_id, check_key, result, measure, measure_unit')
         .order('id')
-        .range(d, h),
+        .range(d, h).abortSignal(plazo()),
     ),
     descargaEntera<FilaPerfil>((d, h) =>
-      supabase.from('profiles').select('id, full_name').order('id').range(d, h),
+      supabase.from('profiles').select('id, full_name').order('id').range(d, h).abortSignal(plazo()),
     ),
     descargaEntera<FilaIncidencia>((d, h) =>
       supabase
         .from('incidents')
         .select('id, room_id, external_ref, title, description, state, kind, opened_at, resolved_at, resolution')
         .order('id')
-        .range(d, h),
+        .range(d, h).abortSignal(plazo()),
     ),
     descargaEntera<FilaMaterial>((d, h) =>
       supabase
         .from('incident_materials')
         .select('incident_id, stock_item_id, qty, raw_text')
         .order('id')
-        .range(d, h),
+        .range(d, h).abortSignal(plazo()),
     ),
     descargaEntera<FilaArticulo>((d, h) =>
-      supabase.from('stock_items').select('id, name, aliases, active').order('id').range(d, h),
+      supabase.from('stock_items').select('id, name, aliases, active').order('id').range(d, h).abortSignal(plazo()),
     ),
     descargaEntera<FilaMovimiento>((d, h) =>
       supabase
         .from('stock_movements')
         .select('stock_item_id, qty, kind, occurred_at, incident_id, room_id, by_user, source, note')
         .order('id')
-        .range(d, h),
+        .range(d, h).abortSignal(plazo()),
     ),
     // Un servidor sin la migración de septiembre no tiene `stock_units`, y eso
     // no puede parar la sincronización de las otras cinco hojas: se sigue sin
@@ -261,7 +275,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
         .from('stock_units')
         .select('id, articulo, brand, model, serial, notes, status, room_id, installed_at, retired_at')
         .order('id')
-        .range(d, h),
+        .range(d, h).abortSignal(plazo()),
     ).then((r) =>
       r.error && /stock_units/.test(r.error.message)
         ? { data: [], completa: true, error: null, sinTabla: true }

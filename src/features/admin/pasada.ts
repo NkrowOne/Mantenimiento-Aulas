@@ -29,6 +29,7 @@
  */
 
 import { supabase } from '@/lib/supabase'
+import { señalConTope } from '@/features/reports/informe/espera'
 import { construirIndice } from '@/domain/cruce'
 import type { Catalogo, Indice } from '@/domain/cruce'
 import { corteDeAnyo } from '@/domain/anyo'
@@ -357,7 +358,8 @@ function planificar(
 
 /** El libro que salió de la última pasada, para saber si es éste el que se sube. */
 async function ultimaSalida(): Promise<{ sha256: string; cuando: string } | null> {
-  const { data, error } = await supabase.rpc('sync_ultima_salida')
+  // Con plazo, como todo lo que la pasada pide: ver `datosDeLaPasada.ts`.
+  const { data, error } = await supabase.rpc('sync_ultima_salida').abortSignal(señalConTope(25_000))
   // Un servidor sin esta función es un servidor que todavía no ha sincronizado
   // nunca: no hay con qué comparar, y parar aquí sería romper la pantalla.
   if (error || !Array.isArray(data) || data.length === 0) return null
@@ -367,7 +369,8 @@ async function ultimaSalida(): Promise<{ sha256: string; cuando: string } | null
 
 /** El antepasado de cada celda de una hoja, de golpe. */
 async function instantaneaDe(hoja: string): Promise<Instantanea> {
-  const { data, error } = await supabase.rpc('sync_instantanea', { p_hoja: hoja })
+  // Miles de celdas en la hoja de estado: un minuto, y si no llega, se dice.
+  const { data, error } = await supabase.rpc('sync_instantanea', { p_hoja: hoja }).abortSignal(señalConTope(60_000))
   // Sin instantánea la fusión sigue funcionando: es la primera pasada, y manda
   // la app. Parar aquí convertiría un servidor viejo en una pantalla rota.
   if (error || !data) return () => undefined
@@ -536,7 +539,8 @@ export async function aplicar(a: Analisis): Promise<Aplicado> {
     },
   }
 
-  const { data, error } = await supabase.rpc('sync_aplicar', { p_plan: plan })
+  // Aplicar es una transacción con cientos de celdas: tres minutos, no infinito.
+  const { data, error } = await supabase.rpc('sync_aplicar', { p_plan: plan }).abortSignal(señalConTope(180_000))
   if (error) throw new Error(`La pasada no se pudo aplicar: ${error.message}`)
 
   const r = data as {

@@ -52,6 +52,7 @@ import {
 import type { Catalogo, EdificioDesaparecido, SalaConocida } from '@/domain/cruce'
 import { OLD_BUILDING_CODES } from '@/domain/normalize'
 import { descargaEntera } from '@/sync/paginada'
+import { señalConTope } from '@/features/reports/informe/espera'
 
 interface FilaSala {
   id: string
@@ -111,16 +112,16 @@ export async function catalogoDelMaestro(): Promise<Catalogo> {
         .select('id, short_ref, code, name, active, zone_id')
         // `order` estable: sin él, dos páginas pueden solaparse o dejar un hueco.
         .order('id')
-        .range(d, h),
+        .range(d, h).abortSignal(señalConTope(60_000)),
     ),
     descargaEntera<FilaZona>((d, h) =>
-      supabase.from('zones').select('id, name, building_id').order('id').range(d, h),
+      supabase.from('zones').select('id, name, building_id').order('id').range(d, h).abortSignal(señalConTope(60_000)),
     ),
     descargaEntera<FilaEdificio>((d, h) =>
-      supabase.from('buildings').select('id, code, name, active, needs_review').order('id').range(d, h),
+      supabase.from('buildings').select('id, code, name, active, needs_review').order('id').range(d, h).abortSignal(señalConTope(60_000)),
     ),
     descargaEntera<FilaAlias>((d, h) =>
-      supabase.from('room_aliases').select('room_id, alias_norm').order('id').range(d, h),
+      supabase.from('room_aliases').select('room_id, alias_norm').order('id').range(d, h).abortSignal(señalConTope(60_000)),
     ),
   ])
 
