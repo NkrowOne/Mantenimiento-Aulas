@@ -979,6 +979,17 @@ Si solo cambió un lado, gana ese lado se elija lo que se elija: elegir «manda
 el Excel» no borra lo que un técnico cerró ayer en el aula. Se puede cambiar
 con el libro ya leído y la pasada se recalcula al momento.
 
+**1b · El recuento arranca el 1 de agosto de 2026.** La aplicación tomó el
+almacén ese día, con lo que «Bolsa 2026» decía en «Total Comprado» como saldo
+de partida. Lo de antes se quedó como estaba en el libro, y la sincronización
+lo respeta: los meses de enero a julio de la bolsa **no se tocan** (ni se
+comparan ni se escriben), los partes anteriores a esa fecha se leen y se
+guardan con su material pero **no descuentan** del almacén —salen en la
+pantalla como «Anteriores al recuento»—, y «Total Comprado» se cuenta desde
+ese día. De agosto en adelante, la bolsa, los partes y el almacén hablan de lo
+mismo. Un parte cuya aula dice «Varias aulas», «Almacén» o «Sin aula» entra
+sin sala y no se pregunta: es un parte de regularización.
+
 **2 · El libro.** Se sube el `.xlsx`. No se escribe nada hasta pulsar
 «Sincronizar».
 

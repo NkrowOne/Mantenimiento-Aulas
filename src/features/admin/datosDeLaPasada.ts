@@ -24,6 +24,7 @@ import { diaEnMadrid } from '@/domain/fechas'
 import { descargaEntera } from '@/sync/paginada'
 import type { ArticuloVolcado, IncidenciaVolcada, MovimientoVolcado, SalaVolcada, UnidadVolcada } from '@/domain/volcado'
 import { compradoEn, consumoPorMes } from '@/domain/volcado'
+import { arranqueDelAnyo } from '@/domain/mapa'
 import type { EquipoParaHoja, MovimientoParaHoja, RevisionParaHoja } from '@/domain/hojasNuevas'
 import { comprobacionesLegibles } from '@/domain/revisiones'
 import type { CheckResult } from '@/domain/types'
@@ -467,6 +468,10 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     }
   }
 
+  // Desde cuándo lleva la aplicación el almacén de ese año: los meses y lo
+  // comprado se cuentan desde ahí, que es lo que la hoja de la bolsa declara.
+  // El saldo, en cambio, es de todos los tiempos: es lo que hay en el almacén.
+  const arranque = arranqueDelAnyo(anyo)
   const articulos: ArticuloVolcado[] = articulosFilas
     .filter((a) => a.active)
     .map((a) => {
@@ -474,8 +479,8 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
       return {
         id: a.id,
         nombre: a.name,
-        meses: consumoPorMes(suyos, anyo),
-        comprado: compradoEn(suyos, anyo),
+        meses: consumoPorMes(suyos, anyo, arranque),
+        comprado: compradoEn(suyos, anyo, arranque),
         saldo: saldos.get(a.id) ?? 0,
       }
     })

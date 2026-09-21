@@ -52,7 +52,7 @@ import { canonizarFila, fusionarCelda, iguales } from './fusion'
 import type { Decision, Dueno, Referencia, Valor } from './fusion'
 import { TITULO_DE_SITUACION, comprobarCabeceras, equipoDe, mesDe } from './mapa'
 import type { Columna, Hoja } from './mapa'
-import { escribir, esVacio, leer, limpiar } from './valores'
+import { escribir, esSinSala, esVacio, leer, limpiar } from './valores'
 import type { FilaNueva } from './estructura'
 import { columnaANumero, numeroAColumna } from './xlsx'
 import type { Cambio, FilaLeida, ValorCelda } from './xlsx'
@@ -387,9 +387,19 @@ function fusionarFilas<T>(
       // Donde un cero es un blanco, se compara en blanco: así ni se rellena el
       // libro de ceros ni un blanco del libro intenta entrar en la base como 0.
       const enBlanco = (v: Valor): Valor => (c.ceroEsBlanco && v === 0 ? null : v)
+      // Y el aula de un parte que dice «ninguna» —«Varias aulas», «Almacén»— se
+      // compara como el blanco que es y no se escribe: la aplicación no tiene
+      // sala para ese parte, y sin esto el texto intentaba entrar en la base
+      // como código de aula en cada pasada, o la aplicación lo borraba de la
+      // hoja para dejar el blanco que ella tiene.
+      const aulaSinSala =
+        op.hoja.identidad.tipo === 'incidencia' &&
+        c.campo === 'sala.code' &&
+        typeof lectura.valor === 'string' &&
+        esSinSala(lectura.valor)
       const decision = fusionarCelda({
         base: enBlanco(base[c.letra] ?? null),
-        excel: enBlanco(lectura.valor),
+        excel: aulaSinSala ? null : enBlanco(lectura.valor),
         antepasado: op.instantanea(par.clave, c.letra),
         dueno: c.dueno,
         tipo: c.tipo,
@@ -404,7 +414,7 @@ function fusionarFilas<T>(
         c,
         decision,
         lectura.valor,
-        par.noEscribir?.has(c.letra) === true,
+        par.noEscribir?.has(c.letra) === true || aulaSinSala,
         op.referencia,
       )
     }
@@ -1378,6 +1388,11 @@ function altaDeParte(plan: Plan, f: FilaLeida, numero: string, e: EntradaDeParte
   } else if (respuesta?.tipo === 'sala') {
     salaId = respuesta.salaId
   } else if (respuesta?.tipo === 'sin_sala') {
+    salaId = null
+  } else if (esSinSala(aula)) {
+    // «Varias aulas», «Almacén», «Sin aula»: quien lo escribió ya contestó. Un
+    // parte de regularización del almacén no es de ninguna sala, y preguntarlo
+    // en cada pasada es la forma de que nadie vuelva a subir el libro.
     salaId = null
   } else if (aula === '') {
     salaId = undefined

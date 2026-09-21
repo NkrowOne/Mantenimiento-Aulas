@@ -741,6 +741,21 @@ y que el código respeta desde entonces:
   filtrar ni ordenar—, y las filas nuevas que inserta la pasada también. La
   columna sigue siendo «arrastrada» al leer: un valor igual al heredado no se
   toca, y un blanco sigue significando «lo de arriba».
+- **El recuento arranca el 1 de agosto de 2026** (`Hoja.arranque`,
+  `ARRANQUE_2026`). La aplicación tomó el almacén ese día con «Total Comprado»
+  como saldo de partida, y lo de antes es del libro. Tres consecuencias, las
+  tres en la misma fecha: los meses de la bolsa anteriores al arranque son
+  `dueno: 'libro'` —un sexto dueño: la aplicación ni los compara ni los
+  escribe—; el material de un parte anterior se guarda en el parte y no mueve
+  stock (`sync_material_del_parte` recibe la fecha; la vista previa lo enseña
+  como `historico`); y lo comprado del año se cuenta desde ese día, con los
+  saldos de partida importados fechados en él. Sin esto la primera pasada
+  volvía a descontar siete meses de partes que ya estaban fuera del recuento
+  de partida y tres artículos salían en negativo.
+- **Un aula que dice «ninguna» no se pregunta.** «Varias aulas», «Almacén»,
+  «Sin aula» (`esSinSala`) en la hoja de partes es la respuesta, no la duda:
+  el parte entra sin sala, y en las pasadas siguientes esa celda se compara
+  como el blanco que es y no se escribe.
 
 ---
 

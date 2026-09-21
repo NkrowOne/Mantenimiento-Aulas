@@ -144,6 +144,20 @@ export interface Hoja {
    * compra de hoy.
    */
   anyo?: number
+  /**
+   * Desde cuándo lleva la aplicación el almacén del año de la hoja.
+   *
+   * La aplicación tomó el almacén el 1 de agosto de 2026, con lo que la bolsa
+   * decía ese día en «Total Comprado» como saldo de partida. Lo de antes se
+   * quedó como estaba en el libro, y así sigue: los partes anteriores a esa
+   * fecha se leen y se guardan en el parte pero **no mueven stock**; los meses
+   * anteriores son del libro (`dueno: 'libro'`) y la aplicación ni los compara
+   * ni los escribe; y lo comprado del año se cuenta desde esa fecha. Sin esto,
+   * la primera pasada sumaba a la bolsa siete meses de partes que ya estaban
+   * descontados del recuento de partida, y el disponible salía negativo en
+   * tres artículos que en el almacén de verdad estaban bien.
+   */
+  arranque?: string
   /** Filas por debajo de la cabecera que no son datos (totales, IVA). */
   filasDeTotales?: number
   nota?: string
@@ -313,7 +327,10 @@ function materialInstalado(anyo: number, conObservacion: boolean): Hoja {
   }
 }
 
-export const MATERIAL_2026 = materialInstalado(2026, false)
+/** El día en que la aplicación tomó el almacén: ver `Hoja.arranque`. */
+export const ARRANQUE_2026 = '2026-08-01'
+
+export const MATERIAL_2026: Hoja = { ...materialInstalado(2026, false), arranque: ARRANQUE_2026 }
 export const MATERIAL_2025: Hoja = { ...materialInstalado(2025, true), congelada: true }
 
 // -----------------------------------------------------------------------------
@@ -343,14 +360,19 @@ const MESES = [
  * entre las incidencias que lo gastaron. Escribirlos aquí es justamente lo que
  * arregla el descuadre: hoy las doce están vacías mientras la hoja de partes del
  * mismo año lleva 96 consumos apuntados.
+ *
+ * Salvo los meses de antes del arranque: si la aplicación tomó el almacén el 1
+ * de agosto, enero–julio son del libro (`dueno: 'libro'`), se quedan como los
+ * dejó quien los apuntó y la aplicación no opina. Ver `Hoja.arranque`.
  */
-function columnasDeMes(desde: number): Columna[] {
+function columnasDeMes(desde: number, arranque?: string): Columna[] {
+  const mesDeArranque = arranque ? Number(arranque.slice(5, 7)) : 1
   return MESES.map((mes, i) => ({
     letra: String.fromCharCode(65 + desde + i),
     cabecera: mes,
     campo: `mes:${i + 1}`,
     ceroEsBlanco: true,
-    dueno: 'solo_app' as const,
+    dueno: i + 1 < mesDeArranque ? ('libro' as const) : ('solo_app' as const),
     tipo: 'numero' as const,
   }))
 }
@@ -358,11 +380,12 @@ function columnasDeMes(desde: number): Columna[] {
 export const BOLSA_2026: Hoja = {
   nombre: 'Bolsa 2026',
   anyo: 2026,
+  arranque: ARRANQUE_2026,
   cabecera: 1,
   identidad: { tipo: 'articulo', columna: 'A' },
   columnas: [
     { letra: 'A', cabecera: 'Articulo / Material', campo: 'articulo.nombre', dueno: 'ambos', tipo: 'texto' },
-    ...columnasDeMes(1),
+    ...columnasDeMes(1, ARRANQUE_2026),
     {
       letra: 'N',
       cabecera: 'Total Instalado',
@@ -474,6 +497,15 @@ export const HOJAS: Hoja[] = [ESTADO, MATERIAL_2026, BOLSA_2026, PCS_2026, MATER
 
 export function hojaPorNombre(nombre: string): Hoja | undefined {
   return HOJAS.find((h) => h.nombre === nombre)
+}
+
+/**
+ * Desde cuándo lleva la aplicación el almacén de un año, si no lo llevó entero.
+ * Es lo que la bolsa de ese año declara en `arranque`; un año sin bolsa, o con
+ * la bolsa entera, no tiene arranque.
+ */
+export function arranqueDelAnyo(anyo: number): string | undefined {
+  return HOJAS.find((h) => h.anyo === anyo && h.identidad.tipo === 'articulo')?.arranque
 }
 
 /** La hoja de partes, la de bolsa y la de PCs de un año, si el libro las lleva. */

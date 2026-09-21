@@ -62,8 +62,13 @@ import { norm } from './normalize'
  *  - `formula`    — stock disponible (`=Comprado − Instalado`). No se escribe
  *                   nunca: escribir un número encima se lleva la fórmula por
  *                   delante. Si los dos números discrepan, eso es un descuadre.
+ *  - `libro`      — los meses de la bolsa de antes de que la aplicación llevara
+ *                   el almacén (enero–julio de 2026). Son del libro y de nadie
+ *                   más: la aplicación ni los compara ni los escribe, porque su
+ *                   recuento arranca después y lo que diga de esos meses no es
+ *                   un dato, es la ausencia de uno. Ver `Hoja.arranque`.
  */
-export type Dueno = 'ambos' | 'solo_excel' | 'solo_app' | 'medida' | 'formula'
+export type Dueno = 'ambos' | 'solo_excel' | 'solo_app' | 'medida' | 'formula' | 'libro'
 
 /**
  * Quién manda cuando la fusión no puede decidir sola.
@@ -204,6 +209,13 @@ function cuando(fecha: string | null | undefined): number | null {
  * Decide qué hacer con una celda. No escribe: devuelve la decisión.
  */
 export function fusionarCelda(c: Celda): Decision {
+  // Del libro y de nadie más: no hay nada que comparar ni que escribir. Se
+  // decide antes que la fórmula y antes que el hueco, porque la regla del hueco
+  // —gana quien tiene el dato— haría entrar en la base un número de un mes que
+  // la base no tiene dónde guardar, o escribiría un 0 encima de lo que alguien
+  // apuntó a mano en enero.
+  if (c.dueno === 'libro') return { tipo: 'sin_cambios' }
+
   // Una fórmula no se toca jamás, ni aunque el número discrepe: el valor de esa
   // celda no es un dato, es el resultado de una resta que la hoja sabe hacer.
   // Escribir el número encima se lleva la fórmula, y a partir de ahí la columna

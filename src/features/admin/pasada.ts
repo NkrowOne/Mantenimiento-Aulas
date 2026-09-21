@@ -252,6 +252,10 @@ function movimientosDe(planes: Plan[], datos: DatosDeLaPasada): MovimientoPrevis
     incidencias: datos.incidencias,
     articulos: datos.articulos,
     resolver: datos.resolverArticulo,
+    // Desde cuándo lleva la aplicación el almacén: lo declara la hoja del año.
+    // Las hojas de una pasada son del mismo año, así que vale la primera que
+    // lo diga.
+    arranque: planes.map((p) => hojaPorNombre(p.hoja)?.arranque).find((a): a is string => a !== undefined),
   })
 }
 
@@ -479,6 +483,9 @@ export async function aplicar(a: Analisis): Promise<Aplicado> {
         // de todos los tiempos y mete la diferencia con 2025 como una compra de
         // hoy —negativa, además, que el signo no la deja pasar.
         ...(hojaPorNombre(p.hoja)?.anyo ? { anyo: hojaPorNombre(p.hoja)!.anyo } : {}),
+        // Y desde cuándo lleva la aplicación el almacén de ese año: el material
+        // de un parte anterior no mueve stock, y lo comprado se cuenta desde ahí.
+        ...(hojaPorNombre(p.hoja)?.arranque ? { arranque: hojaPorNombre(p.hoja)!.arranque } : {}),
         // El material de un parte va ya partido y resuelto: el catálogo de alias
         // vive aquí, y partir «1Pantalla 240X240» en un 1 y una pantalla es
         // exactamente el tipo de cosa que en SQL sale mal.
@@ -562,6 +569,9 @@ function altaParaLaBase(hoja: string, alta: Alta, a: Analisis): Record<string, u
         observacion: alta.observacion,
         resolucion: alta.resolucion,
         detalle: alta.material ? detalleDelMaterial(alta.material, a.datos.resolverArticulo) : [],
+        // Un parte de antes del arranque del recuento entra con su material
+        // apuntado y sin mover el almacén.
+        arranque: h?.arranque ?? null,
         columna_numero: h?.identidad.tipo === 'incidencia' ? h.identidad.columna : 'D',
       }
     }
@@ -575,6 +585,7 @@ function altaParaLaBase(hoja: string, alta: Alta, a: Analisis): Record<string, u
         // con la que entra el artículo tiene que fecharse dentro de él, igual
         // que el cuadre de una celda. Sin el año la base la fechaba hoy.
         anyo: hojaPorNombre(hoja)?.anyo ?? null,
+        arranque: hojaPorNombre(hoja)?.arranque ?? null,
       }
     case 'unidad':
       return {

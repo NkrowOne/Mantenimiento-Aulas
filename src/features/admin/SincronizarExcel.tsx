@@ -586,6 +586,11 @@ const TIPO_DE_MOVIMIENTO: Record<MovimientoPrevisto['tipo'], { titulo: string; t
     tono: 'igual',
     texto: 'Lleva un 0 delante en «Material Usado»: material reciclado, de garantía o de stock antiguo. Se guarda en el parte y no sale del almacén.',
   },
+  historico: {
+    titulo: 'Anteriores al recuento',
+    tono: 'igual',
+    texto: 'Partes de antes de que la aplicación llevara el almacén (1 de agosto de 2026). El material queda apuntado en el parte y no descuenta nada: esos meses de la bolsa son del libro.',
+  },
   sin_articulo: {
     titulo: 'No se descuenta: artículo desconocido',
     tono: 'decidir',

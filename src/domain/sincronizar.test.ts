@@ -740,9 +740,16 @@ function bolsa(filas: FilaLeida[], articulos: ArticuloVolcado[]) {
 }
 
 describe('la hoja de bolsa', () => {
-  it('rellena los meses, que hoy están en blanco', () => {
-    const p = bolsa([fila(2, { A: 'Cable HDMI fibra 10 m' })], [articulo()])
-    expect(p.celdas).toContainEqual({ celda: 'B2', valor: 1 })
+  it('rellena los meses desde el arranque del recuento; los de antes son del libro', () => {
+    // Agosto lo escribe la aplicación. Enero es de antes de que llevara el
+    // almacén: aunque tenga un consumo apuntado, la celda se queda como está.
+    const p = bolsa(
+      [fila(2, { A: 'Cable HDMI fibra 10 m' })],
+      [articulo({ meses: [1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0] })],
+    )
+    expect(p.celdas).toContainEqual({ celda: 'I2', valor: 2 })
+    expect(p.celdas.filter((c) => c.celda === 'B2')).toEqual([])
+    expect(p.haciaLaBase.filter((h) => h.campo === 'mes:1')).toEqual([])
   })
 
   it('no le devuelve la fórmula a una celda si la fórmula daría otra cosa', () => {
@@ -1306,9 +1313,9 @@ describe('un mes a cero es un mes en blanco', () => {
   const cab = fila(1, Object.fromEntries(BOLSA_2026.columnas.map((c) => [c.letra, c.cabecera])))
 
   it('no se escriben ceros en los meses que la hoja tiene en blanco', () => {
-    const art = articulo({ meses: [0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0] })
+    const art = articulo({ meses: [0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0] })
     const p = sincronizarBolsa({ hoja: BOLSA_2026, filas: [cab, fila(2, { A: art.nombre })], articulos: [art], resolver: () => art.id })
-    expect(p.celdas.filter((c) => /^[B-M]2$/.test(c.celda))).toEqual([{ celda: 'D2', valor: 3 }])
+    expect(p.celdas.filter((c) => /^[B-M]2$/.test(c.celda))).toEqual([{ celda: 'J2', valor: 3 }])
   })
 
   it('ni en una fila nueva', () => {
@@ -1413,5 +1420,51 @@ describe('cada hoja de partes solo inserta los partes de su año', () => {
     })
     expect(p.insertar).toHaveLength(1)
     expect(p.insertar[0]!.celdas.some((c) => c.valor === 'I260301_0001')).toBe(true)
+  })
+})
+
+describe('un aula que dice «ninguna»', () => {
+  it('un parte nuevo con «Varias aulas» entra sin sala y no se pregunta', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [
+        CAB_PARTES,
+        fila(2, {
+          A: 'Varias aulas',
+          B: fechaAExcel('2026-09-15'),
+          C: fechaAExcel('2026-09-15'),
+          E: 'Regularización de almacén (septiembre 2026)',
+          G: '2 Botonera',
+        }),
+      ],
+      incidencias: [],
+      indice,
+    })
+    expect(p.dudas).toEqual([])
+    expect(p.sinCruzar).toEqual([])
+    expect(p.altas).toHaveLength(1)
+    expect(p.altas[0]).toMatchObject({ tipo: 'incidencia', salaId: null, aula: 'Varias aulas' })
+  })
+
+  it('en un parte que ya existe sin sala, la celda se compara como el blanco que es y no se toca', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES, fila(2, { D: 'I260102_0002', A: 'Almacén' })],
+      incidencias: [incidencia({ salaCode: '' })],
+    })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'sala.code')).toEqual([])
+    expect(p.celdas.filter((c) => c.celda === 'A2')).toEqual([])
+    expect(p.conflictos).toEqual([])
+    expect(p.instantanea).toContainEqual(expect.objectContaining({ letra: 'A', fila: 2, valor: 'Almacén' }))
+  })
+
+  it('y si la aplicación sí le puso sala, tampoco se pisa lo que alguien escribió', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES, fila(2, { D: 'I260102_0002', A: 'Varias aulas' })],
+      incidencias: [incidencia({ salaCode: '0.1 BC' })],
+    })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'sala.code')).toEqual([])
+    expect(p.celdas.filter((c) => c.celda === 'A2')).toEqual([])
   })
 })

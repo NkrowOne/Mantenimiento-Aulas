@@ -353,6 +353,40 @@ export function leerMaterial(texto: string): MaterialLeido[] {
 }
 
 /** `true` si el renglón se apunta sin descontar: lleva el 0 delante. */
+/**
+ * Un aula que dice «ninguna».
+ *
+ * Los partes de regularización del almacén —material que salió y no quedó
+ * anotado en ningún parte— llevan en «Aula» cosas como «Varias aulas» o
+ * «Almacén». No es un aula que no cruza: es la respuesta a la pregunta de qué
+ * sala es, y no hay que volver a hacerla en cada pasada ni intentar meter ese
+ * texto en la base como código de aula.
+ */
+const SIN_SALA = new Set([
+  'varias aulas',
+  'varias',
+  'varios',
+  'almacen',
+  'sin aula',
+  'sin sala',
+  'ninguna',
+  'ninguno',
+  'general',
+  'n/a',
+  '-',
+  '—',
+])
+
+export function esSinSala(aula: string): boolean {
+  const llana = aula
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+  return SIN_SALA.has(llana)
+}
+
 export function sinDescontar(m: MaterialLeido): boolean {
   return m.cantidad === 0
 }
