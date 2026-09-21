@@ -75,6 +75,9 @@ describe('la hoja de revisiones', () => {
     // Con las dos juntas, filtrar «las del martes» deja de funcionar.
     expect(excelAFecha(h.filas[1]![4] as number)).toBe('2025-06-23')
     expect(h.filas[1]![5]).toMatch(/^\d{2}:\d{2}$/)
+    // El estado y el resultado salen como palabras, no como claves de programa.
+    expect(h.filas[1]![7]).toBe('Completa')
+    expect(h.filas[1]![8]).toBe('Sin incidencias')
   })
 
   it('una revisión sin hora no se inventa una', () => {

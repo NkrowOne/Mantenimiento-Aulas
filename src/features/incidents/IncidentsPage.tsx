@@ -74,7 +74,18 @@ const STATE_LABEL: Record<IncidentState, string> = {
   resuelta: 'Resuelta',
 }
 
-export function IncidentsPage(): React.ReactElement {
+interface Props {
+  /**
+   * Abrir la ficha de la sala de una incidencia. Opcional porque la pantalla
+   * también se monta sin `App` detrás; con él, el código de la sala de cada
+   * fila se vuelve pulsable. Enterarse de una avería y no poder ir al aula
+   * convierte la lista en un cartel: el panel ya lo resolvió así, y esta lista
+   * nombra la sala en cada una de sus filas.
+   */
+  onAbrirSala?: (roomId: string) => void
+}
+
+export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
   const qc = useQueryClient()
   const [showResolved, setShowResolved] = useState(false)
   const [query, setQuery] = useState('')
@@ -457,7 +468,23 @@ export function IncidentsPage(): React.ReactElement {
                 <div className="min-w-0 flex-1 basis-48">
                   <p className="font-medium">{i.title}</p>
                   <p className="mt-0.5 text-xs text-muted">
-                    {sala && <span className="font-mono font-semibold text-ink-2">{sala} · </span>}
+                    {sala &&
+                      (onAbrirSala && i.room_id ? (
+                        // El código es el enlace a la ficha: es lo que se busca
+                        // con la vista al leer la fila, y un botón aparte sería
+                        // un cuarto control en una fila que ya tiene tres.
+                        <button
+                          type="button"
+                          onClick={() => onAbrirSala(i.room_id!)}
+                          className="-mx-1 inline-flex min-h-6 items-center px-1 font-mono font-semibold text-accent underline-offset-2 hover:underline"
+                          title="Abrir la ficha de la sala"
+                        >
+                          {sala}
+                        </button>
+                      ) : (
+                        <span className="font-mono font-semibold text-ink-2">{sala}</span>
+                      ))}
+                    {sala && ' · '}
                     {/* La importación dejó 118 sin sala identificada. Decirlo en
                         la fila es lo que permite reconocerlas — y el panel de
                         administración es donde se les asigna la suya. */}

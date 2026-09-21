@@ -464,7 +464,11 @@ Las demás reglas:
 3. **Las columnas se buscan por su cabecera, jamás por su posición.** Si falta una
    cabecera esperada, la pasada se aborta entera sin escribir nada. La
    alternativa es escribir horas de proyector en la columna de capacidad y no
-   enterarse en seis meses.
+   enterarse en seis meses. Una columna puede admitir más de una cabecera
+   (`alias` en `mapa.ts`): «Sreenbeam» y «Screenbeam» son la misma, y la
+   segunda «Articulo / Material» de la bolsa puede decir «Otro nombre (alias)»,
+   que es lo que es. Es lo que permite corregir a mano una errata del libro
+   sin que la pasada se niegue a empezar.
 4. **Comprobación de estructura antes de cada escritura**: que estén las hojas
    esperadas, que estén las cabeceras esperadas, que la tabla con nombre siga
    existiendo, y que las columnas que eran de fórmula sigan siéndolo. Si algo no
@@ -715,6 +719,28 @@ Y una regla que atraviesa todo: **lo que no se puede leer no se interpreta**. Un
 la de fecha no es una fecha y no se adivina. Va a cuarentena con su celda y su
 motivo, y no entra en la base ni se pisa en la hoja. Un cero inventado en la
 columna de lámparas manda a alguien a un aula que está perfectamente.
+
+Tres cosas más que salieron de reformatear el libro real (septiembre de 2026),
+y que el código respeta desde entonces:
+
+- **`Material Usado` tiene notación propia.** «cantidad artículo», separados
+  por coma; una coma entre dos cifras es un decimal (`Cable HDMI 7,5 m`), no un
+  separador —partirla ahí hacía que el parte «perdiera» el cable y la pasada
+  siguiente lo devolviera al almacén—; y **un 0 delante es «apuntado sin
+  descontar»**, la marca que la gente ya usaba para lo reciclado, lo de
+  garantía y el stock antiguo. La cantidad 0 se guarda en `incident_materials`
+  con su texto y no mueve nada.
+- **`Stock Disponible` cuadra el almacén cuando manda el Excel.** La celda
+  sigue siendo una fórmula y no se escribe jamás; pero si la persona eligió
+  «manda el Excel», su valor viaja como `articulo.disponible` y la base pone el
+  saldo a ese número con un `ajuste` que dice de dónde sale, el último de la
+  pasada. Un disponible negativo no entra: el almacén no baja de cero, y el
+  aviso dice que se revise «Total Comprado».
+- **El edificio y la planta van en todas las filas de la hoja de estado.** El
+  libro reformateado los lleva escritos en cada sala —sin eso no se puede
+  filtrar ni ordenar—, y las filas nuevas que inserta la pasada también. La
+  columna sigue siendo «arrastrada» al leer: un valor igual al heredado no se
+  toca, y un blanco sigue significando «lo de arriba».
 
 ---
 

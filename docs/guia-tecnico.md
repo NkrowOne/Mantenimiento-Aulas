@@ -54,21 +54,26 @@ entra sin PIN.
 ## Llegar al aula: escanea el QR
 
 En el marco de la puerta hay una pegatina con un código. **Apúntale con la
-cámara y se abre la revisión de esa aula, directamente.** Vale la cámara normal
-del móvil —sin abrir nada antes— y también el botón **«Escanear el QR del
-aula»** que hay arriba del todo si ya estás dentro de la aplicación.
+cámara y se abre la ficha de esa aula**: cuándo se revisó, qué queda abierto y
+el botón **«Revisar esta sala»** para empezar. Vale la cámara normal del móvil
+—sin abrir nada antes— y también el botón **«Escanear el QR del aula»** que hay
+arriba del todo si ya estás dentro de la aplicación.
 
-Es el camino corto. Si no hay pegatina, o la cámara no va, sigue estando el de
-siempre: el buscador de arriba y la lista de edificios.
+Es el camino corto: te ahorra elegir el edificio y buscar la sala en la lista.
+Si no hay pegatina, o la cámara no va, sigue estando el de siempre: el buscador
+de arriba y la lista de edificios. Los tres acaban en el mismo sitio, la ficha,
+así que tocar una sala significa siempre lo mismo. Y «Volver» te devuelve a la
+pantalla de la que saliste.
 
 > Si el código no lee, acércate hasta que quepa dentro del marco de la pantalla,
 > y usa el botón **Linterna** si el pasillo está oscuro.
 
 ## La ficha de la sala
 
-Al tocar un aula en la lista se abre **su ficha**, no el formulario. Es la
-pantalla que contesta a lo que uno se pregunta llegando a la puerta: cuándo se
-revisó, qué hay registrado, qué queda abierto y qué le ha pasado antes.
+Al tocar un aula —en la lista, en un resultado del buscador o escaneando su
+QR— se abre **su ficha**, no el formulario. Es la pantalla que contesta a lo que
+uno se pregunta llegando a la puerta: cuándo se revisó, qué hay registrado, qué
+queda abierto y qué le ha pasado antes.
 
 Dos cosas viven aquí:
 
@@ -93,7 +98,7 @@ Dos cosas viven aquí:
 > propia línea: así la incidencia queda pegada a ese aparato, con su número de
 > serie. Este formulario es para lo que no cabe en una revisión.
 
-Arriba del todo, el botón grande: **«Revisar esta aula»**. Al salir de la
+Arriba del todo, el botón grande: **«Revisar esta sala»**. Al salir de la
 revisión vuelves a la ficha.
 
 ### Si una revisión quedó mal apuntada: corrígela
@@ -121,9 +126,10 @@ corrección»** la tira y no cambia nada.
 > Hace falta cobertura **una vez**, al pulsar «Corregir», para traerse lo que
 > dijo aquella revisión. A partir de ahí funciona sin red como cualquier otra.
 
-> **El camino corto sigue igual.** El QR de la puerta y el buscador entran
-> directos a revisar: si escaneas una placa ya sabes dónde estás y a qué vienes.
-> La ficha queda a un toque, tocando la placa de la cabecera.
+> **El QR de la puerta y el buscador entran por aquí también.** Antes llevaban
+> directos al formulario; ahora abren la ficha, igual que la lista, y «Revisar
+> esta sala» queda a un toque. Lo que la ficha cuenta —qué falló y qué sigue
+> abierto— es lo que conviene saber antes de contestar, no después.
 
 ## Revisar un aula
 

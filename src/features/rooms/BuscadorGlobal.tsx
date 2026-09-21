@@ -18,6 +18,14 @@ import { daysSince, roomMatches } from './orden'
  */
 
 interface Props {
+  /**
+   * Qué hacer con la sala elegida.
+   *
+   * El destino lo decide `App` y no este componente, a propósito: hoy es la
+   * ficha de la sala, el mismo sitio al que llevan la fila de la lista y el QR
+   * de la puerta, y esa regla tiene que vivir en un solo sitio para que las
+   * tres entradas no acaben en tres pantallas distintas.
+   */
   onPick: (building: Building, room: Room) => void
 }
 

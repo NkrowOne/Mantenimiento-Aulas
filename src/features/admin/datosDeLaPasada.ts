@@ -28,6 +28,7 @@ import type { EquipoParaHoja, MovimientoParaHoja, RevisionParaHoja } from '@/dom
 import { comprobacionesLegibles } from '@/domain/revisiones'
 import type { CheckResult } from '@/domain/types'
 import { escribirMaterial } from '@/domain/valores'
+import { canonAlmacen } from '@/domain/almacen'
 
 // -----------------------------------------------------------------------------
 // Lo que sale
@@ -98,6 +99,8 @@ interface FilaRevision {
   status: string
   overall: string | null
   notes: string | null
+  /** `app`, `import` o `sharepoint`: de dónde salió la revisión. */
+  source: string | null
 }
 interface FilaCheck {
   inspection_id: string
@@ -211,7 +214,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     descargaEntera<FilaRevision>((d, h) =>
       supabase
         .from('inspections')
-        .select('id, room_id, by_user, occurred_at, status, overall, notes')
+        .select('id, room_id, by_user, occurred_at, status, overall, notes, source')
         .order('id')
         .range(d, h),
     ),
@@ -412,7 +415,15 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
         zona,
         sala: s.code,
         cuando: r.occurred_at,
-        quien: r.by_user ? (perfiles.get(r.by_user) ?? null) : null,
+        // Sin autor, la fila decía de dónde salía con un hueco. Una revisión
+        // que entró desde una fecha del Excel lo dice: es lo que distingue
+        // «alguien estuvo y no sabemos quién» de «nadie estuvo, es la fecha
+        // que traía la hoja».
+        quien: r.by_user
+          ? (perfiles.get(r.by_user) ?? null)
+          : r.source === 'sharepoint' || r.source === 'import'
+            ? 'Excel (sin autor)'
+            : null,
         estado: r.status,
         resultado: r.overall,
         horasProyector: medidaDe(checks, 'h'),
@@ -465,6 +476,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
         nombre: a.name,
         meses: consumoPorMes(suyos, anyo),
         comprado: compradoEn(suyos, anyo),
+        saldo: saldos.get(a.id) ?? 0,
       }
     })
 
@@ -582,7 +594,14 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     salas,
     incidencias,
     articulos,
-    resolverArticulo: (nombre: string) => porNombre.get(llana(nombre)) ?? null,
+    // Primero el nombre y los alias de la base; si no, el catálogo de
+    // nomenclatura (`almacen.ts`), que sabe que «Camaras Aver» es «Cámara
+    // Aver» y «Hub de USB» es «Hub USB». Sin esta red, 17 filas de la bolsa
+    // salían cada pasada como artículos desconocidos, alguien contestaba «no
+    // darlo de alta» —con razón: ya existían— y los meses de esas filas no se
+    // escribían nunca.
+    resolverArticulo: (nombre: string) =>
+      porNombre.get(llana(nombre)) ?? porNombre.get(llana(canonAlmacen(nombre))) ?? null,
     saldos,
     nombresAlternativos,
     revisiones,

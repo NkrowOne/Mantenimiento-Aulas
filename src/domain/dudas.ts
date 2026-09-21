@@ -54,6 +54,13 @@ export type Duda =
       motivo: string
       /** Las salas entre las que se duda, si el cruce llegó a dudar entre algunas. */
       candidatas: SalaCandidata[]
+      /**
+       * Lo que la fila de estado dice de sí misma: edificio y planta heredados
+       * del bloque y el código de aula escrito. Es lo que hace falta para dar de
+       * alta la sala en la aplicación desde la propia duda, sin abrir el libro
+       * ni pasar por el maestro. Solo lo llevan las dudas de la hoja de estado.
+       */
+      origen?: { edificio: string; zona: string; aula: string }
     }
   | {
       tipo: 'alta'

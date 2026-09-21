@@ -405,6 +405,7 @@ function fusionarFilas<T>(
         decision,
         lectura.valor,
         par.noEscribir?.has(c.letra) === true,
+        op.referencia,
       )
     }
   }
@@ -417,6 +418,7 @@ function repartir<T>(
   decision: Decision,
   excel: Valor,
   soloLectura: boolean,
+  referencia?: Referencia,
 ): void {
   switch (decision.tipo) {
     case 'sin_cambios':
@@ -503,8 +505,37 @@ function repartir<T>(
       return
 
     case 'descuadre':
+      // «Stock Disponible» es una fórmula y no se escribe jamás. Pero cuando se
+      // ha elegido que mande el Excel, lo que dice esa celda es lo que hay en el
+      // almacén de verdad, y la aplicación se cuadra con un movimiento de
+      // ajuste —nunca tocando la celda—. Es lo que promete la documentación de
+      // la sincronización desde el principio y lo que la gente espera al
+      // corregir el inventario en la hoja: que la aplicación se ponga a lo que
+      // dice el Excel, no que le lleve la contraria en silencio. Un disponible
+      // negativo no se cuadra: significa que el año gastó más de lo que compró,
+      // y el almacén no puede quedar bajo cero; se dice y se deja.
+      if (
+        c.campo === 'articulo.disponible' &&
+        referencia === 'excel' &&
+        typeof decision.excel === 'number' &&
+        decision.excel >= 0
+      ) {
+        plan.haciaLaBase.push({
+          fila: par.fila,
+          letra: c.letra,
+          campo: c.campo,
+          destino: par.destino,
+          valor: decision.excel,
+          motivo: `manda el Excel: la hoja dice ${decision.excel} disponibles y la aplicación ${decision.base}; el almacén se cuadra con un ajuste`,
+        })
+        return
+      }
       plan.avisos.push(
-        `${c.letra}${par.fila} (${c.cabecera}): la hoja calcula ${decision.excel} y la base ${decision.base}. Es una fórmula: no se toca ninguno de los dos.`,
+        `${c.letra}${par.fila} (${c.cabecera}): la hoja calcula ${decision.excel} y la base ${decision.base}. Es una fórmula: no se toca ninguno de los dos.${
+          c.campo === 'articulo.disponible' && typeof decision.excel === 'number' && decision.excel < 0
+            ? ' El disponible es negativo: este año se ha gastado más de lo comprado; revisar «Total Comprado».'
+            : ''
+        }`,
       )
       return
   }
@@ -639,6 +670,7 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
               texto: resumenDeFila(f, e.hoja, edificio, zona),
               motivo: 'la fila no dice de qué aula es',
               candidatas: [],
+              origen: { edificio, zona, aula: '' },
             })
           }
         }
@@ -694,6 +726,9 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
           texto: resumenDeFila(f, e.hoja, edificio, zona),
           motivo: cruce.motivo,
           candidatas: (cruce.candidatas ?? []).map(candidataDe),
+          // Lo que la fila dice de sí misma, tal cual: es con lo que se puede
+          // dar de alta la sala desde la pantalla sin abrir el libro.
+          origen: { edificio, zona, aula },
         })
       }
       continue
@@ -1115,19 +1150,16 @@ function filasNuevasDeSalas(nuevas: SalaVolcada[], e: EntradaDeEstado, plan: Pla
 
     const valores = filaDeSala(sala, e.hoja)
     for (const c of e.hoja.columnas) {
-      // Dentro de un bloque, el edificio va en blanco como en el resto de la
-      // hoja: escribirlo en todas las filas cambiaría el aspecto de un libro que
-      // la gente lee todos los días. La planta solo se escribe cuando la fila
-      // abre una planta nueva dentro del bloque.
-      if (c.campo === 'edificio' && !abreBloque) continue
-      if (c.campo === 'zona' && !abreBloque && !abrePlanta) continue
+      // El edificio y la planta van escritos en la fila nueva, también dentro de
+      // un bloque. Antes se dejaban en blanco para imitar el libro de siempre,
+      // donde solo los llevaba la primera fila de cada bloque; pero una fila
+      // que no dice de qué edificio es no se puede filtrar ni ordenar, y el
+      // libro reformateado los lleva en todas. Al leer da lo mismo: la columna
+      // se arrastra, y un valor igual al heredado no se toca.
       const dato = valores[c.letra] ?? null
       const valor = escribir(dato, c.tipo)
       if (valor === null) continue
       celdas.push({ celda: `${c.letra}${destino + 1}`, valor: valor as ValorCelda, ...formatoDe(c) })
-      // Solo de lo que se escribe: la columna del edificio que se deja en
-      // blanco dentro de un bloque no vale como antepasado, porque en la pasada
-      // siguiente esa celda se lee arrastrada del bloque y no vacía.
       anotarCeldaNueva(plan, sala.shortRef, c.letra, dato)
     }
     celdas.push({ celda: `${e.columnaRef}${destino + 1}`, valor: sala.shortRef })

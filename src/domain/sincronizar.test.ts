@@ -275,14 +275,17 @@ describe('la hoja de estado', () => {
     ])
   })
 
-  it('dentro de un bloque, la fila nueva no repite el nombre del edificio', () => {
+  it('dentro de un bloque, la fila nueva lleva también el edificio y la planta', () => {
+    // Antes se dejaban en blanco para imitar el libro de siempre; una fila sin
+    // edificio no se puede filtrar, y el libro reformateado los lleva en todas.
     const p = estado(
       [fila(2, { A: 'EDIFICIO P', C: '0.1P', Y: 'SALA-000001' })],
       [sala(), sala({ id: 'r2', shortRef: 'SALA-000002', code: '0.9P' })],
     )
-    const celdas = p.insertar[0]!.celdas.map((c) => c.celda)
-    expect(celdas).not.toContain('A3')
-    expect(celdas).toContain('C3')
+    const celdas = p.insertar[0]!.celdas
+    expect(celdas.find((c) => c.celda === 'A3')?.valor).toBe('EDIFICIO P')
+    expect(celdas.find((c) => c.celda === 'B3')?.valor).toBe('PLANTA BAJA')
+    expect(celdas.map((c) => c.celda)).toContain('C3')
   })
 
   it('un edificio que no está en la hoja abre bloque al final, con su nombre', () => {
@@ -1331,6 +1334,61 @@ describe('un mes a cero es un mes en blanco', () => {
       resolver: () => art.id,
     })
     expect(p.avisos.filter((a) => a.includes('descuadre') || a.includes('Es una fórmula'))).toEqual([])
+  })
+})
+
+describe('«Stock Disponible» cuando manda el Excel', () => {
+  const cab = fila(1, Object.fromEntries(BOLSA_2026.columnas.map((c) => [c.letra, c.cabecera])))
+  // La hoja dice 19 disponibles con sus fórmulas intactas; la app calcula 28 − 9 = 19 también
+  // en meses, pero su saldo real es otro. Lo que se manda a la base es lo que dice la celda.
+  const art = articulo({ meses: [1, 0, 0, 0, 0, 0, 0, 4, 9, 0, 0, 0], comprado: 32, saldo: 28 })
+  const filaBolsa = (o: number): FilaLeida =>
+    ({
+      fila: 2,
+      celdas: { A: art.nombre, B: 1, I: 4, J: 9, N: 14, O: o, P: 32 },
+      formulas: { N: 'B2+C2+D2+E2+F2+G2+H2+I2+J2+K2+L2+M2', O: 'P2-N2' },
+    }) as FilaLeida
+
+  it('sin referencia solo se avisa: la fórmula no se toca y la base tampoco', () => {
+    const p = sincronizarBolsa({ hoja: BOLSA_2026, filas: [cab, filaBolsa(19)], articulos: [art], resolver: () => art.id })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'articulo.disponible')).toEqual([])
+    expect(p.celdas.some((c) => c.celda === 'O2')).toBe(false)
+  })
+
+  it('con «manda el Excel» el disponible va a la base como ajuste, y la celda sigue sin tocarse', () => {
+    const p = sincronizarBolsa({
+      hoja: BOLSA_2026,
+      filas: [cab, filaBolsa(19)],
+      articulos: [art],
+      resolver: () => art.id,
+      referencia: 'excel',
+    })
+    expect(p.haciaLaBase).toContainEqual(expect.objectContaining({ campo: 'articulo.disponible', letra: 'O', valor: 19 }))
+    expect(p.celdas.some((c) => c.celda === 'O2')).toBe(false)
+  })
+
+  it('un disponible negativo no se cuadra: se dice que hay que revisar lo comprado', () => {
+    const p = sincronizarBolsa({
+      hoja: BOLSA_2026,
+      filas: [cab, filaBolsa(-3)],
+      articulos: [art],
+      resolver: () => art.id,
+      referencia: 'excel',
+    })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'articulo.disponible')).toEqual([])
+    expect(p.avisos.join(' ')).toContain('Total Comprado')
+  })
+
+  it('si la hoja y la app coinciden no hay nada que ajustar', () => {
+    const igual = articulo({ meses: [1, 0, 0, 0, 0, 0, 0, 4, 9, 0, 0, 0], comprado: 32, saldo: 18 })
+    const p = sincronizarBolsa({
+      hoja: BOLSA_2026,
+      filas: [cab, filaBolsa(18)],
+      articulos: [igual],
+      resolver: () => igual.id,
+      referencia: 'excel',
+    })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'articulo.disponible')).toEqual([])
   })
 })
 

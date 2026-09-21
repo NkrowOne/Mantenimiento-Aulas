@@ -104,6 +104,12 @@ export interface ArticuloVolcado {
   /** Consumo por mes del año que toca, del 1 al 12. Cero es cero, no vacío. */
   meses: number[]
   comprado: number | null
+  /**
+   * Lo que queda en el almacén hoy: la suma de todos los movimientos. Es contra
+   * lo que se compara «Stock Disponible» cuando manda el Excel. Opcional
+   * porque las pruebas y el espejo del libro no siempre lo saben.
+   */
+  saldo?: number
 }
 
 /**
@@ -255,9 +261,15 @@ export function valorDeArticulo(art: ArticuloVolcado, c: Columna): Valor {
       return art.nombre
     case 'articulo.comprado':
       return art.comprado
+    case 'articulo.disponible':
+      // Lo que queda en el almacén según la aplicación. No se escribe nunca en
+      // la celda —es una fórmula, y la fusión lo sabe—: sirve para comparar con
+      // lo que la hoja calcula, decir el descuadre y, cuando manda el Excel,
+      // cuadrar el almacén con un ajuste. Sin saldo conocido no hay comparación.
+      return art.saldo ?? null
     default:
-      // `Total Instalado` y `Stock Disponible` los calcula la hoja: aquí no hay
-      // valor que dar, y darlo sería escribir un número encima de una fórmula.
+      // `Total Instalado` lo calcula la hoja: aquí no hay valor que dar, y darlo
+      // sería escribir un número encima de una fórmula.
       return null
   }
 }

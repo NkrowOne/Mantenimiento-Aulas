@@ -966,7 +966,12 @@ la aplicación—:
 - **Que decida una persona**: sale como choque y no se toca ninguno de los dos
   lados. Es lo de siempre.
 - **Manda el Excel**: lo que dice la hoja entra en la aplicación. Para cuando
-  se acaba de corregir el Excel a mano y es el inventario bueno.
+  se acaba de corregir el Excel a mano y es el inventario bueno. Con esta
+  opción, además, el almacén de la aplicación **se cuadra con «Stock
+  Disponible»** de la bolsa: la diferencia entre lo que la hoja calcula y lo
+  que suma la base entra como un movimiento de ajuste con su nota, al final de
+  la pasada, detrás de compras y salidas. Un disponible negativo no se cuadra
+  —el almacén no baja de cero— y se avisa para revisar «Total Comprado».
 - **Manda la aplicación**: lo que dice la aplicación se escribe en la hoja.
   Para cuando el Excel lleva meses sin tocarse.
 
@@ -999,6 +1004,35 @@ almacén antes de sincronizar.
 y los borradores llevan número como un parte, pero no lo son: no se añaden a
 `Material Instalado`, y si una pasada anterior los escribió, la siguiente saca
 esas filas del libro y lo dice en «Filas que salen».
+
+**Cómo se escribe «Material Usado».** Cada renglón es «cantidad y artículo»,
+separados por coma, con el nombre de la Bolsa 2026 o cualquiera de sus alias:
+`2 Cable HDMI fibra 10 m, 1 Ratón`. Una coma entre dos cifras es un decimal
+(`Cable HDMI 7,5 m`), no otro artículo. Y **un 0 delante significa «apuntado,
+pero sin descontar»**: es la notación que la hoja ya usaba —`0 Lámpara
+proyector NP44`— para el material reciclado, de garantía o de stock antiguo. Se
+guarda en el parte, sale en el bloque Almacén como «Apuntado sin descontar» y
+el almacén no se mueve.
+
+**Los nombres de la bolsa.** Si una fila de la bolsa está escrita con otra
+grafía —«Camaras Aver», «Hub de USB»—, la pasada la reconoce por el catálogo de
+nomenclatura antes de darla por desconocida. Solo pregunta «¿entra?» por lo
+que de verdad no existe. La columna «Otro nombre (alias)» se guarda como alias
+del artículo, así que la grafía vieja sigue cruzando.
+
+**Una sala que la hoja de estado tiene y la aplicación no.** Sale como duda,
+con lo que dice la fila —edificio, planta y código— ya relleno, y desde ahí se
+da de alta la sala: pasa por la misma operación que el botón «+ Sala» del
+maestro, nace con matrícula y equipamiento por defecto, y el libro se vuelve a
+leer solo. La fila cruza y recibe su matrícula en la pasada. Si el edificio no
+está en el maestro con ese nombre, se elige a cuál pertenece, o se crea antes
+en la sección de edificios.
+
+**Las cabeceras corregidas.** «Screenbeam» vale igual que la errata original
+«Sreenbeam», y la segunda «Articulo / Material» de la bolsa puede llamarse
+«Otro nombre (alias)». Lo demás sigue como estaba: una cabecera movida o
+renombrada de otra forma para la pasada antes de escribir nada, y la pantalla
+dice cuál.
 
 ## 5. Las placas de puerta
 

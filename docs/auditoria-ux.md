@@ -64,6 +64,8 @@ Ni la lista de edificios (App.tsx:172-199, un `<ul>` pelado) ni la de salas tien
 
 **Arreglo.** Añadir un único campo de búsqueda en la pantalla de edificios que filtre sobre `db.rooms` de todos los edificios a la vez (por `code` normalizado con `norm()` y por `name`), mostrando «CÓDIGO · Edificio · Planta» y llevando de un toque a `{ name: 'revision', building, room }`. Reutiliza la infraestructura que ya existe (Dexie tiene `rooms: 'id, zone_id, code, ...'` en dexie.ts:97). Un toque desde el arranque en vez de dos más dos rastreos visuales.
 
+> **Hecho.** Existe como `BuscadorGlobal`, sobre la lista de edificios. Un matiz respecto al arreglo propuesto: el resultado abre la **ficha** de la sala, no la revisión, igual que la fila de la lista y el QR de la puerta; «Revisar esta sala» queda a un toque, y «Volver» devuelve a la pantalla de edificios.
+
 ### `NAV-5` · Las plantas se mezclan en la lista de salas: el técnico recorre un edificio en zigzag
 
 **Media** · esfuerzo M · `src/features/rooms/RoomListPage.tsx:40`
@@ -79,6 +81,8 @@ La lista se ordena solo por antigüedad de revisión, así que dos salas consecu
 Toda la navegación es estado en memoria. Un grep por `pushState`, `popstate`, `history.`, `location.hash` o `useNavigate` en `src/` e `index.html` no devuelve una sola coincidencia. Consecuencias concretas para quien va de pie: (1) el manifiesto declara `display: 'standalone'` (vite.config.ts:19), así que el gesto de retroceso de Android no vuelve de la revisión a la lista — cierra la aplicación; en iOS el deslizamiento desde el borde simplemente no hace nada, y el técnico concluye que la pantalla se ha colgado. (2) Como `tab` y `view` no se persisten en ningún sitio, cualquier recarga —pulsar «Actualizar», que iOS descarte la pestaña por memoria, reiniciar el iPad— devuelve a la lista de edificios: el borrador de la revisión se recupera bien desde Dexie (useInspection.ts:164-180), pero hay que volver a navegar edificio → sala para llegar a él. El propio comentario de UpdatePrompt.tsx lo reconoce: «perdería el sitio donde iba».
 
 **Arreglo.** Dos arreglos pequeños e independientes. (a) Persistir la ubicación: guardar `{ tab, buildingId, roomId }` en `db.meta` (o `localStorage`) cada vez que cambian, y rehidratar `view` al desbloquear leyendo el edificio y la sala por id. (b) Dar sentido al gesto atrás: `history.pushState({ view: 'salas' }, '')` al entrar en salas y en revisión, y un `useEffect` con `window.addEventListener('popstate', ...)` que retroceda un nivel de `view` en vez de dejar que el sistema cierre la aplicación.
+
+> **Hecho (a), abierto (b).** La ubicación se guarda en `db.meta['ultima-vista']` y se rehidrata al desbloquear; también el orden elegido de la lista (`orden-salas`), que una recarga devolvía a «Por planta». «Volver» de la ficha devuelve al sitio del que se salió —lista, edificios o la revisión con su corrección intacta— y la hoja de placas vuelve a la ficha si se abrió desde ella. El gesto de retroceso del sistema sigue sin historial.
 
 ### `NAV-7` · Salir y volver a entrar en una revisión olvida las fotos ya hechas y vuelve a exigirlas
 

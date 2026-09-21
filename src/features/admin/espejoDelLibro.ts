@@ -115,7 +115,15 @@ export function datosDelLibro(
     if (vistos.has(clave)) continue
     vistos.add(clave)
     n++
-    const shortRef = `SALA-${String(n).padStart(6, '0')}`
+    // Si la fila ya trae matrícula —un libro que ya pasó por la sincronización—
+    // el espejo la respeta: inventar otra haría que ninguna fila cruzara por
+    // matrícula y la prueba de ida y vuelta insertaría las 290 salas otra vez.
+    // Solo las filas sin ella se numeran, como hace la base con las altas.
+    // Las que no la traen se numeran desde 900001: una matrícula inventada que
+    // coincidiera con una real de otra fila haría cruzar dos filas a la misma
+    // sala, y eso es un fallo del espejo, no del libro.
+    const escrita = txt(f.celdas[columnaRef])
+    const shortRef = /^SALA-\d{6}$/i.test(escrita) ? escrita.toUpperCase() : `SALA-${String(900000 + n).padStart(6, '0')}`
     filaDe.set(shortRef, f.fila)
     if (llevaA) llevaEdificio.add(shortRef)
     sitioDe.set(shortRef, { edificio, zona })

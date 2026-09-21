@@ -61,6 +61,18 @@ export interface Columna {
   /** Lo que tiene que decir la cabecera. Se comprueba antes de escribir nada. */
   cabecera: string
   /**
+   * Otras cabeceras que valen por la misma columna.
+   *
+   * Existe por dos celdas del libro real: «Sreenbeam», que lleva la errata
+   * desde que se escribió, y la segunda «Articulo / Material» de la bolsa, que
+   * es el nombre alternativo del artículo y confunde a quien lee la hoja porque
+   * repite la cabecera de la primera. Corregir esas dos celdas a mano es lo
+   * razonable, y sin esto la pasada se negaba a empezar en cuanto alguien lo
+   * hacía. Se comparan igual que la cabecera: sin tildes, mayúsculas ni
+   * espacios de sobra.
+   */
+  alias?: string[]
+  /**
    * De dónde sale el valor en la aplicación.
    *
    *  - `sala.code`, `rooms.projector_hours`… un campo directo
@@ -232,10 +244,11 @@ export const ESTADO: Hoja = {
     {
       letra: 'U',
       cabecera: 'Sreenbeam',
+      alias: ['Screenbeam'],
       campo: 'equipo:Screenbeam:serial',
       dueno: 'ambos',
       tipo: 'texto',
-      nota: 'La cabecera trae la errata. Corregirla es cosa de una persona; mientras tanto hay que cruzar con lo que dice.',
+      nota: 'La cabecera trae la errata desde el libro original. Vale también escrita bien: la pasada no se para por corregirla.',
     },
     { letra: 'V', cabecera: 'Barco', campo: 'equipo:Barco:serial', dueno: 'ambos', tipo: 'texto' },
     { letra: 'W', cabecera: 'Panacast 50', campo: 'equipo:Panacast 50:serial', dueno: 'ambos', tipo: 'texto' },
@@ -379,10 +392,11 @@ export const BOLSA_2026: Hoja = {
     {
       letra: 'Q',
       cabecera: 'Articulo / Material',
+      alias: ['Otro nombre (alias)', 'Otro nombre', 'Alias'],
       campo: 'articulo.nombreAlternativo',
       dueno: 'solo_excel',
       tipo: 'texto',
-      nota: 'La segunda grafía del mismo artículo. No se toca: es de donde salen los alias, y reescribirla los perdería.',
+      nota: 'La segunda grafía del mismo artículo. No se toca: es de donde salen los alias, y reescribirla los perdería. Repetía la cabecera de la columna A y confundía; se admite «Otro nombre (alias)».',
     },
   ],
 }
@@ -519,7 +533,8 @@ export function comprobarCabeceras(
   for (const c of hoja.columnas) {
     const encontrada = cabeceras[c.letra]
     const texto = encontrada === null || encontrada === undefined ? '' : String(encontrada)
-    if (llana(texto) !== llana(c.cabecera)) {
+    const admitidas = [c.cabecera, ...(c.alias ?? [])].map(llana)
+    if (!admitidas.includes(llana(texto))) {
       fuera.push({ hoja: hoja.nombre, letra: c.letra, esperada: c.cabecera, encontrada: texto })
     }
   }

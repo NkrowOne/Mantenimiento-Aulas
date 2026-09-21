@@ -28,7 +28,7 @@
  */
 
 import type { Plan } from './sincronizar'
-import { leerMaterial } from './valores'
+import { leerMaterial, sinDescontar } from './valores'
 import type { ArticuloVolcado, IncidenciaVolcada } from './volcado'
 
 export interface MovimientoPrevisto {
@@ -37,11 +37,14 @@ export interface MovimientoPrevisto {
   /** El parte o el artículo del que sale. */
   destino: string
   /**
-   * Qué va a apuntar el almacén. `sin_articulo` y `no_entra` no apuntan nada, y
-   * por eso se enseñan: son las dos formas de que la hoja diga una cosa y el
-   * almacén se quede con otra.
+   * Qué va a apuntar el almacén. `sin_articulo`, `sin_descontar` y `no_entra`
+   * no apuntan nada, y por eso se enseñan: son las formas de que la hoja diga
+   * una cosa y el almacén se quede con otra. `sin_descontar` es la buena de las
+   * tres —el 0 delante lo puso alguien a propósito— y sale para que se vea que
+   * se ha entendido. `ajuste` es el cuadre con «Stock Disponible» cuando se ha
+   * elegido que mande el Excel.
    */
-  tipo: 'compra' | 'consumo' | 'devolucion' | 'sin_articulo' | 'no_entra'
+  tipo: 'compra' | 'consumo' | 'devolucion' | 'ajuste' | 'sin_articulo' | 'sin_descontar' | 'no_entra'
   articulo: string
   cantidad: number
   nota: string
@@ -91,6 +94,28 @@ export function movimientosPrevistos(e: EntradaDeMovimientos): MovimientoPrevist
             nota: `la hoja dice ${dice} comprados y la aplicación tiene ${tiene}: una compra no se deshace desde una celda, va a la bandeja`,
           })
         }
+        continue
+      }
+
+      if (h.campo === 'articulo.disponible') {
+        const id = e.resolver(h.destino) ?? e.articulos.find((a) => norm(a.nombre) === norm(h.destino))?.id
+        const art = id ? porId.get(id) : undefined
+        const dice = numero(h.valor)
+        if (dice === null || !art || art.saldo === undefined) continue
+        const diferencia = dice - art.saldo
+        if (diferencia === 0) continue
+        out.push({
+          hoja: p.hoja,
+          fila: h.fila,
+          destino: h.destino,
+          tipo: 'ajuste',
+          articulo: art.nombre,
+          cantidad: Math.abs(diferencia),
+          nota:
+            diferencia > 0
+              ? `la hoja dice ${dice} disponibles y el almacén tiene ${art.saldo}: manda el Excel, entran ${diferencia} como ajuste`
+              : `la hoja dice ${dice} disponibles y el almacén tiene ${art.saldo}: manda el Excel, salen ${-diferencia} como ajuste`,
+        })
         continue
       }
 
@@ -165,6 +190,20 @@ function deltasDeMaterial(
   const pide = new Map<string, { cantidad: number; escrito: string }>()
   for (const m of leerMaterial(texto)) {
     const id = resolver(m.articulo)
+    // Un 0 delante es «apuntado sin descontar»: se guarda el texto en el parte
+    // y el almacén no se mueve. Se enseña para que se vea que se ha entendido.
+    if (sinDescontar(m)) {
+      out.push({
+        hoja,
+        fila,
+        destino,
+        tipo: 'sin_descontar',
+        articulo: m.articulo,
+        cantidad: 0,
+        nota: 'lleva un 0 delante: se apunta en el parte y no sale del almacén (reciclado, garantía o stock antiguo)',
+      })
+      continue
+    }
     // La base cuenta al menos una unidad por renglón, y aquí igual.
     const cantidad = Math.max(1, m.cantidad)
     if (id === null) {

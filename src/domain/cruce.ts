@@ -70,6 +70,13 @@ export interface EdificioDesaparecido {
 }
 
 export interface EdificioConocido {
+  /**
+   * El `id` de `buildings`, cuando el catálogo sale de la base. Hace falta para
+   * dar de alta una sala desde una duda de la sincronización: `create_room`
+   * pide el edificio por su identificador, no por su código. El espejo de las
+   * pruebas no lo tiene, y por eso es opcional.
+   */
+  id?: string
   codigo: string
   nombre: string
   activo: boolean

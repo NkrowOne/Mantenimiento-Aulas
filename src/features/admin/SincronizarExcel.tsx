@@ -1,10 +1,12 @@
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 import { ofrecerFichero } from '@/lib/ficheros'
+import { aplicarOperacion } from '@/features/rooms/maestro'
 import { analizar, aplicar, dudasPendientes, escribir, lineasDelParte, replanificar } from './pasada'
 import type { Analisis } from './pasada'
 import { Dudas } from './Dudas'
-import type { Respuesta } from '@/domain/dudas'
+import type { AltaDeSalaDesdeDuda } from './Dudas'
+import type { Respuesta, Respuestas } from '@/domain/dudas'
 import { columnaDeCampo, hojaPorNombre } from '@/domain/mapa'
 import type { MovimientoPrevisto } from '@/domain/movimientos'
 import type { Alta, Plan, Referencia } from '@/domain/sincronizar'
@@ -72,6 +74,14 @@ import { Seccion } from './Seccion'
  */
 export function SincronizarExcel(): React.ReactElement {
   const entrada = useRef<HTMLInputElement>(null)
+  const qc = useQueryClient()
+  /**
+   * El último libro leído, tal cual se subió. Hace falta para volver a leerlo
+   * sin pedirlo otra vez: al dar de alta una sala desde una duda, la fila que
+   * no cruzaba pasa a cruzar, y eso solo se sabe leyendo el libro contra la
+   * base de nuevo —el análisis guarda el maestro de cuando se leyó—.
+   */
+  const ultimoFichero = useRef<File | null>(null)
   const [referencia, setReferencia] = useState<Referencia | null>(null)
   const [analisis, setAnalisis] = useState<Analisis | null>(null)
   const [fallo, setFallo] = useState<string | null>(null)
@@ -81,7 +91,10 @@ export function SincronizarExcel(): React.ReactElement {
   const [entregando, setEntregando] = useState(false)
 
   const leer = useMutation({
-    mutationFn: (fichero: File) => analizar(fichero, new Date(), {}, referencia),
+    mutationFn: ({ fichero, respuestas = {} }: { fichero: File; respuestas?: Respuestas }) => {
+      ultimoFichero.current = fichero
+      return analizar(fichero, new Date(), respuestas, referencia)
+    },
     onSuccess: (a) => {
       setAnalisis(a)
       setFallo(null)
@@ -141,6 +154,29 @@ export function SincronizarExcel(): React.ReactElement {
     if (respuesta === null) delete respuestas[id]
     else respuestas[id] = respuesta
     volverAPlanificar(replanificar(analisis, respuestas))
+  }
+
+  /**
+   * Dar de alta una sala que la hoja de estado describe y la aplicación no
+   * tiene, y volver a leer el libro con las respuestas que ya había.
+   *
+   * Pasa por la misma operación del maestro que el botón «+ Sala», así que la
+   * sala nace con matrícula y equipamiento por defecto y el espejo local se
+   * pone al día igual. Lo que cambia es lo de después: el libro se relee contra
+   * la base, porque el análisis guardado no conoce la sala recién creada, y con
+   * ella delante la fila cruza sola y recibe su matrícula en la pasada.
+   */
+  const crearSala = async (alta: AltaDeSalaDesdeDuda): Promise<void> => {
+    if (!analisis) return
+    await aplicarOperacion(
+      { kind: 'nueva-sala', building: alta.edificioId, zone: alta.zona, code: alta.code, name: alta.code, tipo: 'aula' },
+      qc,
+    )
+    const respuestas = { ...analisis.respuestas }
+    // La duda deja de existir en cuanto la fila cruza; si por lo que sea sigue,
+    // no se arrastra una respuesta vieja que ya no significa nada.
+    delete respuestas[alta.dudaId]
+    if (ultimoFichero.current) await leer.mutateAsync({ fichero: ultimoFichero.current, respuestas })
   }
 
   /** Cambiar quién manda también: con el libro ya leído, la pasada se recalcula al momento. */
@@ -220,7 +256,7 @@ export function SincronizarExcel(): React.ReactElement {
           disabled={ocupado}
           onChange={(e) => {
             const f = e.target.files?.[0]
-            if (f) leer.mutate(f)
+            if (f) leer.mutate({ fichero: f })
           }}
           className="mt-2 block w-full text-base file:mr-3 file:h-10 file:rounded-ctl file:border-0 file:bg-accent-fill file:px-4 file:font-semibold file:text-accent-ink"
         />
@@ -262,6 +298,7 @@ export function SincronizarExcel(): React.ReactElement {
               respuestas={analisis.respuestas}
               catalogo={analisis.catalogo}
               onContestar={contestar}
+              onCrearSala={crearSala}
             />
           )}
 
@@ -538,6 +575,16 @@ const TIPO_DE_MOVIMIENTO: Record<MovimientoPrevisto['tipo'], { titulo: string; t
     titulo: 'Devoluciones',
     tono: 'app',
     texto: 'Vuelven al almacén: la hoja baja la cantidad, o ya no cuenta ese artículo en el parte.',
+  },
+  ajuste: {
+    titulo: 'Ajustes al «Stock Disponible»',
+    tono: 'excel',
+    texto: 'Manda el Excel: lo que quede en el almacén después de compras y salidas se pone a lo que dice la hoja, con un movimiento de ajuste que deja rastro.',
+  },
+  sin_descontar: {
+    titulo: 'Apuntado sin descontar',
+    tono: 'igual',
+    texto: 'Lleva un 0 delante en «Material Usado»: material reciclado, de garantía o de stock antiguo. Se guarda en el parte y no sale del almacén.',
   },
   sin_articulo: {
     titulo: 'No se descuenta: artículo desconocido',

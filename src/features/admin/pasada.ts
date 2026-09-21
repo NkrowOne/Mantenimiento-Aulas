@@ -602,6 +602,11 @@ function ordenarParaElAlmacen<T extends { campo: string }>(celdas: T[]): T[] {
   const peso = (campo: string): number => {
     if (campo === 'articulo.comprado') return 0
     if (campo === 'incidencia.material') return 2
+    // El cuadre con «Stock Disponible» va el último de todos: es la diferencia
+    // entre lo que la hoja dice que queda y lo que queda DESPUÉS de las compras
+    // y los consumos de esta misma pasada. Antes de ellos ajustaría un saldo
+    // que la pasada va a mover cuatro celdas más abajo.
+    if (campo === 'articulo.disponible') return 3
     return 1
   }
   return [...celdas].sort((a, b) => peso(a.campo) - peso(b.campo))
