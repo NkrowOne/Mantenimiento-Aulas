@@ -47,6 +47,24 @@ npm run admin:user -- crear tu@correo.es "Tu nombre" --primer-admin
 que arranca a medias y falla en el tercer servicio cuesta mucho más de
 diagnosticar que uno que se niega a empezar diciendo qué falta.
 
+Si después de desplegar la aplicación enseña «Could not find the 'x' column of
+'tabla' in the schema cache», a la base le falta una migración o la API no ha
+recargado su esquema. En la app, Datos → «Ver diagnóstico del servidor» dice
+qué migraciones faltan; `deploy.sh` las aplica y reinicia la API. Para aplicar
+una a mano (son idempotentes):
+
+```bash
+docker compose exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  < supabase/migrations/<fichero>.sql
+docker compose exec -T db psql -U postgres -d postgres -c \
+  "insert into public.schema_migrations (filename) values ('<fichero>.sql') on conflict do nothing"
+docker compose restart rest
+```
+
+Mientras tanto la cola de cada móvil no pierde nada: una columna que el
+servidor no conoce y va vacía se quita y la fila sube; con dato, la entrada
+espera con el motivo a la vista.
+
 ### Sobre una plataforma (skyway, Railway, Fly…)
 
 Cuando los servicios los levanta la plataforma y aquí solo llega una cadena de

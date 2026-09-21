@@ -1,7 +1,7 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -109,6 +109,17 @@ export default defineConfig(({ mode }) => {
      * corriendo. Pasó, y costó varias vueltas.
      */
     define: {
+      /*
+       * Las migraciones que esta versión de la aplicación da por aplicadas: los
+       * nombres de fichero de `supabase/migrations`. La pantalla de diagnóstico
+       * las compara con las que la base tiene anotadas, y así «al servidor le
+       * falta una migración» deja de ser una sospecha y pasa a ser una lista.
+       */
+      __MIGRACIONES__: JSON.stringify(
+        readdirSync('./supabase/migrations')
+          .filter((f) => f.endsWith('.sql'))
+          .sort(),
+      ),
       __BUILD__: JSON.stringify(
         (() => {
           // La hora de compilación va SIEMPRE: es la que contesta «¿este iPad

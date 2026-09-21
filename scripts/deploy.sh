@@ -103,7 +103,14 @@ if [ "$(D -tAc 'select count(*) from public.schema_migrations')" = '0' ] &&
   desplegó una versión anterior de este script, que no lo llevaba.
 
   Anota como aplicadas las que ya están, y vuelve a lanzar el despliegue.
-  Repasa la lista y quita las que sepas que NO se han aplicado todavía:
+  Repasa la lista y quita las que sepas que NO se han aplicado todavía.
+
+  OJO: la lista lleva TODAS las que hay en el repositorio, también las que
+  llegaron después del último despliegue. Si anotas una que no corrió, la
+  aplicación fallará al escribir sus columnas («Could not find the 'x'
+  column … in the schema cache») y desde un móvil nadie sabrá por qué. La
+  pantalla «Ver diagnóstico del servidor» de la aplicación dice qué
+  migraciones faltan; úsala antes de anotar.
 
     docker compose exec -T db psql -U postgres -d postgres -c \\
       "insert into public.schema_migrations (filename) values
@@ -128,6 +135,14 @@ for f in supabase/migrations/*.sql; do
   nuevas=$((nuevas + 1))
 done
 ok "$nuevas migraciones nuevas, $(D -tAc 'select count(*) from public.schema_migrations') en total"
+
+# La API guarda el esquema en caché y no se entera sola de una columna nueva:
+# desde entonces cada móvil recibe «Could not find the 'x' column of 'tabla' in
+# the schema cache» al subir, hasta que alguien la reinicia. Las migraciones
+# que añaden columnas ya avisan (`notify pgrst`), pero solo lo oye una API que
+# esté levantada y escuchando en ese momento. Se avisa aquí también, y la API
+# se reinicia al final del despliegue, cuando seguro que está arriba.
+D -c "notify pgrst, 'reload schema'" >/dev/null 2>&1 || true
 
 # ── 5. Un solo origen para el token del worker ──────────────────────────
 #
@@ -165,6 +180,10 @@ fi
 say 'Levantando el resto'
 docker compose up -d --build
 ok 'todos los servicios arriba'
+
+# Con el esquema ya migrado y la API arriba: que lo cargue de nuevo, pase lo
+# que pase con el aviso de antes. Un reinicio de PostgREST cuesta un segundo.
+docker compose restart rest >/dev/null 2>&1 && ok 'API reiniciada con el esquema nuevo' || true
 
 # ── 8. Comprobaciones ───────────────────────────────────────────────────
 say 'Comprobando el resultado'
