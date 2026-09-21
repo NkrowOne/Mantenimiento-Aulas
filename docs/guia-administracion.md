@@ -966,13 +966,47 @@ la aplicación—:
 - **Que decida una persona**: sale como choque y no se toca ninguno de los dos
   lados. Es lo de siempre.
 - **Manda el Excel**: lo que dice la hoja entra en la aplicación. Para cuando
-  se acaba de corregir el Excel a mano y es el inventario bueno.
+  se acaba de corregir el Excel a mano y es el inventario bueno. Con esta
+  opción, además, el almacén de la aplicación **se cuadra con «Stock
+  Disponible»** de la bolsa: la diferencia entre lo que la hoja calcula y lo
+  que suma la base entra como un movimiento de ajuste con su nota, al final de
+  la pasada, detrás de compras y salidas. Un disponible negativo no se cuadra
+  —el almacén no baja de cero— y se avisa para revisar «Total Comprado».
 - **Manda la aplicación**: lo que dice la aplicación se escribe en la hoja.
   Para cuando el Excel lleva meses sin tocarse.
 
 Si solo cambió un lado, gana ese lado se elija lo que se elija: elegir «manda
 el Excel» no borra lo que un técnico cerró ayer en el aula. Se puede cambiar
 con el libro ya leído y la pasada se recalcula al momento.
+
+**1b · El recuento arranca el 1 de agosto de 2026.** La aplicación tomó el
+almacén ese día, con lo que «Bolsa 2026» decía en «Total Comprado» como saldo
+de partida. Lo de antes se quedó como estaba en el libro, y la sincronización
+lo respeta: los meses de enero a julio de la bolsa **no se tocan** (ni se
+comparan ni se escriben), los partes anteriores a esa fecha se leen y se
+guardan con su material pero **no descuentan** del almacén —salen en la
+pantalla como «Anteriores al recuento»—, y «Total Comprado» se cuenta desde
+ese día. De agosto en adelante, la bolsa, los partes y el almacén hablan de lo
+mismo. Un parte cuya aula dice «Varias aulas», «Almacén» o «Sin aula» entra
+sin sala y no se pregunta: es un parte de regularización.
+
+**1c · El corte: desde un día manda la aplicación en lo que ella cambió.**
+Debajo de «quién manda» hay una fecha. Es para el caso más corriente: el libro
+es el inventario de partida y lo trabajado en la aplicación desde la última
+sincronización —revisiones, partes cerrados, equipos instalados— tiene que
+quedarse aunque choque con la hoja. Con la fecha puesta (la pantalla recuerda
+cuándo fue la última sincronización), lo que la aplicación cambió ese día o
+después gana en la primera pasada y en los choques; lo demás sigue lo elegido
+arriba. Lo que la fusión ya sabe decidir sola no cambia: si solo se movió un
+lado, gana ese lado. Los artículos del almacén no llevan fecha de cambio y no
+entran en el corte.
+
+Y una cosa más cuando manda el Excel: si el libro cambia el **edificio** de una
+sala —y es el libro el que lo ha cambiado desde la última pasada—, la sala se
+muda en la aplicación, y se lleva su planta (si el edificio de destino no la
+tiene, se crea). Si fue la aplicación la que movió la sala, la fila se muda en
+el libro, como siempre. Una planta nueva en un edificio que existe también se
+crea desde la celda; un edificio nuevo, no: hay que crearlo en el maestro.
 
 **2 · El libro.** Se sube el `.xlsx`. No se escribe nada hasta pulsar
 «Sincronizar».
@@ -999,6 +1033,35 @@ almacén antes de sincronizar.
 y los borradores llevan número como un parte, pero no lo son: no se añaden a
 `Material Instalado`, y si una pasada anterior los escribió, la siguiente saca
 esas filas del libro y lo dice en «Filas que salen».
+
+**Cómo se escribe «Material Usado».** Cada renglón es «cantidad y artículo»,
+separados por coma, con el nombre de la Bolsa 2026 o cualquiera de sus alias:
+`2 Cable HDMI fibra 10 m, 1 Ratón`. Una coma entre dos cifras es un decimal
+(`Cable HDMI 7,5 m`), no otro artículo. Y **un 0 delante significa «apuntado,
+pero sin descontar»**: es la notación que la hoja ya usaba —`0 Lámpara
+proyector NP44`— para el material reciclado, de garantía o de stock antiguo. Se
+guarda en el parte, sale en el bloque Almacén como «Apuntado sin descontar» y
+el almacén no se mueve.
+
+**Los nombres de la bolsa.** Si una fila de la bolsa está escrita con otra
+grafía —«Camaras Aver», «Hub de USB»—, la pasada la reconoce por el catálogo de
+nomenclatura antes de darla por desconocida. Solo pregunta «¿entra?» por lo
+que de verdad no existe. La columna «Otro nombre (alias)» se guarda como alias
+del artículo, así que la grafía vieja sigue cruzando.
+
+**Una sala que la hoja de estado tiene y la aplicación no.** Sale como duda,
+con lo que dice la fila —edificio, planta y código— ya relleno, y desde ahí se
+da de alta la sala: pasa por la misma operación que el botón «+ Sala» del
+maestro, nace con matrícula y equipamiento por defecto, y el libro se vuelve a
+leer solo. La fila cruza y recibe su matrícula en la pasada. Si el edificio no
+está en el maestro con ese nombre, se elige a cuál pertenece, o se crea antes
+en la sección de edificios.
+
+**Las cabeceras corregidas.** «Screenbeam» vale igual que la errata original
+«Sreenbeam», y la segunda «Articulo / Material» de la bolsa puede llamarse
+«Otro nombre (alias)». Lo demás sigue como estaba: una cabecera movida o
+renombrada de otra forma para la pasada antes de escribir nada, y la pantalla
+dice cuál.
 
 ## 5. Las placas de puerta
 

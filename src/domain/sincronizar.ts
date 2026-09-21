@@ -48,11 +48,12 @@ import { formasDeEscribir, resolverSala } from './cruce'
 import type { Indice, SalaConocida } from './cruce'
 import { idDeDuda } from './dudas'
 import type { Duda, Respuestas, SalaCandidata } from './dudas'
+import { diaEnMadrid } from './fechas'
 import { canonizarFila, fusionarCelda, iguales } from './fusion'
 import type { Decision, Dueno, Referencia, Valor } from './fusion'
 import { TITULO_DE_SITUACION, comprobarCabeceras, equipoDe, mesDe } from './mapa'
 import type { Columna, Hoja } from './mapa'
-import { escribir, esVacio, leer, limpiar } from './valores'
+import { escribir, esSinSala, esVacio, leer, limpiar } from './valores'
 import type { FilaNueva } from './estructura'
 import { columnaANumero, numeroAColumna } from './xlsx'
 import type { Cambio, FilaLeida, ValorCelda } from './xlsx'
@@ -314,6 +315,10 @@ interface Opciones<T> {
   instantanea: Instantanea
   /** Quién manda donde la fusión no sabe decidir. Se eligió al cargar el libro. */
   referencia?: Referencia
+  /** El corte: desde este día manda la aplicación en lo que ella cambió. Ver `Celda.corte`. */
+  corte?: string
+  /** Cuándo cambió la aplicación el dato de esa columna, si se sabe. Sin esto el corte no decide. */
+  cambioEnLaApp?: (dato: T, c: Columna) => string | null
 }
 
 /**
@@ -387,15 +392,27 @@ function fusionarFilas<T>(
       // Donde un cero es un blanco, se compara en blanco: así ni se rellena el
       // libro de ceros ni un blanco del libro intenta entrar en la base como 0.
       const enBlanco = (v: Valor): Valor => (c.ceroEsBlanco && v === 0 ? null : v)
+      // Y el aula de un parte que dice «ninguna» —«Varias aulas», «Almacén»— se
+      // compara como el blanco que es y no se escribe: la aplicación no tiene
+      // sala para ese parte, y sin esto el texto intentaba entrar en la base
+      // como código de aula en cada pasada, o la aplicación lo borraba de la
+      // hoja para dejar el blanco que ella tiene.
+      const aulaSinSala =
+        op.hoja.identidad.tipo === 'incidencia' &&
+        c.campo === 'sala.code' &&
+        typeof lectura.valor === 'string' &&
+        esSinSala(lectura.valor)
       const decision = fusionarCelda({
         base: enBlanco(base[c.letra] ?? null),
-        excel: enBlanco(lectura.valor),
+        excel: aulaSinSala ? null : enBlanco(lectura.valor),
         antepasado: op.instantanea(par.clave, c.letra),
         dueno: c.dueno,
         tipo: c.tipo,
         medidaBase: c.dueno === 'medida' ? op.fechaDeMedida?.(par.dato, 'base', par.celdas) : undefined,
         medidaExcel: c.dueno === 'medida' ? op.fechaDeMedida?.(par.dato, 'excel', par.celdas) : undefined,
         referencia: op.referencia,
+        corte: op.corte,
+        cambioEnLaApp: op.cambioEnLaApp?.(par.dato, c) ?? null,
       })
 
       repartir(
@@ -404,7 +421,8 @@ function fusionarFilas<T>(
         c,
         decision,
         lectura.valor,
-        par.noEscribir?.has(c.letra) === true,
+        par.noEscribir?.has(c.letra) === true || aulaSinSala,
+        op.referencia,
       )
     }
   }
@@ -417,6 +435,7 @@ function repartir<T>(
   decision: Decision,
   excel: Valor,
   soloLectura: boolean,
+  referencia?: Referencia,
 ): void {
   switch (decision.tipo) {
     case 'sin_cambios':
@@ -503,8 +522,37 @@ function repartir<T>(
       return
 
     case 'descuadre':
+      // «Stock Disponible» es una fórmula y no se escribe jamás. Pero cuando se
+      // ha elegido que mande el Excel, lo que dice esa celda es lo que hay en el
+      // almacén de verdad, y la aplicación se cuadra con un movimiento de
+      // ajuste —nunca tocando la celda—. Es lo que promete la documentación de
+      // la sincronización desde el principio y lo que la gente espera al
+      // corregir el inventario en la hoja: que la aplicación se ponga a lo que
+      // dice el Excel, no que le lleve la contraria en silencio. Un disponible
+      // negativo no se cuadra: significa que el año gastó más de lo que compró,
+      // y el almacén no puede quedar bajo cero; se dice y se deja.
+      if (
+        c.campo === 'articulo.disponible' &&
+        referencia === 'excel' &&
+        typeof decision.excel === 'number' &&
+        decision.excel >= 0
+      ) {
+        plan.haciaLaBase.push({
+          fila: par.fila,
+          letra: c.letra,
+          campo: c.campo,
+          destino: par.destino,
+          valor: decision.excel,
+          motivo: `manda el Excel: la hoja dice ${decision.excel} disponibles y la aplicación ${decision.base}; el almacén se cuadra con un ajuste`,
+        })
+        return
+      }
       plan.avisos.push(
-        `${c.letra}${par.fila} (${c.cabecera}): la hoja calcula ${decision.excel} y la base ${decision.base}. Es una fórmula: no se toca ninguno de los dos.`,
+        `${c.letra}${par.fila} (${c.cabecera}): la hoja calcula ${decision.excel} y la base ${decision.base}. Es una fórmula: no se toca ninguno de los dos.${
+          c.campo === 'articulo.disponible' && typeof decision.excel === 'number' && decision.excel < 0
+            ? ' El disponible es negativo: este año se ha gastado más de lo comprado; revisar «Total Comprado».'
+            : ''
+        }`,
       )
       return
   }
@@ -547,6 +595,8 @@ export interface EntradaDeEstado {
   respuestas?: Respuestas
   /** Quién manda donde la fusión no sabe decidir. Se eligió al cargar el libro. */
   referencia?: Referencia
+  /** El corte: desde este día manda la aplicación en lo que ella cambió. Ver `Celda.corte`. */
+  corte?: string
 }
 
 export function sincronizarEstado(e: EntradaDeEstado): Plan {
@@ -639,6 +689,7 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
               texto: resumenDeFila(f, e.hoja, edificio, zona),
               motivo: 'la fila no dice de qué aula es',
               candidatas: [],
+              origen: { edificio, zona, aula: '' },
             })
           }
         }
@@ -694,6 +745,9 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
           texto: resumenDeFila(f, e.hoja, edificio, zona),
           motivo: cruce.motivo,
           candidatas: (cruce.candidatas ?? []).map(candidataDe),
+          // Lo que la fila dice de sí misma, tal cual: es con lo que se puede
+          // dar de alta la sala desde la pantalla sin abrir el libro.
+          origen: { edificio, zona, aula },
         })
       }
       continue
@@ -773,7 +827,15 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
     // DISTINTOS que existen, es una mudanza; si el nombre del libro no es de
     // ninguno —un nombre viejo que la auditoría no conoce, una errata nueva— se
     // trata como renombrado, que es lo que no destruye nada.
-    if (esOtroEdificio(e.indice, edificio, sala.edificio)) {
+    if (esOtroEdificio(e.indice, edificio, sala.edificio) && laMudaElLibro(e, sala, edificio)) {
+      // Manda el Excel y es el libro el que ha cambiado el edificio —la celda
+      // ya no dice lo que decía en la última pasada—: la sala se muda en la
+      // aplicación, no en el libro. La celda sigue su camino normal hacia la
+      // base, que la coloca en su planta (y la crea si el edificio no la tiene).
+      plan.avisos.push(
+        `Fila ${f.fila}: «${sala.code}» está en «${sala.edificio}» en la aplicación y el libro la pone en «${edificio}»: manda el Excel, la sala se muda en la aplicación.`,
+      )
+    } else if (esOtroEdificio(e.indice, edificio, sala.edificio)) {
       const grupo = grupoDe(f.fila)
       if (grupo.length > 1) {
         // Un aula de dos filas —dos proyectores, celdas combinadas— no se mueve
@@ -816,6 +878,8 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
     filas: e.filas,
     instantanea: e.instantanea ?? SIN_INSTANTANEA,
     referencia: e.referencia,
+    corte: e.corte,
+    cambioEnLaApp: cambioDeSala,
     fechaDeMedida: (sala, lado, celdas) =>
       lado === 'base' ? (sala.revisiones[0] ?? null) : fechaDeCelda(celdas.D),
   })
@@ -880,6 +944,51 @@ function gruposDeFilas(
  * prueba de nada. Así una mudanza exige que el libro y la app nombren dos
  * edificios que existen, y todo lo demás cae en el trato del renombrado.
  */
+/**
+ * Con «manda el Excel», un edificio distinto en la fila es una mudanza que pide
+ * el libro —y se hace en la base— solo si es el libro el que lo cambió: la
+ * celda no dice lo que decía en la última pasada, o no hay última pasada. Si la
+ * celda sigue igual y fue la aplicación la que movió la sala, la fila se muda
+ * en el libro como siempre: elegir «manda el Excel» no deshace en la base lo
+ * que alguien hizo en el maestro.
+ */
+function laMudaElLibro(e: EntradaDeEstado, sala: SalaVolcada, edificioDelLibro: string): boolean {
+  if (e.referencia !== 'excel') return false
+  const letra = e.hoja.columnas.find((c) => c.campo === 'edificio')?.letra
+  if (!letra) return false
+  const antes = (e.instantanea ?? SIN_INSTANTANEA)(sala.shortRef, letra)
+  return antes === undefined || !iguales(antes, edificioDelLibro, 'texto')
+}
+
+/**
+ * Cuándo cambió la aplicación un dato de la sala, para el corte.
+ *
+ * Los equipos llevan el día en que entraron en la sala —el más reciente de su
+ * tipo, que es el que enseña la hoja—. Lo demás que se toca en una revisión
+ * —altavoces, cámara, micrófono, botonera, notas— va con la fecha de la última
+ * revisión. El código, el edificio y la planta no tienen fecha: ahí el corte
+ * no decide y manda lo que se eligió, que para el inventario es el libro.
+ */
+function cambioDeSala(sala: SalaVolcada, c: Columna): string | null {
+  const equipo = equipoDe(c.campo)
+  if (equipo) {
+    const dias = sala.equipos
+      .filter((eq) => norm(eq.tipo) === norm(equipo.tipo) && eq.desde)
+      .map((eq) => diaEnMadrid(new Date(eq.desde!)))
+      .sort()
+    return dias.at(-1) ?? null
+  }
+  if (
+    c.campo.startsWith('capacidad:') ||
+    c.campo === 'microfono' ||
+    c.campo === 'rooms.botonera_estado' ||
+    c.campo === 'revision.notas'
+  ) {
+    return sala.revisiones[0] ?? null
+  }
+  return null
+}
+
 function esOtroEdificio(ix: Indice, delLibro: string, deLaApp: string): boolean {
   const a = ix.edificioPorNombre.get(norm(delLibro))
   const b = ix.edificioPorNombre.get(norm(deLaApp))
@@ -1115,19 +1224,16 @@ function filasNuevasDeSalas(nuevas: SalaVolcada[], e: EntradaDeEstado, plan: Pla
 
     const valores = filaDeSala(sala, e.hoja)
     for (const c of e.hoja.columnas) {
-      // Dentro de un bloque, el edificio va en blanco como en el resto de la
-      // hoja: escribirlo en todas las filas cambiaría el aspecto de un libro que
-      // la gente lee todos los días. La planta solo se escribe cuando la fila
-      // abre una planta nueva dentro del bloque.
-      if (c.campo === 'edificio' && !abreBloque) continue
-      if (c.campo === 'zona' && !abreBloque && !abrePlanta) continue
+      // El edificio y la planta van escritos en la fila nueva, también dentro de
+      // un bloque. Antes se dejaban en blanco para imitar el libro de siempre,
+      // donde solo los llevaba la primera fila de cada bloque; pero una fila
+      // que no dice de qué edificio es no se puede filtrar ni ordenar, y el
+      // libro reformateado los lleva en todas. Al leer da lo mismo: la columna
+      // se arrastra, y un valor igual al heredado no se toca.
       const dato = valores[c.letra] ?? null
       const valor = escribir(dato, c.tipo)
       if (valor === null) continue
       celdas.push({ celda: `${c.letra}${destino + 1}`, valor: valor as ValorCelda, ...formatoDe(c) })
-      // Solo de lo que se escribe: la columna del edificio que se deja en
-      // blanco dentro de un bloque no vale como antepasado, porque en la pasada
-      // siguiente esa celda se lee arrastrada del bloque y no vacía.
       anotarCeldaNueva(plan, sala.shortRef, c.letra, dato)
     }
     celdas.push({ celda: `${e.columnaRef}${destino + 1}`, valor: sala.shortRef })
@@ -1165,6 +1271,8 @@ export interface EntradaDePartes {
   respuestas?: Respuestas
   /** Quién manda donde la fusión no sabe decidir. Se eligió al cargar el libro. */
   referencia?: Referencia
+  /** El corte: desde este día manda la aplicación en lo que ella cambió. Ver `Celda.corte`. */
+  corte?: string
 }
 
 export function sincronizarPartes(e: EntradaDePartes): Plan {
@@ -1240,6 +1348,10 @@ export function sincronizarPartes(e: EntradaDePartes): Plan {
     filas: e.filas,
     instantanea: e.instantanea ?? SIN_INSTANTANEA,
     referencia: e.referencia,
+    corte: e.corte,
+    // Un parte cambia en la aplicación cuando se cierra o, si sigue abierto,
+    // cuando se abrió: es la fecha que dice si es trabajo de después del corte.
+    cambioEnLaApp: (inc) => inc.resuelta ?? inc.abierta,
   })
 
   if (e.hoja.congelada) return plan
@@ -1346,6 +1458,11 @@ function altaDeParte(plan: Plan, f: FilaLeida, numero: string, e: EntradaDeParte
   } else if (respuesta?.tipo === 'sala') {
     salaId = respuesta.salaId
   } else if (respuesta?.tipo === 'sin_sala') {
+    salaId = null
+  } else if (esSinSala(aula)) {
+    // «Varias aulas», «Almacén», «Sin aula»: quien lo escribió ya contestó. Un
+    // parte de regularización del almacén no es de ninguna sala, y preguntarlo
+    // en cada pasada es la forma de que nadie vuelva a subir el libro.
     salaId = null
   } else if (aula === '') {
     salaId = undefined
@@ -1532,6 +1649,8 @@ export interface EntradaDeBolsa {
   instantanea?: Instantanea
   /** Quién manda donde la fusión no sabe decidir. Se eligió al cargar el libro. */
   referencia?: Referencia
+  /** El corte: desde este día manda la aplicación en lo que ella cambió. Ver `Celda.corte`. */
+  corte?: string
 }
 
 /**
@@ -1599,6 +1718,9 @@ export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
     filas: e.filas,
     instantanea: e.instantanea ?? SIN_INSTANTANEA,
     referencia: e.referencia,
+    // Un artículo no lleva fecha de cambio: el almacén es inventario, y con el
+    // corte puesto sigue mandando lo que se eligió.
+    corte: e.corte,
   })
 
   if (e.hoja.congelada) return plan
@@ -1769,6 +1891,8 @@ export interface EntradaDeUnidades {
   respuestas?: Respuestas
   /** Quién manda donde la fusión no sabe decidir. Se eligió al cargar el libro. */
   referencia?: Referencia
+  /** El corte: desde este día manda la aplicación en lo que ella cambió. Ver `Celda.corte`. */
+  corte?: string
 }
 
 /**
@@ -1856,6 +1980,7 @@ export function sincronizarUnidades(e: EntradaDeUnidades): Plan {
     filas: e.filas,
     instantanea: e.instantanea ?? SIN_INSTANTANEA,
     referencia: e.referencia,
+    corte: e.corte,
   })
 
   if (e.hoja.congelada) return plan

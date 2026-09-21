@@ -19,16 +19,31 @@ import type { Duda, Respuesta, Respuestas } from '@/domain/dudas'
  *  - **¿Entra?** Un equipo que la sala no tenía, un artículo que el almacén no
  *    conoce, un ordenador de repuesto nuevo. Sí o no.
  */
+/** Lo que hace falta para dar de alta una sala desde una duda de la hoja de estado. */
+export interface AltaDeSalaDesdeDuda {
+  dudaId: string
+  edificioId: string
+  zona: string
+  code: string
+}
+
 export function Dudas({
   dudas,
   respuestas,
   catalogo,
   onContestar,
+  onCrearSala,
 }: {
   dudas: Duda[]
   respuestas: Respuestas
   catalogo: Catalogo
   onContestar: (id: string, respuesta: Respuesta | null) => void
+  /**
+   * Dar de alta la sala que la fila describe y volver a leer el libro. Solo
+   * para las dudas de la hoja de estado: un parte no define salas. Si no se
+   * pasa, la duda ofrece lo de siempre —elegir una sala o dejarla como está—.
+   */
+  onCrearSala?: (alta: AltaDeSalaDesdeDuda) => Promise<void>
 }): React.ReactElement {
   const sinContestar = dudas.filter((d) => !(d.id in respuestas)).length
   const porHoja = new Map<string, Duda[]>()
@@ -62,6 +77,7 @@ export function Dudas({
                       respuesta={respuestas[d.id]}
                       catalogo={catalogo}
                       onContestar={(r) => onContestar(d.id, r)}
+                      onCrearSala={onCrearSala}
                     />
                   ) : (
                     <DudaDeAlta
@@ -87,17 +103,31 @@ function DudaDeSala({
   respuesta,
   catalogo,
   onContestar,
+  onCrearSala,
 }: {
   duda: Extract<Duda, { tipo: 'sala' }>
   respuesta: Respuesta | undefined
   catalogo: Catalogo
   onContestar: (r: Respuesta | null) => void
+  onCrearSala?: (alta: AltaDeSalaDesdeDuda) => Promise<void>
 }): React.ReactElement {
   const salasPorId = useMemo(() => new Map(catalogo.salas.map((s) => [s.id, s])), [catalogo])
   const edificios = useMemo(
     () =>
       [...new Map(catalogo.salas.filter((s) => s.active).map((s) => [s.edificioCodigo, s.edificioNombre])).entries()]
         .map(([codigo, nombre]) => ({ codigo, nombre }))
+        .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')),
+    [catalogo],
+  )
+  /**
+   * Los edificios del maestro con su identificador, para el alta. Vienen del
+   * catálogo entero y no de las salas: un edificio recién creado y todavía
+   * vacío es justo donde más falta hace poder dar de alta la primera sala.
+   */
+  const edificiosDelMaestro = useMemo(
+    () =>
+      (catalogo.edificios ?? [])
+        .filter((e) => e.activo && e.id)
         .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')),
     [catalogo],
   )
@@ -202,15 +232,132 @@ function DudaDeSala({
               Dejar como está
             </button>
           </div>
-          {duda.que === 'estado' && (
-            <p className="text-xs text-muted">
-              Si la sala no existe todavía, créala en el maestro de salas y vuelve a subir el libro.
-            </p>
-          )}
+          {duda.que === 'estado' &&
+            (onCrearSala && duda.origen ? (
+              <CrearSala
+                duda={duda}
+                origen={duda.origen}
+                edificios={edificiosDelMaestro}
+                onCrear={onCrearSala}
+              />
+            ) : (
+              <p className="text-xs text-muted">
+                Si la sala no existe todavía, créala en el maestro de salas y vuelve a subir el libro.
+              </p>
+            ))}
         </div>
       )}
     </div>
   )
+}
+
+/**
+ * Dar de alta, desde la propia duda, la sala que la fila describe.
+ *
+ * Es la pieza que faltaba para que «lo que falte, la aplicación lo detecte»:
+ * la pasada ya veía la fila que no cruzaba y la sacaba aquí, pero la única
+ * salida era irse al maestro, crear la sala a mano copiando edificio, planta y
+ * código, y volver a subir el libro. Ahora viene todo relleno con lo que dice
+ * la fila —el edificio resuelto por su nombre, la planta y el código tal cual—
+ * y el alta pasa por la misma función del servidor que el maestro
+ * (`create_room`), así que la sala nace con su matrícula y su equipamiento por
+ * defecto. Después el libro se vuelve a leer y la fila cruza sola.
+ */
+function CrearSala({
+  duda,
+  origen,
+  edificios,
+  onCrear,
+}: {
+  duda: Extract<Duda, { tipo: 'sala' }>
+  origen: { edificio: string; zona: string; aula: string }
+  edificios: Array<{ id?: string; codigo: string; nombre: string }>
+  onCrear: (alta: AltaDeSalaDesdeDuda) => Promise<void>
+}): React.ReactElement {
+  const propuesto = useMemo(() => {
+    const t = llana(origen.edificio)
+    return (
+      edificios.find((e) => llana(e.nombre) === t || llana(e.codigo) === t || llana(`EDIFICIO ${e.codigo}`) === t)?.id ?? ''
+    )
+  }, [edificios, origen.edificio])
+  const [edificioId, setEdificioId] = useState(propuesto)
+  const [zona, setZona] = useState(origen.zona)
+  const [code, setCode] = useState(origen.aula)
+  const [estado, setEstado] = useState<{ tipo: 'quieta' } | { tipo: 'creando' } | { tipo: 'fallo'; texto: string }>({ tipo: 'quieta' })
+
+  const crear = (): void => {
+    if (!edificioId || code.trim() === '') return
+    setEstado({ tipo: 'creando' })
+    onCrear({ dudaId: duda.id, edificioId, zona: zona.trim(), code: code.trim() })
+      .then(() => setEstado({ tipo: 'quieta' }))
+      .catch((e: unknown) => setEstado({ tipo: 'fallo', texto: e instanceof Error ? e.message : String(e) }))
+  }
+
+  return (
+    <div className="mt-2 rounded-ctl border border-dashed border-line p-3">
+      <p className="text-xs text-muted">
+        ¿La sala no existe todavía? Dala de alta con lo que dice la fila y el libro se vuelve a leer: la
+        fila cruzará sola y recibirá su matrícula.
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <select
+          className="h-10 min-w-40 rounded-ctl border border-line bg-surface px-2 text-sm"
+          value={edificioId}
+          onChange={(e) => setEdificioId(e.target.value)}
+          aria-label="Edificio de la sala nueva"
+          disabled={estado.tipo === 'creando'}
+        >
+          <option value="">Edificio…</option>
+          {edificios.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.nombre}
+            </option>
+          ))}
+        </select>
+        <input
+          className="h-10 min-w-32 rounded-ctl border border-line bg-surface px-2 text-sm"
+          value={zona}
+          onChange={(e) => setZona(e.target.value)}
+          placeholder="Planta / módulo"
+          aria-label="Planta de la sala nueva"
+          disabled={estado.tipo === 'creando'}
+        />
+        <input
+          className="h-10 min-w-32 rounded-ctl border border-line bg-surface px-2 text-sm"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder="Código del aula"
+          aria-label="Código de la sala nueva"
+          disabled={estado.tipo === 'creando'}
+        />
+        <button
+          type="button"
+          className="key key-accent h-10 px-3 text-sm"
+          disabled={!edificioId || code.trim() === '' || estado.tipo === 'creando'}
+          onClick={crear}
+        >
+          {estado.tipo === 'creando' ? 'Creando…' : 'Crear la sala y volver a leer'}
+        </button>
+      </div>
+      {!propuesto && origen.edificio !== '' && (
+        <p className="mt-1 text-xs text-warn">
+          El edificio «{origen.edificio}» no está en el maestro con ese nombre: elige a cuál pertenece, o créalo
+          antes en «Datos».
+        </p>
+      )}
+      {estado.tipo === 'fallo' && <p className="mt-1 text-xs text-crit">{estado.texto}</p>}
+    </div>
+  )
+}
+
+/** Sin tildes, mayúsculas ni espacios de sobra: como compara el cruce. */
+function llana(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase()
 }
 
 function describirRespuesta(r: Respuesta, salas: Map<string, SalaConocida>): string {

@@ -62,8 +62,13 @@ import { norm } from './normalize'
  *  - `formula`    — stock disponible (`=Comprado − Instalado`). No se escribe
  *                   nunca: escribir un número encima se lleva la fórmula por
  *                   delante. Si los dos números discrepan, eso es un descuadre.
+ *  - `libro`      — los meses de la bolsa de antes de que la aplicación llevara
+ *                   el almacén (enero–julio de 2026). Son del libro y de nadie
+ *                   más: la aplicación ni los compara ni los escribe, porque su
+ *                   recuento arranca después y lo que diga de esos meses no es
+ *                   un dato, es la ausencia de uno. Ver `Hoja.arranque`.
  */
-export type Dueno = 'ambos' | 'solo_excel' | 'solo_app' | 'medida' | 'formula'
+export type Dueno = 'ambos' | 'solo_excel' | 'solo_app' | 'medida' | 'formula' | 'libro'
 
 /**
  * Quién manda cuando la fusión no puede decidir sola.
@@ -118,6 +123,20 @@ export interface Celda {
   medidaExcel?: string | null
   /** Quién manda si no se puede decidir. Sin ella: primera pasada manda la app, y un choque se pregunta. */
   referencia?: Referencia
+  /**
+   * El corte: desde este día (ISO) manda la aplicación en lo que **ella**
+   * cambió, se haya elegido lo que se haya elegido. Es lo que hace posible «el
+   * inventario del libro es la base y lo trabajado en la aplicación desde el
+   * 9/9 se aplica encima»: una revisión o un parte posteriores al corte no se
+   * pierden por un choque con la hoja, y todo lo demás sigue la regla elegida.
+   */
+  corte?: string
+  /**
+   * Cuándo cambió la aplicación este dato, si se sabe: un día o un instante
+   * ISO. La última revisión de la sala, la entrada del equipo, la apertura o el
+   * cierre del parte. Sin fecha, el corte no decide y manda lo elegido.
+   */
+  cambioEnLaApp?: string | null
 }
 
 // -----------------------------------------------------------------------------
@@ -190,6 +209,16 @@ function vacio(v: Valor): boolean {
   return canonizar(v) === ''
 }
 
+/** El día de un instante o un día ISO: lo que se compara con el corte. */
+function diaDe(fecha: string | null | undefined): string {
+  return (fecha ?? '').slice(0, 10)
+}
+
+/** Hay corte, la aplicación cambió el dato y lo hizo el día del corte o después. */
+function trasElCorte(c: Celda): boolean {
+  return c.corte !== undefined && typeof c.cambioEnLaApp === 'string' && diaDe(c.cambioEnLaApp) >= c.corte
+}
+
 function cuando(fecha: string | null | undefined): number | null {
   if (!fecha) return null
   const t = Date.parse(fecha)
@@ -204,6 +233,13 @@ function cuando(fecha: string | null | undefined): number | null {
  * Decide qué hacer con una celda. No escribe: devuelve la decisión.
  */
 export function fusionarCelda(c: Celda): Decision {
+  // Del libro y de nadie más: no hay nada que comparar ni que escribir. Se
+  // decide antes que la fórmula y antes que el hueco, porque la regla del hueco
+  // —gana quien tiene el dato— haría entrar en la base un número de un mes que
+  // la base no tiene dónde guardar, o escribiría un 0 encima de lo que alguien
+  // apuntó a mano en enero.
+  if (c.dueno === 'libro') return { tipo: 'sin_cambios' }
+
   // Una fórmula no se toca jamás, ni aunque el número discrepe: el valor de esa
   // celda no es un dato, es el resultado de una resta que la hoja sabe hacer.
   // Escribir el número encima se lleva la fórmula, y a partir de ahí la columna
@@ -308,7 +344,17 @@ export function fusionarCelda(c: Celda): Decision {
   // política por defecto; en los dos casos queda anotado. Mandar todo a
   // cuarentena aquí sería paralizar la primera sincronización entera por no
   // tener una información que solo puede existir a partir de la segunda.
+  //
+  // Salvo que haya corte y la aplicación haya cambiado el dato después: eso sí
+  // se sabe, y es justo lo que el corte protege.
   if (c.antepasado === undefined) {
+    if (trasElCorte(c)) {
+      return {
+        tipo: 'hacia_el_excel',
+        valor: c.base,
+        motivo: `primera pasada: la aplicación lo cambió el ${diaDe(c.cambioEnLaApp)}, después del corte del ${c.corte}: manda la aplicación`,
+      }
+    }
     if (c.referencia === 'excel') {
       return {
         tipo: 'hacia_la_base',
@@ -339,6 +385,15 @@ export function fusionarCelda(c: Celda): Decision {
   // Los dos cambiaron a cosas distintas. Si al cargar se dijo quién manda, se
   // le hace caso y queda anotado el porqué; si no, nadie pierde su trabajo: se
   // paran los dos lados y decide una persona desde la bandeja de administración.
+  // Y antes que nada, el corte: lo que la aplicación cambió después de él es
+  // suyo, se haya elegido lo que se haya elegido.
+  if (trasElCorte(c)) {
+    return {
+      tipo: 'hacia_el_excel',
+      valor: c.base,
+      motivo: `los dos lados cambiaron: la aplicación lo hizo el ${diaDe(c.cambioEnLaApp)}, después del corte del ${c.corte}, y manda`,
+    }
+  }
   if (c.referencia === 'excel') {
     return {
       tipo: 'hacia_la_base',

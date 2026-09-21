@@ -18,6 +18,7 @@ import {
   type QueuedPhoto,
 } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
+import { columnaQueFalta, motivoDeServidorPorDetras, servidorPorDetras, sinLaColumna } from './esquema'
 
 /** A qué tabla de PostgREST va cada tipo de entrada. */
 const TABLE: Record<OutboxEntry['entity'], string> = {
@@ -280,6 +281,8 @@ function faltaSuPadre(fallo: FalloDeRed): boolean {
 interface FalloDeRed {
   message: string
   status?: number
+  /** El código de PostgREST (`PGRST204`…), cuando lo trae. */
+  code?: string
 }
 
 /**
@@ -313,13 +316,13 @@ async function intentar(
     // error (el cliente de Storage lo trae como `status` o `statusCode`). Sin
     // esto, un rechazo real del almacén de fotos llegaba sin código y se leía
     // como temporal para siempre.
-    const e = error as { message: string; status?: number; statusCode?: number | string }
+    const e = error as { message: string; status?: number; statusCode?: number | string; code?: string }
     const codigo =
       status ??
       (typeof e.status === 'number' ? e.status : undefined) ??
       (e.statusCode !== undefined ? Number(e.statusCode) || undefined : undefined)
 
-    return { message: error.message, status: codigo }
+    return { message: error.message, status: codigo, code: typeof e.code === 'string' ? e.code : undefined }
   } catch (err) {
     // Sin respuesta no hay código: se trata como temporal, que es lo que es.
     return { message: err instanceof Error ? err.message : String(err) }
@@ -408,12 +411,29 @@ async function pushEntry(entry: OutboxEntry): Promise<boolean> {
     : entry.payload
 
   const ignorar = await ignorarDuplicados(entry)
-  const fallo = await intentar(() =>
-    supabase.from(TABLE[entry.entity]).upsert(payload, {
-      onConflict: 'id',
-      ignoreDuplicates: ignorar,
-    }),
-  )
+  const subir = (fila: Record<string, unknown>): Promise<FalloDeRed | null> =>
+    intentar(() =>
+      supabase.from(TABLE[entry.entity]).upsert(fila, {
+        onConflict: 'id',
+        ignoreDuplicates: ignorar,
+      }),
+    )
+  let fallo = await subir(payload)
+
+  /*
+   * El servidor no conoce una columna que la fila trae: a la base le falta una
+   * migración (ver `esquema.ts`). Si la columna va vacía no dice nada, así que
+   * se vuelve a mandar sin ella y el trabajo llega —un cierre de avería sin
+   * código de EasyVista sigue siendo el cierre—. Si lleva dato no se tira: la
+   * entrada espera, con el motivo a la vista, a que administración migre.
+   */
+  if (fallo && servidorPorDetras(fallo)) {
+    const columna = columnaQueFalta(fallo.message)
+    const valor = columna ? payload[columna] : undefined
+    if (columna && (valor === null || valor === undefined || valor === '')) {
+      fallo = await subir(sinLaColumna(payload, columna))
+    }
+  }
 
   if (!fallo) {
     if (esperandoSusChecks) {
@@ -427,7 +447,7 @@ async function pushEntry(entry: OutboxEntry): Promise<boolean> {
   }
 
   const attempts = entry.attempts + 1
-  if (isPermanentFailure(fallo.status) && !faltaSuPadre(fallo)) {
+  if (isPermanentFailure(fallo.status) && !faltaSuPadre(fallo) && !servidorPorDetras(fallo)) {
     // Antes de darla por rechazada: puede que lo que se estaba subiendo ya
     // estuviera arriba y el «permiso denegado» sea de la fila que lo demuestra.
     if (await yaEstabaCerrada(entry)) {
@@ -446,7 +466,7 @@ async function pushEntry(entry: OutboxEntry): Promise<boolean> {
     status: 'pendiente',
     attempts,
     nextAttemptAt: Date.now() + backoffMs(attempts),
-    lastError: fallo.message,
+    lastError: servidorPorDetras(fallo) ? motivoDeServidorPorDetras(fallo) : fallo.message,
   })
   return false
 }

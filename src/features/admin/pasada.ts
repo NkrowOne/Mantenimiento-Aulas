@@ -97,6 +97,11 @@ export interface Analisis {
    * volver a planificar, como contestar una duda.
    */
   referencia: Referencia | null
+  /**
+   * El corte: desde este día manda la aplicación en lo que ella cambió, se
+   * haya elegido lo que se haya elegido. `null` es sin corte. Ver `Celda.corte`.
+   */
+  corte: string | null
   /** Lo que el almacén va a apuntar si la pasada se aplica. Ver `movimientos.ts`. */
   movimientos: MovimientoPrevisto[]
   /** El maestro, para que la pantalla ofrezca salas en las dudas. */
@@ -136,6 +141,7 @@ export async function analizar(
   hoy = new Date(),
   respuestas: Respuestas = {},
   referencia: Referencia | null = null,
+  corte: string | null = null,
 ): Promise<Analisis> {
   const bytes = new Uint8Array(await fichero.arrayBuffer())
   const libro = await abrirLibro(bytes)
@@ -177,13 +183,13 @@ export async function analizar(
     indice,
   }
   const columnaRef = columnaParaLaRef(filas.get(ESTADO.nombre)!, ESTADO.cabecera, 'Ref')
-  const planes = planificar(entrada, datos, columnaRef, respuestas, referencia)
+  const planes = planificar(entrada, datos, columnaRef, respuestas, referencia, corte)
 
   // Las hojas de detalle se rehacen enteras cada pasada. No son un historial que
   // haya que ir completando: son la foto de lo que la base sabe hoy, y
   // reconstruirlas cuesta menos que decidir qué fila cambió.
   const hojasNuevas: HojaNueva[] = []
-  const corte = corteDeAnyo({
+  const cierre = corteDeAnyo({
     anyo,
     hojasExistentes: libro.hojas.map((h) => h.nombre),
     articulos: [...datos.saldos.keys()].map((id) => ({
@@ -192,7 +198,7 @@ export async function analizar(
       saldo: datos.saldos.get(id) ?? 0,
     })).filter((a) => a.nombre !== ''),
   })
-  hojasNuevas.push(...corte.hojas)
+  hojasNuevas.push(...cierre.hojas)
 
   // La hoja de PCs de repuesto, si el libro no la trae: se estrena con lo que
   // la aplicación sabe. A partir de ahí es una hoja normal, con sus dos caras.
@@ -214,6 +220,7 @@ export async function analizar(
     dudas: planes.flatMap((p) => p.dudas),
     respuestas,
     referencia,
+    corte,
     movimientos: movimientosDe(planes, datos),
     catalogo,
     entrada,
@@ -232,8 +239,9 @@ export function replanificar(
   a: Analisis,
   respuestas: Respuestas,
   referencia: Referencia | null = a.referencia,
+  corte: string | null = a.corte,
 ): Analisis {
-  const planes = planificar(a.entrada, a.datos, a.columnaRef, respuestas, referencia)
+  const planes = planificar(a.entrada, a.datos, a.columnaRef, respuestas, referencia, corte)
   return {
     ...a,
     planes,
@@ -241,6 +249,7 @@ export function replanificar(
     dudas: planes.flatMap((p) => p.dudas),
     respuestas,
     referencia,
+    corte,
     movimientos: movimientosDe(planes, a.datos),
     bloqueada: planes.some((p) => p.desajustes.length > 0),
   }
@@ -252,6 +261,10 @@ function movimientosDe(planes: Plan[], datos: DatosDeLaPasada): MovimientoPrevis
     incidencias: datos.incidencias,
     articulos: datos.articulos,
     resolver: datos.resolverArticulo,
+    // Desde cuándo lleva la aplicación el almacén: lo declara la hoja del año.
+    // Las hojas de una pasada son del mismo año, así que vale la primera que
+    // lo diga.
+    arranque: planes.map((p) => hojaPorNombre(p.hoja)?.arranque).find((a): a is string => a !== undefined),
   })
 }
 
@@ -266,10 +279,12 @@ function planificar(
   columnaRef: string,
   respuestas: Respuestas,
   referenciaElegida: Referencia | null,
+  corteElegido: string | null,
 ): Plan[] {
   const planes: Plan[] = []
   const inst = (hoja: string): Instantanea => e.instantaneas.get(hoja) ?? (() => undefined)
   const referencia = referenciaElegida ?? undefined
+  const corte = corteElegido ?? undefined
 
   planes.push(
     sincronizarEstado({
@@ -282,6 +297,7 @@ function planificar(
       instantanea: inst(ESTADO.nombre),
       respuestas,
       referencia,
+      corte,
     }),
   )
 
@@ -297,6 +313,7 @@ function planificar(
         indice: e.indice,
         respuestas,
         referencia,
+        corte,
       }),
     )
   }
@@ -313,6 +330,7 @@ function planificar(
         instantanea: inst(hoja.nombre),
         respuestas,
         referencia,
+        corte,
       }),
     )
   }
@@ -329,6 +347,7 @@ function planificar(
         instantanea: inst(PCS_2026.nombre),
         respuestas,
         referencia,
+        corte,
       }),
     )
   }
@@ -479,6 +498,9 @@ export async function aplicar(a: Analisis): Promise<Aplicado> {
         // de todos los tiempos y mete la diferencia con 2025 como una compra de
         // hoy —negativa, además, que el signo no la deja pasar.
         ...(hojaPorNombre(p.hoja)?.anyo ? { anyo: hojaPorNombre(p.hoja)!.anyo } : {}),
+        // Y desde cuándo lleva la aplicación el almacén de ese año: el material
+        // de un parte anterior no mueve stock, y lo comprado se cuenta desde ahí.
+        ...(hojaPorNombre(p.hoja)?.arranque ? { arranque: hojaPorNombre(p.hoja)!.arranque } : {}),
         // El material de un parte va ya partido y resuelto: el catálogo de alias
         // vive aquí, y partir «1Pantalla 240X240» en un 1 y una pantalla es
         // exactamente el tipo de cosa que en SQL sale mal.
@@ -510,6 +532,7 @@ export async function aplicar(a: Analisis): Promise<Aplicado> {
       // Quién mandó donde la fusión no supo decidir. La base no lo usa; queda
       // en el plan por si algún día hay que explicar una pasada.
       referencia: a.referencia ?? 'preguntar',
+      corte: a.corte,
     },
   }
 
@@ -562,6 +585,9 @@ function altaParaLaBase(hoja: string, alta: Alta, a: Analisis): Record<string, u
         observacion: alta.observacion,
         resolucion: alta.resolucion,
         detalle: alta.material ? detalleDelMaterial(alta.material, a.datos.resolverArticulo) : [],
+        // Un parte de antes del arranque del recuento entra con su material
+        // apuntado y sin mover el almacén.
+        arranque: h?.arranque ?? null,
         columna_numero: h?.identidad.tipo === 'incidencia' ? h.identidad.columna : 'D',
       }
     }
@@ -575,6 +601,7 @@ function altaParaLaBase(hoja: string, alta: Alta, a: Analisis): Record<string, u
         // con la que entra el artículo tiene que fecharse dentro de él, igual
         // que el cuadre de una celda. Sin el año la base la fechaba hoy.
         anyo: hojaPorNombre(hoja)?.anyo ?? null,
+        arranque: hojaPorNombre(hoja)?.arranque ?? null,
       }
     case 'unidad':
       return {
@@ -602,6 +629,11 @@ function ordenarParaElAlmacen<T extends { campo: string }>(celdas: T[]): T[] {
   const peso = (campo: string): number => {
     if (campo === 'articulo.comprado') return 0
     if (campo === 'incidencia.material') return 2
+    // El cuadre con «Stock Disponible» va el último de todos: es la diferencia
+    // entre lo que la hoja dice que queda y lo que queda DESPUÉS de las compras
+    // y los consumos de esta misma pasada. Antes de ellos ajustaría un saldo
+    // que la pasada va a mover cuatro celdas más abajo.
+    if (campo === 'articulo.disponible') return 3
     return 1
   }
   return [...celdas].sort((a, b) => peso(a.campo) - peso(b.campo))

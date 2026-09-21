@@ -13,3 +13,11 @@
  * el servidor ya sirve el arreglo.
  */
 declare const __BUILD__: string
+
+/**
+ * Las migraciones que esta versión de la aplicación da por aplicadas: los
+ * nombres de fichero de `supabase/migrations` cuando se compiló. Lo inyecta
+ * `define` en `vite.config.ts`; la pantalla de diagnóstico las compara con las
+ * que el servidor tiene anotadas y dice cuáles faltan.
+ */
+declare const __MIGRACIONES__: string[]

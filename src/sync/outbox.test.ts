@@ -564,3 +564,55 @@ describe('flush', () => {
     expect(vistos).toEqual(['tipo', 'equipo'])
   })
 })
+
+describe('cuando el servidor va por detrás de la aplicación', () => {
+  // El 21 de septiembre: la aplicación desplegada escribía `easyvista_ref` en
+  // los cierres y la base de producción no tenía la columna. PostgREST
+  // contesta 400 —«Could not find the 'easyvista_ref' column of
+  // 'incident_resolutions' in the schema cache»— y un 400 se marcaba rechazado
+  // para siempre: dos cierres de avería en rojo sin que el técnico hubiera
+  // hecho nada mal.
+  const sinColumna = {
+    error: {
+      message: "Could not find the 'easyvista_ref' column of 'incident_resolutions' in the schema cache",
+      code: 'PGRST204',
+    },
+    status: 400,
+  }
+
+  it('una columna que el servidor no conoce y va vacía se quita, y el cierre llega', async () => {
+    upsert.mockResolvedValueOnce(sinColumna).mockResolvedValueOnce({ error: null, status: 201 })
+    const cierre = entrada({
+      entity: 'incident_resolution',
+      payload: { id: 'r1', incident_id: 'i1', resolution: 'Cable cambiado', easyvista_ref: null },
+    })
+    await db.outbox.add(cierre)
+
+    const parte = await flush()
+
+    expect(parte.subidos).toBe(1)
+    expect(parte.rechazados).toBe(0)
+    expect(upsert).toHaveBeenCalledTimes(2)
+    expect(upsert.mock.calls[1]![0]).toEqual({ id: 'r1', incident_id: 'i1', resolution: 'Cable cambiado' })
+    expect(await db.outbox.get(cierre.id)).toBeUndefined()
+  })
+
+  it('si la columna lleva dato no se tira: la entrada espera a la migración con el motivo a la vista', async () => {
+    upsert.mockResolvedValue(sinColumna)
+    const cierre = entrada({
+      entity: 'incident_resolution',
+      payload: { id: 'r2', incident_id: 'i1', resolution: 'Cable cambiado', easyvista_ref: 'I260921_0042' },
+    })
+    await db.outbox.add(cierre)
+
+    const parte = await flush()
+
+    expect(parte.rechazados).toBe(0)
+    expect(parte.pendientes).toBe(1)
+    expect(upsert).toHaveBeenCalledTimes(1)
+    const fila = await db.outbox.get(cierre.id)
+    expect(fila?.status).toBe('pendiente')
+    expect(fila?.lastError).toMatch(/va por detrás de la aplicación/)
+    expect(fila?.lastError).toContain('easyvista_ref')
+  })
+})

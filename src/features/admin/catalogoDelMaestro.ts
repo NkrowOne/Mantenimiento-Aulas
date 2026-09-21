@@ -167,6 +167,7 @@ export async function catalogoDelMaestro(): Promise<Catalogo> {
   const historia = await historiaDeLaAuditoria(edificiosD.data ?? [])
 
   const edificios = (edificiosD.data ?? []).map((b) => ({
+    id: b.id,
     codigo: b.code,
     nombre: b.name,
     activo: b.active,

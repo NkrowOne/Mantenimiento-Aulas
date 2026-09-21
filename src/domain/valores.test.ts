@@ -10,6 +10,7 @@ import {
   fechaDeTexto,
   leer,
   leerMaterial,
+  sinDescontar,
   leerMicrofono,
   limpiar,
 } from './valores'
@@ -174,6 +175,37 @@ describe('el material consumido', () => {
     expect(m).toHaveLength(1)
     expect(m[0]!.cantidad).toBe(1)
     expect(m[0]!.articulo).toBe('Proyector EB-992F S/N X8BR4800886')
+  })
+
+  it('una coma entre dos cifras es un decimal, no otro artículo', () => {
+    // «Cable HDMI 7,5 m» y «Pantalla de proyección 2,40 x 2,40 m» son nombres
+    // del catálogo. Partidos en la coma, el parte «perdía» el artículo y la
+    // pasada siguiente lo devolvía al almacén.
+    expect(leerMaterial('2 Cable HDMI 7,5 m')).toEqual([
+      { cantidad: 2, articulo: 'Cable HDMI 7,5 m', crudo: '2 Cable HDMI 7,5 m' },
+    ])
+    expect(leerMaterial('1 Pantalla de proyección 2,40 x 2,40 m, 1 Botonera')).toEqual([
+      { cantidad: 1, articulo: 'Pantalla de proyección 2,40 x 2,40 m', crudo: '1 Pantalla de proyección 2,40 x 2,40 m' },
+      { cantidad: 1, articulo: 'Botonera', crudo: '1 Botonera' },
+    ])
+    // Con espacio detrás sigue siendo un separador: «2 cables, 3 mts».
+    expect(leerMaterial('2 cables, 3 mts')).toHaveLength(2)
+  })
+
+  it('un 0 delante es «apuntado sin descontar»', () => {
+    // Es la notación de la hoja para lo reciclado, lo de garantía y el stock
+    // antiguo: `0 1 lampara NP44`. La cantidad es cero y el texto se conserva.
+    expect(leerMaterial('0 1 lampara NP44')).toEqual([
+      { cantidad: 0, articulo: 'lampara NP44', crudo: '0 1 lampara NP44' },
+    ])
+    expect(leerMaterial('0 Lámpara proyector NP44 (stock antiguo), 1 Botonera')).toEqual([
+      { cantidad: 0, articulo: 'Lámpara proyector NP44 (stock antiguo)', crudo: '0 Lámpara proyector NP44 (stock antiguo)' },
+      { cantidad: 1, articulo: 'Botonera', crudo: '1 Botonera' },
+    ])
+    expect(sinDescontar({ cantidad: 0, articulo: 'x', crudo: '0 x' })).toBe(true)
+    expect(sinDescontar({ cantidad: 1, articulo: 'x', crudo: '1 x' })).toBe(false)
+    // El 0 se conserva al volver a escribir: es lo que dice que no salió de la bolsa.
+    expect(escribirMaterial([{ cantidad: 0, articulo: 'Lámpara proyector NP44', crudo: '' }])).toBe('0 Lámpara proyector NP44')
   })
 
   it('un renglón vacío no es un consumo de nada', () => {

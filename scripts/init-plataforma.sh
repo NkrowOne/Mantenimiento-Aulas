@@ -132,6 +132,12 @@ TXT
 done
 ok "$nuevas migraciones nuevas, $(Q 'select count(*) from public.schema_migrations') en total"
 
+# La API guarda el esquema en caché: que lo recargue, o cada móvil recibirá
+# «Could not find the 'x' column … in the schema cache» al subir hasta que
+# alguien la reinicie. Sobre una plataforma no se puede reiniciar desde aquí;
+# el aviso por el canal de PostgREST es lo que hay, y suele bastar.
+P -c "notify pgrst, 'reload schema'" >/dev/null 2>&1 || true
+
 # ── 4. Un solo origen para el token del worker ──────────────────────────
 #
 # La migración deja 'cambiame-en-produccion' y la URL interna del compose. Si

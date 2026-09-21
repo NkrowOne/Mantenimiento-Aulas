@@ -104,6 +104,12 @@ export interface ArticuloVolcado {
   /** Consumo por mes del año que toca, del 1 al 12. Cero es cero, no vacío. */
   meses: number[]
   comprado: number | null
+  /**
+   * Lo que queda en el almacén hoy: la suma de todos los movimientos. Es contra
+   * lo que se compara «Stock Disponible» cuando manda el Excel. Opcional
+   * porque las pruebas y el espejo del libro no siempre lo saben.
+   */
+  saldo?: number
 }
 
 /**
@@ -255,9 +261,15 @@ export function valorDeArticulo(art: ArticuloVolcado, c: Columna): Valor {
       return art.nombre
     case 'articulo.comprado':
       return art.comprado
+    case 'articulo.disponible':
+      // Lo que queda en el almacén según la aplicación. No se escribe nunca en
+      // la celda —es una fórmula, y la fusión lo sabe—: sirve para comparar con
+      // lo que la hoja calcula, decir el descuadre y, cuando manda el Excel,
+      // cuadrar el almacén con un ajuste. Sin saldo conocido no hay comparación.
+      return art.saldo ?? null
     default:
-      // `Total Instalado` y `Stock Disponible` los calcula la hoja: aquí no hay
-      // valor que dar, y darlo sería escribir un número encima de una fórmula.
+      // `Total Instalado` lo calcula la hoja: aquí no hay valor que dar, y darlo
+      // sería escribir un número encima de una fórmula.
       return null
   }
 }
@@ -341,22 +353,28 @@ export interface MovimientoVolcado {
  * sincronice desde otro huso. Dos años distintos para el mismo movimiento son
  * una celda que no cuadra nunca.
  */
-function enMadrid(iso: string): { anyo: number; mes: number } | null {
+function enMadrid(iso: string): { anyo: number; mes: number; dia: string } | null {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return null
-  const [anyo, mes] = new Intl.DateTimeFormat('sv-SE', { timeZone: ZONA, dateStyle: 'short' })
-    .format(d)
-    .split('-')
-    .map(Number)
-  return { anyo: anyo!, mes: mes! }
+  // `sv-SE` escribe la fecha como ISO —`2026-08-01`—, que es justo lo que hace
+  // falta para compararla con el arranque sin volver a pasar por `Date`.
+  const dia = new Intl.DateTimeFormat('sv-SE', { timeZone: ZONA, dateStyle: 'short' }).format(d)
+  const [anyo, mes] = dia.split('-').map(Number)
+  return { anyo: anyo!, mes: mes!, dia }
 }
 
-export function consumoPorMes(movimientos: MovimientoVolcado[], anyo: number): number[] {
+/**
+ * `desde` es el arranque del recuento (`Hoja.arranque`, un día ISO): lo de
+ * antes de ese día no cuenta, porque la bolsa de ese año empezó a llevarse en
+ * la aplicación ese día y los meses anteriores son del libro.
+ */
+export function consumoPorMes(movimientos: MovimientoVolcado[], anyo: number, desde?: string): number[] {
   const meses = new Array<number>(12).fill(0)
   for (const m of movimientos) {
     if (m.kind !== 'consumo' && m.kind !== 'devolucion') continue
     const cuando = enMadrid(m.occurredAt)
     if (cuando === null || cuando.anyo !== anyo) continue
+    if (desde !== undefined && cuando.dia < desde) continue
     // El consumo se guarda en negativo —sale del almacén—: en la hoja se enseña
     // cuánto salió, así que se le da la vuelta.
     meses[cuando.mes - 1] = (meses[cuando.mes - 1] ?? 0) - m.qty
@@ -364,13 +382,18 @@ export function consumoPorMes(movimientos: MovimientoVolcado[], anyo: number): n
   return meses.map((n) => Math.max(0, n))
 }
 
-/** Lo comprado en el año: los movimientos de compra, sumados. */
-export function compradoEn(movimientos: MovimientoVolcado[], anyo: number): number {
+/**
+ * Lo comprado en el año: los movimientos de compra, sumados. Con `desde`, solo
+ * los del arranque del recuento en adelante: el saldo de partida está fechado
+ * ese día, y una compra anterior es de un almacén que la aplicación no llevaba.
+ */
+export function compradoEn(movimientos: MovimientoVolcado[], anyo: number, desde?: string): number {
   let total = 0
   for (const m of movimientos) {
     if (m.kind !== 'compra') continue
     const cuando = enMadrid(m.occurredAt)
     if (cuando === null || cuando.anyo !== anyo) continue
+    if (desde !== undefined && cuando.dia < desde) continue
     total += m.qty
   }
   return total

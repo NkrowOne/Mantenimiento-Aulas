@@ -304,19 +304,47 @@ export interface MaterialLeido {
  * Un renglón puede llevar varios artículos separados por coma o por `+`. Lo que
  * no se pueda partir se devuelve entero como `crudo`, y quien lo reciba lo
  * guarda en `incident_materials.raw_text` en vez de inventarse una cantidad.
+ *
+ * Dos cosas que la hoja hace y aquí hay que respetar:
+ *
+ * **Una coma entre dos cifras es un decimal, no un separador.** «Cable HDMI
+ * 7,5 m» y «Pantalla de proyección 2,40 x 2,40 m» son nombres del catálogo, y
+ * partir en la coma dejaba «2 Cable HDMI 7» y «5 m»: el artículo no se
+ * reconocía y, peor, como el parte ya lo tenía descontado, la pasada siguiente
+ * lo **devolvía** al almacén por «ya no lo nombra». Solo se parte en una coma
+ * que no esté pegada a dos cifras.
+ *
+ * **Un 0 delante es «apuntado, pero sin descontar».** Es la notación que ya usa
+ * la gente en la hoja —`0 1 lampara NP44`, `0 1 Proyector EB-FH54`— para el
+ * material que se instaló y no salió de la bolsa: reciclado, de garantía o de
+ * stock antiguo. Antes ese 0 se convertía en una unidad y se descontaba, o el
+ * renglón entero se daba por ilegible. Ahora la cantidad es 0, el texto se
+ * conserva en el parte y el almacén no se mueve.
  */
 export function leerMaterial(texto: string): MaterialLeido[] {
   const t = limpiar(texto)
   if (t === '') return []
 
-  return t
+  // El decimal se protege antes de partir y se restaura después: sin
+  // lookbehind, que en los iPad viejos no existe.
+  const DECIMAL = '\u0000'
+  const protegido = t.replace(/(\d),(\d)/g, `$1${DECIMAL}$2`)
+
+  return protegido
     .split(/\s*[,+]\s*(?=\d|[A-Za-zÁÉÍÓÚÜÑáéíóúüñ])/)
-    .map((trozo) => trozo.trim())
+    .map((trozo) => trozo.split(DECIMAL).join(',').trim())
     .filter((trozo) => trozo !== '')
     .map((trozo) => {
       // `2 Cable…`, `2Cable…`, `1 mts canaleta…`. El número pegado a la palabra
       // solo cuenta si lo que sigue empieza por letra: `240X240` no es cantidad.
+      // Y `0 1 lampara NP44` —el 0 de «sin descontar» seguido de la cantidad
+      // de antes— se lee como cero: el segundo número forma parte del texto.
       const m = /^(\d+)\s*(?=[A-Za-zÁÉÍÓÚÜÑáéíóúüñ])(.*)$/.exec(trozo)
+      const sinDescontar = /^0\s+(?:\d+\s+)?(?=[A-Za-zÁÉÍÓÚÜÑáéíóúüñ])(.*)$/.exec(trozo)
+      if (sinDescontar) {
+        const resto = limpiar(sinDescontar[1]!)
+        return { cantidad: 0, articulo: resto === '' ? trozo : resto, crudo: trozo }
+      }
       if (!m) return { cantidad: 1, articulo: trozo, crudo: trozo }
       const resto = limpiar(m[2]!)
       if (resto === '') return { cantidad: 1, articulo: trozo, crudo: trozo }
@@ -324,7 +352,50 @@ export function leerMaterial(texto: string): MaterialLeido[] {
     })
 }
 
-/** Y volver a escribirlo como lo escribe la gente: `2 Cable HDMI fibra 10 m`. */
+/** `true` si el renglón se apunta sin descontar: lleva el 0 delante. */
+/**
+ * Un aula que dice «ninguna».
+ *
+ * Los partes de regularización del almacén —material que salió y no quedó
+ * anotado en ningún parte— llevan en «Aula» cosas como «Varias aulas» o
+ * «Almacén». No es un aula que no cruza: es la respuesta a la pregunta de qué
+ * sala es, y no hay que volver a hacerla en cada pasada ni intentar meter ese
+ * texto en la base como código de aula.
+ */
+const SIN_SALA = new Set([
+  'varias aulas',
+  'varias',
+  'varios',
+  'almacen',
+  'sin aula',
+  'sin sala',
+  'ninguna',
+  'ninguno',
+  'general',
+  'n/a',
+  '-',
+  '—',
+])
+
+export function esSinSala(aula: string): boolean {
+  const llana = aula
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+  return SIN_SALA.has(llana)
+}
+
+export function sinDescontar(m: MaterialLeido): boolean {
+  return m.cantidad === 0
+}
+
+/**
+ * Y volver a escribirlo como lo escribe la gente: `2 Cable HDMI fibra 10 m`.
+ * El 0 de «sin descontar» se conserva, que es lo que dice que no salió de la
+ * bolsa.
+ */
 export function escribirMaterial(materiales: MaterialLeido[]): string {
   return materiales.map((m) => `${m.cantidad} ${m.articulo}`).join(', ')
 }

@@ -15,9 +15,21 @@ import { RoomListPage } from '@/features/rooms/RoomListPage'
    apoyado en la fila. Un `Suspense` ahí significaría medio segundo de nada justo
    después de un gesto que acaba de vibrar para confirmar que se ha entendido. */
 import { HojaDeMaestro } from '@/features/rooms/HojaDeMaestro'
+/* La ficha de la sala tampoco: desde que todas las entradas pasan por ella —la
+   fila de la lista, el buscador, el QR de la puerta y el enlace de la pegatina—
+   es la primera pantalla de cualquier camino, o sea la más tocada del día, y se
+   abre con el dedo ya apoyado. Un `Suspense` ahí era un «Cargando…» justo
+   después del gesto. Lo que arrastra es un formulario y el codificador de QR de
+   la placa, que es minúsculo y no tiene dependencias. */
+import { RoomSheet } from '@/features/rooms/RoomSheet'
 import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
 import { averiasPorEdificio, averiasPorSala } from '@/features/rooms/averias'
-import { nextRoom, ROOM_ORDER_POR_DEFECTO, type RoomOrder } from '@/features/rooms/orden'
+import {
+  nextRoom,
+  ROOM_ORDER_LABELS,
+  ROOM_ORDER_POR_DEFECTO,
+  type RoomOrder,
+} from '@/features/rooms/orden'
 
 import { getSealed, lock, resumeSession, touch, watchSession } from '@/auth/session'
 import { marcarTrabajoDelicado } from '@/sw'
@@ -30,7 +42,7 @@ import type { SealedSession } from '@/auth/pin'
 import { OVERDUE_INSPECTION_DAYS, type Building, type Role, type Room } from '@/domain/types'
 
 /*
- * Todo lo que no es revisar un aula se carga aparte.
+ * Todo lo que no es llegar a un aula y revisarla se carga aparte.
  *
  * El panel arrastra ECharts, que pesa más que todo lo demás junto. Y las otras
  * cuatro pantallas las esconde el rol —un técnico no puede abrir Informes ni
@@ -38,6 +50,10 @@ import { OVERDUE_INSPECTION_DAYS, type Building, type Role, type Room } from '@/
  * mínimo» y la bandeja de cuarentena a un dispositivo que nunca los va a
  * enseñar. Y el arranque ocurre justo con la peor cobertura, al llegar al
  * edificio.
+ *
+ * La ficha de la sala NO está en esta lista a propósito: se importa arriba, con
+ * la hoja del maestro, porque es la pantalla en la que desembocan todos los
+ * caminos y la que se abre con el dedo ya apoyado.
  */
 const DashboardPage = lazy(() =>
   import('@/features/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
@@ -51,12 +67,10 @@ const StockPage = lazy(() =>
 const CleanupPage = lazy(() =>
   import('@/features/admin/CleanupPage').then((m) => ({ default: m.CleanupPage })),
 )
-const RoomSheet = lazy(() =>
-  import('@/features/rooms/RoomSheet').then((m) => ({ default: m.RoomSheet })),
-)
-/* La hoja de placas arrastra el codificador de QR, y solo se abre para imprimir
-   etiquetas: una o dos veces en la vida del despliegue. No tiene por qué viajar
-   en el arranque, que ocurre justo con la peor cobertura. */
+/* La hoja de placas solo se abre para imprimir etiquetas: una o dos veces en la
+   vida del despliegue. No tiene por qué viajar en el arranque, que ocurre justo
+   con la peor cobertura. Lo que se ahorra es la hoja, no el codificador de QR:
+   ese ya viaja con la ficha, que pinta la misma placa en su cabecera. */
 const PlateSheet = lazy(() =>
   import('@/features/rooms/PlateSheet').then((m) => ({ default: m.PlateSheet })),
 )
@@ -82,12 +96,19 @@ const EscanerQR = lazy(() =>
 type Tab = 'revisar' | 'panel' | 'incidencias' | 'almacen' | 'historial' | 'informes' | 'datos'
 
 /*
- * La ficha se intercala entre la lista y la revisión, pero solo por ese camino.
- * El QR de la puerta y el buscador global siguen entrando directos a revisar:
- * quien escanea una pegatina ya sabe dónde está y a qué viene, y cobrarle un
- * toque por información que no ha pedido convertiría el camino corto en uno
- * largo. Por eso la revisión recuerda de dónde vino: volver tiene que devolver
- * al sitio del que se salió, no a uno que no se ha visto nunca.
+ * Toda sala se abre por su ficha, venga el toque de donde venga.
+ *
+ * La fila de la lista, el buscador global, el lector de QR y el enlace de la
+ * pegatina desembocan en la misma pantalla, y la revisión se empieza desde ella
+ * con «Revisar esta sala». La ficha contesta lo que uno se pregunta llegando a
+ * la puerta —qué hay aquí, qué falló, qué queda abierto— y eso va ANTES de
+ * rellenar un formulario: la avería abierta del proyector se lee antes de
+ * volver a marcarla. El botón está a un toque y ocupa el ancho, así que el
+ * camino corto sigue costando un toque; y con las cuatro entradas en el mismo
+ * sitio, un gesto significa una cosa.
+ *
+ * Por eso cada vista que se apila recuerda de dónde vino: volver tiene que
+ * devolver al sitio del que se salió, no a uno que no se ha visto nunca.
  */
 type RoomView =
   | { name: 'edificios' }
@@ -110,25 +131,48 @@ type RoomView =
   /*
    * La ficha de la sala.
    *
-   * Es lo primero que se abre al tocar un aula en la lista: lo que uno se
-   * pregunta llegando a la puerta —qué hay aquí, esto ya falló, queda algo
-   * abierto— viene antes que rellenar comprobaciones, y desde la ficha se
-   * empieza la revisión con un botón que ocupa el ancho.
+   * Es lo primero que se abre al tocar un aula, se toque en la lista, en un
+   * resultado del buscador o en una pegatina: lo que uno se pregunta llegando a
+   * la puerta —qué hay aquí, esto ya falló, queda algo abierto— viene antes que
+   * rellenar comprobaciones, y desde la ficha se empieza la revisión con un
+   * botón que ocupa el ancho.
    *
-   * El camino corto sigue intacto y es lo que importa: el QR de la puerta y el
-   * buscador global entran DIRECTOS a revisar. Quien escanea una pegatina ya
-   * sabe dónde está y a qué viene; cobrarle una pantalla intermedia convertiría
-   * el atajo en un rodeo, y son 276 salas en una ronda.
+   * Antes el QR y el buscador entraban directos a revisar, con el argumento de
+   * que quien escanea ya sabe a qué viene. Pero el mismo toque llevaba a dos
+   * pantallas distintas según de dónde saliera, y lo que la ficha cuenta es
+   * justo lo que hace falta saber ANTES de contestar el formulario, no después.
    *
-   * `volverA` existe porque a la ficha se llega por dos sitios —la lista y la
-   * placa de la cabecera de la revisión— y volver tiene que devolver al sitio
-   * del que se salió, no a uno que no se ha visto.
+   * `volverA` existe porque a la ficha se llega por tres sitios —la lista, la
+   * pantalla de edificios (donde viven el buscador, el lector y el enlace en
+   * frío) y la placa de la cabecera de la revisión— y volver tiene que devolver
+   * al sitio del que se salió, no a uno que no se ha visto.
+   *
+   * Cuando se vuelve a la revisión, la ficha lleva consigo lo que la distingue
+   * de una nueva. Antes «Volver» la rehacía solo con el edificio y la sala, y
+   * quien consultaba la ficha a media corrección aterrizaba en una revisión
+   * vacía de la misma sala, con la corrección perdida por el camino.
    */
-  | { name: 'ficha'; building: Building; room: Room; volverA: 'salas' | 'revision' }
-  /* La hoja de placas del edificio. Vive aquí y no en «Datos» porque se imprime
-     desde donde se está trabajando: se decide etiquetar un edificio cuando se
-     está recorriendo ese edificio. */
-  | { name: 'placas'; building: Building }
+  | { name: 'ficha'; building: Building; room: Room; volverA: 'salas' | 'edificios' | 'incidencias' }
+  | {
+      name: 'ficha'
+      building: Building
+      room: Room
+      volverA: 'revision'
+      /** La revisión a la que se vuelve: si entró desde la ficha y qué corrige. */
+      revision: { desdeFicha?: boolean; correccion?: Correccion }
+    }
+  /*
+   * La hoja de placas del edificio. Vive aquí y no en «Datos» porque se imprime
+   * desde donde se está trabajando: se decide etiquetar un edificio cuando se
+   * está recorriendo ese edificio.
+   *
+   * Se abre desde la lista de salas y desde la ficha de una sala, y `volverA`
+   * devuelve a la que fuera. Volvía siempre a la lista, así que quien salía de
+   * una ficha a imprimir aterrizaba en una pantalla que no había pedido y tenía
+   * que buscar el aula otra vez.
+   */
+  | { name: 'placas'; building: Building; volverA: 'salas' }
+  | { name: 'placas'; building: Building; volverA: 'ficha'; room: Room }
   /*
    * La hoja de inventario, de una sala o del edificio entero.
    *
@@ -183,6 +227,18 @@ const RANK: Record<Role, number> = { tecnico: 0, supervisor: 1, admin: 2 }
 function puedeVer(tab: Tab, role: Role): boolean {
   const t = TABS.find((x) => x.id === tab)
   return t !== undefined && RANK[role] >= RANK[t.minRole]
+}
+
+/**
+ * ¿Es esto uno de los órdenes de la lista de salas?
+ *
+ * Lo que se lee de `db.meta` viene de fuera del tipo: lo escribió otra versión
+ * de la aplicación, o nadie. Se comprueba contra las etiquetas y no contra una
+ * lista aparte para que añadir un orden en `orden.ts` no deje aquí un nombre que
+ * se descarta en silencio.
+ */
+function esOrdenDeSalas(valor: unknown): valor is RoomOrder {
+  return typeof valor === 'string' && Object.hasOwn(ROOM_ORDER_LABELS, valor)
 }
 
 /**
@@ -501,6 +557,33 @@ export function App(): React.ReactElement {
     })()
   }, [])
 
+  /**
+   * Abre una sala por su identificador, venga de donde venga.
+   *
+   * La llaman el lector de la cámara y el enlace de la pegatina al arrancar, y
+   * es UNA función a propósito: la regla de a qué pantalla se entra al llegar a
+   * una sala vive aquí y en la fila de la lista, y con más copias volverían a
+   * discrepar. Tiene que resolver también el edificio: la ficha necesita saber
+   * de quién es la sala, y la cabecera enseña el edificio y la planta.
+   */
+  const abrirSala = useCallback(async (roomId: string): Promise<boolean> => {
+    const room = await db.rooms.get(roomId)
+    if (!room) return false
+    const zone = await db.zones.get(room.zone_id)
+    const building = zone ? await db.buildings.get(zone.building_id) : undefined
+    if (!building) return false
+
+    setTab('revisar')
+    // A la ficha, igual que al tocar la fila de la lista: quien escanea viene a
+    // trabajar en esa sala, y lo primero del trabajo es saber qué hay dentro y
+    // qué quedó abierto. «Revisar esta sala» está a un toque. Se vuelve a la
+    // pantalla de edificios, que es donde viven el botón de escanear y el
+    // buscador; y para quien entró por la cámara del móvil, la raíz es lo único
+    // que hay detrás.
+    setView({ name: 'ficha', building, room, volverA: 'edificios' })
+    return true
+  }, [])
+
   /*
    * Recuperar el sitio.
    *
@@ -512,32 +595,22 @@ export function App(): React.ReactElement {
    * Se guarda solo la ubicación, que es lo barato y lo que se pierde. El trabajo
    * en sí ya sobrevive por otro camino: está en Dexie y respaldado en el servidor.
    */
-  /**
-   * Abre una sala por su identificador, venga de donde venga.
-   *
-   * La usan el enlace de la pegatina y el lector de la cámara, y tiene que
-   * resolver también el edificio: la revisión necesita saber a qué lista volver
-   * al salir, y la cabecera enseña el edificio y la planta.
-   */
-  const abrirSala = useCallback(async (roomId: string): Promise<boolean> => {
-    const room = await db.rooms.get(roomId)
-    if (!room) return false
-    const zone = await db.zones.get(room.zone_id)
-    const building = zone ? await db.buildings.get(zone.building_id) : undefined
-    if (!building) return false
-
-    setTab('revisar')
-    // Directo a revisar: esto lo llama el lector de la cámara, y quien escanea
-    // viene a revisar. La ficha está a un toque, en la placa de la cabecera.
-    setView({ name: 'revision', building, room })
-    return true
-  }, [])
-
-
   useEffect(() => {
     if (!unlocked || restaurado) return
     void (async () => {
       try {
+        /*
+         * El orden de la lista de salas, antes que nada y al margen de la placa.
+         *
+         * Es una preferencia de trabajo, no una ubicación: quien persigue el
+         * retraso pone «Más antiguas» y una recarga se lo devolvía a «Por planta»
+         * sin decir nada, con la lista reordenada bajo el dedo. Va delante del
+         * enlace de la pegatina porque ese camino sale del efecto en cuanto abre
+         * la sala, y el orden tiene que quedar puesto también entonces.
+         */
+        const orden = (await db.meta.get('orden-salas'))?.value
+        if (esOrdenDeSalas(orden)) setRoomOrder(orden)
+
         /*
          * Si se ha llegado escaneando la placa de la puerta, manda eso.
          *
@@ -558,15 +631,10 @@ export function App(): React.ReactElement {
           limpia.searchParams.delete(PARAM_SALA)
           window.history.replaceState({}, '', limpia.pathname + limpia.search)
 
-          const room = await db.rooms.get(escaneada)
-          const zone = room ? await db.zones.get(room.zone_id) : undefined
-          const building = zone ? await db.buildings.get(zone.building_id) : undefined
-
-          if (room && building) {
-            setTab('revisar')
-            setView({ name: 'revision', building, room })
-            return
-          }
+          // Por `abrirSala`, como el lector de la cámara: el enlace de la
+          // pegatina es otra puerta a la misma sala, no a otra pantalla, y las
+          // dos entran en la ficha con «Volver» hacia la lista de edificios.
+          if (await abrirSala(escaneada)) return
 
           // La placa apunta a una sala que este dispositivo no tiene todavía.
           // Decirlo es mejor que dejarlo en la lista de edificios como si no se
@@ -599,7 +667,7 @@ export function App(): React.ReactElement {
         setRestaurado(true)
       }
     })()
-  }, [unlocked, restaurado])
+  }, [unlocked, restaurado, abrirSala])
 
   useEffect(() => {
     if (!unlocked || !restaurado) return
@@ -619,12 +687,18 @@ export function App(): React.ReactElement {
      * nueva y vacía donde había una corrección a medias. La ficha, en cambio,
      * encuentra el borrador y ofrece «Continuar la corrección».
      *
-     * La hoja de inventario se guarda como el sitio del que se salió, por lo
-     * mismo: lo que la hoja tiene dentro son filas recién pedidas al servidor y
-     * un diálogo de impresión, nada de lo cual sobrevive a una recarga. Devolver
-     * a una hoja vacía —o peor, restaurarla con `roomId` y sin entenderla, que es
-     * lo que haría abrir una revisión en blanco de esa sala— sería inventar
-     * trabajo. Se vuelve a la lista o a la ficha, con la hoja a un toque.
+     * Las hojas de inventario y de placas se guardan como el sitio del que se
+     * salió, por lo mismo: lo que tienen dentro son filas recién pedidas al
+     * servidor o un diálogo de impresión, nada de lo cual sobrevive a una
+     * recarga. Devolver a una hoja vacía —o peor, restaurarla con `roomId` y sin
+     * entenderla, que es lo que haría abrir una revisión en blanco de esa sala—
+     * sería inventar trabajo. Se vuelve a la lista o a la ficha, con la hoja a
+     * un toque.
+     *
+     * La ficha que volvería a la pantalla de edificios o a la revisión se guarda
+     * como ficha sin más: al restaurar, «Volver» lleva a la lista de salas, que
+     * es de donde se llega a una ficha en frío. Lo que la revisión llevaba —la
+     * corrección— no se guarda, por lo dicho arriba.
      */
     const restauracion: { vista: RoomView['name']; roomId: string | null } =
       view.name === 'revision' && view.correccion
@@ -634,10 +708,15 @@ export function App(): React.ReactElement {
               vista: view.volverA,
               roomId: view.volverA === 'ficha' ? (view.room?.id ?? null) : null,
             }
-          : {
-              vista: view.name,
-              roomId: view.name === 'revision' || view.name === 'ficha' ? view.room.id : null,
-            }
+          : view.name === 'placas'
+            ? {
+                vista: view.volverA,
+                roomId: view.volverA === 'ficha' ? view.room.id : null,
+              }
+            : {
+                vista: view.name,
+                roomId: view.name === 'revision' || view.name === 'ficha' ? view.room.id : null,
+              }
 
     void db.meta.put({
       key: 'ultima-vista',
@@ -649,6 +728,17 @@ export function App(): React.ReactElement {
       },
     })
   }, [unlocked, restaurado, tab, view])
+
+  /*
+   * El orden elegido se guarda cada vez que cambia, con la misma llave que lo
+   * restaura. Espera a `restaurado` por lo mismo que la última vista: antes de
+   * rehidratar, `roomOrder` es el de partida, y escribirlo pisaría justo lo que
+   * se quiere recuperar.
+   */
+  useEffect(() => {
+    if (!unlocked || !restaurado) return
+    void db.meta.put({ key: 'orden-salas', value: roomOrder })
+  }, [unlocked, restaurado, roomOrder])
 
   useEffect(() => {
     if (!unlocked) return
@@ -864,8 +954,12 @@ export function App(): React.ReactElement {
             {avisoQR && <p className="pt-2 text-sm text-crit">{avisoQR}</p>}
           </div>
 
+          {/* A la ficha, como la fila de la lista y el QR. Se vuelve aquí, a la
+              pantalla de edificios, que es donde está el buscador. */}
           <BuscadorGlobal
-            onPick={(building, room) => setView({ name: 'revision', building, room })}
+            onPick={(building, room) =>
+              setView({ name: 'ficha', building, room, volverA: 'edificios' })
+            }
           />
 
         {/* Misma regla que la lista de salas: el contenido va sobre papel. */}
@@ -994,7 +1088,7 @@ export function App(): React.ReactElement {
           order={roomOrder}
           onOrderChange={setRoomOrder}
           onBack={() => setView({ name: 'edificios' })}
-          onPlacas={() => setView({ name: 'placas', building: view.building })}
+          onPlacas={() => setView({ name: 'placas', building: view.building, volverA: 'salas' })}
           /* Sin sala: la hoja del edificio entero, que es lo que se pide desde
              aquí —estando en la lista se está mirando el edificio, no un aula—. */
           onInventario={() =>
@@ -1031,7 +1125,15 @@ export function App(): React.ReactElement {
             final y la primera del resto es la que toca.
           */
           onFicha={() =>
-            setView({ name: 'ficha', building: view.building, room: view.room, volverA: 'revision' })
+            setView({
+              name: 'ficha',
+              building: view.building,
+              room: view.room,
+              volverA: 'revision',
+              /* Lo que hace falta para volver a ESTA revisión y no a una nueva de
+                 la misma sala: si es una corrección, la corrección. */
+              revision: { desdeFicha: view.desdeFicha, correccion: view.correccion },
+            })
           }
           onDone={(encadenar) => {
             /*
@@ -1067,56 +1169,81 @@ export function App(): React.ReactElement {
       )}
 
       {tab === 'revisar' && view.name === 'ficha' && (
-        <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
-          <RoomSheet
-            room={view.room}
-            buildingName={view.building.name}
-            zoneName={zoneName}
-            userId={userId}
-            onBack={() =>
-              setView(
-                view.name === 'ficha' && view.volverA === 'salas'
-                  ? { name: 'salas', building: view.building }
-                  : { name: 'revision', building: view.building, room: view.room },
-              )
-            }
-            onRevisar={() =>
-              setView({
-                name: 'revision',
-                building: view.building,
-                room: view.room,
-                desdeFicha: true,
-              })
-            }
-            /* Corregir es el mismo destino con una carga distinta: el formulario
-               sembrado con lo que dijo aquella visita. */
-            onCorregir={(correccion) =>
-              setView({
-                name: 'revision',
-                building: view.building,
-                room: view.room,
-                desdeFicha: true,
-                correccion,
-              })
-            }
-            onImprimir={() => setView({ name: 'placas', building: view.building })}
-            onInventario={() =>
-              setView({
-                name: 'inventario',
-                building: view.building,
-                room: view.room,
-                volverA: 'ficha',
-              })
-            }
-          />
-        </Suspense>
+        <RoomSheet
+          room={view.room}
+          buildingName={view.building.name}
+          zoneName={zoneName}
+          userId={userId}
+          /* Al sitio del que se salió: la lista, la pantalla de edificios —de
+             donde vienen el buscador, el lector y el enlace— o la revisión, tal
+             cual se dejó: con su `desdeFicha` y, si era una corrección, con la
+             corrección. Sin eso, volver de consultar la ficha a media corrección
+             abría una revisión nueva y vacía de la misma sala. */
+          onBack={() => {
+            // Si se vino de la lista de incidencias, se vuelve a ella: la vista
+            // de «Revisar» se deja en la raíz, que es lo que hay detrás.
+            if (view.volverA === 'incidencias') setTab('incidencias')
+            setView(
+              // La revisión se pregunta primero y en positivo: es la rama que
+              // necesita `view.revision`, y TypeScript solo estrecha la unión por
+              // `volverA` con una igualdad, no descartando los otros dos valores.
+              view.volverA === 'revision'
+                ? { name: 'revision', building: view.building, room: view.room, ...view.revision }
+                : view.volverA === 'edificios' || view.volverA === 'incidencias'
+                  ? { name: 'edificios' }
+                  : { name: 'salas', building: view.building },
+            )
+          }}
+          onRevisar={() =>
+            setView({
+              name: 'revision',
+              building: view.building,
+              room: view.room,
+              desdeFicha: true,
+            })
+          }
+          /* Corregir es el mismo destino con una carga distinta: el formulario
+             sembrado con lo que dijo aquella visita. */
+          onCorregir={(correccion) =>
+            setView({
+              name: 'revision',
+              building: view.building,
+              room: view.room,
+              desdeFicha: true,
+              correccion,
+            })
+          }
+          /* Con la sala: la hoja tiene que saber que se vuelve a esta ficha y no
+             a la lista. */
+          onImprimir={() =>
+            setView({ name: 'placas', building: view.building, volverA: 'ficha', room: view.room })
+          }
+          onInventario={() =>
+            setView({
+              name: 'inventario',
+              building: view.building,
+              room: view.room,
+              volverA: 'ficha',
+            })
+          }
+        />
       )}
 
       {tab === 'revisar' && view.name === 'placas' && (
         <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
           <PlateSheet
             building={view.building}
-            onBack={() => setView({ name: 'salas', building: view.building })}
+            /* A la ficha si se abrió desde una, y si no a la lista. La ficha
+               vuelve con «Volver» hacia la lista: la hoja no arrastra de dónde
+               venía la ficha a su vez, y tras imprimir la lista es un sitio
+               razonable. Igual que la hoja de inventario, de abajo. */
+            onBack={() =>
+              setView(
+                view.volverA === 'ficha'
+                  ? { name: 'ficha', building: view.building, room: view.room, volverA: 'salas' }
+                  : { name: 'salas', building: view.building },
+              )
+            }
           />
         </Suspense>
       )}
@@ -1178,7 +1305,20 @@ export function App(): React.ReactElement {
               }}
             />
           )}
-          {tab === 'incidencias' && <IncidentsPage />}
+          {tab === 'incidencias' && (
+            <IncidentsPage
+              onAbrirSala={(roomId) => {
+                void (async () => {
+                  const room = await db.rooms.get(roomId)
+                  const zone = room ? await db.zones.get(room.zone_id) : undefined
+                  const building = zone ? await db.buildings.get(zone.building_id) : undefined
+                  if (!room || !building) return
+                  setTab('revisar')
+                  setView({ name: 'ficha', building, room, volverA: 'incidencias' })
+                })()
+              }}
+            />
+          )}
           {tab === 'almacen' && <StockPage role={role} />}
           {tab === 'historial' && <HistorialPage />}
           {/* Sin `role`: aquí dentro todo el mundo es administrador, así que la

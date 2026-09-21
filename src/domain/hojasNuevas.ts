@@ -97,8 +97,8 @@ export function hojaDeRevisiones(revisiones: RevisionParaHoja[]): HojaNueva {
       fechaAExcel(r.cuando),
       horaDe(r.cuando),
       r.quien,
-      r.estado,
-      r.resultado,
+      estadoLegible(r.estado),
+      resultadoLegible(r.resultado),
       r.horasProyector,
       r.lampara,
       r.comprobaciones,
@@ -113,6 +113,23 @@ export function hojaDeRevisiones(revisiones: RevisionParaHoja[]): HojaNueva {
     anchos: [14, 22, 16, 16, 11, 8, 22, 12, 16, 14, 12, 40, 10, 46],
     formatos: formatos({ 4: 'fecha', 10: 'porcentaje' }),
   }
+}
+
+/**
+ * Lo que la base guarda como `completa` u `ok` se lee mal en una hoja: son
+ * claves de programa. Se escriben como palabras, que es lo que cualquiera
+ * espera leer en una columna de resultado; lo que no se reconozca sale tal cual.
+ */
+const ESTADO_LEGIBLE: Record<string, string> = { completa: 'Completa', borrador: 'Borrador', cerrada: 'Cerrada' }
+const RESULTADO_LEGIBLE: Record<string, string> = { ok: 'Sin incidencias', con_incidencias: 'Con incidencias' }
+
+function estadoLegible(estado: string): string {
+  return ESTADO_LEGIBLE[estado] ?? estado
+}
+
+function resultadoLegible(resultado: string | null): string | null {
+  if (resultado === null) return null
+  return RESULTADO_LEGIBLE[resultado] ?? resultado
 }
 
 /**

@@ -113,6 +113,33 @@ describe('lo que el almacén va a apuntar', () => {
     expect(m).toEqual([])
   })
 
+  it('un renglón con 0 delante se apunta y no mueve el almacén', () => {
+    const m = movimientosPrevistos({
+      planes: [
+        plan('Material Instalado 2026', [
+          { campo: 'incidencia.material', destino: 'I260102_0002', valor: '1 Cable HDMI fibra 10 m, 0 Ratón' },
+        ]),
+      ],
+      incidencias: [parte()],
+      articulos,
+      resolver,
+    })
+    // El cable ya estaba descontado: nada. El ratón con 0: se enseña, cantidad 0, y no es «sin artículo».
+    expect(m).toEqual([expect.objectContaining({ tipo: 'sin_descontar', articulo: 'Ratón', cantidad: 0 })])
+  })
+
+  it('«Stock Disponible» cuando manda el Excel: la diferencia con el saldo es un ajuste', () => {
+    const conSaldo = [{ ...CABLE, saldo: 40 }, RATON]
+    const m = movimientosPrevistos({
+      planes: [plan('Bolsa 2026', [{ campo: 'articulo.disponible', destino: 'Cable HDMI fibra 10 m', valor: 31, letra: 'O' }])],
+      incidencias: [],
+      articulos: conSaldo,
+      resolver,
+    })
+    expect(m).toEqual([expect.objectContaining({ tipo: 'ajuste', articulo: 'Cable HDMI fibra 10 m', cantidad: 9 })])
+    expect(m[0]!.nota).toContain('salen 9')
+  })
+
   it('un artículo que el catálogo no conoce no descuenta nada, y se dice antes de aplicar', () => {
     const m = movimientosPrevistos({
       planes: [plan('Material Instalado 2026', [{ campo: 'incidencia.material', destino: 'I260102_0002', valor: '1 Cable HDMI fibra 10 m, 2 Regleta 6 tomas' }])],

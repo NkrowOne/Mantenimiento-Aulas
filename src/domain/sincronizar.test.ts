@@ -275,14 +275,17 @@ describe('la hoja de estado', () => {
     ])
   })
 
-  it('dentro de un bloque, la fila nueva no repite el nombre del edificio', () => {
+  it('dentro de un bloque, la fila nueva lleva también el edificio y la planta', () => {
+    // Antes se dejaban en blanco para imitar el libro de siempre; una fila sin
+    // edificio no se puede filtrar, y el libro reformateado los lleva en todas.
     const p = estado(
       [fila(2, { A: 'EDIFICIO P', C: '0.1P', Y: 'SALA-000001' })],
       [sala(), sala({ id: 'r2', shortRef: 'SALA-000002', code: '0.9P' })],
     )
-    const celdas = p.insertar[0]!.celdas.map((c) => c.celda)
-    expect(celdas).not.toContain('A3')
-    expect(celdas).toContain('C3')
+    const celdas = p.insertar[0]!.celdas
+    expect(celdas.find((c) => c.celda === 'A3')?.valor).toBe('EDIFICIO P')
+    expect(celdas.find((c) => c.celda === 'B3')?.valor).toBe('PLANTA BAJA')
+    expect(celdas.map((c) => c.celda)).toContain('C3')
   })
 
   it('un edificio que no está en la hoja abre bloque al final, con su nombre', () => {
@@ -737,9 +740,16 @@ function bolsa(filas: FilaLeida[], articulos: ArticuloVolcado[]) {
 }
 
 describe('la hoja de bolsa', () => {
-  it('rellena los meses, que hoy están en blanco', () => {
-    const p = bolsa([fila(2, { A: 'Cable HDMI fibra 10 m' })], [articulo()])
-    expect(p.celdas).toContainEqual({ celda: 'B2', valor: 1 })
+  it('rellena los meses desde el arranque del recuento; los de antes son del libro', () => {
+    // Agosto lo escribe la aplicación. Enero es de antes de que llevara el
+    // almacén: aunque tenga un consumo apuntado, la celda se queda como está.
+    const p = bolsa(
+      [fila(2, { A: 'Cable HDMI fibra 10 m' })],
+      [articulo({ meses: [1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0] })],
+    )
+    expect(p.celdas).toContainEqual({ celda: 'I2', valor: 2 })
+    expect(p.celdas.filter((c) => c.celda === 'B2')).toEqual([])
+    expect(p.haciaLaBase.filter((h) => h.campo === 'mes:1')).toEqual([])
   })
 
   it('no le devuelve la fórmula a una celda si la fórmula daría otra cosa', () => {
@@ -1303,9 +1313,9 @@ describe('un mes a cero es un mes en blanco', () => {
   const cab = fila(1, Object.fromEntries(BOLSA_2026.columnas.map((c) => [c.letra, c.cabecera])))
 
   it('no se escriben ceros en los meses que la hoja tiene en blanco', () => {
-    const art = articulo({ meses: [0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0] })
+    const art = articulo({ meses: [0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0] })
     const p = sincronizarBolsa({ hoja: BOLSA_2026, filas: [cab, fila(2, { A: art.nombre })], articulos: [art], resolver: () => art.id })
-    expect(p.celdas.filter((c) => /^[B-M]2$/.test(c.celda))).toEqual([{ celda: 'D2', valor: 3 }])
+    expect(p.celdas.filter((c) => /^[B-M]2$/.test(c.celda))).toEqual([{ celda: 'J2', valor: 3 }])
   })
 
   it('ni en una fila nueva', () => {
@@ -1334,6 +1344,61 @@ describe('un mes a cero es un mes en blanco', () => {
   })
 })
 
+describe('«Stock Disponible» cuando manda el Excel', () => {
+  const cab = fila(1, Object.fromEntries(BOLSA_2026.columnas.map((c) => [c.letra, c.cabecera])))
+  // La hoja dice 19 disponibles con sus fórmulas intactas; la app calcula 28 − 9 = 19 también
+  // en meses, pero su saldo real es otro. Lo que se manda a la base es lo que dice la celda.
+  const art = articulo({ meses: [1, 0, 0, 0, 0, 0, 0, 4, 9, 0, 0, 0], comprado: 32, saldo: 28 })
+  const filaBolsa = (o: number): FilaLeida =>
+    ({
+      fila: 2,
+      celdas: { A: art.nombre, B: 1, I: 4, J: 9, N: 14, O: o, P: 32 },
+      formulas: { N: 'B2+C2+D2+E2+F2+G2+H2+I2+J2+K2+L2+M2', O: 'P2-N2' },
+    }) as FilaLeida
+
+  it('sin referencia solo se avisa: la fórmula no se toca y la base tampoco', () => {
+    const p = sincronizarBolsa({ hoja: BOLSA_2026, filas: [cab, filaBolsa(19)], articulos: [art], resolver: () => art.id })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'articulo.disponible')).toEqual([])
+    expect(p.celdas.some((c) => c.celda === 'O2')).toBe(false)
+  })
+
+  it('con «manda el Excel» el disponible va a la base como ajuste, y la celda sigue sin tocarse', () => {
+    const p = sincronizarBolsa({
+      hoja: BOLSA_2026,
+      filas: [cab, filaBolsa(19)],
+      articulos: [art],
+      resolver: () => art.id,
+      referencia: 'excel',
+    })
+    expect(p.haciaLaBase).toContainEqual(expect.objectContaining({ campo: 'articulo.disponible', letra: 'O', valor: 19 }))
+    expect(p.celdas.some((c) => c.celda === 'O2')).toBe(false)
+  })
+
+  it('un disponible negativo no se cuadra: se dice que hay que revisar lo comprado', () => {
+    const p = sincronizarBolsa({
+      hoja: BOLSA_2026,
+      filas: [cab, filaBolsa(-3)],
+      articulos: [art],
+      resolver: () => art.id,
+      referencia: 'excel',
+    })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'articulo.disponible')).toEqual([])
+    expect(p.avisos.join(' ')).toContain('Total Comprado')
+  })
+
+  it('si la hoja y la app coinciden no hay nada que ajustar', () => {
+    const igual = articulo({ meses: [1, 0, 0, 0, 0, 0, 0, 4, 9, 0, 0, 0], comprado: 32, saldo: 18 })
+    const p = sincronizarBolsa({
+      hoja: BOLSA_2026,
+      filas: [cab, filaBolsa(18)],
+      articulos: [igual],
+      resolver: () => igual.id,
+      referencia: 'excel',
+    })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'articulo.disponible')).toEqual([])
+  })
+})
+
 describe('cada hoja de partes solo inserta los partes de su año', () => {
   it('un parte abierto en 2025 no entra en la hoja de 2026', () => {
     const p = sincronizarPartes({
@@ -1355,5 +1420,172 @@ describe('cada hoja de partes solo inserta los partes de su año', () => {
     })
     expect(p.insertar).toHaveLength(1)
     expect(p.insertar[0]!.celdas.some((c) => c.valor === 'I260301_0001')).toBe(true)
+  })
+})
+
+describe('un aula que dice «ninguna»', () => {
+  it('un parte nuevo con «Varias aulas» entra sin sala y no se pregunta', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [
+        CAB_PARTES,
+        fila(2, {
+          A: 'Varias aulas',
+          B: fechaAExcel('2026-09-15'),
+          C: fechaAExcel('2026-09-15'),
+          E: 'Regularización de almacén (septiembre 2026)',
+          G: '2 Botonera',
+        }),
+      ],
+      incidencias: [],
+      indice,
+    })
+    expect(p.dudas).toEqual([])
+    expect(p.sinCruzar).toEqual([])
+    expect(p.altas).toHaveLength(1)
+    expect(p.altas[0]).toMatchObject({ tipo: 'incidencia', salaId: null, aula: 'Varias aulas' })
+  })
+
+  it('en un parte que ya existe sin sala, la celda se compara como el blanco que es y no se toca', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES, fila(2, { D: 'I260102_0002', A: 'Almacén' })],
+      incidencias: [incidencia({ salaCode: '' })],
+    })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'sala.code')).toEqual([])
+    expect(p.celdas.filter((c) => c.celda === 'A2')).toEqual([])
+    expect(p.conflictos).toEqual([])
+    expect(p.instantanea).toContainEqual(expect.objectContaining({ letra: 'A', fila: 2, valor: 'Almacén' }))
+  })
+
+  it('y si la aplicación sí le puso sala, tampoco se pisa lo que alguien escribió', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES, fila(2, { D: 'I260102_0002', A: 'Varias aulas' })],
+      incidencias: [incidencia({ salaCode: '0.1 BC' })],
+    })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'sala.code')).toEqual([])
+    expect(p.celdas.filter((c) => c.celda === 'A2')).toEqual([])
+  })
+})
+
+describe('el corte y la mudanza cuando manda el Excel', () => {
+  const SERIAL = ESTADO.columnas.find((c) => c.campo === 'equipo:Proyector:serial')!.letra
+
+  it('un proyector instalado en la aplicación después del corte no lo pisa la hoja en la primera pasada', () => {
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, { Y: 'SALA-000001', C: '0.1P', [SERIAL]: 'SN-VIEJO' })],
+      salas: [sala({ equipos: [{ id: 'e1', tipo: 'Proyector', serial: 'SN-NUEVO', model: null, desde: '2026-09-15T10:00:00Z' }] })],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      referencia: 'excel',
+      corte: '2026-09-09',
+    })
+    expect(p.celdas).toContainEqual({ celda: `${SERIAL}2`, valor: 'SN-NUEVO' })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'equipo:Proyector:serial')).toEqual([])
+  })
+
+  it('el mismo proyector, instalado antes del corte: manda el Excel, como se eligió', () => {
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, { Y: 'SALA-000001', C: '0.1P', [SERIAL]: 'SN-VIEJO' })],
+      salas: [sala({ equipos: [{ id: 'e1', tipo: 'Proyector', serial: 'SN-NUEVO', model: null, desde: '2026-07-01T10:00:00Z' }] })],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      referencia: 'excel',
+      corte: '2026-09-09',
+    })
+    expect(p.haciaLaBase).toContainEqual(expect.objectContaining({ campo: 'equipo:Proyector:serial', valor: 'SN-VIEJO' }))
+    expect(p.celdas.filter((c) => c.celda === `${SERIAL}2`)).toEqual([])
+  })
+
+  it('una sala revisada después del corte se queda con sus altavoces aunque la hoja diga otra cosa', () => {
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, { Y: 'SALA-000001', C: '0.1P', H: 'NO' })],
+      salas: [sala({ revisiones: ['2026-09-12'], capacidades: { altavoces: true } })],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      referencia: 'excel',
+      corte: '2026-09-09',
+    })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'capacidad:altavoces')).toEqual([])
+    expect(p.celdas).toContainEqual({ celda: 'H2', valor: 'SI' })
+  })
+
+  const indiceDosEdificios = construirIndice({
+    ...catalogo,
+    edificios: [...(catalogo.edificios ?? []), { codigo: 'C', nombre: 'ED. CENTRAL', activo: true }],
+  })
+  const enElLibro = fila(2, { A: 'ED. CENTRAL', B: 'PLANTA BAJA', C: '0.1P', Y: 'SALA-000001' })
+  const antesDeciaP: Instantanea = (_clave, letra) => (letra === 'A' ? 'EDIFICIO P' : undefined)
+
+  it('con «manda el Excel», si el libro cambió el edificio de una sala, la sala se muda en la aplicación y la fila se queda', () => {
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, enElLibro],
+      salas: [sala()],
+      indice: indiceDosEdificios,
+      columnaRef: 'Y',
+      instantanea: antesDeciaP,
+      referencia: 'excel',
+    })
+    expect(p.borrar).toEqual([])
+    expect(p.haciaLaBase).toContainEqual(expect.objectContaining({ campo: 'edificio', valor: 'ED. CENTRAL' }))
+    expect(p.avisos.some((a) => a.includes('se muda en la aplicación'))).toBe(true)
+  })
+
+  it('sin elegir que mande el Excel, la fila se muda en el libro como siempre', () => {
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, enElLibro],
+      salas: [sala()],
+      indice: indiceDosEdificios,
+      columnaRef: 'Y',
+      instantanea: antesDeciaP,
+    })
+    expect(p.borrar).toEqual([2])
+    expect(p.haciaLaBase.filter((h) => h.campo === 'edificio')).toEqual([])
+  })
+
+  it('y si fue la aplicación la que movió la sala, «manda el Excel» no la devuelve: la fila se muda en el libro', () => {
+    // La celda dice lo mismo que en la última pasada: quien cambió fue la app.
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, enElLibro],
+      salas: [sala()],
+      indice: indiceDosEdificios,
+      columnaRef: 'Y',
+      instantanea: (_clave, letra) => (letra === 'A' ? 'ED. CENTRAL' : undefined),
+      referencia: 'excel',
+    })
+    expect(p.borrar).toEqual([2])
+  })
+
+  it('un parte cerrado en la aplicación después del corte no lo pisa la hoja', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES, fila(2, { D: 'I260102_0002', F: 'Texto viejo de la hoja' })],
+      incidencias: [incidencia({ abierta: '2026-09-10', resuelta: '2026-09-12', resolucion: 'Arreglado en la aplicación' })],
+      referencia: 'excel',
+      corte: '2026-09-09',
+    })
+    expect(p.celdas).toContainEqual({ celda: 'F2', valor: 'Arreglado en la aplicación' })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'incidencia.resolucion')).toEqual([])
+  })
+
+  it('y uno cerrado antes del corte sigue la regla elegida: entra lo que dice la hoja', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES, fila(2, { D: 'I260102_0002', F: 'Texto viejo de la hoja' })],
+      incidencias: [incidencia({ abierta: '2026-08-10', resuelta: '2026-08-12', resolucion: 'Arreglado en la aplicación' })],
+      referencia: 'excel',
+      corte: '2026-09-09',
+    })
+    expect(p.haciaLaBase).toContainEqual(expect.objectContaining({ campo: 'incidencia.resolucion', valor: 'Texto viejo de la hoja' }))
   })
 })

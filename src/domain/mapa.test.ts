@@ -117,6 +117,19 @@ describe('la comprobación de cabeceras', () => {
     })
   })
 
+  it('admite la cabecera corregida donde el libro traía una errata', () => {
+    // «Sreenbeam» lleva la errata desde el libro original; escrita bien no
+    // para la pasada. Y la segunda «Articulo / Material» de la bolsa puede
+    // llamarse «Otro nombre (alias)», que es lo que es.
+    expect(comprobarCabeceras(ESTADO, cabeceras({ U: 'Screenbeam' }))).toHaveLength(0)
+    const bolsa: Record<string, string> = {}
+    for (const c of BOLSA_2026.columnas) bolsa[c.letra] = c.cabecera
+    bolsa.Q = 'Otro nombre (alias)'
+    expect(comprobarCabeceras(BOLSA_2026, bolsa)).toHaveLength(0)
+    bolsa.Q = 'Notas'
+    expect(comprobarCabeceras(BOLSA_2026, bolsa).map((f) => f.letra)).toEqual(['Q'])
+  })
+
   it('una cabecera que falta también se dice', () => {
     const sinX = cabeceras({})
     delete sinX.X

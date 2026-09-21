@@ -28,6 +28,23 @@ interface Parte {
   perfil_rol: string | null
   perfil_activo: boolean | null
   puede_leer: boolean
+  /**
+   * Las migraciones que la base tiene anotadas. `null` es una base sin
+   * registro; ausente, un servidor cuya función de diagnóstico es anterior a
+   * que se contara esto. Se compara con `__MIGRACIONES__`, la lista con la que
+   * se compiló esta versión, porque «al servidor le falta una migración» tiene
+   * que ser una lista y no una sospecha: el 21 de septiembre los cierres de
+   * avería se quedaban en la cola por una columna que la base no tenía y desde
+   * el móvil no había forma de saber cuál ni por qué.
+   */
+  migraciones?: string[] | null
+}
+
+/** Las que esta versión de la aplicación necesita y la base no anota. */
+function migracionesQueFaltan(parte: Parte): string[] {
+  if (!parte.migraciones) return []
+  const anotadas = new Set(parte.migraciones)
+  return __MIGRACIONES__.filter((m) => !anotadas.has(m))
 }
 
 export function Diagnostico(): React.ReactElement {
@@ -96,7 +113,42 @@ export function Diagnostico(): React.ReactElement {
             {fila('rol del perfil', parte.perfil_rol ?? '—', !parte.perfil_rol)}
             {fila('perfil activo', parte.perfil_activo === false ? 'no' : 'sí', parte.perfil_activo === false)}
             {fila('puede leer', parte.puede_leer ? 'sí' : 'no', !parte.puede_leer)}
+            {parte.migraciones !== undefined &&
+              fila(
+                'migraciones en la base',
+                parte.migraciones === null ? 'sin registro' : `${parte.migraciones.length} anotadas`,
+                parte.migraciones === null,
+              )}
+            {migracionesQueFaltan(parte).length > 0 &&
+              fila('migraciones que faltan', String(migracionesQueFaltan(parte).length), true)}
           </ul>
+
+          {migracionesQueFaltan(parte).length > 0 && (
+            <div className="mt-3 text-sm">
+              <p className="text-crit">
+                A esta base le faltan {migracionesQueFaltan(parte).length} migraciones que esta versión
+                de la aplicación necesita. Mientras tanto, lo que la aplicación mande con columnas
+                nuevas se queda en la cola, con el motivo a la vista en la lámpara.
+              </p>
+              <ul className="mt-1 font-mono text-xs text-muted">
+                {migracionesQueFaltan(parte).map((m) => (
+                  <li key={m}>{m}</li>
+                ))}
+              </ul>
+              <p className="mt-1 text-muted">
+                En el servidor: <span className="font-mono">./scripts/deploy.sh</span> (o{' '}
+                <span className="font-mono">npm run init:plataforma</span> sobre una plataforma). Si
+                el registro anota como aplicada una que no corrió, ejecútala a mano con psql,
+                anótala y reinicia la API.
+              </p>
+            </div>
+          )}
+          {parte.migraciones === undefined && (
+            <p className="mt-2 text-xs text-muted">
+              Este servidor no dice qué migraciones tiene: su función de diagnóstico es anterior.
+              Le falta, al menos, la migración 20260921000400.
+            </p>
+          )}
 
           {/*
             La conclusión, escrita. Una tabla de valores obliga a saber ya cuál

@@ -1,13 +1,16 @@
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 import { ofrecerFichero } from '@/lib/ficheros'
+import { aplicarOperacion } from '@/features/rooms/maestro'
 import { analizar, aplicar, dudasPendientes, escribir, lineasDelParte, replanificar } from './pasada'
 import type { Analisis } from './pasada'
 import { Dudas } from './Dudas'
-import type { Respuesta } from '@/domain/dudas'
+import type { AltaDeSalaDesdeDuda } from './Dudas'
+import type { Respuesta, Respuestas } from '@/domain/dudas'
 import { columnaDeCampo, hojaPorNombre } from '@/domain/mapa'
 import type { MovimientoPrevisto } from '@/domain/movimientos'
 import type { Alta, Plan, Referencia } from '@/domain/sincronizar'
+import { fechaCorta } from '@/domain/fechas'
 import { Seccion } from './Seccion'
 
 /**
@@ -72,7 +75,17 @@ import { Seccion } from './Seccion'
  */
 export function SincronizarExcel(): React.ReactElement {
   const entrada = useRef<HTMLInputElement>(null)
+  const qc = useQueryClient()
+  /**
+   * El último libro leído, tal cual se subió. Hace falta para volver a leerlo
+   * sin pedirlo otra vez: al dar de alta una sala desde una duda, la fila que
+   * no cruzaba pasa a cruzar, y eso solo se sabe leyendo el libro contra la
+   * base de nuevo —el análisis guarda el maestro de cuando se leyó—.
+   */
+  const ultimoFichero = useRef<File | null>(null)
   const [referencia, setReferencia] = useState<Referencia | null>(null)
+  /** El corte: desde este día manda la aplicación en lo que ella cambió. `null` es sin corte. */
+  const [corte, setCorte] = useState<string | null>(null)
   const [analisis, setAnalisis] = useState<Analisis | null>(null)
   const [fallo, setFallo] = useState<string | null>(null)
   const [aplicado, setAplicado] = useState<string | null>(null)
@@ -81,7 +94,10 @@ export function SincronizarExcel(): React.ReactElement {
   const [entregando, setEntregando] = useState(false)
 
   const leer = useMutation({
-    mutationFn: (fichero: File) => analizar(fichero, new Date(), {}, referencia),
+    mutationFn: ({ fichero, respuestas = {} }: { fichero: File; respuestas?: Respuestas }) => {
+      ultimoFichero.current = fichero
+      return analizar(fichero, new Date(), respuestas, referencia, corte)
+    },
     onSuccess: (a) => {
       setAnalisis(a)
       setFallo(null)
@@ -143,10 +159,39 @@ export function SincronizarExcel(): React.ReactElement {
     volverAPlanificar(replanificar(analisis, respuestas))
   }
 
+  /**
+   * Dar de alta una sala que la hoja de estado describe y la aplicación no
+   * tiene, y volver a leer el libro con las respuestas que ya había.
+   *
+   * Pasa por la misma operación del maestro que el botón «+ Sala», así que la
+   * sala nace con matrícula y equipamiento por defecto y el espejo local se
+   * pone al día igual. Lo que cambia es lo de después: el libro se relee contra
+   * la base, porque el análisis guardado no conoce la sala recién creada, y con
+   * ella delante la fila cruza sola y recibe su matrícula en la pasada.
+   */
+  const crearSala = async (alta: AltaDeSalaDesdeDuda): Promise<void> => {
+    if (!analisis) return
+    await aplicarOperacion(
+      { kind: 'nueva-sala', building: alta.edificioId, zone: alta.zona, code: alta.code, name: alta.code, tipo: 'aula' },
+      qc,
+    )
+    const respuestas = { ...analisis.respuestas }
+    // La duda deja de existir en cuanto la fila cruza; si por lo que sea sigue,
+    // no se arrastra una respuesta vieja que ya no significa nada.
+    delete respuestas[alta.dudaId]
+    if (ultimoFichero.current) await leer.mutateAsync({ fichero: ultimoFichero.current, respuestas })
+  }
+
   /** Cambiar quién manda también: con el libro ya leído, la pasada se recalcula al momento. */
   const elegirReferencia = (r: Referencia | null): void => {
     setReferencia(r)
-    if (analisis) volverAPlanificar(replanificar(analisis, analisis.respuestas, r))
+    if (analisis) volverAPlanificar(replanificar(analisis, analisis.respuestas, r, corte))
+  }
+
+  /** Y el corte igual: con el libro leído, la pasada se recalcula al momento. */
+  const elegirCorte = (c: string | null): void => {
+    setCorte(c)
+    if (analisis) volverAPlanificar(replanificar(analisis, analisis.respuestas, referencia, c))
   }
 
   /**
@@ -205,7 +250,14 @@ export function SincronizarExcel(): React.ReactElement {
         ) : undefined
       }
     >
-      <QuienManda referencia={referencia} disabled={ocupado} onElegir={elegirReferencia} />
+      <QuienManda
+        referencia={referencia}
+        corte={corte}
+        ultimaSalida={analisis?.ultimaSalida ?? null}
+        disabled={ocupado}
+        onElegir={elegirReferencia}
+        onCorte={elegirCorte}
+      />
 
       <div className="card mt-4 p-4">
         <p className="eyebrow">2 · El libro</p>
@@ -220,7 +272,7 @@ export function SincronizarExcel(): React.ReactElement {
           disabled={ocupado}
           onChange={(e) => {
             const f = e.target.files?.[0]
-            if (f) leer.mutate(f)
+            if (f) leer.mutate({ fichero: f })
           }}
           className="mt-2 block w-full text-base file:mr-3 file:h-10 file:rounded-ctl file:border-0 file:bg-accent-fill file:px-4 file:font-semibold file:text-accent-ink"
         />
@@ -262,6 +314,7 @@ export function SincronizarExcel(): React.ReactElement {
               respuestas={analisis.respuestas}
               catalogo={analisis.catalogo}
               onContestar={contestar}
+              onCrearSala={crearSala}
             />
           )}
 
@@ -341,12 +394,19 @@ const OPCIONES: Array<{ id: Referencia | null; titulo: string; texto: string }> 
  */
 function QuienManda({
   referencia,
+  corte,
+  ultimaSalida,
   disabled,
   onElegir,
+  onCorte,
 }: {
   referencia: Referencia | null
+  corte: string | null
+  /** Cuándo salió el último libro de la aplicación, si se sabe: el corte natural. */
+  ultimaSalida: string | null
   disabled: boolean
   onElegir: (r: Referencia | null) => void
+  onCorte: (c: string | null) => void
 }): React.ReactElement {
   return (
     <div className="card mt-4 p-4">
@@ -378,15 +438,54 @@ function QuienManda({
           )
         })}
       </div>
+
+      {referencia !== 'app' && (
+        <div className="mt-4">
+          <label htmlFor="excel-corte" className="block text-sm font-semibold">
+            Desde este día manda la aplicación en lo que ella cambió
+          </label>
+          <p className="mt-1 text-xs leading-relaxed text-muted">
+            Para cuando el libro es el inventario de partida y lo trabajado en la aplicación desde
+            un día —revisiones, partes cerrados, equipos instalados— tiene que quedarse aunque
+            choque con la hoja. Lo que la aplicación cambió ese día o después gana; el resto sigue
+            lo elegido arriba. Sin fecha, no hay corte.
+            {ultimaSalida ? ` La última sincronización fue el ${fechaCorta(ultimaSalida)}.` : ''}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input
+              id="excel-corte"
+              type="date"
+              className="h-10 min-w-40 rounded-ctl border border-line bg-surface px-2 text-sm"
+              value={corte ?? ''}
+              disabled={disabled}
+              onChange={(ev) => onCorte(ev.target.value || null)}
+            />
+            {corte && (
+              <button
+                type="button"
+                className="key key-quiet min-h-10 px-3 text-sm"
+                disabled={disabled}
+                onClick={() => onCorte(null)}
+              >
+                Sin corte
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 /** Cómo se dice la elección, en una frase corta, donde haga falta recordarla. */
-function nombreDeLaReferencia(r: Referencia | null): string {
-  if (r === 'excel') return 'manda el Excel'
-  if (r === 'app') return 'manda la aplicación'
-  return 'decide una persona: los choques se quedan sin tocar'
+function nombreDeLaReferencia(r: Referencia | null, corte: string | null = null): string {
+  const base =
+    r === 'excel'
+      ? 'manda el Excel'
+      : r === 'app'
+        ? 'manda la aplicación'
+        : 'decide una persona: los choques se quedan sin tocar'
+  return corte && r !== 'app' ? `${base} · desde el ${fechaCorta(corte)} manda la aplicación en lo que cambió` : base
 }
 
 // -----------------------------------------------------------------------------
@@ -430,7 +529,7 @@ function Resumen({ analisis, total }: { analisis: Analisis; total: Totales }): R
       <p className="eyebrow">3 · Qué va a pasar</p>
       <p className="mt-1 text-sm">
         <span className="font-semibold">{analisis.nombre}</span>
-        <span className="text-muted"> · {nombreDeLaReferencia(analisis.referencia)}</span>
+        <span className="text-muted"> · {nombreDeLaReferencia(analisis.referencia, analisis.corte)}</span>
       </p>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -538,6 +637,21 @@ const TIPO_DE_MOVIMIENTO: Record<MovimientoPrevisto['tipo'], { titulo: string; t
     titulo: 'Devoluciones',
     tono: 'app',
     texto: 'Vuelven al almacén: la hoja baja la cantidad, o ya no cuenta ese artículo en el parte.',
+  },
+  ajuste: {
+    titulo: 'Ajustes al «Stock Disponible»',
+    tono: 'excel',
+    texto: 'Manda el Excel: lo que quede en el almacén después de compras y salidas se pone a lo que dice la hoja, con un movimiento de ajuste que deja rastro.',
+  },
+  sin_descontar: {
+    titulo: 'Apuntado sin descontar',
+    tono: 'igual',
+    texto: 'Lleva un 0 delante en «Material Usado»: material reciclado, de garantía o de stock antiguo. Se guarda en el parte y no sale del almacén.',
+  },
+  historico: {
+    titulo: 'Anteriores al recuento',
+    tono: 'igual',
+    texto: 'Partes de antes de que la aplicación llevara el almacén (1 de agosto de 2026). El material queda apuntado en el parte y no descuenta nada: esos meses de la bolsa son del libro.',
   },
   sin_articulo: {
     titulo: 'No se descuenta: artículo desconocido',

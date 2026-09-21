@@ -28,7 +28,7 @@
  */
 
 import type { Plan } from './sincronizar'
-import { leerMaterial } from './valores'
+import { leerMaterial, sinDescontar } from './valores'
 import type { ArticuloVolcado, IncidenciaVolcada } from './volcado'
 
 export interface MovimientoPrevisto {
@@ -37,11 +37,17 @@ export interface MovimientoPrevisto {
   /** El parte o el artículo del que sale. */
   destino: string
   /**
-   * Qué va a apuntar el almacén. `sin_articulo` y `no_entra` no apuntan nada, y
-   * por eso se enseñan: son las dos formas de que la hoja diga una cosa y el
-   * almacén se quede con otra.
+   * Qué va a apuntar el almacén. `sin_articulo`, `sin_descontar`, `historico` y
+   * `no_entra` no apuntan nada, y por eso se enseñan: son las formas de que la
+   * hoja diga una cosa y el almacén se quede con otra. `sin_descontar` es la
+   * buena de ellas —el 0 delante lo puso alguien a propósito— y sale para que
+   * se vea que se ha entendido; `historico` es el material de un parte de antes
+   * de que la aplicación llevara el almacén (`Hoja.arranque`): queda apuntado
+   * en el parte y no sale de ningún sitio, porque ya salió de un almacén que
+   * la aplicación no llevaba. `ajuste` es el cuadre con «Stock Disponible»
+   * cuando se ha elegido que mande el Excel.
    */
-  tipo: 'compra' | 'consumo' | 'devolucion' | 'sin_articulo' | 'no_entra'
+  tipo: 'compra' | 'consumo' | 'devolucion' | 'ajuste' | 'sin_articulo' | 'sin_descontar' | 'historico' | 'no_entra'
   articulo: string
   cantidad: number
   nota: string
@@ -53,6 +59,12 @@ export interface EntradaDeMovimientos {
   articulos: ArticuloVolcado[]
   /** Un nombre escrito como sea → el id del artículo, con los alias. */
   resolver: (nombre: string) => string | null
+  /**
+   * Desde cuándo lleva la aplicación el almacén (`Hoja.arranque`, un día ISO).
+   * El material de un parte anterior no mueve nada: es la misma regla que
+   * aplica `sync_material_del_parte` con la fecha del parte.
+   */
+  arranque?: string
 }
 
 export function movimientosPrevistos(e: EntradaDeMovimientos): MovimientoPrevisto[] {
@@ -94,6 +106,28 @@ export function movimientosPrevistos(e: EntradaDeMovimientos): MovimientoPrevist
         continue
       }
 
+      if (h.campo === 'articulo.disponible') {
+        const id = e.resolver(h.destino) ?? e.articulos.find((a) => norm(a.nombre) === norm(h.destino))?.id
+        const art = id ? porId.get(id) : undefined
+        const dice = numero(h.valor)
+        if (dice === null || !art || art.saldo === undefined) continue
+        const diferencia = dice - art.saldo
+        if (diferencia === 0) continue
+        out.push({
+          hoja: p.hoja,
+          fila: h.fila,
+          destino: h.destino,
+          tipo: 'ajuste',
+          articulo: art.nombre,
+          cantidad: Math.abs(diferencia),
+          nota:
+            diferencia > 0
+              ? `la hoja dice ${dice} disponibles y el almacén tiene ${art.saldo}: manda el Excel, entran ${diferencia} como ajuste`
+              : `la hoja dice ${dice} disponibles y el almacén tiene ${art.saldo}: manda el Excel, salen ${-diferencia} como ajuste`,
+        })
+        continue
+      }
+
       if (h.campo === 'incidencia.material') {
         const inc = porNumero.get(norm(h.destino))
         out.push(
@@ -105,6 +139,9 @@ export function movimientosPrevistos(e: EntradaDeMovimientos): MovimientoPrevist
             inc?.materialApuntado ?? [],
             e.resolver,
             nombreDe,
+            // La misma fecha que mira la base: la de resolución y, si no, la de
+            // apertura.
+            esAnterior(inc?.resuelta ?? inc?.abierta ?? null, e.arranque),
           ),
         )
       }
@@ -135,6 +172,7 @@ export function movimientosPrevistos(e: EntradaDeMovimientos): MovimientoPrevist
             [],
             e.resolver,
             nombreDe,
+            esAnterior(a.resuelta ?? a.abierta, e.arranque),
           ),
         )
       }
@@ -144,9 +182,15 @@ export function movimientosPrevistos(e: EntradaDeMovimientos): MovimientoPrevist
   return out
 }
 
+/** Un parte de antes del arranque del recuento. Sin fecha, o sin arranque, no lo es. */
+function esAnterior(fecha: string | null, arranque?: string): boolean {
+  return arranque !== undefined && fecha !== null && fecha < arranque
+}
+
 /**
  * La diferencia entre lo que la hoja dice y lo que el parte ya tiene descontado,
  * artículo a artículo. Es la misma cuenta que hace `sync_material_del_parte`.
+ * `anterior` es un parte de antes del arranque: se lee igual, y no mueve nada.
  */
 function deltasDeMaterial(
   hoja: string,
@@ -156,6 +200,7 @@ function deltasDeMaterial(
   apuntado: Array<{ articuloId: string; cantidad: number }>,
   resolver: (nombre: string) => string | null,
   nombreDe: (id: string, escrito: string) => string,
+  anterior = false,
 ): MovimientoPrevisto[] {
   const out: MovimientoPrevisto[] = []
   const tiene = new Map<string, number>()
@@ -165,6 +210,20 @@ function deltasDeMaterial(
   const pide = new Map<string, { cantidad: number; escrito: string }>()
   for (const m of leerMaterial(texto)) {
     const id = resolver(m.articulo)
+    // Un 0 delante es «apuntado sin descontar»: se guarda el texto en el parte
+    // y el almacén no se mueve. Se enseña para que se vea que se ha entendido.
+    if (sinDescontar(m)) {
+      out.push({
+        hoja,
+        fila,
+        destino,
+        tipo: 'sin_descontar',
+        articulo: m.articulo,
+        cantidad: 0,
+        nota: 'lleva un 0 delante: se apunta en el parte y no sale del almacén (reciclado, garantía o stock antiguo)',
+      })
+      continue
+    }
     // La base cuenta al menos una unidad por renglón, y aquí igual.
     const cantidad = Math.max(1, m.cantidad)
     if (id === null) {
@@ -181,6 +240,24 @@ function deltasDeMaterial(
     }
     const ya = pide.get(id)
     pide.set(id, { cantidad: (ya?.cantidad ?? 0) + cantidad, escrito: ya?.escrito ?? m.articulo })
+  }
+
+  if (anterior) {
+    // El parte es de antes de que la aplicación llevara el almacén: lo que la
+    // hoja dice se guarda en el parte y de aquí no sale ni vuelve nada, ni
+    // siquiera lo que el parte tuviera descontado de otra época.
+    for (const [id, { cantidad, escrito }] of pide) {
+      out.push({
+        hoja,
+        fila,
+        destino,
+        tipo: 'historico',
+        articulo: nombreDe(id, escrito),
+        cantidad,
+        nota: 'el parte es anterior al arranque del recuento: queda apuntado en el parte y no se descuenta del almacén',
+      })
+    }
+    return out
   }
 
   for (const [id, { cantidad, escrito }] of pide) {
