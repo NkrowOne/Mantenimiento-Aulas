@@ -4339,3 +4339,73 @@ begin;
     raise notice 'OK: el consumo que entra del Excel lleva el aula de su parte';
   end $$;
 rollback;
+
+\echo ''
+\echo '=== 78. Renombrar un tipo conserva el número de cada etiqueta ==='
+-- «Pantalla 2» tiene que acabar en «TV 2». Que el conjunto salga bien no basta:
+-- el número es lo único que distingue una pantalla de otra dentro del aula, y
+-- si se baraja, el parte que decía «la 2 no da señal» pasa a señalar otro
+-- aparato sin que nadie se entere, porque las tres siguen ahí con nombres
+-- correctos.
+--
+-- Las tres entran en la misma sentencia y comparten `created_at` a propósito:
+-- esa es justamente la condición con la que se barajaban, porque sin fecha que
+-- las ordene desempata el `id`, que es un uuid.
+begin;
+  do $$
+  declare
+    v_sala   uuid;
+    v_otra   uuid;
+    v_tipo   uuid;
+    v_ajeno  uuid;
+    v_n      integer;
+    v_salio  text;
+  begin
+    select id into v_sala from rooms order by id limit 1;
+    select id into v_otra from rooms where id <> v_sala order by id limit 1;
+    if v_otra is null then
+      raise notice 'SIN DATOS: hacen falta dos aulas para probar el choque';
+      return;
+    end if;
+
+    insert into asset_types (name, confirmed) values ('Pantalla de prueba', true)
+      returning id into v_tipo;
+    insert into asset_types (name, confirmed) values ('Ajeno de prueba', true)
+      returning id into v_ajeno;
+
+    insert into assets (asset_type_id, room_id, label, serial, status, created_by) values
+      (v_tipo, v_sala, 'Pantalla de prueba',   'PRB-78-1', 'instalado', '44444444-4444-4444-8444-444444444444'),
+      (v_tipo, v_sala, 'Pantalla de prueba 2', 'PRB-78-2', 'instalado', '44444444-4444-4444-8444-444444444444'),
+      (v_tipo, v_sala, 'Pantalla de prueba 3', 'PRB-78-3', 'instalado', '44444444-4444-4444-8444-444444444444');
+
+    -- En la otra aula, el nombre que le va a tocar ya está cogido por un equipo
+    -- de otro tipo. Ahí sí hay un choque de verdad.
+    insert into assets (asset_type_id, room_id, label, serial, status, created_by) values
+      (v_ajeno, v_otra, 'TV de prueba 2',       'PRB-78-4', 'instalado', '44444444-4444-4444-8444-444444444444'),
+      (v_tipo,  v_otra, 'Pantalla de prueba 2', 'PRB-78-5', 'instalado', '44444444-4444-4444-8444-444444444444');
+
+    v_n := public.relabel_assets_of_type(v_tipo, 'Pantalla de prueba', 'TV de prueba');
+    if v_n <> 4 then
+      raise exception 'FALLO: se han renombrado % etiquetas y eran 4', v_n;
+    end if;
+
+    select string_agg(label, ', ' order by serial) into v_salio
+      from assets where serial in ('PRB-78-1', 'PRB-78-2', 'PRB-78-3');
+    if v_salio <> 'TV de prueba, TV de prueba 2, TV de prueba 3' then
+      raise exception 'FALLO: los números se han barajado: %', v_salio;
+    end if;
+    raise notice 'OK: «Pantalla de prueba 2» acaba en «TV de prueba 2», no en otra';
+
+    -- El choque lo sigue resolviendo `assets_label_libre`, que además lo apunta.
+    select label into v_salio from assets where serial = 'PRB-78-5';
+    if v_salio = 'TV de prueba 2' then
+      raise exception 'FALLO: dos equipos con la misma etiqueta en la misma aula';
+    end if;
+    if not exists (select 1 from asset_label_conflicts c
+                    join assets a on a.id = c.asset_id
+                   where a.serial = 'PRB-78-5') then
+      raise exception 'FALLO: el choque no ha dejado apunte en la bandeja de duplicados';
+    end if;
+    raise notice 'OK: el nombre ya cogido se recoloca y queda apuntado (%)', v_salio;
+  end $$;
+rollback;
