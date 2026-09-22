@@ -1589,3 +1589,187 @@ describe('el corte y la mudanza cuando manda el Excel', () => {
     expect(p.haciaLaBase).toContainEqual(expect.objectContaining({ campo: 'incidencia.resolucion', valor: 'Texto viejo de la hoja' }))
   })
 })
+
+describe('un edificio que el maestro no conoce', () => {
+  // La hoja llama a los edificios como los llama SharePoint —«ED. P - BLAISE
+  // PASCAL»— y el maestro como los dejó el importador —«EDIFICIO P»—. Las
+  // aulas cruzan igual, porque cruzan por matrícula, pero la celda no coincide
+  // nunca: con «manda el Excel» se mandaba a la base aula por aula y volvían
+  // 23 apuntes de cuarentena iguales.
+  const comoLoEscribeSharePoint = {
+    A: 'ED. P - BLAISE PASCAL',
+    B: 'PLANTA BAJA',
+    C: '0.1P',
+    Y: 'SALA-000001',
+  }
+
+  it('su celda no viaja a la base, y se dice una vez con el recuento', () => {
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, comoLoEscribeSharePoint)],
+      salas: [sala()],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      referencia: 'excel',
+    })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'edificio')).toEqual([])
+    expect(p.cuarentena).toEqual([])
+    const aviso = p.avisos.find((a) => a.includes('ED. P - BLAISE PASCAL'))
+    expect(aviso).toBeTruthy()
+    expect(aviso).toContain('1 fila')
+    expect(aviso).toContain('Maestro')
+  })
+
+  it('y las demás columnas de esa fila siguen entrando como siempre', () => {
+    // No se bloquea la fila: solo esa celda. Lo que el Excel corrija en el
+    // aula tiene que seguir llegando.
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, { ...comoLoEscribeSharePoint, H: 'NO' })],
+      salas: [sala({ capacidades: { altavoces: true } })],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      referencia: 'excel',
+    })
+    expect(p.haciaLaBase).toContainEqual(
+      expect.objectContaining({ campo: 'capacidad:altavoces', valor: false }),
+    )
+  })
+
+  it('veinte filas del mismo bloque dan UN aviso, no veinte', () => {
+    const filas = Array.from({ length: 20 }, (_, i) =>
+      fila(i + 2, {
+        ...comoLoEscribeSharePoint,
+        C: `0.${i + 1}P`,
+        Y: `SALA-00000${i}`,
+      }),
+    )
+    const salas = filas.map((_f, i) =>
+      sala({ id: `r${i}`, shortRef: `SALA-00000${i}`, code: `0.${i + 1}P` }),
+    )
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, ...filas],
+      salas,
+      indice: construirIndice({
+        ...catalogo,
+        salas: salas.map((s) => ({
+          id: s.id,
+          shortRef: s.shortRef,
+          code: s.code,
+          name: s.code,
+          active: true,
+          zona: s.zona,
+          edificioCodigo: 'P',
+          edificioNombre: 'EDIFICIO P',
+          edificioActivo: true,
+          alias: [],
+        })),
+      }),
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      referencia: 'excel',
+    })
+    expect(p.avisos.filter((a) => a.includes('no es ningún edificio del maestro'))).toHaveLength(1)
+    expect(
+      p.avisos.find((a) => a.includes('no es ningún edificio del maestro')),
+    ).toContain('20 filas')
+    expect(p.haciaLaBase.filter((h) => h.campo === 'edificio')).toEqual([])
+  })
+})
+
+describe('la planta viaja con su edificio, o no viaja', () => {
+  it('si el edificio se retiene, la planta también: crearla en el edificio viejo sería peor que rechazarla', () => {
+    // La base crea la planta dentro del edificio en el que la sala está HOY
+    // (sync_mover_sala). Con el edificio retenido, mandar la planta pone
+    // «PLANTA 2» en el edificio de antes, sin un solo mensaje.
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [
+        CABECERA,
+        fila(2, {
+          A: 'ED. S - SÓCRATES',
+          B: 'PLANTA 2',
+          C: '0.1P',
+          Y: 'SALA-000001',
+        }),
+      ],
+      salas: [sala()],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      referencia: 'excel',
+    })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'edificio' || h.campo === 'zona')).toEqual([])
+  })
+
+  it('pero con el edificio conocido, la planta entra: para eso la base sabe crearla', () => {
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, { A: 'EDIFICIO P', B: 'PLANTA 2', C: '0.1P', Y: 'SALA-000001' })],
+      salas: [sala()],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      referencia: 'excel',
+    })
+    expect(p.haciaLaBase).toContainEqual(
+      expect.objectContaining({ campo: 'zona', valor: 'PLANTA 2' }),
+    )
+  })
+})
+
+describe('y el aviso no impide que la hoja se siga corrigiendo', () => {
+  it('con «manda la aplicación», el nombre del maestro sigue entrando en la celda: es un renombrado', () => {
+    // La guarda corta solo la dirección que estaba rota —mandar a la base un
+    // nombre que la base no puede aplicar—, no la que sana erratas.
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, { A: 'ED. P - BLAISE PASCAL', C: '0.1P', Y: 'SALA-000001' })],
+      salas: [sala()],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      referencia: 'app',
+    })
+    expect(p.celdas).toContainEqual({ celda: 'A2', valor: 'EDIFICIO P' })
+    expect(p.haciaLaBase.filter((h) => h.campo === 'edificio')).toEqual([])
+  })
+})
+
+describe('un parte sin aula a propósito no es un parte sin identificar', () => {
+  it('«Varias aulas» entra marcado como sin sala a propósito', () => {
+    // La base apunta en la cuarentena todo parte que entra sin sala, y esa
+    // bandeja solo sabe ofrecer salas del maestro: una regularización de
+    // almacén se quedaría ahí para siempre, una por pasada.
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [
+        CAB_PARTES,
+        fila(2, {
+          A: 'Varias aulas',
+          B: fechaAExcel('2026-09-15'),
+          E: 'Regularización de almacén',
+          G: '2 Botonera',
+        }),
+      ],
+      incidencias: [],
+      indice,
+    })
+    expect(p.altas[0]).toMatchObject({ tipo: 'incidencia', salaId: null, sinSala: true })
+  })
+
+  it('y un aula que no cruza entra SIN esa marca: ésa sí hay que colocarla', () => {
+    const p = sincronizarPartes({
+      hoja: MATERIAL_2026,
+      filas: [CAB_PARTES, fila(2, { A: '9.9 ZZ', B: fechaAExcel('2026-09-15'), E: 'No arranca' })],
+      incidencias: [],
+      indice,
+      respuestas: { [`${MATERIAL_2026.nombre}!2`]: { tipo: 'sin_sala' } },
+    })
+    // Contestar «no es de ninguna sala» también es a propósito.
+    expect(p.altas[0]).toMatchObject({ salaId: null, sinSala: true })
+  })
+})

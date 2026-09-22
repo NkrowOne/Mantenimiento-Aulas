@@ -187,3 +187,82 @@ describe('el material de un parte anterior al arranque se apunta y no se descuen
     expect(movs[0]!.cantidad).toBe(3)
   })
 })
+
+describe('la vista previa y la base cuentan lo mismo en un parte anterior', () => {
+  const CABLE: ArticuloVolcado = {
+    id: 'cable',
+    nombre: 'Cable HDMI fibra 10 m',
+    meses: [],
+    comprado: 28,
+  }
+  const resolver = (n: string): string | null =>
+    n.toLowerCase().startsWith('cable') ? 'cable' : null
+
+  function planDe(valor: string): Plan {
+    return {
+      hoja: 'Material Instalado 2026',
+      celdas: [],
+      insertar: [],
+      borrar: [],
+      haciaElExcel: [],
+      filasQueEntran: [],
+      filasQueSalen: [],
+      haciaLaBase: [
+        {
+          fila: 2,
+          letra: 'G',
+          campo: 'incidencia.material',
+          destino: 'I260102_0007',
+          valor,
+          motivo: '',
+        },
+      ],
+      conflictos: [],
+      cuarentena: [],
+      instantanea: [],
+      sinCruzar: [],
+      dudas: [],
+      altas: [],
+      avisos: [],
+      desajustes: [],
+    }
+  }
+  const parteDeEnero: IncidenciaVolcada = {
+    id: 'i1',
+    numero: 'I260102_0007',
+    salaCode: '1.7',
+    abierta: '2026-01-02',
+    resuelta: null,
+    problema: 'Sin imagen',
+    observacion: null,
+    resolucion: null,
+    material: null,
+    esParte: true,
+    materialApuntado: [],
+  }
+
+  it('un artículo que el catálogo no reconoce, en un parte anterior, NO sale como desconocido', () => {
+    // La base descarta el parte antiguo antes de mirar si el nombre cruza, así
+    // que no apunta nada en cuarentena. La pantalla decía lo contrario.
+    const movs = movimientosPrevistos({
+      planes: [planDe('1 lampara NP30')],
+      incidencias: [parteDeEnero],
+      articulos: [CABLE],
+      resolver,
+      arranque: ARRANQUE_2026,
+    })
+    expect(movs.map((m) => m.tipo)).toEqual(['historico'])
+    expect(movs[0]!.articulo).toBe('lampara NP30')
+  })
+
+  it('y en un parte de después sí sale, que es donde de verdad no se va a descontar', () => {
+    const movs = movimientosPrevistos({
+      planes: [planDe('1 lampara NP30')],
+      incidencias: [{ ...parteDeEnero, resuelta: '2026-09-10' }],
+      articulos: [CABLE],
+      resolver,
+      arranque: ARRANQUE_2026,
+    })
+    expect(movs.map((m) => m.tipo)).toEqual(['sin_articulo'])
+  })
+})

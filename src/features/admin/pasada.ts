@@ -226,8 +226,8 @@ export async function analizar(
     catalogo,
     entrada,
     bloqueada: planes.some((p) => p.desajustes.length > 0),
-    libroDesconocido: salida !== null && salida.sha256 !== sha256,
-    ultimaSalida: salida?.cuando ?? null,
+    libroDesconocido: salida.estado === 'conocida' && salida.sha256 !== sha256,
+    ultimaSalida: salida.estado === 'conocida' ? salida.cuando : null,
   }
 }
 
@@ -356,15 +356,30 @@ function planificar(
   return planes
 }
 
-/** El libro que salió de la última pasada, para saber si es éste el que se sube. */
-async function ultimaSalida(): Promise<{ sha256: string; cuando: string } | null> {
+/**
+ * El libro que salió de la última pasada, para saber si es éste el que se sube.
+ *
+ * Tres respuestas, no dos, y la tercera es la que faltaba: «no lo sé». Un
+ * servidor al que le falta `sync_ultima_salida` —o que no contesta— devolvía
+ * `null`, lo mismo que «nunca se ha sincronizado», y quien leía eso concluía
+ * que el libro guardado en el aparato era el bueno. Sobre la base del 22/09,
+ * con migraciones anotadas y sin ejecutar, eso habría dicho «súbelo» de un
+ * fichero de hace tres semanas.
+ */
+export type UltimaSalida =
+  | { estado: 'ninguna' }
+  | { estado: 'conocida'; sha256: string; cuando: string }
+  | { estado: 'no se sabe'; porQue: string }
+
+export async function ultimaSalida(): Promise<UltimaSalida> {
   // Con plazo, como todo lo que la pasada pide: ver `datosDeLaPasada.ts`.
   const { data, error } = await supabase.rpc('sync_ultima_salida').abortSignal(señalConTope(25_000))
-  // Un servidor sin esta función es un servidor que todavía no ha sincronizado
-  // nunca: no hay con qué comparar, y parar aquí sería romper la pantalla.
-  if (error || !Array.isArray(data) || data.length === 0) return null
+  if (error) return { estado: 'no se sabe', porQue: error.message }
+  if (!Array.isArray(data) || data.length === 0) return { estado: 'ninguna' }
   const fila = data[0] as { sha256: string | null; cuando: string }
-  return fila.sha256 ? { sha256: fila.sha256, cuando: fila.cuando } : null
+  return fila.sha256
+    ? { estado: 'conocida', sha256: fila.sha256, cuando: fila.cuando }
+    : { estado: 'ninguna' }
 }
 
 /** El antepasado de cada celda de una hoja, de golpe. */
@@ -581,6 +596,9 @@ function altaParaLaBase(hoja: string, alta: Alta, a: Analisis): Record<string, u
       return {
         ...base,
         sala_id: alta.salaId,
+        // Sin sala a propósito no es lo mismo que sin sala por no saberlo: la
+        // base no apunta en la cuarentena lo que no tiene nada que resolver.
+        sin_sala: alta.sinSala ?? false,
         aula: alta.aula,
         numero: alta.numero,
         abierta: alta.abierta,

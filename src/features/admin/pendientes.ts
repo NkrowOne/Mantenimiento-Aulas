@@ -26,6 +26,8 @@ export interface PendientesDeDatos {
   edificiosSinIdentificar: number
   incidenciasSinSala: number
   cuarentena: number
+  /** De esas, las que ya cuenta «incidencias sin sala»: no se suman dos veces. */
+  cuarentenaSinSala: number
   /** Cuándo salió el último libro sincronizado, en ISO. Nulo si nunca. */
   ultimaSincronizacion: string | null
 }
@@ -40,6 +42,7 @@ const NADA: PendientesDeDatos = {
   edificiosSinIdentificar: 0,
   incidenciasSinSala: 0,
   cuarentena: 0,
+  cuarentenaSinSala: 0,
   ultimaSincronizacion: null,
 }
 
@@ -75,7 +78,17 @@ async function ultimaSalida(): Promise<string | null> {
 }
 
 export async function contarPendientes(): Promise<PendientesDeDatos> {
-  const [retiradas, equipos, tipos, duplicados, edificios, sinSala, cuarentena, salida] = await Promise.all([
+  const [
+    retiradas,
+    equipos,
+    tipos,
+    duplicados,
+    edificios,
+    sinSala,
+    cuarentena,
+    cuarentenaSinSala,
+    salida,
+  ] = await Promise.all([
     cuenta(supabase.from('asset_removal_queue').select('id', { count: 'exact', head: true })),
     cuenta(
       supabase
@@ -101,6 +114,13 @@ export async function contarPendientes(): Promise<PendientesDeDatos> {
     ),
     filasDe('incidencias_sin_sala'),
     cuenta(supabase.from('import_quarantine').select('id', { count: 'exact', head: true }).eq('resolved', false)),
+    cuenta(
+      supabase
+        .from('import_quarantine')
+        .select('id', { count: 'exact', head: true })
+        .eq('resolved', false)
+        .eq('reason', 'No se pudo identificar la sala'),
+    ),
     ultimaSalida(),
   ])
 
@@ -112,6 +132,7 @@ export async function contarPendientes(): Promise<PendientesDeDatos> {
     edificiosSinIdentificar: edificios,
     incidenciasSinSala: sinSala,
     cuarentena,
+    cuarentenaSinSala,
     ultimaSincronizacion: salida,
   }
 }
@@ -151,6 +172,12 @@ export function porSeccion(p: PendientesDeDatos): {
   return {
     pendientes: p.retiradas + p.equiposSinValidar + p.tiposSinValidar + p.duplicados,
     maestro: p.edificiosSinIdentificar,
-    importacion: p.incidenciasSinSala + p.cuarentena,
+    /*
+     * Sin sumar dos veces lo mismo. Una incidencia sin sala deja además su fila
+     * en la cuarentena con el motivo «No se pudo identificar la sala», y las
+     * dos cosas se contaban: la insignia decía 68 donde había 34 decisiones. Y
+     * ese número es lo que decide si alguien entra en la sección.
+     */
+    importacion: p.incidenciasSinSala + Math.max(0, p.cuarentena - p.cuarentenaSinSala),
   }
 }

@@ -769,6 +769,30 @@ y que el código respeta desde entonces:
 - **El corte** (`corte`, en `Celda`, en las entradas de las cuatro hojas y en
   `Analisis`): desde un día manda la aplicación en lo que ella cambió. Ver el
   apartado «Quién manda cuando no se puede saber».
+- **Un edificio que el maestro no conoce no viaja a la base** (`noALaBase`, en
+  `sincronizarEstado`). La hoja escribe «ED. S - SÓCRATES» y el maestro tiene
+  «EDIFICIO S»: la fila cruza por matrícula, pero la celda no coincide y con
+  «manda el Excel» se mandaba aula por aula a `sync_mover_sala`, que solo sabe
+  mover a un edificio que existe. Eran 23 apuntes de cuarentena idénticos por
+  pasada. Ahora se retiene esa celda —y la de la planta con ella, porque la
+  planta se crea dentro del edificio en el que la sala está HOY— y se emite un
+  aviso por edificio con su recuento. Hacia el Excel sí se sigue escribiendo:
+  un nombre que el maestro no conoce se trata como un renombrado, y corregir la
+  celda es lo que sana una errata.
+- **Un parte que no es de ninguna sala a propósito no va a la cuarentena**
+  (`Alta.sinSala` → `sync_alta`, e `incidents.sin_sala`). «Varias aulas»,
+  «Almacén» o el botón «No es de ninguna sala» entran sin sala porque no la
+  tienen; apuntarlos como «No se pudo identificar la sala» dejaba una fila que
+  nadie podía cerrar —cerrarla exige elegir una sala del maestro— y el montón
+  crecía en cada pasada.
+- **El almacén dice QUÉ material no reconoce**, no cuántos
+  (`sync_material_del_parte`). El número iba además dentro del motivo, que
+  forma parte de la clave que impide duplicar la cuarentena: al cambiar de uno
+  a dos se abría un apunte nuevo y el viejo se quedaba abierto para siempre.
+- **La vista previa cuenta como la base en un parte anterior al arranque**
+  (`movimientos.ts`): el material que el catálogo no reconoce ya no sale como
+  «artículo desconocido», porque la base descarta el parte antiguo antes de
+  mirar si el nombre cruza y no apunta nada.
 - **Con «manda el Excel», el libro muda salas de edificio** (`laMudaElLibro`):
   si la celda del edificio ya no dice lo que decía en la última pasada, la
   fila se queda y la celda viaja a la base, donde `sync_mover_sala` mueve la

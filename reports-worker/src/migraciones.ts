@@ -24,8 +24,25 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Sql } from 'postgres'
 import { conectar } from './db.js'
+import { desajustes, esRepetible, funcionesDe, versionVigente } from './esquema.js'
 
-const DIRECTORIO = process.argv[2] ?? process.env['MIGRACIONES_DIR'] ?? '/opt/migraciones'
+/**
+ * `migrar --reaplicar <fichero>`: vuelve a ejecutar una migración que el
+ * registro da por aplicada y el esquema desmiente.
+ *
+ * Existe porque el atajo que había —anotarla en `schema_migrations` sin
+ * ejecutarla— es justo lo que ha causado la avería dos veces. Éste hace lo
+ * contrario: ejecuta de verdad, y solo si el fichero se puede repetir sin
+ * romper ni borrar nada.
+ */
+const REAPLICAR = process.argv.includes('--reaplicar')
+  ? (process.argv[process.argv.indexOf('--reaplicar') + 1] ?? '')
+  : null
+
+const DIRECTORIO =
+  (process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : undefined) ??
+  process.env['MIGRACIONES_DIR'] ??
+  '/opt/migraciones'
 const DATABASE_URL = process.env['DATABASE_URL'] ?? ''
 
 /**
@@ -102,10 +119,163 @@ async function esLaBaseDelDespliegue(sql: Sql): Promise<boolean> {
   return false
 }
 
+/**
+ * Las funciones que la base tiene, con el md5 de su cuerpo.
+ *
+ * Solo las del esquema `public` y solo las normales: los agregados y las de
+ * ventana no salen de ninguna migración de este proyecto.
+ */
+async function funcionesDeLaBase(sql: Sql): Promise<Map<string, Set<string>>> {
+  const filas = await sql<{ nombre: string; md5: string }[]>`
+    select n.nspname || '.' || p.proname as nombre, md5(p.prosrc) as md5
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.prokind = 'f'`
+  const out = new Map<string, Set<string>>()
+  for (const f of filas) {
+    const ya = out.get(f.nombre) ?? new Set<string>()
+    ya.add(f.md5)
+    out.set(f.nombre, ya)
+  }
+  return out
+}
+
+/** @returns cuántas funciones de la base no son las del repositorio. */
+async function comprobarElEsquema(sql: Sql, ficheros: string[]): Promise<number> {
+  const analizados = ficheros.map((f) => ({
+    fichero: f,
+    ...funcionesDe(f, readFileSync(join(DIRECTORIO, f), 'utf8')),
+  }))
+  const sinLeer = analizados.flatMap((a) => a.sinLeer)
+  const vigente = versionVigente(analizados)
+  const fuera = desajustes(vigente, await funcionesDeLaBase(sql))
+
+  if (sinLeer.length > 0) {
+    // Decirlo, siempre. Una comprobación que se calla lo que no ha mirado es
+    // otra forma de mentir, que es de lo que veníamos.
+    avisa(`${sinLeer.length} definiciones no se han podido leer y NO se han comprobado:`)
+    for (const s of sinLeer.slice(0, 5)) avisa(`    ${s.fichero} · ${s.nombre}: ${s.porQue}`)
+  }
+
+  if (fuera.length === 0) {
+    ok(`esquema comprobado: las ${vigente.size} funciones de la base son las del repositorio`)
+    return 0
+  }
+
+  // Por fichero, que es la unidad con la que se arregla.
+  const porFichero = new Map<string, string[]>()
+  for (const d of fuera)
+    porFichero.set(d.fichero, [...(porFichero.get(d.fichero) ?? []), `${d.nombre} (${d.que})`])
+
+  console.error(
+    `  ✗ el esquema NO cuadra: ${fuera.length} de ${vigente.size} funciones no son las del repositorio.`,
+  )
+  console.error(
+    '    El registro dice que esas migraciones están aplicadas y la base dice que no.',
+  )
+  console.error(
+    '    Casi siempre es porque alguien las anotó sin ejecutarlas para salir de un atasco.',
+  )
+  for (const [fichero, nombres] of porFichero) {
+    console.error(`    ${fichero}`)
+    for (const n of nombres.slice(0, 6)) console.error(`        ${n}`)
+    if (nombres.length > 6) console.error(`        … y ${nombres.length - 6} más`)
+  }
+
+  /*
+   * Y el remedio, en orden y desde el principio del estropicio.
+   *
+   * No basta con reaplicar los ficheros que poseen una función descuadrada: un
+   * registro que mintió sobre uno mintió sobre la tanda, y lo que una migración
+   * hace con los DATOS —un `update` que reclasifica movimientos— no deja rastro
+   * en `pg_proc`, así que aquí no se ve. El caso real: la rama de
+   * `articulo.disponible` vive hoy en la migración del día 200, pero la del 100
+   * es la que reclasifica el saldo inicial como compra, y la del 200 busca
+   * justo la nota que la del 100 deja. Reaplicar solo la del 200 deja el
+   * almacén a medias y en silencio.
+   */
+  const primero = [...porFichero.keys()].sort()[0]!
+  const desdeAhi = ficheros.filter((f) => f >= primero)
+  console.error('')
+  console.error(
+    '    Hay que reaplicar en orden, desde la primera que falla. Lo que una migración',
+  )
+  console.error(
+    '    cambia en los DATOS no se ve en esta comprobación, así que no basta con las',
+  )
+  console.error('    que salen arriba:')
+  for (const f of desdeAhi) {
+    const { si, porQue } = esRepetible(readFileSync(join(DIRECTORIO, f), 'utf8'))
+    console.error(si ? `        migrar --reaplicar ${f}` : `        ${f}  ← a mano: ${porQue}`)
+  }
+  return fuera.length
+}
+
+/**
+ * Vuelve a ejecutar una migración que el registro da por aplicada.
+ *
+ * Es la salida del atasco que sustituye al atajo viejo —anotarla sin
+ * ejecutarla—, y por eso comprueba antes que el fichero se pueda repetir sin
+ * romper ni borrar nada. Si no se puede, no lo hace: lo dice y se queda quieto.
+ */
+async function reaplicar(sql: Sql, fichero: string, ficheros: string[]): Promise<number> {
+  if (!ficheros.includes(fichero)) {
+    console.error(`  ✗ «${fichero}» no está en ${DIRECTORIO}. Escribe el nombre tal cual, con su .sql.`)
+    return 1
+  }
+  const contenido = readFileSync(join(DIRECTORIO, fichero), 'utf8')
+  const { si, porQue } = esRepetible(contenido)
+  if (!si) {
+    console.error(`  ✗ «${fichero}» no se puede volver a aplicar entero: ${porQue}.`)
+    console.error(
+      '    Hay que mirarlo y aplicar a mano lo que falte. Repetirlo podría borrar trabajo.',
+    )
+    return 1
+  }
+  console.log(`    reaplicando ${fichero} (${porQue})`)
+  try {
+    await sql.unsafe(contenido).simple()
+  } catch (err) {
+    console.error(`  ✗ ${fichero}: ${mensaje(err)}`)
+    return 1
+  }
+  await sql`insert into public.schema_migrations (filename) values (${fichero}) on conflict do nothing`
+  ok(`${fichero} aplicada de verdad`)
+  const quedan = await comprobarElEsquema(sql, ficheros)
+  try {
+    await sql.notify('pgrst', 'reload schema')
+    ok('avisado a PostgREST de que recargue el esquema')
+  } catch {
+    avisa('no se ha podido avisar a PostgREST: reinicia su servicio si la API no ve los cambios')
+  }
+  return quedan > 0 ? 3 : 0
+}
+
 async function main(): Promise<number> {
   if (!DATABASE_URL) {
-    avisa('sin DATABASE_URL: no se aplican migraciones')
-    return 0
+    /*
+     * Sin cadena de conexión no se aplica nada, y eso NO es un éxito.
+     *
+     * Devolvía 0. El arranque lo leía como «al día», `salud.json` publicaba
+     * «migraciones: al dia» y nadie volvía a mirar: un despliegue en el que
+     * este servicio no lleva `DATABASE_URL` no migra la base NUNCA, deploy
+     * tras deploy, diciendo que todo va bien. Se descubrió el 22/09/2026, con
+     * la base corriendo funciones de agosto: los cierres de avería atascados
+     * por una columna que no existía y 54 filas en cuarentena porque el
+     * almacén y las plantas seguían con las reglas viejas.
+     *
+     * El 2 lo distingue de un fallo de verdad (1): no se ha podido comprobar.
+     */
+    avisa(
+      'sin DATABASE_URL: este servicio NO aplica migraciones, ni ahora ni en los despliegues siguientes.',
+    )
+    avisa(
+      'La base se queda como esté, y la aplicación pedirá columnas y funciones que quizá no tenga.',
+    )
+    avisa(
+      'Solución: añade DATABASE_URL (el Postgres de la pila) a las variables de ESTE servicio y vuelve a desplegar.',
+    )
+    return 2
   }
 
   let ficheros: string[]
@@ -134,6 +304,8 @@ async function main(): Promise<number> {
     // que no pueden hacer dos réplicas a la vez.
     await sql`select pg_advisory_lock(${CERROJO})`
 
+    if (REAPLICAR !== null) return await reaplicar(sql, REAPLICAR, ficheros)
+
     await sql.unsafe(`create table if not exists public.schema_migrations (
       filename   text primary key,
       applied_at timestamptz not null default now())`)
@@ -161,7 +333,24 @@ async function main(): Promise<number> {
     }
 
     await sql`select pg_advisory_unlock(${CERROJO})`
-    ok(nuevas === 0 ? 'la base ya estaba al día' : `${nuevas} migraciones nuevas, ${ficheros.length} en total`)
+    ok(
+      nuevas === 0
+        ? 'el registro no pedía ninguna'
+        : `${nuevas} migraciones nuevas, ${ficheros.length} en total`,
+    )
+
+    /*
+     * Y ahora lo que de verdad contesta «¿está la base al día?»: el esquema.
+     *
+     * El registro no puede contestarlo. Guarda un nombre de fichero, así que
+     * «aplicada» significa «alguien escribió esta cadena en una tabla», y eso
+     * ha sido falso dos veces en una semana con el coste de siete días de
+     * trabajo atascados y 54 filas en cuarentena. El cuerpo de cada función
+     * está en `pg_proc.prosrc` byte a byte: comparar su md5 con el del fichero
+     * no se puede engañar anotando una fila.
+     */
+    const noCuadra = await comprobarElEsquema(sql, ficheros)
+    if (noCuadra > 0) return 3
 
     /*
      * PostgREST lee el esquema al arrancar y lo guarda en memoria: un `create

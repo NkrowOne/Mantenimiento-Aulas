@@ -206,6 +206,35 @@ function deltasDeMaterial(
   const tiene = new Map<string, number>()
   for (const m of apuntado) tiene.set(m.articuloId, (tiene.get(m.articuloId) ?? 0) + m.cantidad)
 
+  /*
+   * Un parte anterior al arranque del recuento se despacha aquí, antes de
+   * mirar nada más: lo que la hoja dice se guarda en el parte y de aquí no
+   * sale ni vuelve nada, ni siquiera lo que el parte tuviera descontado de otra
+   * época.
+   *
+   * Y antes de resolver el artículo, que es lo que hace la base
+   * (`sync_material_del_parte` descarta el parte antiguo y ni mira si el
+   * nombre cruza). Estaba después, así que un material que el catálogo no
+   * reconoce salía en la vista previa como «no se descuenta: artículo
+   * desconocido» y en la base no salía de ninguna forma: la pantalla enseñaba
+   * más problemas de los que iban a existir, justo donde hay que creérsela.
+   */
+  if (anterior) {
+    for (const m of leerMaterial(texto)) {
+      const id = resolver(m.articulo)
+      out.push({
+        hoja,
+        fila,
+        destino,
+        tipo: 'historico',
+        articulo: id === null ? m.articulo : nombreDe(id, m.articulo),
+        cantidad: Math.max(0, m.cantidad),
+        nota: 'el parte es anterior al arranque del recuento: queda apuntado en el parte y no se descuenta del almacén',
+      })
+    }
+    return out
+  }
+
   // Lo que la hoja pide, sumado por artículo: «1 cable, 1 cable» son dos.
   const pide = new Map<string, { cantidad: number; escrito: string }>()
   for (const m of leerMaterial(texto)) {
@@ -240,24 +269,6 @@ function deltasDeMaterial(
     }
     const ya = pide.get(id)
     pide.set(id, { cantidad: (ya?.cantidad ?? 0) + cantidad, escrito: ya?.escrito ?? m.articulo })
-  }
-
-  if (anterior) {
-    // El parte es de antes de que la aplicación llevara el almacén: lo que la
-    // hoja dice se guarda en el parte y de aquí no sale ni vuelve nada, ni
-    // siquiera lo que el parte tuviera descontado de otra época.
-    for (const [id, { cantidad, escrito }] of pide) {
-      out.push({
-        hoja,
-        fila,
-        destino,
-        tipo: 'historico',
-        articulo: nombreDe(id, escrito),
-        cantidad,
-        nota: 'el parte es anterior al arranque del recuento: queda apuntado en el parte y no se descuenta del almacén',
-      })
-    }
-    return out
   }
 
   for (const [id, { cantidad, escrito }] of pide) {

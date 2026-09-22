@@ -47,11 +47,37 @@ npm run admin:user -- crear tu@correo.es "Tu nombre" --primer-admin
 que arranca a medias y falla en el tercer servicio cuesta mucho más de
 diagnosticar que uno que se niega a empezar diciendo qué falta.
 
+### Cuando la base se queda atrás
+
+Tres averías distintas, y las tres se veían igual —la aplicación pide una
+columna o una función que el servidor no tiene— hasta que cada una dijo lo
+suyo. Datos → «Ver diagnóstico del servidor» las distingue, y `/salud.json`
+las publica en `ejecucion.migraciones`:
+
+| Dice | Qué pasa | Qué hacer |
+|---|---|---|
+| `al dia` | aplicadas Y comprobadas contra `pg_proc` | nada |
+| `sin comprobar` | el servicio no tiene `DATABASE_URL`, así que **no migra la base en ningún despliegue** | añadir esa variable al servicio y volver a desplegar |
+| `fallidas` | una migración reventó al aplicarse | `migrar` en la terminal del servicio: dice cuál y por qué |
+| `esquema no cuadra` | el registro las da por aplicadas y la base no las tiene | `migrar --reaplicar <fichero>.sql`, en el orden que imprime |
+
+El último es el que más caro ha salido, dos veces. El registro
+(`schema_migrations`) guarda solo el nombre del fichero, así que «aplicada»
+significa «alguien escribió esta cadena en una tabla» — y el propio proyecto
+imprimía, como remedio a un atasco, un `insert` con las 67 de golpe. Desde
+ahora `migrar` no se cree el registro: compara el md5 del cuerpo de cada
+función del repositorio con `pg_proc.prosrc`, que es donde Postgres guarda ese
+mismo texto byte a byte. Son 95 funciones y una consulta, y no se puede
+engañar anotando una fila.
+
+**No anotes una migración sin ejecutarla.** Si hay que salir de un atasco, es
+`migrar --reaplicar <fichero>.sql`: comprueba antes que ese fichero se pueda
+repetir sin borrar nada —lo deduce de sus sentencias, y ante la duda dice que
+no— y lo ejecuta de verdad.
+
 Si después de desplegar la aplicación enseña «Could not find the 'x' column of
 'tabla' in the schema cache», a la base le falta una migración o la API no ha
-recargado su esquema. En la app, Datos → «Ver diagnóstico del servidor» dice
-qué migraciones faltan; `deploy.sh` las aplica y reinicia la API. Para aplicar
-una a mano (son idempotentes):
+recargado su esquema. Para aplicar una a mano con `docker compose`:
 
 ```bash
 docker compose exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
