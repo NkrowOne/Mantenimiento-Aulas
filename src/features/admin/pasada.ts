@@ -103,6 +103,15 @@ export interface Analisis {
    * haya elegido lo que se haya elegido. `null` es sin corte. Ver `Celda.corte`.
    */
   corte: string | null
+  /**
+   * Si esta pasada va a crear las aulas que el libro trae bien escritas.
+   *
+   * Apagado por defecto: dar de alta una sala es lo único de esta pantalla que
+   * no se deshace solo. Se enciende desde la pantalla y es volver a
+   * planificar, como contestar una duda, así que la lista de lo que se va a
+   * crear se ve antes de aplicar nada.
+   */
+  crearAulas: boolean
   /** Lo que el almacén va a apuntar si la pasada se aplica. Ver `movimientos.ts`. */
   movimientos: MovimientoPrevisto[]
   /** El maestro, para que la pantalla ofrezca salas en las dudas. */
@@ -143,6 +152,7 @@ export async function analizar(
   respuestas: Respuestas = {},
   referencia: Referencia | null = null,
   corte: string | null = null,
+  crearAulas = false,
 ): Promise<Analisis> {
   const bytes = new Uint8Array(await fichero.arrayBuffer())
   const libro = await abrirLibro(bytes)
@@ -184,7 +194,7 @@ export async function analizar(
     indice,
   }
   const columnaRef = columnaParaLaRef(filas.get(ESTADO.nombre)!, ESTADO.cabecera, 'Ref')
-  const planes = planificar(entrada, datos, columnaRef, respuestas, referencia, corte)
+  const planes = planificar(entrada, datos, columnaRef, respuestas, referencia, corte, crearAulas)
 
   // Las hojas de detalle se rehacen enteras cada pasada. No son un historial que
   // haya que ir completando: son la foto de lo que la base sabe hoy, y
@@ -222,6 +232,7 @@ export async function analizar(
     respuestas,
     referencia,
     corte,
+    crearAulas,
     movimientos: movimientosDe(planes, datos),
     catalogo,
     entrada,
@@ -241,8 +252,9 @@ export function replanificar(
   respuestas: Respuestas,
   referencia: Referencia | null = a.referencia,
   corte: string | null = a.corte,
+  crearAulas: boolean = a.crearAulas,
 ): Analisis {
-  const planes = planificar(a.entrada, a.datos, a.columnaRef, respuestas, referencia, corte)
+  const planes = planificar(a.entrada, a.datos, a.columnaRef, respuestas, referencia, corte, crearAulas)
   return {
     ...a,
     planes,
@@ -251,6 +263,7 @@ export function replanificar(
     respuestas,
     referencia,
     corte,
+    crearAulas,
     movimientos: movimientosDe(planes, a.datos),
     bloqueada: planes.some((p) => p.desajustes.length > 0),
   }
@@ -281,6 +294,7 @@ function planificar(
   respuestas: Respuestas,
   referenciaElegida: Referencia | null,
   corteElegido: string | null,
+  crearAulas: boolean,
 ): Plan[] {
   const planes: Plan[] = []
   const inst = (hoja: string): Instantanea => e.instantaneas.get(hoja) ?? (() => undefined)
@@ -299,6 +313,7 @@ function planificar(
       respuestas,
       referencia,
       corte,
+      crearAulas,
     }),
   )
 
@@ -613,6 +628,17 @@ function altaParaLaBase(hoja: string, alta: Alta, a: Analisis): Record<string, u
         columna_numero: h?.identidad.tipo === 'incidencia' ? h.identidad.columna : 'D',
       }
     }
+    case 'sala':
+      return {
+        ...base,
+        edificio: alta.edificio,
+        zona: alta.zona,
+        code: alta.code,
+        // El aula tal y como la escribió el libro, que puede no ser el código
+        // —`2.6 S` crea la `2.6`—: queda de alias y es lo que hace que la fila
+        // cruce sola en la pasada siguiente sin tocar el libro.
+        aula: alta.aula,
+      }
     case 'articulo':
       return {
         ...base,

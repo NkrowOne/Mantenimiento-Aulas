@@ -804,6 +804,54 @@ y que el código respeta desde entonces:
 
 ---
 
+## 11 ter. Las aulas que el libro trae y el maestro no
+
+La hoja de estado traía 43 filas que ninguna sala del maestro podía reconocer:
+las 23 de «ED. S - SÓCRATES» y las 20 de «ED. G - ANTONIO GAUDÍ». Eran 43 dudas
+idénticas, pasada tras pasada, y contestarlas una a una no las iba a crear
+nunca.
+
+**Los dos edificios ya existían.** `S` y `G` estaban en el maestro desde la
+importación del histórico —con seis y dos incidencias detrás— pero sin nombre:
+`Edificio S (sin identificar)`. La migración `20260922000300` les pone el suyo
+y les quita la marca de revisión, y con eso el nombre que escribe SharePoint
+cruza solo.
+
+**Y ahora el libro puede crear sus aulas.** Es una casilla de la pantalla de
+sincronización, **apagada de salida**, porque dar de alta una sala es lo único
+de esa pantalla que no se deshace solo: desde que existe, las incidencias
+empiezan a colgar de ella, y si era la equivocada el histórico se reparte entre
+dos aulas y ninguna lo tiene entero.
+
+Al encenderla se recalcula la pasada y las aulas aparecen una por una en las
+altas, con su edificio y su planta, antes de aplicar nada.
+
+Solo pasa lo que **no se puede leer de dos maneras** (`src/domain/altaDeSala.ts`):
+
+| Entra | No entra |
+|---|---|
+| `2.6`, `-1.3`, `0.10` — el código de siempre | `Aula Demo`, `Sala Vip`, `Laboratorio 9` |
+| `0.1P`, `2.6 S` — con el sufijo de SU edificio | `2.6 H` en una fila del edificio S: se contradice |
+| en un edificio que el maestro conoce | en uno que no: el aula iría a saber dónde |
+| sin matrícula en la fila | con matrícula: entonces falta el aula, no la sala |
+
+La planta se **lee** de la columna «PLANTA/MÓDULO» siempre que venga, y solo se
+deduce del código cuando la fila no la trae. La diferencia se dice en pantalla:
+una planta leída es un dato y una deducida es una apuesta. Deducir siempre
+rompería el Edificio Central —donde `2.6` vive en el `MÓDULO 2`— y el CRAI,
+donde las `1.x-` están en la `PLANTA -1`.
+
+`canonicalPlanta` traduce además lo que el libro escribe a lo que usa el
+maestro: `PLANTA 2` es la `2ª PLANTA`. Sin eso el servidor creaba una segunda
+planta con el nombre del libro y las aulas quedaban repartidas entre las dos —
+eran diecisiete de las filas de cuarentena.
+
+El aula tal y como la escribió el libro queda de **alias** de la sala creada, así
+que la fila cruza sola en la pasada siguiente sin tocar el libro. Y la clave de
+la instantánea es la **matrícula** de la sala, no su id: es por donde la pasada
+siguiente pregunta por el antepasado de cada celda, y dejar el id ahí haría que
+lo corregido a mano entre dos pasadas se sobrescribiera en silencio.
+
 ## 12. Lo que puede salir mal
 
 - **Que la API de libro no acepte un token sin usuario.** La documentación de

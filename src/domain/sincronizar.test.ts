@@ -1773,3 +1773,97 @@ describe('un parte sin aula a propósito no es un parte sin identificar', () => 
     expect(p.altas[0]).toMatchObject({ salaId: null, sinSala: true })
   })
 })
+
+describe('las aulas que el libro trae y el maestro no', () => {
+  /*
+   * Las 43 de Sócrates y de Antonio Gaudí: hoy son 43 dudas idénticas, pasada
+   * tras pasada, y contestarlas una a una no las iba a crear nunca. El
+   * edificio S existe en el maestro desde el histórico —con seis incidencias
+   * detrás— pero sin nombre y sin ninguna sala, así que sus aulas no cruzan.
+   */
+  const conSocrates = construirIndice({
+    ...catalogo,
+    edificios: [
+      { codigo: 'P', nombre: 'EDIFICIO P', activo: true },
+      { codigo: 'S', nombre: 'SÓCRATES', activo: true },
+    ],
+  })
+
+  function conLaOpcion(celdas: Record<string, string>, crearAulas = true) {
+    return sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, celdas)],
+      salas: [sala()],
+      indice: conSocrates,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      crearAulas,
+    })
+  }
+
+  const dosSeis = { A: 'SÓCRATES', B: 'PLANTA 2', C: '2.6' }
+
+  it('apagada, sigue siendo una duda y no se crea nada', () => {
+    // Es lo de siempre, y es el que manda: dar de alta una sala no se deshace.
+    const p = conLaOpcion(dosSeis, false)
+    expect(p.altas.filter((a) => a.tipo === 'sala')).toEqual([])
+    expect(p.dudas.some((d) => d.tipo === 'sala')).toBe(true)
+  })
+
+  it('encendida, la crea con la planta que dice el libro y con el nombre del maestro', () => {
+    const p = conLaOpcion(dosSeis)
+    expect(p.altas.filter((a) => a.tipo === 'sala')).toEqual([
+      {
+        tipo: 'sala',
+        fila: 2,
+        edificio: 'S',
+        // `PLANTA 2` del libro es la `2ª PLANTA` del maestro: sin traducirlo,
+        // el servidor creaba una segunda planta con el nombre del libro y las
+        // aulas quedaban repartidas entre las dos.
+        zona: '2ª PLANTA',
+        code: '2.6',
+        aula: '2.6',
+        plantaDeducida: false,
+        celdas: expect.anything(),
+      },
+    ])
+    // Y ya no se pregunta lo que se va a crear.
+    expect(p.dudas.some((d) => d.tipo === 'sala')).toBe(false)
+  })
+
+  it('el sufijo del edificio se quita del código, pero el aula original queda de alias', () => {
+    const p = conLaOpcion({ A: 'SÓCRATES', B: 'PLANTA 2', C: '2.6 S' })
+    const alta = p.altas.find((a) => a.tipo === 'sala')
+    expect(alta).toMatchObject({ code: '2.6', aula: '2.6 S' })
+  })
+
+  it('pero un nombre descriptivo se sigue preguntando', () => {
+    // «Aula Demo» existe hoy en Bellas Artes. Crearla en Sócrates sin que nadie
+    // lo mire partiría su histórico entre dos aulas.
+    const p = conLaOpcion({ A: 'SÓCRATES', B: '', C: 'Aula Demo' })
+    expect(p.altas.filter((a) => a.tipo === 'sala')).toEqual([])
+    expect(p.dudas.some((d) => d.tipo === 'sala')).toBe(true)
+  })
+
+  it('y un edificio que el maestro no conoce tampoco crea nada', () => {
+    /*
+     * Sin edificio no se sabe dónde va el aula, y una sala en el edificio de
+     * al lado es peor que una sala que falta: la de al lado parece correcta.
+     */
+    const p = conLaOpcion({ A: 'ED. X - LO QUE SEA', B: 'PLANTA 2', C: '2.6' })
+    expect(p.altas.filter((a) => a.tipo === 'sala')).toEqual([])
+    expect(p.dudas.some((d) => d.tipo === 'sala')).toBe(true)
+  })
+
+  it('una fila con matrícula nunca crea un aula: es una sala que ya existe', () => {
+    // Si la matrícula no cruza es que el maestro cambió, no que falte el aula.
+    const p = conLaOpcion({ A: 'SÓCRATES', B: 'PLANTA 2', C: '2.6', Y: 'SALA-999999' })
+    expect(p.altas.filter((a) => a.tipo === 'sala')).toEqual([])
+  })
+
+  it('y un aula que el maestro ya tiene no se duplica', () => {
+    // La 0.1P cruza por nombre: la opción no la toca.
+    const p = conLaOpcion({ A: 'EDIFICIO P', B: 'PLANTA BAJA', C: '0.1P' })
+    expect(p.altas.filter((a) => a.tipo === 'sala')).toEqual([])
+  })
+})
