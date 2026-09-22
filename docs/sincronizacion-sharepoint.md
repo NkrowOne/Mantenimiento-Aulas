@@ -885,8 +885,17 @@ Lo que **no** se toca, y es a propósito:
 
 - **«Monitor Atril»** (38). La pantalla del PC no está en la aplicación, así que
   el monitor del atril es otra cosa.
-- **«Ordenador Lenovo Ideacentre»** (30). Es un ordenador, pero no el Tiny, y la
-  columna del libro es la del Tiny.
+- **«Ordenador Lenovo Ideacentre»** (30) — **confirmado que NO se fusiona.** Son
+  ordenadores, pero no son Tinys, y la columna del libro es la del Tiny: el
+  ordenador del profesor, uno por aula. Los treinta están todos en la misma
+  sala, «Laboratorio informatica 6», y son los **puestos de los alumnos**: el
+  del profesor es «puesto profe» y los demás van del 1 al 30. Meterlos en
+  «Ordenador» habría puesto treinta y un ordenadores en la celda de un aula que
+  solo tiene sitio para uno, y habría borrado la única cosa que los distingue,
+  que es qué puesto es cada uno.
+- **«Monitor Atril»** (38) — **confirmado que NO se fusiona**: solo está en unos
+  edificios y es un aparato distinto de la pantalla del PC. Que se parezca en el
+  nombre no lo convierte en lo mismo.
 - **«Pantalla Proyector»** y **«Pantalla de proyección»**. Son la tela donde
   proyecta el cañón. Que compartan la palabra «Pantalla» es justo la trampa que
   la migración tiene que esquivar, y por eso la lista va con el nombre exacto y
