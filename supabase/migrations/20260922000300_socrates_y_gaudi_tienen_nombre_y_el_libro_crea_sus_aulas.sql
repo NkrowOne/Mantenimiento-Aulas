@@ -100,7 +100,14 @@ update buildings
    -- Solo si nadie ha tocado esta ficha: `needs_review = false` con la nota en
    -- blanco es exactamente como la dejó el importador. Si alguien ya escribió
    -- ahí su propia nota —o ya lo marcó por otra razón— eso vale más que esto,
-   -- y encima es lo que hace que el fichero se pueda reaplicar sin pisar nada.
+   -- y encima es lo que hace que una segunda pasada no encuentre nada.
+   --
+   -- Queda un caso y se dice: si alguien confirma `BBAA` desde la bandeja, la
+   -- ficha vuelve a estar como la dejó el importador, y un redespliegue que
+   -- reaplique este fichero volvería a escribir la nota. No se puede distinguir
+   -- «confirmado» de «sin mirar», porque los dos son lo mismo en la tabla. Y
+   -- entre las dos equivocaciones posibles, repetir una pregunta que ya se
+   -- contestó es mucho más barato que borrar una nota que alguien escribió.
    and not needs_review
    and review_note is null;
 
@@ -160,6 +167,10 @@ declare
   v_sin_sala boolean := coalesce((p->>'sin_sala')::boolean, false);
   v_nombre  text;
   v_cantidad int;
+  -- El año de la bolsa y la fecha que se le pone a su compra. Ver la rama
+  -- `articulo`: la compra va dentro del año que dice la hoja, no hoy.
+  v_anyo    int;
+  v_cuando  timestamptz;
   -- El alta de un aula: el edificio tal y como lo escribe la fila, el edificio
   -- y la planta ya resueltos del maestro, y el código con el que se crea.
   v_edificio_dicho text;
@@ -370,9 +381,40 @@ begin
     end if;
     v_cantidad := nullif(p->>'comprado', '')::int;
     if v_cantidad is not null and v_cantidad > 0 then
+      /*
+       * La compra va dentro del año de la bolsa, no hoy.
+       *
+       * Esto lo trajo `20260916000200` y se perdió por el camino:
+       * `20260921000200` volvió a declarar la función entera para la rama del
+       * arranque del recuento, copió el cuerpo de una versión anterior y se
+       * llevó por delante el fechado; `20260922000100` y `20260922000200`
+       * arrastraron la pérdida, y este fichero la arrastraba también.
+       *
+       * Lo caza `supabase/rls-test.sql` («la compra del artículo nuevo se
+       * fechó en 2026 y la bolsa era de 2025»), que lleva desde el 21/09
+       * fallando en rojo sin que nadie mirara. El daño es de los callados: un
+       * artículo que estrena la Bolsa 2025 metía su compra en 2026, y «Total
+       * Comprado» de los dos años dejaba de cuadrar sin decir por qué.
+       *
+       * Se arregla aquí y no en un fichero propio porque este ya vuelve a
+       * declarar `sync_alta` entera: separarlo dejaría dos versiones de la
+       * misma función compitiendo por ser la última.
+       *
+       * Dentro del año y lo más cerca de hoy que se pueda, igual que en el
+       * cuadre de una celda. Sin año se supone el corriente, que es lo que
+       * hacía antes de que las bolsas llevaran el suyo.
+       */
+      v_anyo := coalesce(
+        nullif(p->>'anyo', '')::int,
+        extract(year from (now() at time zone 'Europe/Madrid'))::int
+      );
+      v_cuando := least(
+        greatest(now(), make_timestamptz(v_anyo, 1, 1, 0, 0, 0, 'Europe/Madrid')),
+        make_timestamptz(v_anyo, 12, 31, 23, 59, 59, 'Europe/Madrid')
+      );
       insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user, source, note)
-      values (gen_random_uuid(), v_id, v_cantidad, 'compra', now(), null, 'sharepoint',
-              'Comprado según la bolsa del Excel, al dar de alta el artículo');
+      values (gen_random_uuid(), v_id, v_cantidad, 'compra', v_cuando, null, 'sharepoint',
+              format('Comprado según la bolsa de %s del Excel, al dar de alta el artículo', v_anyo));
     end if;
     v_clave := v_id::text;
 
