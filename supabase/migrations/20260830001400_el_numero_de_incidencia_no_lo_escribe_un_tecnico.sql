@@ -63,6 +63,143 @@
 -- -----------------------------------------------------------------------------
 
 alter table incidents drop constraint if exists incidents_external_ref_formato;
+
+/*
+ * Antes de exigir el formato, ponerle el formato a lo que ya hay.
+ *
+ * Esto se añadió el 22/09/2026, y no por gusto: en producción esta migración
+ * llevaba semanas sin poder aplicarse —«check constraint
+ * incidents_external_ref_formato is violated by some row»— y, como `migrar` va
+ * en orden y se para en la primera que falla, detrás de ella se habían quedado
+ * TREINTA migraciones sin aplicar. Un número mal tecleado en una celda del
+ * Excel tenía parada la base entera.
+ *
+ * El número de una incidencia es trabajo de alguien: lo escribió un técnico en
+ * el libro o lo trae el histórico. Así que aquí no se borra ninguno. Se
+ * arreglan los que se pueden arreglar sin interpretar nada —los cuatro
+ * primeros pasos son formas de escribir el MISMO número— y el que no encaja en
+ * ninguna se guarda entero en la descripción antes de darle uno nuevo, que es
+ * donde alguien lo va a ver.
+ *
+ * Y no se usa `not valid`, que era la salida fácil: con la restricción sin
+ * validar, esas mismas filas pasan a no poder actualizarse —el `check` sí mira
+ * los UPDATE—, y quien intentara cerrar una de esas averías se encontraría con
+ * el mismo error de ahora y sin ninguna pista de por qué.
+ */
+
+/*
+ * Se hace en un solo paso y no con cuatro `update` seguidos, y la razón la
+ * encontró la prueba: encadenados, `i260908_0001` y `I260908_1` acaban los dos
+ * en `I260908_0001` —dos averías distintas con el mismo número— y para
+ * entonces ya no queda rastro de lo que cada una decía. Aquí se calcula
+ * primero el candidato de cada fila, se mira quién choca con quién, y solo
+ * después se escribe.
+ */
+do $arreglo$
+declare
+  v_rehechas int;
+begin
+  create temporary table _refs on commit drop as
+  select i.id,
+         i.external_ref                           as original,
+         btrim(i.external_ref)                    as t,
+         i.opened_at,
+         i.recorded_at,
+         null::text                               as candidato
+    from incidents i
+   where i.external_ref is not null;
+
+  /*
+   * El candidato: la misma cosa, escrita como la escribe la base.
+   *
+   * Las cuatro formas son las que aparecen de verdad en el libro, y ninguna
+   * interpreta nada: son maneras de teclear el MISMO número. Lo que no encaja
+   * en ninguna se queda sin candidato —`INC0012345`, «revisar con Juan»— y se
+   * trata abajo, sin tocarle ni una letra al original.
+   */
+  update _refs set candidato =
+    case
+      -- Ya lo es, salvo por las mayúsculas o los espacios.
+      when upper(t) ~ '^[A-Z]\d{6}_\d{4}$' then upper(t)
+      -- Los ceros a la izquierda: `I260908_1` es `I260908_0001`.
+      when upper(t) ~ '^[A-Z]\d{6}_\d{1,3}$'
+        then substring(upper(t) from '^[A-Z]\d{6}') || '_' ||
+             lpad(substring(upper(t) from '_(\d{1,3})$'), 4, '0')
+      -- Sin la letra delante: la `I` es la que pone la base.
+      when t ~ '^\d{6}_\d{1,4}$'
+        then 'I' || substring(t from '^\d{6}') || '_' ||
+             lpad(substring(t from '_(\d{1,4})$'), 4, '0')
+      -- Un guion o un espacio donde va el guion bajo.
+      when upper(t) ~ '^[A-Z]\d{6}[-\s]\d{1,4}$'
+        then substring(upper(t) from '^[A-Z]\d{6}') || '_' ||
+             lpad(substring(upper(t) from '[-\s](\d{1,4})$'), 4, '0')
+      else null
+    end;
+
+  -- De los que chocan, se queda con el número el que se apuntó primero. El
+  -- resto pasa por la misma puerta que los ilegibles: no se pierde nada, pero
+  -- dos averías no pueden compartir número.
+  create temporary table _rehacer on commit drop as
+  select id, original, opened_at, recorded_at
+    from (
+      select r.*, row_number() over (partition by r.candidato
+                                     order by r.recorded_at, r.id) as puesto
+        from _refs r
+       where r.candidato is not null
+    ) q
+   where q.puesto > 1
+   union all
+  select id, original, opened_at, recorded_at from _refs where candidato is null;
+
+  -- Lo que sí se queda con su número, primero: así el reparto de abajo cuenta
+  -- con ellos y no vuelve a dar uno que ya está dado.
+  update incidents i
+     set external_ref = r.candidato
+    from _refs r
+   where i.id = r.id
+     and r.candidato is not null
+     and i.external_ref is distinct from r.candidato
+     and not exists (select 1 from _rehacer h where h.id = r.id);
+
+  /*
+   * Y los demás: el original entero a la descripción, en su propia línea y
+   * delante, y un número libre del día en que se abrió la avería.
+   *
+   * El número se reparte de una vez por día contando desde el mayor que ese
+   * día ya tenga. Llamar a `siguiente_ref_incidencia` fila a fila leería la
+   * tabla antes de escribir ninguno y los repetiría todos.
+   */
+  with numerada as (
+    select h.id, h.original,
+           to_char(h.opened_at, 'YYMMDD') as dia,
+           row_number() over (partition by to_char(h.opened_at, 'YYMMDD')
+                              order by h.recorded_at, h.id) as n
+      from _rehacer h
+  ),
+  tope as (
+    select d.dia,
+           coalesce(max(substring(i.external_ref from '_(\d{4})$')::int), 0) as ultimo
+      from (select distinct dia from numerada) d
+      left join incidents i
+        on i.external_ref ~ '^[A-Z]\d{6}_\d{4}$'
+       and substring(i.external_ref from 2 for 6) = d.dia
+     group by d.dia
+  )
+  update incidents i
+     set description = 'Número original en el libro: ' || m.original ||
+                       coalesce(chr(10) || chr(10) || i.description, ''),
+         external_ref = 'I' || m.dia || '_' || lpad((t.ultimo + m.n)::text, 4, '0')
+    from numerada m
+    join tope t on t.dia = m.dia
+   where i.id = m.id;
+
+  get diagnostics v_rehechas = row_count;
+  if v_rehechas > 0 then
+    raise notice 'Números de incidencia rehechos: %. El original de cada uno queda en su descripción.', v_rehechas;
+  end if;
+end
+$arreglo$;
+
 alter table incidents add constraint incidents_external_ref_formato
   check (external_ref is null or external_ref ~ '^[A-Z]\d{6}_\d{4}$');
 
