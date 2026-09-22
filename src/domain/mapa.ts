@@ -221,15 +221,31 @@ export const ESTADO: Hoja = {
       tipo: 'porcentaje',
       nota: 'La aplicación no lo mide en ninguna pantalla: de un proyector solo se apuntan las horas. Mientras eso sea así, el Excel es la única fuente y tratarlo como medida sería peligroso — la app «ganaría» con el valor congelado de la importación y borraría lo que alguien acabara de apuntar en la hoja.',
     },
-    { letra: 'H', cabecera: 'Altavoces', campo: 'capacidad:altavoces', dueno: 'ambos', tipo: 'si_no' },
-    { letra: 'I', cabecera: 'Cámara', campo: 'capacidad:camara', dueno: 'ambos', tipo: 'si_no' },
+    /*
+     * Las tres columnas de SÍ/NO las escribe la aplicación, leyendo su
+     * inventario. No es una restricción técnica: es la única forma de que dejen
+     * de contradecir a la hoja «Inventario por Sala» del mismo libro.
+     *
+     * Eran `ambos` y salían de `rooms.capabilities`, un sí o un no guardado al
+     * margen de los aparatos. En el libro del 22/09 los dos datos se
+     * contradicen 442 veces: 20 altavoces, 66 cámaras y 256 micrófonos que la
+     * hoja da por no tener y que la aplicación tiene apuntados uno a uno, con
+     * su ficha. El mismo hecho en dos sitios no se arregla cuadrándolo una vez.
+     *
+     * Escribir «SI» a mano en la hoja ya no crea nada: la pasada siguiente
+     * devuelve la celda a lo que diga el inventario y lo deja escrito en la
+     * hoja «Sincronización», que es lo que hace `solo_app` con cualquier
+     * columna suya. Para que un aula tenga altavoces se apuntan los altavoces.
+     */
+    { letra: 'H', cabecera: 'Altavoces', campo: 'capacidad:altavoces', dueno: 'solo_app', tipo: 'si_no' },
+    { letra: 'I', cabecera: 'Cámara', campo: 'capacidad:camara', dueno: 'solo_app', tipo: 'si_no' },
     {
       letra: 'J',
       cabecera: 'Microfono Jabra',
       campo: 'microfono',
-      dueno: 'ambos',
+      dueno: 'solo_app',
       tipo: 'texto',
-      nota: 'Dos columnas en una: 32 filas dicen SÍ/NO y 37 llevan el número de serie del micrófono. Se decide por la forma del valor.',
+      nota: 'Dos columnas en una: dice SÍ/NO, o el número de serie del micrófono cuando la ficha lo lleva. El tipo del inventario es «Micrófono Jabra» en 298 aulas y «Micrófono» en 35: los dos contestan por esta columna.',
     },
     {
       letra: 'K',
@@ -237,7 +253,7 @@ export const ESTADO: Hoja = {
       campo: 'rooms.botonera_estado',
       dueno: 'ambos',
       tipo: 'texto',
-      nota: 'No es un sí o un no: «Actualizada *», «Actualizada», «No tiene». Se guarda literal, asterisco incluido.',
+      nota: 'No es un sí o un no: «Actualizada *», «Actualizada», «No tiene». Se guarda literal, asterisco incluido. Sigue siendo de los dos, y a propósito: el inventario sabe si hay botonera, pero no si está actualizada, que es lo que esta columna dice. Sus contradicciones con el inventario son 8 aulas, no las 100 que parecen contando los 92 huecos.',
     },
     { letra: 'L', cabecera: 'Modelo Proyector', campo: 'equipo:Proyector:model', dueno: 'ambos', tipo: 'texto' },
     { letra: 'M', cabecera: 'S/N Proyector', campo: 'equipo:Proyector:serial', dueno: 'ambos', tipo: 'texto' },

@@ -19,6 +19,7 @@ import {
   assetIdFromCheckKey,
   LEGACY_CHECK_LABELS,
   ROOM_CHECK_LABELS,
+  type RoomCheckKey,
   type Incident,
   type IncidentResolution,
 } from './types'
@@ -172,5 +173,5 @@ export function equipoDeIncidencia(
   const porEquipo = assetIdFromCheckKey(clave)
   if (porEquipo !== null) return nombreDeEquipo(porEquipo)
 
-  return ROOM_CHECK_LABELS[clave as 'red'] ?? LEGACY_CHECK_LABELS[clave] ?? null
+  return ROOM_CHECK_LABELS[clave as RoomCheckKey] ?? LEGACY_CHECK_LABELS[clave] ?? null
 }

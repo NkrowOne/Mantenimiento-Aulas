@@ -1625,17 +1625,23 @@ describe('un edificio que el maestro no conoce', () => {
   it('y las demás columnas de esa fila siguen entrando como siempre', () => {
     // No se bloquea la fila: solo esa celda. Lo que el Excel corrija en el
     // aula tiene que seguir llegando.
+    //
+    // Se mira el número de serie del proyector y no la casilla de altavoces
+    // —que es lo que miraba antes— porque las columnas de SÍ/NO ya no vienen
+    // del Excel: las escribe la aplicación desde su inventario.
     const p = sincronizarEstado({
       hoja: ESTADO,
-      filas: [CABECERA, fila(2, { ...comoLoEscribeSharePoint, H: 'NO' })],
-      salas: [sala({ capacidades: { altavoces: true } })],
+      filas: [CABECERA, fila(2, { ...comoLoEscribeSharePoint, M: '0340985RL' })],
+      salas: [
+        sala({ equipos: [{ id: 'p1', tipo: 'Proyector', serial: null, model: null, desde: null }] }),
+      ],
       indice,
       columnaRef: 'Y',
       instantanea: SIN_INSTANTANEA,
       referencia: 'excel',
     })
     expect(p.haciaLaBase).toContainEqual(
-      expect.objectContaining({ campo: 'capacidad:altavoces', valor: false }),
+      expect.objectContaining({ campo: 'equipo:Proyector:serial', valor: '0340985RL' }),
     )
   })
 
@@ -1917,80 +1923,35 @@ describe('los equipos que el libro trae y la sala no tiene', () => {
    * Y el caso que costó dos rondas de capturas: el aparato YA está en la
    * aplicación, pero con otro nombre de tipo.
    *
-   * Preguntar «¿lo creo?» ahí es mentira dos veces. La sala no se ha quedado
-   * sin nada: lo tiene, con otro nombre. Y decir que sí no crearía nada,
-   * porque `assets_serial_idx` es único global y la base rechaza la fila
-   * entera. Lo que hace falta es unificar los dos tipos.
+   * Preguntar «¿lo creo?» ahí es mentira: la sala no se ha quedado sin nada, lo
+   * tiene con otro nombre. Y decir que sí no crearía nada, porque
+   * `assets_serial_idx` es único global y la base rechaza la fila entera.
+   *
+   * Qué se hace depende de DÓNDE esté, y son dos cosas distintas:
+   *
+   *  - En esta misma aula: la celda **viaja**. `sync_aplicar_equipo` adopta el
+   *    aparato y le devuelve el tipo que el libro le da en su columna. Retener
+   *    la celda era justo lo que impedía esa reclasificación: no llegaba nunca
+   *    al servidor.
+   *  - En otra aula: se retiene. Crear es imposible y mover un aparato de aula
+   *    no se hace desde una celda.
    */
-  function conEseSerialPuesto(tipo: string, over: Partial<SalaVolcada> = {}) {
+  function conEseSerialPuesto(tipo: string, crearEquipos = false) {
     return sincronizarEstado({
       hoja: ESTADO,
       filas: [CABECERA, fila(2, conSerie)],
       salas: [
-        sala({ equipos: [{ id: 'e1', tipo, serial: 'V3080D6Y', model: null, desde: null }], ...over }),
+        sala({ equipos: [{ id: 'e1', tipo, serial: 'V3080D6Y', model: null, desde: null }] }),
       ],
       indice,
       columnaRef: 'Y',
       instantanea: SIN_INSTANTANEA,
-      crearEquipos: false,
+      crearEquipos,
     })
   }
 
-  it('si ese número de serie ya está puesto con otro nombre, no se pregunta', () => {
-    const p = conEseSerialPuesto('Pantalla')
-    expect(p.dudas.filter((d) => d.tipo === 'alta' && d.que === 'equipo')).toEqual([])
-    // Y la celda tampoco viaja: escribirla crearía un equipo que la base rechaza.
-    expect(p.haciaLaBase.filter((h) => h.letra === 'R')).toEqual([])
-  })
-
-  it('y el aviso dice los dos nombres, para poder unificarlos', () => {
-    const aviso = conEseSerialPuesto('Pantalla').avisos.find((a) => a.includes('otro nombre'))
-    expect(aviso).toBeTruthy()
-    expect(aviso).toContain('«Monitor» del libro')
-    expect(aviso).toContain('«Pantalla»')
-    expect(aviso).toContain('V3080D6Y')
-  })
-
-  it('la casilla de crear no lo salta: la base lo rechazaría igual', () => {
-    const p = sincronizarEstado({
-      hoja: ESTADO,
-      filas: [CABECERA, fila(2, conSerie)],
-      salas: [
-        sala({ equipos: [{ id: 'e1', tipo: 'Pantalla', serial: 'V3080D6Y', model: null, desde: null }] }),
-      ],
-      indice,
-      columnaRef: 'Y',
-      instantanea: SIN_INSTANTANEA,
-      crearEquipos: true,
-    })
-    expect(p.haciaLaBase.filter((h) => h.letra === 'R')).toEqual([])
-    expect(p.avisos.filter((a) => a.includes('sin preguntar'))).toEqual([])
-    expect(p.avisos.some((a) => a.includes('otro nombre'))).toBe(true)
-  })
-
-  it('un «sí» contestado antes tampoco lo crea', () => {
-    // La respuesta vale para «no lo tengo». Aquí sí lo tiene.
-    const p = sincronizarEstado({
-      hoja: ESTADO,
-      filas: [CABECERA, fila(2, conSerie)],
-      salas: [
-        sala({ equipos: [{ id: 'e1', tipo: 'Pantalla', serial: 'V3080D6Y', model: null, desde: null }] }),
-      ],
-      indice,
-      columnaRef: 'Y',
-      instantanea: SIN_INSTANTANEA,
-      respuestas: { [idDeDuda(ESTADO.nombre, 2, 'Monitor')]: { tipo: 'alta', aceptar: true } },
-    })
-    expect(p.haciaLaBase.filter((h) => h.letra === 'R')).toEqual([])
-  })
-
-  it('y si está en otra aula, el aviso dice en cuál', () => {
-    /*
-     * El serial es único global: si lo tiene otra aula, este alta tampoco
-     * entra. Y saber cuál es lo que convierte «no se puede» en «el aparato se
-     * movió y nadie lo apuntó».
-     */
-    const p = sincronizarEstado({
+  function enOtraAula(crearEquipos = false) {
+    return sincronizarEstado({
       hoja: ESTADO,
       filas: [CABECERA, fila(2, conSerie)],
       salas: [
@@ -2000,16 +1961,66 @@ describe('los equipos que el libro trae y la sala no tiene', () => {
           shortRef: 'SALA-000002',
           code: '1.5',
           edificio: 'ED. O',
-          equipos: [{ id: 'e9', tipo: 'Pantalla', serial: 'V3080D6Y', model: null, desde: null }],
+          equipos: [{ id: 'e9', tipo: 'TV', serial: 'V3080D6Y', model: null, desde: null }],
         }),
       ],
       indice,
       columnaRef: 'Y',
       instantanea: SIN_INSTANTANEA,
-      crearEquipos: true,
+      crearEquipos,
     })
-    const aviso = p.avisos.find((a) => a.includes('otro nombre'))
+  }
+
+  it('si ya está en esta aula con otro nombre, no se pregunta y la celda viaja', () => {
+    const p = conEseSerialPuesto('TV')
+    expect(p.dudas.filter((d) => d.tipo === 'alta' && d.que === 'equipo')).toEqual([])
+    // Viaja a propósito: es lo que el servidor necesita para reclasificarlo.
+    expect(p.haciaLaBase.find((h) => h.letra === 'R')?.valor).toBe('V3080D6Y')
+  })
+
+  it('y el aviso dice los dos nombres y que se reclasifica', () => {
+    const aviso = conEseSerialPuesto('TV').avisos.find((a) => a.includes('devuelve el tipo'))
+    expect(aviso).toBeTruthy()
+    expect(aviso).toContain('«Monitor» del libro')
+    expect(aviso).toContain('«TV»')
+    expect(aviso).toContain('V3080D6Y')
+    // No es un alta: no puede contarse entre los que entran de nuevos.
+    expect(conEseSerialPuesto('TV', true).avisos.filter((a) => a.includes('sin preguntar'))).toEqual([])
+  })
+
+  it('un «sí» contestado antes no lo convierte en un alta', () => {
+    // La respuesta valía para «no lo tengo». Aquí sí lo tiene, y se reclasifica.
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, conSerie)],
+      salas: [
+        sala({ equipos: [{ id: 'e1', tipo: 'TV', serial: 'V3080D6Y', model: null, desde: null }] }),
+      ],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      respuestas: { [idDeDuda(ESTADO.nombre, 2, 'Monitor')]: { tipo: 'alta', aceptar: true } },
+    })
+    expect(p.haciaLaBase.find((h) => h.letra === 'R')?.valor).toBe('V3080D6Y')
+    expect(p.avisos.some((a) => a.includes('devuelve el tipo'))).toBe(true)
+  })
+
+  it('en otra aula sí se retiene: crear es imposible y mover no se hace desde una celda', () => {
+    const p = enOtraAula()
+    expect(p.dudas.filter((d) => d.tipo === 'alta' && d.que === 'equipo')).toEqual([])
+    expect(p.haciaLaBase.filter((h) => h.letra === 'R')).toEqual([])
+  })
+
+  it('y el aviso de la otra aula dice en cuál', () => {
+    /*
+     * El serial es único global: si lo tiene otra aula, este alta tampoco entra.
+     * Y saber cuál convierte «no se puede» en «el aparato se movió y nadie lo
+     * apuntó».
+     */
+    const aviso = enOtraAula(true).avisos.find((a) => a.includes('OTRA aula'))
+    expect(aviso).toBeTruthy()
     expect(aviso).toContain('«1.5» (ED. O)')
+    expect(enOtraAula(true).avisos.filter((a) => a.includes('sin preguntar'))).toEqual([])
   })
 
   it('la sala que ya tiene ese equipo no cuenta como nuevo', () => {

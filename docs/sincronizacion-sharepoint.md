@@ -924,27 +924,103 @@ distintas—, así que la fila se rechazaba entera y la celda se quedaba atascad
 sin decir por qué.
 
 Ahora la pasada mira **antes** si ese número de serie ya está puesto en algún
-equipo de la aplicación. Si lo está:
+equipo de la aplicación. Nunca se pregunta —la única respuesta que la pantalla
+sabe ofrecer, «sí, que entre», fallaría— y lo que se hace depende de **dónde
+esté**, que son dos cosas distintas:
 
-- **No se pregunta.** La única respuesta que la pantalla sabe ofrecer —«sí, que
-  entre»— fallaría.
-- **No entra ni con la casilla puesta**, ni con un «sí» contestado en una
-  pasada anterior. Lo de la base manda sobre las dos cosas.
-- **La celda se retiene** y se dice una vez, con el nombre de los dos lados y
-  hasta tres ejemplos:
+### En esta misma aula: la celda viaja y el aparato se reclasifica
 
-  > «Monitor» del libro ya está en la aplicación con otro nombre: 75 números de
-  > serie que están puestos en equipos de tipo «Pantalla». No se crea ninguno:
-  > el n.º de serie es único en toda la aplicación y la base lo rechazaría. Es
-  > el mismo aparato con dos nombres, y se arregla unificando los dos tipos.
-  > Por ejemplo «V3080D6Y» en «1.1», «V305T6VL» en «SALA PRÁCTICAS
-  > FISIOTERAPIA 2».
+`sync_aplicar_equipo` sabe hacer esto desde `20260901000100`: adopta el aparato
+y le devuelve el tipo que el libro le da en su columna, si es uno del que el
+suyo se separó. Retener la celda era justo lo que lo impedía —no llegaba nunca
+al servidor— y por eso aquella regla no se disparó ni una vez.
 
-Ese aviso es un **diagnóstico**, no un fallo de la hoja: dice qué dos tipos hay
-que unificar y con qué aparatos, que es lo que hace falta para escribir la
-migración. Si el serial está en **otra aula**, el aviso dice en cuál, y
-entonces lo que pasa no es que falte un equipo: es que el aparato se movió y
-nadie lo apuntó.
+> «Monitor» del libro está en la aplicación puesto en equipos de tipo «TV»: 67
+> números de serie, en su misma aula. No se crea ninguno: el libro los reclama
+> en su columna y la aplicación les devuelve el tipo. Por ejemplo «V3080D6Y» en
+> «1.1».
+
+Y si el servidor no puede, lo dice en la fila con su motivo, que es una frase y
+no un `duplicate key value violates unique constraint "assets_serial_idx"`.
+
+### En otra aula: se retiene
+
+Crear es imposible —el n.º de serie es único global— y mover un aparato de aula
+no se hace desde una celda. Se dice una vez, con el aula donde está:
+
+> «Monitor» del libro ya está en la aplicación, pero en OTRA aula: 2 números de
+> serie puestos en equipos de tipo «TV». O el aparato se movió y nadie lo
+> apuntó, o el número está en la fila equivocada.
+
+## 11 sexies. 67 monitores de PC contados como TV, y Teams que no es un aparato
+
+Las dos cosas salieron de la misma mesa: cruzar el libro con el inventario de
+verdad, 3.585 aparatos y 23 tipos.
+
+**Los monitores.** De los 68 números de serie de «S/N Monitor», **67 ya estaban
+en la aplicación, puestos en equipos de tipo «TV»**; uno solo faltaba de verdad.
+Por eso «TV» tenía 371 aparatos y TVs de verdad hay 186. Viene de la
+importación: `asset_type_id('Monitor')` resolvía a «Pantalla» —«monitor» era uno
+de sus alias— igual que `asset_type_id('TV')`, así que las dos columnas del
+libro entraron en el mismo tipo.
+
+Deshacerlo no es una fusión, es una **separación**, y no la hace una migración:
+la hace la sincronización, aparato a aparato, con el libro delante diciendo cuál
+va en qué columna. Lo que `20260922000700` arregla es el mapa: `separado_de` de
+«Monitor» apuntaba a «Pantalla», que ya está vacía, cuando la mezcla está hoy
+dentro de «TV». La regla que aplica es general y sin nombres propios: *si un
+tipo dice haberse separado de otro que ya está vacío, y de ese otro salió un
+único hermano que sí tiene aparatos, la mezcla se fue con el hermano*.
+
+**Teams y Zoom.** 303 fichas de «Teams actualizado» y 292 de «Zoom
+actualizado», **ninguna con modelo ni número de serie**, porque no hay nada que
+apuntar: no son cosas que se puedan señalar con el dedo, son un estado del
+puesto. Puestos como aparatos no se podían contestar «falla» —el inventario no
+tiene esa casilla— y llenaban la ficha de cada aula con dos renglones mudos.
+
+Pasan a ser **comprobaciones de la sala**, al lado de «Red», que ya lo era: la
+revisión pregunta correcto / falla / no aplica y lo que pasa va en la
+observación. Las fichas se retiran; los tipos **no** se borran, porque
+`inspection_checks` apunta a esos `assets` y una revisión vieja tiene que poder
+seguir leyéndose entera.
+
+## 11 septies. Las columnas de SÍ/NO salen del inventario, no de una casilla aparte
+
+`Altavoces`, `Cámara` y `Microfono Jabra` no leían el inventario. Salían de
+`rooms.capabilities`, un sí o un no guardado **al margen** de los aparatos. Dos
+registros del mismo hecho, y llevan años yendo cada uno por su lado:
+
+| Columna | dice SÍ | dice NO / vacío | **dice NO y el aparato SÍ está** |
+|---|---|---|---|
+| H `Altavoces` | 154 | 139 | **20** |
+| I `Cámara` | 163 | 130 | **66** |
+| J `Microfono Jabra` | 30 | 263 | **256** |
+
+442 aulas donde las dos hojas del **mismo libro** se contradicen. El caso gordo
+es el micrófono, y tenía además una causa propia: se buscaba el tipo
+«Micrófono» y el de 298 aulas se llama **«Micrófono Jabra»**.
+
+Ahora las tres son `solo_app`: las escribe la aplicación leyendo su inventario.
+Manda el inventario porque es el que se puede señalar —detrás de cada sí hay una
+ficha con su aula, su estado y su fecha—, y `capabilities` se queda de respaldo
+**solo** para las aulas que no tienen ni un aparato apuntado: ahí no hay
+inventario que consultar y su sí sigue siendo el único dato que existe.
+
+Escribir «SI» a mano en la hoja ya no crea nada: la pasada siguiente devuelve la
+celda a lo que diga el inventario y lo deja escrito en la hoja `Sincronización`,
+que es lo que hace `solo_app` con cualquier columna suya. Para que un aula tenga
+altavoces, se apuntan los altavoces.
+
+**`Botonera` (K) no cambia, y es a propósito.** No dice si hay botonera: dice si
+está **actualizada** —«Actualizada \*», «Actualizada», «No tiene»—, y eso el
+inventario no lo sabe. Sus contradicciones reales son 8 aulas, no las 100 que
+parecen si se cuentan como «no» los 92 huecos.
+
+**Los cinco tipos sin columna** —HDMI PC (303), HDMI Amarillo (300), HDMI Azul
+(281), Atril (38) y Monitor Atril (38)— se quedan fuera de `Estado` a propósito:
+ya salen en `Inventario por Sala`, uno por fila y con su `Ref`. Darles columna
+sería volver a tener el mismo dato en dos sitios, que es justo lo que este
+apartado deshace.
 
 ## 12. Lo que puede salir mal
 

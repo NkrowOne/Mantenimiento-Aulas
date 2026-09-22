@@ -181,6 +181,10 @@ describe('equipoDeIncidencia', () => {
 
   it('sin equipo, la comprobación de sala se lee con palabras', () => {
     expect(equipoDeIncidencia({ asset_id: null, check_key: 'red' }, nombreDeEquipo)).toBe('Red')
+    // Y las dos que entran con esta tanda: una avería de Teams tiene que
+    // poder decir de qué habla, igual que la de Red.
+    expect(equipoDeIncidencia({ asset_id: null, check_key: 'teams' }, nombreDeEquipo)).toBe('Teams')
+    expect(equipoDeIncidencia({ asset_id: null, check_key: 'zoom' }, nombreDeEquipo)).toBe('Zoom')
   })
 
   // Las revisiones de antes del inventario guardaron `pantallas`, `sonido`… y

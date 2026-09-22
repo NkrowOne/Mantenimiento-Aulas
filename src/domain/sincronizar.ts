@@ -1802,8 +1802,13 @@ function retenerEquiposNuevos(
   const preguntas = new Map<string, { par: Emparejada<SalaVolcada>; tipo: string; celdas: HaciaLaBase[] }>()
   /** Cuántos van a entrar sin preguntar, por tipo. Solo con la casilla puesta. */
   const nuevos = new Map<string, number>()
-  /** `tipo del libro → tipo de la aplicación` de los que ya están, con ejemplos. */
+  /** Los que están en OTRA aula: `tipo del libro → tipo de la app`, con ejemplos. */
   const conOtroNombre = new Map<
+    string,
+    { delLibro: string; enLaApp: string; n: number; ejemplos: string[] }
+  >()
+  /** Los que están en ESTA aula con otro tipo: los reclasifica el servidor. */
+  const aReclasificar = new Map<
     string,
     { delLibro: string; enLaApp: string; n: number; ejemplos: string[] }
   >()
@@ -1850,10 +1855,24 @@ function retenerEquiposNuevos(
      */
     const ya = yaPuesto.get(id)
     if (ya) {
-      retenidas.add(`${h.fila}|${h.letra}`)
+      /*
+       * En ESTA aula y con otro tipo: la celda viaja, y el servidor decide.
+       *
+       * `sync_aplicar_equipo` sabe hacer justo esto desde `20260901000100`:
+       * adopta el aparato y le devuelve el tipo que el libro le da en su
+       * columna, si es uno del que el suyo se separó. Y si no lo es, lo rechaza
+       * con una frase que dice qué lleva ese número y de qué tipo es.
+       *
+       * Retener la celda aquí era lo que impedía las dos cosas: la pregunta de
+       * «equipo nuevo» se comía la celda, no llegaba nunca al servidor, y la
+       * reclasificación que aquella migración dejó escrita no se disparó una
+       * sola vez. 67 monitores de PC llevan desde entonces contados como TV.
+       */
+      const enEstaAula = ya.sala.id === par.dato.id
+      const cesta = enEstaAula ? aReclasificar : conOtroNombre
       if (eq.campo === 'serial') {
         const k = `${norm(eq.tipo)}|${norm(ya.equipo.tipo)}`
-        const acum = conOtroNombre.get(k) ?? {
+        const acum = cesta.get(k) ?? {
           delLibro: eq.tipo,
           enLaApp: ya.equipo.tipo,
           n: 0,
@@ -1862,11 +1881,14 @@ function retenerEquiposNuevos(
         acum.n += 1
         if (acum.ejemplos.length < 3) {
           acum.ejemplos.push(
-            `«${h.valor ?? ''}» en ${ya.sala.id === par.dato.id ? `«${par.destino}»` : `«${ya.sala.code}» (${ya.sala.edificio})`}`,
+            `«${h.valor ?? ''}» en ${enEstaAula ? `«${par.destino}»` : `«${ya.sala.code}» (${ya.sala.edificio})`}`,
           )
         }
-        conOtroNombre.set(k, acum)
+        cesta.set(k, acum)
       }
+      // En otra aula sí se retiene: crear es imposible y mover un aparato de
+      // aula no se hace desde una celda, que es lo que dice el propio servidor.
+      if (!enEstaAula) retenidas.add(`${h.fila}|${h.letra}`)
       continue
     }
 
@@ -1898,11 +1920,19 @@ function retenerEquiposNuevos(
     preguntas.set(id, q)
   }
 
+  for (const c of aReclasificar.values()) {
+    plan.avisos.push(
+      `«${c.delLibro}» del libro está en la aplicación puesto en equipos de tipo «${c.enLaApp}»: ${c.n} ${
+        c.n === 1 ? 'número de serie' : 'números de serie'
+      }, en su misma aula. No se crea ninguno: el libro los reclama en su columna y la aplicación les devuelve el tipo, que es el mismo aparato con el nombre que le toca. Si alguno no se pudiera, la fila lo dirá con su motivo. Por ejemplo ${c.ejemplos.join(', ')}.`,
+    )
+  }
+
   for (const c of conOtroNombre.values()) {
     plan.avisos.push(
-      `«${c.delLibro}» del libro ya está en la aplicación con otro nombre: ${c.n} ${
-        c.n === 1 ? 'número de serie que está puesto' : 'números de serie que están puestos'
-      } en equipos de tipo «${c.enLaApp}». No se crea ninguno: el n.º de serie es único en toda la aplicación y la base lo rechazaría. Es el mismo aparato con dos nombres, y se arregla unificando los dos tipos. Por ejemplo ${c.ejemplos.join(', ')}.`,
+      `«${c.delLibro}» del libro ya está en la aplicación, pero en OTRA aula: ${c.n} ${
+        c.n === 1 ? 'número de serie puesto' : 'números de serie puestos'
+      } en equipos de tipo «${c.enLaApp}». No se crea ninguno: el n.º de serie es único en toda la aplicación y la base lo rechazaría. O el aparato se movió y nadie lo apuntó, o el número está en la fila equivocada. Por ejemplo ${c.ejemplos.join(', ')}.`,
     )
   }
 

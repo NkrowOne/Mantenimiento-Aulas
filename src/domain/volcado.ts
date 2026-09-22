@@ -165,6 +165,52 @@ export function equiposDeMas(sala: SalaVolcada): Array<{ tipo: string; cuantos: 
   return out
 }
 
+/**
+ * Qué aparatos del inventario responden por cada columna de SÍ/NO.
+ *
+ * «Micrófono Jabra» y «Micrófono» son el mismo renglón del libro: la columna se
+ * llama «Microfono Jabra» y la importación creó los dos tipos. Buscar solo
+ * «Micrófono» es lo que dejaba 254 aulas diciendo que no tienen micrófono
+ * cuando lo tienen: el suyo se llama «Micrófono Jabra».
+ */
+const TIPOS_DE_CAPACIDAD: Record<string, string[]> = {
+  altavoces: ['Altavoces'],
+  camara: ['Cámara'],
+  microfono: ['Micrófono Jabra', 'Micrófono'],
+}
+
+/** El equipo de la sala que sea de alguno de esos tipos, si lo hay. */
+function equipoDeAlgunTipo(sala: SalaVolcada, tipos: string[] | undefined): EquipoVolcado | null {
+  for (const t of tipos ?? []) {
+    const eq = equipoQueSeVe(sala.equipos, t)
+    if (eq) return eq
+  }
+  return null
+}
+
+/**
+ * Si la sala tiene ese aparato, según el INVENTARIO.
+ *
+ * Antes se leía de `rooms.capabilities`, que es un dato aparte: un sí o un no
+ * guardado al margen de los aparatos. Los dos han ido cada uno por su lado, y en
+ * el libro del 22/09 se contradicen **442 veces** —20 altavoces, 66 cámaras y
+ * 256 micrófonos que la hoja daba por no tener y la aplicación sí tiene, aparato
+ * a aparato y con su ficha—. Dos sitios para el mismo hecho: eso no se arregla
+ * cuadrándolos una vez, se arregla dejando uno.
+ *
+ * Manda el inventario porque es el que se puede señalar: detrás de cada sí hay
+ * una ficha con su aula, su estado y su fecha. `capabilities` se queda de
+ * respaldo para las salas que no tienen ni un aparato apuntado —ahí no hay
+ * inventario que consultar y su sí sigue siendo el único dato que existe—.
+ */
+function hayCapacidad(sala: SalaVolcada, cap: string): boolean | null {
+  const tipos = TIPOS_DE_CAPACIDAD[cap]
+  if (tipos === undefined) return sala.capacidades[cap] ?? null
+  if (equipoDeAlgunTipo(sala, tipos)) return true
+  if (sala.equipos.length === 0) return sala.capacidades[cap] ?? null
+  return false
+}
+
 /** El valor que le toca a una columna de la hoja de estado. */
 export function valorDeSala(sala: SalaVolcada, c: Columna): Valor {
   const eq = equipoDe(c.campo)
@@ -174,7 +220,7 @@ export function valorDeSala(sala: SalaVolcada, c: Columna): Valor {
   }
 
   const cap = capacidadDe(c.campo)
-  if (cap) return sala.capacidades[cap] ?? null
+  if (cap) return hayCapacidad(sala, cap)
 
   switch (c.campo) {
     case 'edificio':
@@ -196,9 +242,9 @@ export function valorDeSala(sala: SalaVolcada, c: Columna): Valor {
     case 'rooms.botonera_estado':
       return sala.botoneraEstado
     case 'microfono': {
-      const micro = equipoQueSeVe(sala.equipos, 'Micrófono')
+      const micro = equipoDeAlgunTipo(sala, TIPOS_DE_CAPACIDAD.microfono)
       return escribirMicrofono({
-        hay: micro ? true : (sala.capacidades.microfono ?? null),
+        hay: micro ? true : hayCapacidad(sala, 'microfono'),
         serial: micro?.serial ?? null,
         modelo: micro?.serial ? null : (micro?.model ?? null),
       })
