@@ -667,6 +667,21 @@ export interface EntradaDeEstado {
    * lista de la vista previa y reconoce las aulas que salen.
    */
   crearAulas?: boolean
+  /**
+   * Dejar entrar los equipos que el libro trae y la sala no tiene, sin
+   * preguntar uno por uno.
+   *
+   * Apagado por defecto, por lo mismo que `crearAulas`: crear un equipo en un
+   * aula no se deshace solo. Pero con 75 monitores que ninguna sala tiene
+   * —porque la pantalla del PC no estaba en la aplicación— contestar de uno en
+   * uno no los iba a crear nunca, que es el mismo callejón del que salieron
+   * las aulas de Sócrates.
+   *
+   * Lo que abarata el riesgo aquí es el número de serie: es único por aparato
+   * y la propia base lo tiene con un índice único, así que un equipo creado de
+   * más no se duplica ni se confunde con otro.
+   */
+  crearEquipos?: boolean
 }
 
 export function sincronizarEstado(e: EntradaDeEstado): Plan {
@@ -1038,7 +1053,7 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
       lado === 'base' ? (sala.revisiones[0] ?? null) : fechaDeCelda(celdas.D),
   })
 
-  retenerEquiposNuevos(plan, emparejadas, e.hoja, e.respuestas ?? {})
+  retenerEquiposNuevos(plan, emparejadas, e.hoja, e.respuestas ?? {}, e.crearEquipos === true)
 
   // Las salas vivas que el libro no tiene: fila nueva en su bloque de edificio.
   const enLaHoja = new Set(emparejadas.map((p) => p.dato.id))
@@ -1742,10 +1757,13 @@ function retenerEquiposNuevos(
   emparejadas: Array<Emparejada<SalaVolcada>>,
   hoja: Hoja,
   respuestas: Respuestas,
+  crearEquipos: boolean,
 ): void {
   const porFila = new Map(emparejadas.map((p) => [p.fila, p]))
   const retenidas = new Set<string>()
   const preguntas = new Map<string, { par: Emparejada<SalaVolcada>; tipo: string; celdas: HaciaLaBase[] }>()
+  /** Cuántos van a entrar sin preguntar, por tipo. Solo con la casilla puesta. */
+  const nuevos = new Map<string, number>()
 
   for (const h of plan.haciaLaBase) {
     const eq = equipoDe(h.campo)
@@ -1758,6 +1776,19 @@ function retenerEquiposNuevos(
     const r = respuestas[id]
     if (r?.tipo === 'alta' && r.aceptar) continue
 
+    /*
+     * Con la casilla puesta, ni se retiene ni se pregunta: la celda sigue su
+     * camino y `sync_aplicar_equipo` crea el equipo, que es lo que hace por su
+     * cuenta cuando la sala no tiene ninguno de ese tipo.
+     *
+     * Se cuenta para decirlo una vez al final. La lista completa está en la
+     * vista previa, celda a celda, que es donde se mira antes de aplicar.
+     */
+    if (crearEquipos) {
+      nuevos.set(eq.tipo, (nuevos.get(eq.tipo) ?? 0) + 1)
+      continue
+    }
+
     retenidas.add(`${h.fila}|${h.letra}`)
     if (r?.tipo === 'alta') {
       plan.avisos.push(
@@ -1768,6 +1799,16 @@ function retenerEquiposNuevos(
     const q = preguntas.get(id) ?? { par, tipo: eq.tipo, celdas: [] }
     q.celdas.push(h)
     preguntas.set(id, q)
+  }
+
+  if (nuevos.size > 0) {
+    const detalle = [...nuevos.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([tipo, n]) => `${n} ${tipo.toLowerCase()}`)
+      .join(', ')
+    plan.avisos.push(
+      `Equipos nuevos que entran sin preguntar, por número de serie: ${detalle}. Están abajo, celda a celda.`,
+    )
   }
 
   if (retenidas.size === 0) return

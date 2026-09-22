@@ -116,6 +116,7 @@ export function SincronizarExcel(): React.ReactElement {
   const [corte, setCorte] = useState<string | null>(null)
   // Apagado al entrar, siempre: no se hereda de la pasada anterior.
   const [crearAulas, setCrearAulas] = useState(false)
+  const [crearEquipos, setCrearEquipos] = useState(false)
   const [analisis, setAnalisis] = useState<Analisis | null>(null)
   const [fallo, setFallo] = useState<string | null>(null)
   const [aplicado, setAplicado] = useState<string | null>(null)
@@ -307,6 +308,16 @@ export function SincronizarExcel(): React.ReactElement {
     }
   }
 
+  /** Y los equipos, igual: se recalcula al momento y la lista se ve antes. */
+  const elegirCrearEquipos = (v: boolean): void => {
+    setCrearEquipos(v)
+    if (analisis) {
+      volverAPlanificar(
+        replanificar(analisis, analisis.respuestas, referencia, corte, crearAulas, v),
+      )
+    }
+  }
+
   /**
    * El mismo libro que saldría de la pasada, sin la pasada: no entra nada en la
    * base y no se apunta como salida. Es para mirarlo, y el nombre lo dice.
@@ -414,6 +425,16 @@ export function SincronizarExcel(): React.ReactElement {
         hayLibro={analisis !== null}
         disabled={ocupado}
         onCambiar={elegirCrearAulas}
+      />
+
+      <EquiposNuevos
+        encendido={crearEquipos}
+        cuantos={
+          analisis?.dudas.filter((d) => d.tipo === 'alta' && d.que === 'equipo').length ?? 0
+        }
+        hayLibro={analisis !== null}
+        disabled={ocupado}
+        onCambiar={elegirCrearEquipos}
       />
 
       <div className="card mt-4 p-4">
@@ -565,6 +586,67 @@ const OPCIONES: Array<{ id: Referencia | null; titulo: string; texto: string }> 
     texto: 'Lo que dice la aplicación se escribe en la hoja.',
   },
 ]
+
+/**
+ * Y el de los equipos: los números de serie que el libro trae y la sala no.
+ *
+ * Nace de setenta y cinco monitores. La pantalla del PC no estaba en la
+ * aplicación, así que ninguna sala tenía «monitor» y la pasada preguntaba por
+ * cada una: setenta y cinco veces la misma pregunta, pasada tras pasada, que
+ * es exactamente como no se crea ninguno.
+ *
+ * Lo que abarata el riesgo, y por eso este está separado del de las aulas: el
+ * número de serie es único por aparato y la base lo tiene con un índice único.
+ * Un equipo creado de más no se duplica ni se confunde con otro; un aula
+ * creada de más se lleva la mitad del histórico de la buena.
+ */
+function EquiposNuevos({
+  encendido,
+  cuantos,
+  hayLibro,
+  disabled,
+  onCambiar,
+}: {
+  encendido: boolean
+  cuantos: number
+  hayLibro: boolean
+  disabled: boolean
+  onCambiar: (v: boolean) => void
+}): React.ReactElement {
+  return (
+    <div className="card mt-4 p-4">
+      <p className="eyebrow">Equipos que el libro trae y la sala no</p>
+      <label className="mt-2 flex items-start gap-3">
+        <input
+          type="checkbox"
+          className="mt-0.5 size-5 shrink-0"
+          checked={encendido}
+          disabled={disabled}
+          onChange={(ev) => onCambiar(ev.target.checked)}
+        />
+        <span className="text-sm">
+          <span className="font-semibold">Crear los equipos con número de serie</span>
+          <span className="mt-0.5 block text-muted">
+            En todas las aulas y de una vez, en vez de preguntar aula por aula. El número de serie
+            es único por aparato, así que uno creado de más no se confunde con otro.
+          </span>
+        </span>
+      </label>
+      {!encendido && hayLibro && cuantos > 0 && (
+        <p className="mt-2 text-sm text-muted">
+          Ahora mismo hay {cuantos} {cuantos === 1 ? 'pregunta' : 'preguntas'} de equipo esperando
+          abajo. Enciende esto y entran todas.
+        </p>
+      )}
+      {encendido && hayLibro && (
+        <p className="mt-2 text-sm text-muted">
+          Van a entrar solos. Lo que entra está abajo, celda a celda, con su aula y su número de
+          serie: míralo antes de aplicar.
+        </p>
+      )}
+    </div>
+  )
+}
 
 /**
  * El interruptor de dar de alta las aulas que el libro trae y el maestro no.

@@ -112,6 +112,13 @@ export interface Analisis {
    * crear se ve antes de aplicar nada.
    */
   crearAulas: boolean
+  /**
+   * Si esta pasada va a crear los equipos que el libro trae y la sala no tiene.
+   *
+   * Hermana de `crearAulas` y por el mismo motivo: contestar de uno en uno a
+   * setenta y cinco monitores no los iba a crear nunca. Apagada de salida.
+   */
+  crearEquipos: boolean
   /** Lo que el almacén va a apuntar si la pasada se aplica. Ver `movimientos.ts`. */
   movimientos: MovimientoPrevisto[]
   /** El maestro, para que la pantalla ofrezca salas en las dudas. */
@@ -153,6 +160,7 @@ export async function analizar(
   referencia: Referencia | null = null,
   corte: string | null = null,
   crearAulas = false,
+  crearEquipos = false,
 ): Promise<Analisis> {
   const bytes = new Uint8Array(await fichero.arrayBuffer())
   const libro = await abrirLibro(bytes)
@@ -194,7 +202,7 @@ export async function analizar(
     indice,
   }
   const columnaRef = columnaParaLaRef(filas.get(ESTADO.nombre)!, ESTADO.cabecera, 'Ref')
-  const planes = planificar(entrada, datos, columnaRef, respuestas, referencia, corte, crearAulas)
+  const planes = planificar(entrada, datos, columnaRef, respuestas, referencia, corte, crearAulas, crearEquipos)
 
   // Las hojas de detalle se rehacen enteras cada pasada. No son un historial que
   // haya que ir completando: son la foto de lo que la base sabe hoy, y
@@ -233,6 +241,7 @@ export async function analizar(
     referencia,
     corte,
     crearAulas,
+    crearEquipos,
     movimientos: movimientosDe(planes, datos),
     catalogo,
     entrada,
@@ -253,8 +262,11 @@ export function replanificar(
   referencia: Referencia | null = a.referencia,
   corte: string | null = a.corte,
   crearAulas: boolean = a.crearAulas,
+  crearEquipos: boolean = a.crearEquipos,
 ): Analisis {
-  const planes = planificar(a.entrada, a.datos, a.columnaRef, respuestas, referencia, corte, crearAulas)
+  const planes = planificar(
+    a.entrada, a.datos, a.columnaRef, respuestas, referencia, corte, crearAulas, crearEquipos,
+  )
   return {
     ...a,
     planes,
@@ -264,6 +276,7 @@ export function replanificar(
     referencia,
     corte,
     crearAulas,
+    crearEquipos,
     movimientos: movimientosDe(planes, a.datos),
     bloqueada: planes.some((p) => p.desajustes.length > 0),
   }
@@ -295,6 +308,7 @@ function planificar(
   referenciaElegida: Referencia | null,
   corteElegido: string | null,
   crearAulas: boolean,
+  crearEquipos: boolean,
 ): Plan[] {
   const planes: Plan[] = []
   const inst = (hoja: string): Instantanea => e.instantaneas.get(hoja) ?? (() => undefined)
@@ -314,6 +328,7 @@ function planificar(
       referencia,
       corte,
       crearAulas,
+      crearEquipos,
     }),
   )
 
