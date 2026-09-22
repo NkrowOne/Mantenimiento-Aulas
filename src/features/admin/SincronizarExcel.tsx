@@ -1,8 +1,19 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { useRef, useState } from 'react'
 import { ofrecerFichero } from '@/lib/ficheros'
 import { aplicarOperacion } from '@/features/rooms/maestro'
-import { analizar, aplicar, dudasPendientes, escribir, lineasDelParte, replanificar } from './pasada'
+import {
+  analizar,
+  aplicar,
+  dudasPendientes,
+  escribir,
+  lineasDelParte,
+  replanificar,
+  sha256De,
+  ultimaSalida,
+} from './pasada'
+import type { UltimaSalida } from './pasada'
 import type { Analisis } from './pasada'
 import { Dudas } from './Dudas'
 import type { AltaDeSalaDesdeDuda } from './Dudas'
@@ -10,7 +21,13 @@ import type { Respuesta, Respuestas } from '@/domain/dudas'
 import { columnaDeCampo, hojaPorNombre } from '@/domain/mapa'
 import type { MovimientoPrevisto } from '@/domain/movimientos'
 import type { Alta, Plan, Referencia } from '@/domain/sincronizar'
-import { fechaCorta } from '@/domain/fechas'
+import { fechaCorta, horaCorta } from '@/domain/fechas'
+import {
+  guardarLibroSincronizado,
+  leerLibroSincronizado,
+  olvidarLibroSincronizado,
+} from '@/db/dexie'
+import type { LibroGuardado } from '@/db/dexie'
 import { Seccion } from './Seccion'
 
 /**
@@ -73,6 +90,9 @@ import { Seccion } from './Seccion'
  * salen como dudas, se contestan aquí y la pasada se recalcula con la respuesta.
  * Con dudas sin contestar no se sincroniza; ver el libro sí se puede.
  */
+/** La última salida que el servidor conoce. Se refresca al sincronizar. */
+const CLAVE_ULTIMA_SALIDA = ['excel', 'ultima-salida'] as const
+
 /** Una lectura que se canceló mientras corría: su resultado no es de nadie. */
 class LecturaCancelada extends Error {
   constructor() {
@@ -100,6 +120,8 @@ export function SincronizarExcel(): React.ReactElement {
   const [libro, setLibro] = useState<LibroGenerado | null>(null)
   const [entregado, setEntregado] = useState<'compartido' | 'descargado' | null>(null)
   const [entregando, setEntregando] = useState(false)
+  /** Si el libro no se pudo dejar guardado para luego, hay que decirlo aquí. */
+  const [sinGuardar, setSinGuardar] = useState<string | null>(null)
 
   /*
    * Qué lectura es la que vale. Cada lectura lleva su número; «Cancelar» sube
@@ -144,14 +166,54 @@ export function SincronizarExcel(): React.ReactElement {
       const r = await aplicar(analisis)
       // Con los números que la base puso a los partes nuevos: van a su fila.
       const bytes = await escribir(analisis, ahora(), r.parteId, r.altas)
-      setLibro({ nombre: conSufijo(analisis.nombre, 'sincronizado'), bytes, sincronizado: true })
+      const nombre = conSufijo(analisis.nombre, 'sincronizado')
+      setLibro({ nombre, bytes, sincronizado: true })
       setEntregado(null)
+
+      /*
+       * Y guardado en el aparato, que es lo que permite bajarlo más tarde.
+       *
+       * Sincronizar y subir a SharePoint no ocurren en el mismo minuto: se
+       * sincroniza donde hay base y se sube donde hay VPN. Hasta aquí el libro
+       * vivía solo en la pantalla, así que cambiar de sección, recargar o
+       * bloquear el móvil lo perdía — y recuperarlo obligaba a volver a subir
+       * el fichero de entrada y sincronizar otra vez sobre una base que ya
+       * tenía los cambios dentro.
+       *
+       * Si esto falla, la pasada ya está hecha y el libro está en pantalla: se
+       * pierde poder bajarlo luego, no el trabajo.
+       */
+      try {
+        const t = sumar(analisis.planes)
+        await guardarLibroSincronizado({
+          nombre,
+          bytes,
+          cuando: new Date().toISOString(),
+          sha256: await sha256De(bytes),
+          resumen: `${t.alExcel.celdas} celdas al libro · ${t.aLaApp.celdas} a la aplicación · ${t.alExcel.filasNuevas} filas nuevas`,
+        })
+        setSinGuardar(null)
+      } catch (err) {
+        // Y se dice en pantalla, no solo en la consola. Si esto falla —un
+        // iPhone con el almacenamiento apretado— el libro solo existe mientras
+        // esta pantalla siga abierta, y quien se vaya a comer sin bajarlo lo
+        // pierde: la pasada ya está aplicada y no se puede regenerar.
+        setSinGuardar(
+          'No se ha podido guardar el libro en este aparato para luego. Bájalo ahora: si sales de aquí, habrá que volver a sincronizar.',
+        )
+        console.warn('No se ha podido guardar el libro para bajarlo luego:', err)
+      }
       return r
     },
     onSuccess: (r) => {
       if (!r) return
       const partes = r.altas.filter((x) => x.tipo === 'incidencia').length
       const nuevas = r.altas.length
+      // La última salida del servidor acaba de cambiar: es esta. Sin esto, la
+      // caché de un minuto conserva el sha anterior y la tarjeta avisa de que
+      // «hay otro más nuevo» señalando a una fecha ANTERIOR a la del libro que
+      // ofrece — un aviso que se contradice solo y que empuja a no subir el bueno.
+      void qc.invalidateQueries({ queryKey: CLAVE_ULTIMA_SALIDA })
       setAplicado(
         [
           r.rechazadas === 0
@@ -240,14 +302,32 @@ export function SincronizarExcel(): React.ReactElement {
    * Sin `useMutation` a propósito: la hoja de compartir hay que pedirla dentro
    * de la pulsación, y `mutate` mete un turno de por medio antes de llamar.
    */
-  const entregar = (): void => {
-    if (!libro || entregando) return
+  const entregar = (nombre: string, bytes: Uint8Array): void => {
+    if (entregando) return
     setEntregando(true)
-    void ofrecerFichero(libro.nombre, blobDe(libro.bytes))
+    void ofrecerFichero(nombre, blobDe(bytes))
       .then((via) => setEntregado(via))
       .catch((e: Error) => setFallo(e.message))
       .finally(() => setEntregando(false))
   }
+
+  /*
+   * El libro de la última sincronización, esté o no esta pantalla recién
+   * abierta. Es lo que contesta «sincronicé esta mañana y ahora quiero subirlo».
+   */
+  const guardado = useLiveQuery(() => leerLibroSincronizado(), [], undefined)
+
+  /*
+   * Y cuál fue la última salida SEGÚN EL SERVIDOR. Si no es la que este
+   * aparato guardó, es que alguien ha sincronizado después: subir el de aquí
+   * devolvería a SharePoint una foto vieja, y eso no se puede dejar pasar en
+   * silencio.
+   */
+  const salida = useQuery({
+    queryKey: CLAVE_ULTIMA_SALIDA,
+    queryFn: ultimaSalida,
+    staleTime: 60_000,
+  })
 
   const limpiar = (): void => {
     setAnalisis(null)
@@ -277,6 +357,24 @@ export function SincronizarExcel(): React.ReactElement {
         ) : undefined
       }
     >
+      {/* Antes que nada: el libro de la última sincronización, que es a lo que
+          más gente entra aquí. Se esconde mientras hay uno recién hecho en
+          pantalla, para no ofrecer dos descargas que se parecen. */}
+      {guardado && !libro && (
+        <ElUltimoLibro
+          guardado={guardado}
+          ultimaDelServidor={
+            salida.isError
+              ? { estado: 'no se sabe', porQue: 'no contesta' }
+              : (salida.data ?? null)
+          }
+          entregado={entregado}
+          entregando={entregando}
+          onEntregar={() => entregar(guardado.nombre, new Uint8Array(guardado.bytes))}
+          onOlvidar={() => void olvidarLibroSincronizado()}
+        />
+      )}
+
       <QuienManda
         referencia={referencia}
         corte={corte}
@@ -396,12 +494,16 @@ export function SincronizarExcel(): React.ReactElement {
 
           {aplicado && <p className="mt-3 text-sm text-ok">{aplicado}</p>}
 
+          {sinGuardar && (
+            <p className="mt-3 rounded-ctl bg-warn-tint p-3 text-sm text-warn">{sinGuardar}</p>
+          )}
+
           {libro && (
             <Entrega
               libro={libro}
               entregado={entregado}
               entregando={entregando}
-              onEntregar={entregar}
+              onEntregar={() => entregar(libro.nombre, libro.bytes)}
             />
           )}
         </>
@@ -981,6 +1083,119 @@ interface LibroGenerado {
   bytes: Uint8Array
   /** Si entró en la base antes de escribirse. Si no, es una vista previa. */
   sincronizado: boolean
+}
+
+/**
+ * El libro de la última sincronización, siempre a mano.
+ *
+ * Sincronizar y subir a SharePoint no pasan a la vez: se sincroniza donde hay
+ * base y se sube donde hay VPN, a veces horas después y desde otra pantalla.
+ * Antes el fichero vivía solo en el estado de este componente, así que cambiar
+ * de sección lo perdía y recuperarlo obligaba a subir otra vez el libro de
+ * entrada y sincronizar sobre una base que ya tenía los cambios aplicados —una
+ * pasada en balde que además vuelve a preguntar las mismas dudas—.
+ *
+ * Con la fecha delante y el aviso de si el servidor conoce una salida más
+ * nueva: bajar un libro viejo y subirlo a SharePoint devuelve el inventario a
+ * una foto anterior, y eso no se nota hasta la sincronización siguiente.
+ */
+/**
+ * ¿El libro guardado aquí sigue siendo el que hay que subir?
+ *
+ * Tres respuestas, y la tercera es la que importa: «no lo sé». Antes eran dos,
+ * y el silencio de un servidor que no sabe contestar se leía como «todo bien»,
+ * que es exactamente lo que devuelve SharePoint a una foto de hace semanas.
+ *
+ * Y la fecha se compara además del sha: si `sync_apuntar_salida` falló —solo se
+ * queja por la consola—, el servidor se queda con la salida anterior y el sha
+ * no coincide, pero la suya es MÁS VIEJA. Avisar entonces sería empujar a no
+ * subir el libro bueno.
+ */
+function comoEstaElLibro(
+  guardado: LibroGuardado,
+  servidor: UltimaSalida | null,
+): { que: 'el ultimo' | 'hay otro mas nuevo' | 'no se sabe'; cuando?: string } {
+  if (servidor === null) return { que: 'no se sabe' }
+  if (servidor.estado === 'no se sabe') return { que: 'no se sabe' }
+  // El servidor no conoce ninguna salida: o nunca se sincronizó desde aquí, o
+  // no llegó a apuntarse. El libro de este aparato es lo único que hay.
+  if (servidor.estado === 'ninguna') return { que: 'el ultimo' }
+  if (servidor.sha256 === guardado.sha256) return { que: 'el ultimo' }
+  return servidor.cuando > guardado.cuando
+    ? { que: 'hay otro mas nuevo', cuando: servidor.cuando }
+    : { que: 'el ultimo' }
+}
+
+function ElUltimoLibro({
+  guardado,
+  ultimaDelServidor,
+  entregado,
+  entregando,
+  onEntregar,
+  onOlvidar,
+}: {
+  guardado: LibroGuardado
+  ultimaDelServidor: UltimaSalida | null
+  entregado: 'compartido' | 'descargado' | null
+  entregando: boolean
+  onEntregar: () => void
+  onOlvidar: () => void
+}): React.ReactElement {
+  const estado = comoEstaElLibro(guardado, ultimaDelServidor)
+
+  return (
+    <div className="card mt-4 p-4">
+      <p className="eyebrow">El libro para SharePoint</p>
+      <h2 className="mt-1 text-sm font-semibold">
+        {/* Con la hora: quien sincroniza por la mañana y después de comer no
+            puede distinguir dos libros del mismo día por la fecha sola. */}
+        Sincronizado el {fechaCorta(guardado.cuando)} a las {horaCorta(guardado.cuando)}
+      </h2>
+      <p className="mt-1 text-sm text-muted">
+        {estado.que === 'hay otro mas nuevo'
+          ? 'Guardado en este aparato, pero no es el último.'
+          : 'Guardado en este aparato. Súbelo a SharePoint sustituyendo el original.'}
+      </p>
+      <p className="mt-1 text-xs text-muted">{guardado.resumen}</p>
+
+      {estado.que === 'hay otro mas nuevo' && (
+        <p className="mt-2 rounded-ctl bg-warn-tint p-2 text-sm text-warn">
+          Después de éste ha habido otra sincronización
+          {estado.cuando ? ` (${fechaCorta(estado.cuando)} a las ${horaCorta(estado.cuando)})` : ''}
+          , probablemente desde otro aparato. Subir éste devolvería SharePoint a la foto de antes:
+          pide el suyo a quien la hizo, o vuelve a sincronizar tú.
+        </p>
+      )}
+
+      {estado.que === 'no se sabe' && (
+        <p className="mt-2 rounded-ctl bg-warn-tint p-2 text-sm text-warn">
+          No se ha podido comprobar con el servidor si éste sigue siendo el último libro. Si alguien
+          ha sincronizado después que tú, subir éste devolvería SharePoint a la foto de antes.
+        </p>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          className="key key-accent h-11 px-4"
+          disabled={entregando}
+          onClick={onEntregar}
+        >
+          {entregando ? 'Entregando…' : 'Descargar el libro'}
+        </button>
+        <button type="button" className="key key-quiet min-h-11 px-3 text-sm" onClick={onOlvidar}>
+          Ya lo he subido
+        </button>
+      </div>
+      <p className="mt-2 text-xs text-muted">{guardado.nombre}</p>
+      {entregado && (
+        <p className="mt-2 text-sm text-ok">
+          {entregado === 'compartido' ? 'Compartido.' : 'Descargado.'} Súbelo a SharePoint
+          sustituyendo el original.
+        </p>
+      )}
+    </div>
+  )
 }
 
 /**

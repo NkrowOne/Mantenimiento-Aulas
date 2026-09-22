@@ -1001,12 +1001,32 @@ arriba. Lo que la fusión ya sabe decidir sola no cambia: si solo se movió un
 lado, gana ese lado. Los artículos del almacén no llevan fecha de cambio y no
 entran en el corte.
 
+**1e · Un edificio que el maestro no conoce no llena la cuarentena.** La hoja
+llama a los edificios como los llama SharePoint —«ED. S - SÓCRATES»— y el
+maestro como los tiene el inventario —«EDIFICIO S»—. Las aulas cruzan igual,
+porque cruzan por matrícula, pero la celda no coincide nunca: antes se mandaba
+a la aplicación aula por aula y volvían 23 apuntes de cuarentena diciendo lo
+mismo, porque una celda no puede crear ni renombrar un edificio. Ahora sale un
+aviso por edificio, con cuántas filas afecta y qué hacer: renombrarlo en Datos
+→ Maestro si es el mismo con otro nombre, o crearlo allí si es nuevo. La planta
+de esas filas se retiene con él, porque aplicarla sola la crearía dentro del
+edificio de antes y sin decir nada.
+
 Y una cosa más cuando manda el Excel: si el libro cambia el **edificio** de una
 sala —y es el libro el que lo ha cambiado desde la última pasada—, la sala se
 muda en la aplicación, y se lleva su planta (si el edificio de destino no la
 tiene, se crea). Si fue la aplicación la que movió la sala, la fila se muda en
 el libro, como siempre. Una planta nueva en un edificio que existe también se
 crea desde la celda; un edificio nuevo, no: hay que crearlo en el maestro.
+
+**1d · El libro para SharePoint está siempre a mano.** Sincronizar y subir a
+SharePoint no pasan a la vez: se sincroniza donde hay base y se sube donde hay
+VPN, a veces horas después. El libro de la última sincronización se guarda en
+el aparato y la sección lo ofrece al entrar, con su fecha y su hora y con un
+resumen de lo que llevaba. Si el servidor conoce una salida posterior —alguien
+sincronizó después desde otro sitio— lo avisa antes de que lo subas; y si no
+puede comprobarlo, lo dice en vez de callar. «Ya lo he subido» lo quita de en
+medio.
 
 **2 · El libro.** Se sube el `.xlsx`. No se escribe nada hasta pulsar
 «Sincronizar».

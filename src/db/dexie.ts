@@ -111,6 +111,32 @@ export interface PhotoBytes {
   type: string
 }
 
+/**
+ * El libro de Excel que salió de la última sincronización, guardado aquí.
+ *
+ * El fichero que hay que subir a SharePoint lo produce la pasada y hasta ahora
+ * vivía solo en la pantalla: cambiar de sección, recargar o bloquear el móvil
+ * lo perdía, y recuperarlo exigía volver a subir el libro de entrada y
+ * sincronizar otra vez —sobre una base que ya tenía los cambios aplicados—.
+ * Quien sincroniza no siempre puede subirlo a SharePoint en ese mismo minuto:
+ * se sincroniza en el despacho y se sube cuando hay VPN.
+ *
+ * `ArrayBuffer` por lo mismo que las fotos: se clona como datos planos y no
+ * arrastra un fichero de respaldo que WebKit pierda. Son unos 300 KB.
+ */
+export interface LibroGuardado {
+  /** Siempre `ultimo`: solo se guarda el más reciente, que es el que se sube. */
+  id: string
+  nombre: string
+  bytes: ArrayBuffer
+  /** Cuándo se generó, en ISO. Es lo que decide si sigue valiendo. */
+  cuando: string
+  /** El mismo que se apuntó en el servidor: dice si este sigue siendo el último. */
+  sha256: string
+  /** Una línea de qué llevaba la pasada, para no bajar a ciegas. */
+  resumen: string
+}
+
 /** Clave-valor para estado de la app: última sincronización, sesión cifrada… */
 export interface MetaEntry {
   key: string
@@ -148,6 +174,8 @@ export class AulasDB extends Dexie {
   photos!: EntityTable<QueuedPhoto, 'id'>
   /** Los bytes de las fotos en cola, separados de su fila de estado. */
   photoBlobs!: EntityTable<PhotoBytes, 'id'>
+  /** El libro de Excel de la última sincronización, para poder bajarlo luego. */
+  libros!: EntityTable<LibroGuardado, 'id'>
   meta!: EntityTable<MetaEntry, 'key'>
 
   constructor() {
@@ -201,6 +229,17 @@ export class AulasDB extends Dexie {
      */
     this.version(5).stores({
       photoBlobs: 'id',
+    })
+
+    /*
+     * El libro que salió de la última pasada. Una sola fila, la de `ultimo`.
+     *
+     * En tabla propia y no en `meta` porque `meta` se lee entera en sitios
+     * donde no pinta nada arrastrar 300 KB de xlsx, y porque así se borra sin
+     * tocar el resto del estado.
+     */
+    this.version(6).stores({
+      libros: 'id',
     })
   }
 }
@@ -264,6 +303,31 @@ export async function leerBytesDeFoto(id: string): Promise<Blob | null> {
 export async function borrarFotoDeLaCola(id: string): Promise<void> {
   await db.photos.delete(id)
   await db.photoBlobs.delete(id)
+}
+
+// -----------------------------------------------------------------------------
+// El libro de la última sincronización
+// -----------------------------------------------------------------------------
+
+/** La única clave: solo se guarda el último, que es el que hay que subir. */
+const ULTIMO_LIBRO = 'ultimo'
+
+export async function guardarLibroSincronizado(
+  libro: Omit<LibroGuardado, 'id' | 'bytes'> & { bytes: Uint8Array },
+): Promise<void> {
+  // Una copia propia del buffer: el `Uint8Array` que viene de la pasada puede
+  // ser una vista sobre un buffer mayor, y guardar el buffer entero metería en
+  // IndexedDB megas que nadie va a leer.
+  const bytes = libro.bytes.slice().buffer
+  await db.libros.put({ ...libro, id: ULTIMO_LIBRO, bytes })
+}
+
+export async function leerLibroSincronizado(): Promise<LibroGuardado | null> {
+  return (await db.libros.get(ULTIMO_LIBRO)) ?? null
+}
+
+export async function olvidarLibroSincronizado(): Promise<void> {
+  await db.libros.delete(ULTIMO_LIBRO)
 }
 
 /**

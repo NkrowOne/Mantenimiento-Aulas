@@ -167,6 +167,20 @@ migraciones='"al dia"'
 if [ -f /srv/dist/.migraciones-fallidas ]; then
 	migraciones='"fallidas"'
 	falta 'MIGRACIONES'
+elif [ -f /srv/dist/.migraciones-esquema ]; then
+	# Lo peor de los cuatro estados, porque es el único que hasta ahora se
+	# publicaba como «al dia»: el registro da por aplicadas migraciones que la
+	# base no tiene. Se comprueba contra `pg_proc`, que no se puede engañar
+	# anotando una fila.
+	migraciones='"esquema no cuadra"'
+	falta 'MIGRACIONES'
+elif [ -f /srv/dist/.migraciones-sin-comprobar ]; then
+	# Ni aplicadas ni fallidas: sin mirar. Cuenta como desconfiguración —falta
+	# una variable— y no como aviso, porque la consecuencia no es menor: la base
+	# se queda en la versión que tuviera, y la aplicación desplegada le pide
+	# columnas y funciones que quizá no existan.
+	migraciones='"sin comprobar"'
+	falta 'DATABASE_URL'
 fi
 
 # Presencia, nunca el valor. Su ausencia NO es un fallo del despliegue: la PWA
@@ -264,6 +278,20 @@ texto() {
 			linea '  Las migraciones no se han podido aplicar: la base puede no tener'
 			linea '  las tablas ni las funciones que la aplicación va a pedir.'
 			linea '  Relánzalas desde la terminal de este servicio con: migrar'
+			;;
+		'"esquema no cuadra"')
+			linea '  La base NO tiene las funciones que el código desplegado necesita,'
+			linea '  aunque el registro de migraciones diga que sí. Pasa cuando alguien'
+			linea '  las anota para salir de un atasco sin llegar a ejecutarlas.'
+			linea '  Arriba está la lista y, por cada fichero, la orden que lo arregla:'
+			linea '    migrar --reaplicar <fichero>.sql'
+			;;
+		'"sin comprobar"')
+			linea '  Este servicio no tiene DATABASE_URL, así que NO migra la base:'
+			linea '  se queda en la versión que tuviera, y seguirá así en cada despliegue.'
+			linea '  Añade DATABASE_URL (el Postgres de la pila) a las variables de este'
+			linea '  servicio y vuelve a desplegar; o lánzalo a mano desde su terminal:'
+			linea '    DATABASE_URL=postgres://... migrar'
 			;;
 	esac
 	if [ -n "$faltan" ] || [ -n "$avisos" ]; then

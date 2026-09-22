@@ -218,12 +218,24 @@ describe.skipIf(!RUTA)('la aplicación cambió y el libro lo dice', () => {
       : []
     if (m8b) m8b.activa = false
 
-    // M9 — el almacén: cambia el consumo de marzo y lo comprado de un artículo.
+    /*
+     * M9 — el almacén: cambia el consumo de un mes y lo comprado de un artículo.
+     *
+     * El mes es SEPTIEMBRE y no marzo, y el cambio no es cosmético: desde que
+     * el recuento arranca el 1 de agosto (`Hoja.arranque`), enero–julio son del
+     * libro y la aplicación no los escribe nunca. Probar marzo era probar que
+     * la aplicación hace justo lo que se decidió que no hiciera, y por eso esta
+     * prueba —que solo corre con un libro de verdad delante— llevaba fallando
+     * sin que nadie lo viera.
+     */
     const m9 = datos.articulos[0]!
-    const m9MarzoAntes = m9.meses[2]!
-    m9.meses[2] = m9MarzoAntes + 5
+    const m9SeptiembreAntes = m9.meses[8]!
+    m9.meses[8] = m9SeptiembreAntes + 5
     const m9CompradoAntes = m9.comprado ?? 0
     m9.comprado = m9CompradoAntes + 10
+    // Y que enero–julio no se toquen, que es la otra mitad de la regla.
+    const m9MarzoAntes = m9.meses[2]!
+    m9.meses[2] = m9MarzoAntes + 7
 
     // M10 — un artículo nuevo en el almacén.
     datos.articulos.push({ id: 'A-M10', nombre: 'Cable de prueba XYZ', meses: [1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0], comprado: 7 })
@@ -405,8 +417,12 @@ describe.skipIf(!RUTA)('la aplicación cambió y el libro lo dice', () => {
     // M9
     {
       const f = bolsa1.find((x) => x.fila === Number(m9.id.slice(1)))!
-      if (f.celdas.D !== m9MarzoAntes + 5) falla(`M9: marzo (D) dice «${String(f.celdas.D)}» y tenía que decir ${m9MarzoAntes + 5}`)
+      if (f.celdas.J !== m9SeptiembreAntes + 5)
+        falla(`M9: septiembre (J) dice «${String(f.celdas.J)}» y tenía que decir ${m9SeptiembreAntes + 5}`)
       if (f.celdas.P !== m9CompradoAntes + 10) falla(`M9: Comprado (P) dice «${String(f.celdas.P)}» y tenía que decir ${m9CompradoAntes + 10}`)
+      // Marzo es del libro: la aplicación no lo escribe aunque haya cambiado.
+      if (f.celdas.D === m9MarzoAntes + 7)
+        falla('M9: marzo (D) se ha reescrito, y enero–julio son del libro desde el arranque del recuento')
     }
     // M10
     {

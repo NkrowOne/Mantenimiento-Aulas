@@ -1,3 +1,11 @@
+-- reejecutable: si
+--
+-- Sus dos `update` de datos buscan exactamente la nota que ellos mismos
+-- cambian, así que una segunda pasada no encuentra ni una fila. Lo demás es
+-- `create or replace` y `alter table ... disable trigger`, que se repiten sin
+-- consecuencias. Hace falta declararlo porque la deducción automática rechaza
+-- cualquier `update` de datos, y bien rechazado está: el que se repite y no da
+-- error es el que borra trabajo de personas en silencio.
 -- =============================================================================
 -- El recuento del almacén arranca el 1 de agosto de 2026
 --

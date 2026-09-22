@@ -47,8 +47,33 @@ function migracionesQueFaltan(parte: Parte): string[] {
   return __MIGRACIONES__.filter((m) => !anotadas.has(m))
 }
 
+/**
+ * Lo que el propio servidor de la PWA dice de sí mismo (`/salud.json`).
+ *
+ * Es la única fuente que sigue contestando cuando la base está vieja: lo
+ * escribe el arranque del contenedor con lo que hay en su entorno, sin tocar
+ * Postgres. Ahí se ve el caso que costó dos semanas de avería —el servicio sin
+ * `DATABASE_URL`, que por tanto nunca migra la base y lo venía diciendo como
+ * «al dia»—, y que `mi_diagnostico()` no puede contar porque vive justo en la
+ * migración que falta.
+ */
+interface Salud {
+  estado?: string
+  commit?: string | null
+  ejecucion?: { migraciones?: string }
+  faltan?: string[]
+}
+
+const MIGRACIONES_LEGIBLE: Record<string, string> = {
+  'al dia': 'aplicadas y comprobadas contra el esquema',
+  fallidas: 'fallaron al aplicarse',
+  'sin comprobar': 'este servidor NO migra la base',
+  'esquema no cuadra': 'anotadas, pero la base no las tiene',
+}
+
 export function Diagnostico(): React.ReactElement {
   const [parte, setParte] = useState<Parte | null>(null)
+  const [salud, setSalud] = useState<Salud | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [cargando, setCargando] = useState(false)
 
@@ -56,6 +81,19 @@ export function Diagnostico(): React.ReactElement {
     setCargando(true)
     setError(null)
     void (async () => {
+      /*
+       * El informe del propio servidor, antes que la base: si el servicio no
+       * migra, todo lo que conteste la base es de una versión anterior y hay
+       * que decirlo ANTES de leer nada más. No puede tumbar el diagnóstico —en
+       * desarrollo `salud.json` ni existe—, así que su fallo se traga.
+       */
+      try {
+        const res = await fetch('/salud.json', { cache: 'no-store' })
+        setSalud(res.ok ? ((await res.json()) as Salud) : null)
+      } catch {
+        setSalud(null)
+      }
+
       const { data, error: err } = await supabase.rpc('mi_diagnostico')
       if (err) {
         // Que la propia función no exista ES un diagnóstico: significa que la
@@ -92,6 +130,52 @@ export function Diagnostico(): React.ReactElement {
 
       {error && <p className="mt-2 text-sm text-crit">{error}</p>}
 
+      {/* Lo primero, y en rojo: un servidor que no migra la base hace que todo
+          lo demás de esta pantalla hable de una versión que no es la que la
+          aplicación necesita. */}
+      {salud?.ejecucion?.migraciones === 'sin comprobar' && (
+        <div className="card mt-3 border-crit p-4 text-sm">
+          <p className="font-semibold text-crit">Este servidor no migra la base.</p>
+          <p className="mt-1 text-muted">
+            Al servicio de la aplicación le falta la variable{' '}
+            <span className="font-mono">DATABASE_URL</span>, así que al arrancar no toca la base: se
+            queda en la versión que tuviera, y seguirá igual en cada despliegue. Es lo que hace que
+            la aplicación pida columnas y funciones que el servidor no tiene.
+          </p>
+          <p className="mt-2 text-muted">
+            Añade <span className="font-mono">DATABASE_URL</span> (el Postgres de la pila) a las
+            variables de <em>este</em> servicio y vuelve a desplegar. O lánzalo a mano desde su
+            terminal: <span className="font-mono">DATABASE_URL=postgres://… migrar</span>
+          </p>
+        </div>
+      )}
+      {salud?.ejecucion?.migraciones === 'esquema no cuadra' && (
+        <div className="card mt-3 border-crit p-4 text-sm">
+          <p className="font-semibold text-crit">La base no tiene las migraciones que dice tener.</p>
+          <p className="mt-1 text-muted">
+            El registro las da por aplicadas y las funciones de la base son otras: pasa cuando
+            alguien las anota para salir de un atasco sin llegar a ejecutarlas. Es lo que hace que
+            el Excel rechace plantas, que el almacén no entienda «Stock Disponible» o que un cierre
+            de avería se quede en la cola.
+          </p>
+          <p className="mt-2 text-muted">
+            En la terminal del servicio, <span className="font-mono">migrar</span> dice qué
+            funciones y con qué orden se arregla cada fichero:{' '}
+            <span className="font-mono">migrar --reaplicar &lt;fichero&gt;.sql</span>
+          </p>
+        </div>
+      )}
+      {salud?.ejecucion?.migraciones === 'fallidas' && (
+        <div className="card mt-3 border-crit p-4 text-sm">
+          <p className="font-semibold text-crit">Las migraciones fallaron al arrancar.</p>
+          <p className="mt-1 text-muted">
+            La base puede no tener las tablas ni las funciones que la aplicación va a pedir.
+            Relánzalas desde la terminal del servicio con <span className="font-mono">migrar</span>{' '}
+            y lee lo que conteste: lo dice en una línea.
+          </p>
+        </div>
+      )}
+
       {parte && (
         <>
           <ul className="mt-3 divide-y divide-line text-xs">
@@ -113,6 +197,12 @@ export function Diagnostico(): React.ReactElement {
             {fila('rol del perfil', parte.perfil_rol ?? '—', !parte.perfil_rol)}
             {fila('perfil activo', parte.perfil_activo === false ? 'no' : 'sí', parte.perfil_activo === false)}
             {fila('puede leer', parte.puede_leer ? 'sí' : 'no', !parte.puede_leer)}
+            {salud?.ejecucion?.migraciones &&
+              fila(
+                'migraciones al arrancar',
+                MIGRACIONES_LEGIBLE[salud.ejecucion.migraciones] ?? salud.ejecucion.migraciones,
+                salud.ejecucion.migraciones !== 'al dia',
+              )}
             {parte.migraciones !== undefined &&
               fila(
                 'migraciones en la base',

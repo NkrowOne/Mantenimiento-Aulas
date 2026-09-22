@@ -179,6 +179,16 @@ export type Alta =
       fila: number
       /** La sala, si se supo. `null` es un parte sin aula, que existe. */
       salaId: string | null
+      /**
+       * `true` cuando el parte no es de ninguna sala **a propósito**: el aula
+       * dice «Varias aulas», «Almacén» o «Sin aula», o alguien contestó «no es
+       * de ninguna sala» a la duda. Es distinto de «no se ha podido
+       * identificar», aunque las dos lleguen con `salaId: null`, y la base
+       * necesita saber cuál de las dos es: la primera no tiene nada que
+       * resolver, y apuntarla en la cuarentena deja una fila que nadie puede
+       * cerrar nunca —cerrarla exige asignar una sala que el parte no tiene—.
+       */
+      sinSala?: boolean
       /** El aula tal y como la escribió quien la escribió: queda de alias. */
       aula: string
       /** El número que la fila traía, si traía. La base decide si lo respeta. */
@@ -305,6 +315,23 @@ interface Emparejada<T> {
    *    que reaparece el día que alguien deshaga la combinación.
    */
   noEscribir?: Set<string>
+  /**
+   * Columnas de esta fila que **se comparan pero no viajan a la base**.
+   *
+   * Existe por el nombre del edificio. La hoja de estado lo escribe como lo
+   * escribe SharePoint —«ED. S - SÓCRATES»— y el maestro lo tiene como lo puso
+   * el importador —«EDIFICIO S»—. Son el mismo edificio y la fila cruza igual,
+   * porque cruza por matrícula; pero la celda no coincide, y con «manda el
+   * Excel» se mandaba a la base una por una. Allí no hay nada que hacer con
+   * ella: `sync_mover_sala` solo sabe mover una sala a un edificio que EXISTE,
+   * y un nombre que no es de ninguno no se puede aplicar desde una celda —
+   * crear un edificio por escribir su nombre es justo el fallo que la hoja
+   * lleva cinco veces escrito («EDIFICO E»)—. El resultado eran 23 apuntes de
+   * cuarentena idénticos, uno por aula, diciendo lo mismo.
+   *
+   * Así que no se manda, y se dice **una vez** con su recuento.
+   */
+  noALaBase?: Set<string>
 }
 
 interface Opciones<T> {
@@ -423,6 +450,7 @@ function fusionarFilas<T>(
         lectura.valor,
         par.noEscribir?.has(c.letra) === true || aulaSinSala,
         op.referencia,
+        par.noALaBase?.has(c.letra) === true,
       )
     }
   }
@@ -436,6 +464,8 @@ function repartir<T>(
   excel: Valor,
   soloLectura: boolean,
   referencia?: Referencia,
+  /** La celda se compara, pero lo que diga no se manda a la base. Ver `noALaBase`. */
+  noALaBase = false,
 ): void {
   switch (decision.tipo) {
     case 'sin_cambios':
@@ -493,6 +523,11 @@ function repartir<T>(
     }
 
     case 'hacia_la_base':
+      if (noALaBase) {
+        // Se queda como está en los dos lados, y sin antepasado: apuntarlo como
+        // acordado haría que la pasada siguiente creyera que la base lo aceptó.
+        return
+      }
       plan.haciaLaBase.push({
         fila: par.fila,
         letra: c.letra,
@@ -613,6 +648,8 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
   const porId = new Map(e.salas.map((s) => [s.id, s]))
   const porSerialUnico = serialesUnicos(e.salas)
   const grupoDe = gruposDeFilas(e.filas, e.hoja, e.columnaRef, e.combinadas ?? [])
+  /** Nombre de edificio que la hoja escribe y el maestro no conoce → cuántas filas. */
+  const edificiosDesconocidos = new Map<string, { filas: number; ejemplo: string }>()
   const emparejadas: Array<Emparejada<SalaVolcada>> = []
   const vistas = new Set<string>()
   const tapadas = celdasTapadas(e.combinadas ?? [])
@@ -815,6 +852,47 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
       celdas[c.letra] = c.campo === 'edificio' ? edificio : zona
     }
 
+    /*
+     * Y si el edificio que escribe la hoja no es NINGUNO del maestro, su celda
+     * se compara y no viaja a la base.
+     *
+     * La hoja llama a los edificios como los llama SharePoint —«ED. S -
+     * SÓCRATES», «ED. P - BLAISE PASCAL»— y el maestro los tiene como los dejó
+     * el importador —«EDIFICIO S», «EDIFICIO P»—. La fila cruza igual, porque
+     * cruza por matrícula, pero la celda no coincide nunca; y con «manda el
+     * Excel» se mandaba a la base aula por aula, donde no hay nada que hacer
+     * con ella: `sync_mover_sala` mueve a un edificio que existe, y un nombre
+     * que no es de ninguno no puede crear uno desde una celda. Salían 23
+     * apuntes de cuarentena iguales, uno por aula del bloque.
+     *
+     * Se cuenta aquí y se dice una sola vez al final, con qué hacer.
+     */
+    const columnaEdificio = e.hoja.columnas.find((c) => c.campo === 'edificio')
+    const columnaZona = e.hoja.columnas.find((c) => c.campo === 'zona')
+    const noALaBase = new Set<string>()
+    if (columnaEdificio && edificio !== '' && !e.indice.edificioPorNombre.has(norm(edificio))) {
+      noALaBase.add(columnaEdificio.letra)
+      /*
+       * Y con él, la planta de esa misma fila. No es simetría: es que la planta
+       * se aplica **dentro del edificio en el que la sala está HOY**, no dentro
+       * del que dice la fila de al lado. Con el edificio retenido, mandar la
+       * planta significa crear «PLANTA 2» en el edificio viejo, que es
+       * exactamente donde no va. Hoy eso se rechazaba con un mensaje; en cuanto
+       * la base sepa crear plantas (migración 20260921000300) pasaría sin decir
+       * nada, y un dato mal puesto en silencio es peor que un rechazo ruidoso.
+       */
+      if (columnaZona) noALaBase.add(columnaZona.letra)
+      /*
+       * Hacia el Excel sí se escribe, y no es un olvido: un nombre que el
+       * maestro no conoce se trata como un renombrado, y corregir la celda es
+       * lo que sana una errata («EDIFICO E») o un nombre viejo. Es una decisión
+       * del proyecto, con su prueba. Lo que estaba roto era la otra dirección:
+       * mandar a la base un nombre que la base no puede aplicar.
+       */
+      const cuenta = edificiosDesconocidos.get(edificio) ?? { filas: 0, ejemplo: sala.code }
+      edificiosDesconocidos.set(edificio, { filas: cuenta.filas + 1, ejemplo: cuenta.ejemplo })
+    }
+
     // Una sala que ya no está en el edificio que su fila dice **se muda**: la
     // fila sale de este bloque y entra en el suyo. Corregir el nombre del
     // edificio en el sitio —que es lo que se hace con un renombrado— dejaría una
@@ -870,7 +948,16 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
       clave: sala.shortRef,
       destino: sala.code,
       noEscribir,
+      noALaBase,
     })
+  }
+
+  // Un aviso por edificio desconocido, con su recuento y con lo que hay que
+  // hacer. Antes era un apunte de cuarentena por aula diciendo lo mismo.
+  for (const [nombre, { filas, ejemplo }] of edificiosDesconocidos) {
+    plan.avisos.push(
+      `«${nombre}» no es ningún edificio del maestro y lo escriben ${filas} ${filas === 1 ? 'fila' : 'filas'} (por ejemplo «${ejemplo}»). Sus aulas cruzan igual —la matrícula manda— y ese nombre no viaja a la aplicación: una celda no puede crear ni renombrar un edificio, así que mandarlo solo llenaba la cuarentena. Si es el mismo edificio con otro nombre, renómbralo en Datos → Maestro; si es nuevo, créalo allí.`,
+    )
   }
 
   fusionarFilas(plan, emparejadas, (s) => filaDeSala(s, e.hoja), {
@@ -1520,6 +1607,7 @@ function altaDeParte(plan: Plan, f: FilaLeida, numero: string, e: EntradaDeParte
     tipo: 'incidencia',
     fila: f.fila,
     salaId,
+    sinSala: salaId === null && (respuesta?.tipo === 'sin_sala' || esSinSala(aula)),
     aula,
     numero: numero === '' ? null : numero,
     abierta: fecha('incidencia.abierta'),

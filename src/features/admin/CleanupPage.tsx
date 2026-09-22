@@ -434,6 +434,66 @@ interface QuarantineRow {
   raw: Record<string, unknown>
   reason: string
   at: string
+  /** Cuántas pasadas han vuelto a tropezar con esto. Existe desde agosto y no lo leía nadie. */
+  veces: number
+  /** La última vez que volvió. Es lo que distingue «lleva ahí un año» de «salió ayer». */
+  ultima_at: string | null
+}
+
+/**
+ * La línea legible de una fila de cuarentena.
+ *
+ * Lo que se guarda es el objeto entero de la celda o de la fila que no se pudo
+ * aplicar, y la pantalla lo pintaba con `Object.values(...).join(' · ')`: en una
+ * celda de material eso son diez claves, el texto que importa enterrado en la
+ * mitad, y el array `detalle` convertido en «[object Object]». Treinta líneas
+ * idénticas de ruido en un móvil.
+ *
+ * Aquí se pone delante lo que contesta «¿qué no se pudo aplicar?» —el valor, el
+ * texto, el aula— y detrás el resto, sin las claves que no dicen nada a nadie.
+ */
+const CLAVES_QUE_NO_APORTAN = new Set(['clave', 'motivo', 'anyo', 'arranque', 'columna'])
+const CLAVES_QUE_MANDAN = ['valor', 'texto', 'aula', 'problema', 'ref', 'nombre', 'serial']
+
+export function resumenDelCrudo(raw: Record<string, unknown>): string {
+  const trozos: string[] = []
+  const escrito = new Set<string>()
+
+  const escribir = (clave: string, valor: unknown): void => {
+    if (escrito.has(clave) || valor === null || valor === undefined || valor === '') return
+    escrito.add(clave)
+    if (Array.isArray(valor)) {
+      // `detalle`: los renglones del material, cada uno con su texto.
+      const textos = valor
+        .map((v) =>
+          v !== null && typeof v === 'object' ? (v as Record<string, unknown>)['texto'] : v,
+        )
+        .filter((t) => typeof t === 'string' && t !== '')
+      if (textos.length > 0) trozos.push(textos.join(', '))
+      return
+    }
+    if (typeof valor === 'object') return
+    trozos.push(String(valor))
+  }
+
+  for (const clave of CLAVES_QUE_MANDAN) escribir(clave, raw[clave])
+  for (const [clave, valor] of Object.entries(raw)) {
+    if (CLAVES_QUE_NO_APORTAN.has(clave)) continue
+    escribir(clave, valor)
+  }
+  return trozos.join(' · ') || '(sin contenido)'
+}
+
+/**
+ * De dónde salió esto, dicho como lo diría una persona.
+ *
+ * `source` es «SharePoint» para lo que deja la sincronización y el nombre de la
+ * hoja para lo que dejó la importación inicial. Sin traducirlo, el coordinador
+ * no puede saber si está mirando un problema de ayer o herencia de 2025 —y en
+ * esta cuarentena hay 88 filas de un programa que ya no se ejecuta—.
+ */
+function deDondeSale(source: string): string {
+  return source === 'SharePoint' ? 'de una sincronización' : `de la importación inicial (${source})`
 }
 
 const LIMITE_CUARENTENA = 500
@@ -448,7 +508,7 @@ function Cuarentena(): React.ReactElement {
     queryFn: async (): Promise<{ filas: QuarantineRow[]; total: number }> => {
       const { data, error: err, count } = await supabase
         .from('import_quarantine')
-        .select('id, source, row_ref, raw, reason, at', { count: 'exact' })
+        .select('id, source, row_ref, raw, reason, at, veces, ultima_at', { count: 'exact' })
         .eq('resolved', false)
         // Sin `order`, Postgres no garantiza ninguno y el `update` de «Revisada»
         // puede mover la fila dentro del heap: la lista se reordenaba bajo el
@@ -516,11 +576,18 @@ function Cuarentena(): React.ReactElement {
               {lista.map((q) => (
                 <li key={q.id} className="flex items-start gap-3 py-2.5 text-sm">
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-mono text-xs">
-                      {Object.values(q.raw).filter(Boolean).join(' · ') || '(sin contenido)'}
-                    </p>
+                    {/* Sin `truncate`: el texto que no se pudo aplicar es justo
+                        lo que hay que leer para arreglarlo. */}
+                    <p className="break-words font-mono text-xs">{resumenDelCrudo(q.raw)}</p>
                     <p className="mt-0.5 text-xs text-muted">
-                      {[q.source, q.row_ref, fechaCorta(q.at)].filter(Boolean).join(' · ')}
+                      {[
+                        deDondeSale(q.source),
+                        q.row_ref,
+                        fechaCorta(q.ultima_at ?? q.at),
+                        q.veces > 1 ? `ha vuelto ${q.veces} veces` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </p>
                   </div>
                   <button

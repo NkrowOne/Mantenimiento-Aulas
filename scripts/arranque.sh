@@ -42,7 +42,8 @@ escribir_salud() {
 
 # La señal de un arranque anterior no dice nada de este. Borrarla antes de nada
 # evita que un fallo ya resuelto se quede pegado al informe para siempre.
-rm -f /srv/dist/.migraciones-fallidas 2>/dev/null
+rm -f /srv/dist/.migraciones-fallidas /srv/dist/.migraciones-sin-comprobar \
+      /srv/dist/.migraciones-esquema 2>/dev/null
 
 escribir_salud
 
@@ -58,7 +59,24 @@ salud --texto
 # en marcha esto imprime una sola línea («la base ya estaba al día»), y cuando
 # imprime más es porque ha pasado algo que hay que leer —y entonces conviene
 # que sea lo último, no lo penúltimo.
-if ! migrar; then
+#
+# Tres desenlaces, no dos. El tercero —«ni siquiera he podido mirar», que es lo
+# que pasa sin DATABASE_URL— se contaba como éxito, y ese es justo el que deja
+# una base sin migrar durante semanas mientras el informe dice «al dia».
+migrar
+codigo_migrar=$?
+if [ "$codigo_migrar" = 3 ]; then
+	# El registro dice que están aplicadas y el esquema dice que no. `migrar`
+	# acaba de imprimir qué funciones y con qué orden se arregla cada fichero.
+	printf '[migrar] El registro y el esquema NO dicen lo mismo: lee las líneas de arriba.\n'
+	touch /srv/dist/.migraciones-esquema 2>/dev/null
+	escribir_salud
+elif [ "$codigo_migrar" = 2 ]; then
+	printf '[migrar] La base NO se ha comprobado: este servicio no tiene DATABASE_URL.\n'
+	printf '[migrar] Ningún despliegue de este servicio migrará la base mientras siga así.\n'
+	touch /srv/dist/.migraciones-sin-comprobar 2>/dev/null
+	escribir_salud
+elif [ "$codigo_migrar" != 0 ]; then
 	printf '[migrar] El esquema no se ha podido poner al día: la aplicación se sirve igual.\n'
 	# Y que conste en el informe, no solo aquí. Un `"faltan":[]` sobre una base
 	# que no tiene las tablas ni las funciones que la aplicación va a pedir es
