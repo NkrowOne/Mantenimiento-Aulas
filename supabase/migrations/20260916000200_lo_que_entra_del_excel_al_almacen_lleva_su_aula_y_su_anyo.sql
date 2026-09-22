@@ -135,12 +135,38 @@ revoke all on function public.sync_material_del_parte(uuid, jsonb) from public, 
 -- Lo que ya entró del Excel sin aula: la recibe de su parte. Es el mismo
 -- arreglo que hizo julio con lo apuntado desde la aplicación, y por la misma
 -- razón: el informe reparte el material por edificio con esta columna.
+--
+/*
+ * Con el disparador quitado mientras dura, y esto faltaba.
+ *
+ * `stock_movements` es un libro de asientos: `20260729000500` le puso un
+ * disparador que prohíbe el `update` —«un movimiento no se corrige: registra
+ * el contrario»— y deja como única puerta desactivarlo a propósito, que es lo
+ * que ya hacen las dos migraciones del 21/09 para sus arreglos de datos.
+ *
+ * Aquí no se hizo, y no se notó: en desarrollo y en las pruebas ningún
+ * movimiento cumplía el `where` —hacen falta consumos del Excel anteriores a
+ * esta migración—, así que el `update` no tocaba ninguna fila y un disparador
+ * `for each row` sobre cero filas no salta nunca. En producción sí los había:
+ * el 22/09/2026 esta migración llevaba días parada con
+ *
+ *     ✗ Un movimiento de almacén no se corrige: registra el contrario (id=…)
+ *
+ * y detrás se habían quedado las siguientes sin aplicar. Un `update` de datos
+ * sobre esta tabla necesita SIEMPRE este par de líneas alrededor, aunque
+ * parezca que no va a tocar nada: que no toque nada es una propiedad de los
+ * datos que haya delante, no del código.
+ */
+alter table stock_movements disable trigger stock_movements_solo_alta;
+
 update stock_movements sm
    set room_id = i.room_id
   from incidents i
  where sm.incident_id = i.id
    and sm.room_id is null
    and i.room_id is not null;
+
+alter table stock_movements enable trigger stock_movements_solo_alta;
 
 -- -----------------------------------------------------------------------------
 -- 2 — El alta de un artículo, con la compra fechada en el año de su bolsa
