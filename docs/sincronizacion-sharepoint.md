@@ -852,6 +852,46 @@ la instantánea es la **matrícula** de la sala, no su id: es por donde la pasad
 siguiente pregunta por el antepasado de cada celda, y dejar el id ahí haría que
 lo corregido a mano entre dos pasadas se sobrescribiera en silencio.
 
+## 11 quater. El Excel y la aplicación llaman igual a cada aparato
+
+La pasada pedía dar de alta equipos que la sala ya tenía:
+
+> «Equipo nuevo en la sala 1.1: **TV** — la hoja dice n.º de serie 04204654NB y
+> la sala no tiene ningún tv en la aplicación»
+
+La sala sí lo tenía. Lo tenía como **«Pantalla»**, que es como lo llamó la
+importación, mientras la columna del libro se llama «S/N TV» y escribe en un
+tipo llamado «TV». Dos tipos para el mismo aparato, y el número de serie
+repartido entre los dos: buscar por serie encuentra uno y el histórico del otro
+no aparece.
+
+La equivalencia la confirmó quien mantiene el libro, aparato por aparato:
+
+| Columna del libro | Qué es | Tipo de la aplicación |
+|---|---|---|
+| `S/N TV` | la pantalla grande del aula (NEC E657Q, 201 series) | «Pantalla» (367) |
+| `S/N Monitor` | la pantalla del PC (75 series) | ninguno todavía |
+| `S/N Ordenador` | el Tiny PC (ThinkCentre M70Q, 58 series) | «Ordenador Tiny» (301) |
+
+Sobrevive el nombre del libro, que es lo que se mira y lo que se sube a
+SharePoint. El absorbido no se pierde: `merge_asset_type` lo deja de **alias**,
+así que quien escriba «Pantalla» en un parte sigue encontrando el tipo.
+
+Los **numerados** se recogen en su tipo base: «Pantalla 2» pasa a ser un segundo
+equipo del tipo «TV», con la etiqueta «TV 2». Un tipo por repetición es lo que
+impedía contar cuántas pantallas hay en el campus.
+
+Lo que **no** se toca, y es a propósito:
+
+- **«Monitor Atril»** (38). La pantalla del PC no está en la aplicación, así que
+  el monitor del atril es otra cosa.
+- **«Ordenador Lenovo Ideacentre»** (30). Es un ordenador, pero no el Tiny, y la
+  columna del libro es la del Tiny.
+- **«Pantalla Proyector»** y **«Pantalla de proyección»**. Son la tela donde
+  proyecta el cañón. Que compartan la palabra «Pantalla» es justo la trampa que
+  la migración tiene que esquivar, y por eso la lista va con el nombre exacto y
+  no con un `like 'Pantalla%'`.
+
 ## 12. Lo que puede salir mal
 
 - **Que la API de libro no acepte un token sin usuario.** La documentación de
