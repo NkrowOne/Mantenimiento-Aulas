@@ -58,7 +58,7 @@ las publica en `ejecucion.migraciones`:
 |---|---|---|
 | `al dia` | aplicadas Y comprobadas contra `pg_proc` | nada |
 | `sin comprobar` | el servicio no tiene `DATABASE_URL`, así que **no migra la base en ningún despliegue** | añadir esa variable al servicio y volver a desplegar |
-| `fallidas` | una migración reventó al aplicarse | `migrar` en la terminal del servicio: dice cuál y por qué |
+| `fallidas` | una migración reventó al aplicarse | la pantalla de diagnóstico enseña la línea del error; `migrar` en la terminal la repite entera |
 | `esquema no cuadra` | el registro las da por aplicadas y la base no las tiene | `migrar --reaplicar <fichero>.sql`, en el orden que imprime |
 
 El último es el que más caro ha salido, dos veces. El registro

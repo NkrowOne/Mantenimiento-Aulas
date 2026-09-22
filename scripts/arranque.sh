@@ -63,8 +63,28 @@ salud --texto
 # Tres desenlaces, no dos. El tercero —«ni siquiera he podido mirar», que es lo
 # que pasa sin DATABASE_URL— se contaba como éxito, y ese es justo el que deja
 # una base sin migrar durante semanas mientras el informe dice «al dia».
-migrar
+#
+# Y su salida se guarda, además de imprimirse.
+#
+# Hasta ahora el motivo del fallo vivía SOLO en el registro del arranque. Quien
+# mira la pantalla de diagnóstico es quien lleva el despliegue, casi siempre
+# desde el móvil, y la tarjeta le decía «fallaron» y a continuación «abre la
+# terminal del servicio» —que es justo lo que no puede hacer desde ahí—. Con la
+# línea del fallo delante, la mitad de las veces no hace falta entrar.
+#
+# A fichero y luego a pantalla, y no con `tee`: esto es `sh`, no `bash`, y sin
+# `PIPESTATUS` el código de salida de una tubería es el del último mandato —o
+# sea, el de `tee`, que siempre va bien—. Se perdería justo lo que se mira.
+#
+# Y al volcarlo, un `printf` por línea, por lo mismo que el informe de salud:
+# Skyway recorta ocho caracteres a cada escritura cuando da por hecha la
+# cabecera de multiplexado de Docker. Un `cat` escribe el bloque entero de una
+# vez y se comería el principio del mensaje.
+migrar >/tmp/migrar.log 2>&1
 codigo_migrar=$?
+while IFS= read -r linea_migrar; do
+	printf '%s\n' "$linea_migrar"
+done </tmp/migrar.log
 if [ "$codigo_migrar" = 3 ]; then
 	# El registro dice que están aplicadas y el esquema dice que no. `migrar`
 	# acaba de imprimir qué funciones y con qué orden se arregla cada fichero.
@@ -87,6 +107,10 @@ elif [ "$codigo_migrar" != 0 ]; then
 	# porque `migrar` conviene que hable el último— así que aquella foto no sabía
 	# nada de esto.
 	touch /srv/dist/.migraciones-fallidas 2>/dev/null
+	# Las líneas del fallo, para que el informe pueda decir cuál y por qué. Solo
+	# las que empiezan por la marca de error de `migrar`, y las cuatro últimas:
+	# es lo que cabe en una tarjeta sin que nadie deje de leerla.
+	grep -a '✗' /tmp/migrar.log 2>/dev/null | tail -4 >/srv/dist/.migraciones-motivo || true
 	escribir_salud
 fi
 
