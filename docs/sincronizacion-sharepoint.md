@@ -910,6 +910,42 @@ Lo que **no** se toca, y es a propósito:
   la migración tiene que esquivar, y por eso la lista va con el nombre exacto y
   no con un `like 'Pantalla%'`.
 
+## 11 quinquies. Un n.º de serie que ya está puesto no es un equipo nuevo
+
+La pregunta de «equipo nuevo» se dispara cuando el aula **no tiene ningún
+equipo de ese tipo**. Eso deja un agujero, y es justo el que costó dos rondas
+de capturas encontrar con el Tiny: el aparato sí está, pero con **otro nombre
+de tipo**. El aula no tiene ningún «Ordenador», tiene un «Ordenador Tiny». La
+pregunta se hacía igual, y era mentira dos veces.
+
+Decir que sí tampoco arreglaba nada: `assets_serial_idx` es único **global**
+—un número de serie no puede estar dos veces en la base, ni siquiera en aulas
+distintas—, así que la fila se rechazaba entera y la celda se quedaba atascada
+sin decir por qué.
+
+Ahora la pasada mira **antes** si ese número de serie ya está puesto en algún
+equipo de la aplicación. Si lo está:
+
+- **No se pregunta.** La única respuesta que la pantalla sabe ofrecer —«sí, que
+  entre»— fallaría.
+- **No entra ni con la casilla puesta**, ni con un «sí» contestado en una
+  pasada anterior. Lo de la base manda sobre las dos cosas.
+- **La celda se retiene** y se dice una vez, con el nombre de los dos lados y
+  hasta tres ejemplos:
+
+  > «Monitor» del libro ya está en la aplicación con otro nombre: 75 números de
+  > serie que están puestos en equipos de tipo «Pantalla». No se crea ninguno:
+  > el n.º de serie es único en toda la aplicación y la base lo rechazaría. Es
+  > el mismo aparato con dos nombres, y se arregla unificando los dos tipos.
+  > Por ejemplo «V3080D6Y» en «1.1», «V305T6VL» en «SALA PRÁCTICAS
+  > FISIOTERAPIA 2».
+
+Ese aviso es un **diagnóstico**, no un fallo de la hoja: dice qué dos tipos hay
+que unificar y con qué aparatos, que es lo que hace falta para escribir la
+migración. Si el serial está en **otra aula**, el aviso dice en cuál, y
+entonces lo que pasa no es que falte un equipo: es que el aparato se movió y
+nadie lo apuntó.
+
 ## 12. Lo que puede salir mal
 
 - **Que la API de libro no acepte un token sin usuario.** La documentación de

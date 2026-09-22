@@ -10,6 +10,7 @@ import {
   SIN_INSTANTANEA,
 } from './sincronizar'
 import type { Instantanea } from './sincronizar'
+import { idDeDuda } from './dudas'
 import { columnaParaLaRef } from './preparar'
 import { abrirLibro, leerHoja } from './xlsx'
 import type { FilaLeida } from './xlsx'
@@ -1910,6 +1911,105 @@ describe('los equipos que el libro trae y la sala no tiene', () => {
     const aviso = p.avisos.find((a) => a.includes('sin preguntar'))
     expect(aviso).toBeTruthy()
     expect(aviso).toContain('1 monitor')
+  })
+
+  /*
+   * Y el caso que costó dos rondas de capturas: el aparato YA está en la
+   * aplicación, pero con otro nombre de tipo.
+   *
+   * Preguntar «¿lo creo?» ahí es mentira dos veces. La sala no se ha quedado
+   * sin nada: lo tiene, con otro nombre. Y decir que sí no crearía nada,
+   * porque `assets_serial_idx` es único global y la base rechaza la fila
+   * entera. Lo que hace falta es unificar los dos tipos.
+   */
+  function conEseSerialPuesto(tipo: string, over: Partial<SalaVolcada> = {}) {
+    return sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, conSerie)],
+      salas: [
+        sala({ equipos: [{ id: 'e1', tipo, serial: 'V3080D6Y', model: null, desde: null }], ...over }),
+      ],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      crearEquipos: false,
+    })
+  }
+
+  it('si ese número de serie ya está puesto con otro nombre, no se pregunta', () => {
+    const p = conEseSerialPuesto('Pantalla')
+    expect(p.dudas.filter((d) => d.tipo === 'alta' && d.que === 'equipo')).toEqual([])
+    // Y la celda tampoco viaja: escribirla crearía un equipo que la base rechaza.
+    expect(p.haciaLaBase.filter((h) => h.letra === 'R')).toEqual([])
+  })
+
+  it('y el aviso dice los dos nombres, para poder unificarlos', () => {
+    const aviso = conEseSerialPuesto('Pantalla').avisos.find((a) => a.includes('otro nombre'))
+    expect(aviso).toBeTruthy()
+    expect(aviso).toContain('«Monitor» del libro')
+    expect(aviso).toContain('«Pantalla»')
+    expect(aviso).toContain('V3080D6Y')
+  })
+
+  it('la casilla de crear no lo salta: la base lo rechazaría igual', () => {
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, conSerie)],
+      salas: [
+        sala({ equipos: [{ id: 'e1', tipo: 'Pantalla', serial: 'V3080D6Y', model: null, desde: null }] }),
+      ],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      crearEquipos: true,
+    })
+    expect(p.haciaLaBase.filter((h) => h.letra === 'R')).toEqual([])
+    expect(p.avisos.filter((a) => a.includes('sin preguntar'))).toEqual([])
+    expect(p.avisos.some((a) => a.includes('otro nombre'))).toBe(true)
+  })
+
+  it('un «sí» contestado antes tampoco lo crea', () => {
+    // La respuesta vale para «no lo tengo». Aquí sí lo tiene.
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, conSerie)],
+      salas: [
+        sala({ equipos: [{ id: 'e1', tipo: 'Pantalla', serial: 'V3080D6Y', model: null, desde: null }] }),
+      ],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      respuestas: { [idDeDuda(ESTADO.nombre, 2, 'Monitor')]: { tipo: 'alta', aceptar: true } },
+    })
+    expect(p.haciaLaBase.filter((h) => h.letra === 'R')).toEqual([])
+  })
+
+  it('y si está en otra aula, el aviso dice en cuál', () => {
+    /*
+     * El serial es único global: si lo tiene otra aula, este alta tampoco
+     * entra. Y saber cuál es lo que convierte «no se puede» en «el aparato se
+     * movió y nadie lo apuntó».
+     */
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, conSerie)],
+      salas: [
+        sala({ equipos: [] }),
+        sala({
+          id: 'r2',
+          shortRef: 'SALA-000002',
+          code: '1.5',
+          edificio: 'ED. O',
+          equipos: [{ id: 'e9', tipo: 'Pantalla', serial: 'V3080D6Y', model: null, desde: null }],
+        }),
+      ],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      crearEquipos: true,
+    })
+    const aviso = p.avisos.find((a) => a.includes('otro nombre'))
+    expect(aviso).toContain('«1.5» (ED. O)')
   })
 
   it('la sala que ya tiene ese equipo no cuenta como nuevo', () => {
