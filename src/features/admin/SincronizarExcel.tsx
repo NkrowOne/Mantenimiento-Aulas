@@ -114,6 +114,8 @@ export function SincronizarExcel(): React.ReactElement {
   const [referencia, setReferencia] = useState<Referencia | null>(null)
   /** El corte: desde este día manda la aplicación en lo que ella cambió. `null` es sin corte. */
   const [corte, setCorte] = useState<string | null>(null)
+  // Apagado al entrar, siempre: no se hereda de la pasada anterior.
+  const [crearAulas, setCrearAulas] = useState(false)
   const [analisis, setAnalisis] = useState<Analisis | null>(null)
   const [fallo, setFallo] = useState<string | null>(null)
   const [aplicado, setAplicado] = useState<string | null>(null)
@@ -208,7 +210,11 @@ export function SincronizarExcel(): React.ReactElement {
     onSuccess: (r) => {
       if (!r) return
       const partes = r.altas.filter((x) => x.tipo === 'incidencia').length
-      const nuevas = r.altas.length
+      // Las aulas aparte: crear una sala es lo único de aquí que no se deshace,
+      // y decirlo como «filas nuevas» lo esconde entre los partes y los
+      // artículos, que sí se corrigen en la pasada siguiente.
+      const aulas = r.altas.filter((x) => x.tipo === 'sala').length
+      const nuevas = r.altas.length - aulas
       // La última salida del servidor acaba de cambiar: es esta. Sin esto, la
       // caché de un minuto conserva el sha anterior y la tarjeta avisa de que
       // «hay otro más nuevo» señalando a una fecha ANTERIOR a la del libro que
@@ -221,6 +227,9 @@ export function SincronizarExcel(): React.ReactElement {
             : `${r.aplicadas} celdas han entrado y ${r.rechazadas} han ido a la bandeja de choques.`,
           nuevas > 0
             ? `${nuevas} filas nuevas del libro han entrado en la aplicación${partes > 0 ? `; los ${partes === 1 ? 'parte lleva' : `${partes} partes llevan`} ya su número en el libro` : ''}.`
+            : '',
+          aulas > 0
+            ? `Y se ${aulas === 1 ? 'ha creado 1 aula nueva' : `han creado ${aulas} aulas nuevas`}: sus filas cruzarán solas en la pasada siguiente.`
             : '',
         ]
           .filter(Boolean)
@@ -281,6 +290,21 @@ export function SincronizarExcel(): React.ReactElement {
   const elegirCorte = (c: string | null): void => {
     setCorte(c)
     if (analisis) volverAPlanificar(replanificar(analisis, analisis.respuestas, referencia, c))
+  }
+
+  /**
+   * Y crear o no las aulas nuevas, que también es volver a planificar.
+   *
+   * Lo importante es que se vea ANTES de aplicar: al encenderlo, la lista de
+   * altas se llena con las aulas que se van a crear, una por una, con su
+   * edificio y su planta. Dar de alta una sala es lo único de esta pantalla
+   * que no se deshace solo, así que nadie debería encenderlo a ciegas.
+   */
+  const elegirCrearAulas = (v: boolean): void => {
+    setCrearAulas(v)
+    if (analisis) {
+      volverAPlanificar(replanificar(analisis, analisis.respuestas, referencia, corte, v))
+    }
   }
 
   /**
@@ -382,6 +406,14 @@ export function SincronizarExcel(): React.ReactElement {
         disabled={ocupado}
         onElegir={elegirReferencia}
         onCorte={elegirCorte}
+      />
+
+      <AulasNuevas
+        encendido={crearAulas}
+        cuantas={analisis?.planes.flatMap((p) => p.altas).filter((a) => a.tipo === 'sala').length ?? 0}
+        hayLibro={analisis !== null}
+        disabled={ocupado}
+        onCambiar={elegirCrearAulas}
       />
 
       <div className="card mt-4 p-4">
@@ -533,6 +565,64 @@ const OPCIONES: Array<{ id: Referencia | null; titulo: string; texto: string }> 
     texto: 'Lo que dice la aplicación se escribe en la hoja.',
   },
 ]
+
+/**
+ * El interruptor de dar de alta las aulas que el libro trae y el maestro no.
+ *
+ * Existe porque las 43 aulas de Sócrates y de Antonio Gaudí eran 43 dudas
+ * idénticas, pasada tras pasada, y contestarlas una a una no las iba a crear
+ * nunca. Y está apagado de salida porque crear una sala es lo único de esta
+ * pantalla que **no se deshace solo**: desde que existe, las incidencias
+ * empiezan a colgar de ella, y si era la equivocada el histórico se reparte
+ * entre dos aulas y ninguna lo tiene entero.
+ *
+ * El número de al lado es lo que lo hace seguro: al encenderlo se recalcula la
+ * pasada y la lista de altas dice, una por una, qué aula, en qué edificio y en
+ * qué planta. Se mira antes de aplicar.
+ */
+function AulasNuevas({
+  encendido,
+  cuantas,
+  hayLibro,
+  disabled,
+  onCambiar,
+}: {
+  encendido: boolean
+  cuantas: number
+  hayLibro: boolean
+  disabled: boolean
+  onCambiar: (v: boolean) => void
+}): React.ReactElement {
+  return (
+    <div className="card mt-4 p-4">
+      <p className="eyebrow">Aulas que el libro trae y el maestro no</p>
+      <label className="mt-2 flex items-start gap-3">
+        <input
+          type="checkbox"
+          className="mt-0.5 size-5 shrink-0"
+          checked={encendido}
+          disabled={disabled}
+          onChange={(ev) => onCambiar(ev.target.checked)}
+        />
+        <span className="text-sm">
+          <span className="font-semibold">Crear las aulas que estén bien escritas</span>
+          <span className="mt-0.5 block text-muted">
+            Solo las que llevan un código de los de siempre —«2.6», «-1.3», «0.1P»— en un edificio
+            que el maestro ya conoce. Un nombre suelto como «Aula Demo» se sigue preguntando: ahí
+            una errata no se ve, y la sala inventada se lleva la mitad del histórico de la buena.
+          </span>
+        </span>
+      </label>
+      {encendido && hayLibro && (
+        <p className="mt-2 text-sm text-muted">
+          {cuantas === 0
+            ? 'Este libro no trae ninguna aula nueva que se pueda crear sin preguntar.'
+            : `Se van a crear ${cuantas} aula${cuantas === 1 ? '' : 's'}. Están abajo, en las altas, con su edificio y su planta: míralas antes de aplicar.`}
+        </p>
+      )}
+    </div>
+  )
+}
 
 /**
  * La elección va ANTES del libro, y con número: es la primera decisión de la
@@ -1330,6 +1420,7 @@ function Tabla({
 function queEs(a: Alta): string {
   if (a.tipo === 'incidencia') return 'Parte'
   if (a.tipo === 'articulo') return 'Artículo del almacén'
+  if (a.tipo === 'sala') return 'Aula nueva'
   return 'Ordenador de repuesto'
 }
 
@@ -1338,6 +1429,12 @@ function describirAlta(a: Alta): string {
     return `${a.aula || 'sin aula'} · ${a.abierta ?? 'sin fecha'} · ${a.problema}${a.numero ? ` · ${a.numero}` : ''}`
   }
   if (a.tipo === 'articulo') return `${a.nombre}${a.comprado !== null ? ` · ${a.comprado} comprados` : ''}`
+  if (a.tipo === 'sala') {
+    // La planta deducida se dice: una leída es un dato y una deducida es una
+    // apuesta, y quien revisa la lista tiene derecho a saber cuáles son cuáles.
+    const planta = a.plantaDeducida ? `${a.zona} (deducida del código)` : a.zona
+    return `${a.code} · ${a.edificio} · ${planta}`
+  }
   return `${[a.articulo, a.marca, a.modelo].filter(Boolean).join(' ')} · ${a.serial}`
 }
 

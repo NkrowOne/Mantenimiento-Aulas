@@ -44,6 +44,7 @@
  * sincronización que se puede dejar corriendo y una que hay que vigilar.
  */
 
+import { salaQueSePuedeCrear } from './altaDeSala'
 import { formasDeEscribir, resolverSala } from './cruce'
 import type { Indice, SalaConocida } from './cruce'
 import { idDeDuda } from './dudas'
@@ -199,6 +200,30 @@ export type Alta =
       observacion: string | null
       resolucion: string | null
       material: string | null
+      celdas: Record<string, Valor>
+    }
+  | {
+      /**
+       * Un aula que el libro trae y el maestro no tiene.
+       *
+       * Solo llega aquí lo que `salaQueSePuedeCrear` deja pasar: un código de
+       * la nomenclatura del campus en un edificio que el maestro ya conoce. Un
+       * nombre descriptivo —«Aula Demo», «Sala Vip»— sigue siendo una duda,
+       * porque ahí una errata es invisible y la sala inventada se lleva la
+       * mitad del histórico de la buena.
+       */
+      tipo: 'sala'
+      fila: number
+      /** El código del edificio del maestro, ya resuelto. */
+      edificio: string
+      /** La planta, con el nombre que usa el maestro. */
+      zona: string
+      /** El código con el que se crea, sin el sufijo del edificio. */
+      code: string
+      /** El aula tal y como la escribió el libro: queda de alias. */
+      aula: string
+      /** `true` si la planta sale del código y no de la columna del libro. */
+      plantaDeducida: boolean
       celdas: Record<string, Valor>
     }
   | {
@@ -632,6 +657,16 @@ export interface EntradaDeEstado {
   referencia?: Referencia
   /** El corte: desde este día manda la aplicación en lo que ella cambió. Ver `Celda.corte`. */
   corte?: string
+  /**
+   * Crear solas las aulas que el libro trae bien escritas, en vez de preguntar.
+   *
+   * Apagado por defecto y a propósito. Dar de alta una sala es la única cosa
+   * de esta pantalla que **no se deshace sola**: en cuanto existe, las
+   * incidencias empiezan a colgar de ella, y si era la sala equivocada el
+   * histórico queda repartido entre dos. Que lo encienda quien ha mirado la
+   * lista de la vista previa y reconoce las aulas que salen.
+   */
+  crearAulas?: boolean
 }
 
 export function sincronizarEstado(e: EntradaDeEstado): Plan {
@@ -770,6 +805,38 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
         // el libro y el porqué es lo que dice qué hacer con ello.
         motivo: matricula !== '' ? cruce.motivo : `«${aula}» de «${edificio}»: ${cruce.motivo}`,
       })
+      /*
+       * Salvo que el libro la traiga bien escrita y se haya pedido crearlas.
+       *
+       * «Bien escrita» es lo que `salaQueSePuedeCrear` deja pasar, y es poco a
+       * propósito: un código de la nomenclatura del campus en un edificio que
+       * el maestro ya conoce. Es lo que convierte las 43 aulas de Sócrates y
+       * de Antonio Gaudí —que hoy son 43 dudas idénticas, pasada tras pasada—
+       * en una lista que se revisa de un vistazo y se aplica de una vez.
+       *
+       * El edificio tiene que cruzar. Sin eso no se sabe dónde va el aula, y
+       * una sala en el edificio de al lado es peor que una sala que falta.
+       */
+      const codigoDelEdificio = e.indice?.edificioPorNombre.get(norm(edificio))
+      const puedeCrearse =
+        e.crearAulas === true && matricula === '' && codigoDelEdificio !== undefined
+          ? salaQueSePuedeCrear(aula, zona, codigoDelEdificio)
+          : null
+
+      if (puedeCrearse && codigoDelEdificio !== undefined) {
+        plan.altas.push({
+          tipo: 'sala',
+          fila: f.fila,
+          edificio: codigoDelEdificio,
+          zona: puedeCrearse.zona,
+          code: puedeCrearse.code,
+          aula,
+          plantaDeducida: puedeCrearse.plantaDeducida,
+          celdas: f.celdas as Record<string, Valor>,
+        })
+        continue
+      }
+
       // Sin matrícula y sin cruce es una pregunta, no un veredicto: la sala
       // puede existir con otro nombre, y quien mira la pantalla lo sabe.
       if (matricula === '' && respuesta?.tipo !== 'ignorar') {
