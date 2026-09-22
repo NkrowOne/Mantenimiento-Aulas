@@ -984,6 +984,44 @@ observación. Las fichas se retiran; los tipos **no** se borran, porque
 `inspection_checks` apunta a esos `assets` y una revisión vieja tiene que poder
 seguir leyéndose entera.
 
+## 11 septies. Las columnas de SÍ/NO salen del inventario, no de una casilla aparte
+
+`Altavoces`, `Cámara` y `Microfono Jabra` no leían el inventario. Salían de
+`rooms.capabilities`, un sí o un no guardado **al margen** de los aparatos. Dos
+registros del mismo hecho, y llevan años yendo cada uno por su lado:
+
+| Columna | dice SÍ | dice NO / vacío | **dice NO y el aparato SÍ está** |
+|---|---|---|---|
+| H `Altavoces` | 154 | 139 | **20** |
+| I `Cámara` | 163 | 130 | **66** |
+| J `Microfono Jabra` | 30 | 263 | **256** |
+
+442 aulas donde las dos hojas del **mismo libro** se contradicen. El caso gordo
+es el micrófono, y tenía además una causa propia: se buscaba el tipo
+«Micrófono» y el de 298 aulas se llama **«Micrófono Jabra»**.
+
+Ahora las tres son `solo_app`: las escribe la aplicación leyendo su inventario.
+Manda el inventario porque es el que se puede señalar —detrás de cada sí hay una
+ficha con su aula, su estado y su fecha—, y `capabilities` se queda de respaldo
+**solo** para las aulas que no tienen ni un aparato apuntado: ahí no hay
+inventario que consultar y su sí sigue siendo el único dato que existe.
+
+Escribir «SI» a mano en la hoja ya no crea nada: la pasada siguiente devuelve la
+celda a lo que diga el inventario y lo deja escrito en la hoja `Sincronización`,
+que es lo que hace `solo_app` con cualquier columna suya. Para que un aula tenga
+altavoces, se apuntan los altavoces.
+
+**`Botonera` (K) no cambia, y es a propósito.** No dice si hay botonera: dice si
+está **actualizada** —«Actualizada \*», «Actualizada», «No tiene»—, y eso el
+inventario no lo sabe. Sus contradicciones reales son 8 aulas, no las 100 que
+parecen si se cuentan como «no» los 92 huecos.
+
+**Los cinco tipos sin columna** —HDMI PC (303), HDMI Amarillo (300), HDMI Azul
+(281), Atril (38) y Monitor Atril (38)— se quedan fuera de `Estado` a propósito:
+ya salen en `Inventario por Sala`, uno por fila y con su `Ref`. Darles columna
+sería volver a tener el mismo dato en dos sitios, que es justo lo que este
+apartado deshace.
+
 ## 12. Lo que puede salir mal
 
 - **Que la API de libro no acepte un token sin usuario.** La documentación de

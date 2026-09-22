@@ -10,8 +10,10 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { compradoEn, consumoPorMes } from './volcado'
-import type { MovimientoVolcado } from './volcado'
+import { ESTADO } from './mapa'
+import type { Columna } from './mapa'
+import { compradoEn, consumoPorMes, valorDeSala } from './volcado'
+import type { MovimientoVolcado, SalaVolcada } from './volcado'
 
 const mov = (occurredAt: string, qty: number, kind: string): MovimientoVolcado =>
   ({ occurredAt, qty, kind }) as MovimientoVolcado
@@ -53,5 +55,77 @@ describe('el consumo por meses', () => {
     const meses = consumoPorMes(m, 2026)
     expect(meses[1]).toBe(0)
     expect(meses[2]).toBe(2)
+  })
+})
+
+// -----------------------------------------------------------------------------
+// Las columnas de SÍ/NO salen del inventario
+// -----------------------------------------------------------------------------
+
+/**
+ * Antes salían de `rooms.capabilities`, que es un sí o un no guardado al margen
+ * de los aparatos. En el libro del 22/09 los dos datos se contradicen 442
+ * veces, y el caso gordo es el micrófono: la hoja decía que hay 30 y la
+ * aplicación tiene 286 apuntados, porque el tipo se llama «Micrófono Jabra» y
+ * aquí solo se buscaba «Micrófono».
+ */
+describe('las columnas de sí o no de la hoja de estado', () => {
+  const columna = (letra: string): Columna => ESTADO.columnas.find((c) => c.letra === letra)!
+
+  const conEquipos = (equipos: Array<[string, string | null]>, capacidades = {}): SalaVolcada =>
+    ({
+      id: 'r1',
+      shortRef: 'SALA-000001',
+      edificio: 'EDIFICIO P',
+      zona: 'PLANTA BAJA',
+      code: '0.1P',
+      activa: true,
+      projectorHours: null,
+      lampPct: null,
+      botoneraEstado: null,
+      capacidades,
+      revisiones: [],
+      notas: null,
+      equipos: equipos.map(([tipo, serial], i) => ({
+        id: `e${i}`,
+        tipo,
+        serial,
+        model: null,
+        desde: null,
+      })),
+    }) as SalaVolcada
+
+  it('un micrófono apuntado como «Micrófono Jabra» cuenta', () => {
+    // 254 aulas decían NO teniéndolo. El tipo se llama así en 298 de ellas.
+    const sala = conEquipos([['Micrófono Jabra', null]], { microfono: false })
+    expect(valorDeSala(sala, columna('J'))).toBe('SI')
+  })
+
+  it('y manda el inventario, no la casilla guardada aparte', () => {
+    expect(valorDeSala(conEquipos([['Altavoces', null]], { altavoces: false }), columna('H'))).toBe(true)
+    expect(valorDeSala(conEquipos([['Cámara', null]], { camara: false }), columna('I'))).toBe(true)
+    // Y al revés: si el inventario no lo tiene, la casilla vieja no lo resucita.
+    expect(valorDeSala(conEquipos([['Proyector', null]], { altavoces: true }), columna('H'))).toBe(false)
+  })
+
+  it('un aula sin nada apuntado se queda con lo que dijera la casilla', () => {
+    // Sin inventario no hay a qué preguntar, y su sí sigue siendo el único
+    // dato que existe. Tirarlo sería cambiar «no lo sé» por «no lo tiene».
+    expect(valorDeSala(conEquipos([], { altavoces: true }), columna('H'))).toBe(true)
+    expect(valorDeSala(conEquipos([], {}), columna('H'))).toBeNull()
+  })
+
+  it('el número de serie del micrófono sigue ganando al sí', () => {
+    const sala = conEquipos([['Micrófono Jabra', 'MIC-77']], { microfono: false })
+    expect(valorDeSala(sala, columna('J'))).toBe('MIC-77')
+  })
+
+  it('y las tres columnas las escribe la aplicación', () => {
+    // `solo_app`: escribir «SI» a mano ya no crea nada. La pasada siguiente
+    // devuelve la celda a lo que diga el inventario y lo apunta en la hoja
+    // «Sincronización».
+    for (const letra of ['H', 'I', 'J']) expect(columna(letra).dueno).toBe('solo_app')
+    // La botonera no: dice si está actualizada, y eso el inventario no lo sabe.
+    expect(columna('K').dueno).toBe('ambos')
   })
 })

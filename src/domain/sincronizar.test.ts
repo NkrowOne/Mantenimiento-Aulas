@@ -1625,17 +1625,23 @@ describe('un edificio que el maestro no conoce', () => {
   it('y las demás columnas de esa fila siguen entrando como siempre', () => {
     // No se bloquea la fila: solo esa celda. Lo que el Excel corrija en el
     // aula tiene que seguir llegando.
+    //
+    // Se mira el número de serie del proyector y no la casilla de altavoces
+    // —que es lo que miraba antes— porque las columnas de SÍ/NO ya no vienen
+    // del Excel: las escribe la aplicación desde su inventario.
     const p = sincronizarEstado({
       hoja: ESTADO,
-      filas: [CABECERA, fila(2, { ...comoLoEscribeSharePoint, H: 'NO' })],
-      salas: [sala({ capacidades: { altavoces: true } })],
+      filas: [CABECERA, fila(2, { ...comoLoEscribeSharePoint, M: '0340985RL' })],
+      salas: [
+        sala({ equipos: [{ id: 'p1', tipo: 'Proyector', serial: null, model: null, desde: null }] }),
+      ],
       indice,
       columnaRef: 'Y',
       instantanea: SIN_INSTANTANEA,
       referencia: 'excel',
     })
     expect(p.haciaLaBase).toContainEqual(
-      expect.objectContaining({ campo: 'capacidad:altavoces', valor: false }),
+      expect.objectContaining({ campo: 'equipo:Proyector:serial', valor: '0340985RL' }),
     )
   })
 
