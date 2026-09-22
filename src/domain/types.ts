@@ -26,13 +26,28 @@ export type CheckResult = 'ok' | 'incidencia' | 'na'
  */
 export type CheckKey = string
 
-/** Lo que se comprueba en la sala y no en un aparato concreto. */
-export type RoomCheckKey = 'red'
+/**
+ * Lo que se comprueba en la sala y no en un aparato concreto.
+ *
+ * Teams y Zoom estaban en el inventario, como si fueran aparatos: 303 fichas de
+ * «Teams actualizado» y 292 de «Zoom actualizado», **ninguna con modelo ni
+ * número de serie**, porque no hay nada que apuntar. No son cosas que se puedan
+ * señalar con el dedo: son un estado del puesto, y un estado se comprueba, no se
+ * inventaría. Puestos como aparatos no se podían contestar «falla» —el
+ * inventario no tiene esa casilla— y ensuciaban la ficha del aula con seis
+ * renglones que no dicen nada.
+ *
+ * Aquí sí: la revisión pregunta correcto / falla / no aplica, y lo que pasa va
+ * en la observación, que es donde se escribe lo que la casilla no sabe decir.
+ */
+export type RoomCheckKey = 'red' | 'teams' | 'zoom'
 
-export const ROOM_CHECKS: RoomCheckKey[] = ['red']
+export const ROOM_CHECKS: RoomCheckKey[] = ['red', 'teams', 'zoom']
 
 export const ROOM_CHECK_LABELS: Record<RoomCheckKey, string> = {
   red: 'Red',
+  teams: 'Teams',
+  zoom: 'Zoom',
 }
 
 /**
@@ -44,6 +59,8 @@ export const ROOM_CHECK_LABELS: Record<RoomCheckKey, string> = {
  */
 export const ROOM_CHECK_HINTS: Record<RoomCheckKey, string> = {
   red: 'Conectividad del puesto',
+  teams: 'Abre y llama: cámara, micro y sonido',
+  zoom: 'Abre y llama: cámara, micro y sonido',
 }
 
 export const ROOM_CHECK_MEASURE: Partial<Record<RoomCheckKey, { unit: string; label: string }>> = {

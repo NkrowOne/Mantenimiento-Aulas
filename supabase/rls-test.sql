@@ -4409,3 +4409,93 @@ begin;
     raise notice 'OK: el nombre ya cogido se recoloca y queda apuntado (%)', v_salio;
   end $$;
 rollback;
+
+\echo ''
+\echo '=== 79. El monitor del PC sale del «TV», y Teams deja de ser un aparato ==='
+-- Se aplica la migración OTRA VEZ, con el escenario montado delante. Es la
+-- única forma de probar lo que hace: en `db:verify` corre sobre una base sin
+-- datos, donde no hay ni una mezcla que deshacer ni una ficha que retirar, y
+-- pasaría en verde sin haber hecho nada. Puede repetirse porque lo declara.
+begin;
+  do $$
+  declare
+    v_sala uuid;
+    v_tv   uuid;
+    v_pan  uuid;
+    v_mon  uuid;
+  begin
+    select id into v_sala from rooms order by id limit 1;
+    select id into v_pan from asset_types where public.norm_text(name) = public.norm_text('Pantalla');
+    select id into v_tv  from asset_types where public.norm_text(name) = public.norm_text('TV');
+    select id into v_mon from asset_types where public.norm_text(name) = public.norm_text('Monitor');
+    if v_pan is null or v_tv is null or v_mon is null then
+      raise exception 'FALLO: faltan los tipos que 20260830000100 separa';
+    end if;
+
+    -- Como está producción: «Pantalla» vacía, la mezcla dentro de «TV», y
+    -- «Monitor» sin un solo aparato aunque el libro traiga sus números.
+    update assets set status = 'retirado' where asset_type_id in (v_pan, v_mon);
+    update asset_types set separado_de = v_pan where id in (v_tv, v_mon);
+    insert into assets (id, asset_type_id, room_id, label, serial, status)
+    values ('77777777-7777-4777-8777-777777777771', v_tv, v_sala, 'TV de la 79', 'PRB-79-1', 'instalado');
+
+    -- Y las dos fichas que no son un aparato.
+    insert into asset_types (name, confirmed) values ('Teams actualizado', true), ('Zoom actualizado', true)
+      on conflict (name) do nothing;
+    insert into assets (id, asset_type_id, room_id, label, status) values
+      ('77777777-7777-4777-8777-777777777772', public.asset_type_id('Teams actualizado'), v_sala, 'Teams actualizado', 'instalado'),
+      ('77777777-7777-4777-8777-777777777773', public.asset_type_id('Zoom actualizado'),  v_sala, 'Zoom actualizado',  'instalado');
+  end $$;
+
+\i supabase/migrations/20260922000700_el_monitor_del_pc_sale_del_tv_y_teams_deja_de_ser_un_aparato.sql
+
+  do $$
+  declare
+    v_sala   uuid;
+    v_tv     uuid;
+    v_mon    uuid;
+    v_apunta uuid;
+    v_err    text;
+    v_ahora  uuid;
+  begin
+    select room_id into v_sala from assets where id = '77777777-7777-4777-8777-777777777771';
+    select id into v_tv  from asset_types where public.norm_text(name) = public.norm_text('TV');
+    select id into v_mon from asset_types where public.norm_text(name) = public.norm_text('Monitor');
+
+    select separado_de into v_apunta from asset_types where id = v_mon;
+    if v_apunta is distinct from v_tv then
+      raise exception 'FALLO: «Monitor» sigue buscando los suyos en % y la mezcla está en «TV»',
+        coalesce((select name from asset_types where id = v_apunta), 'ninguna parte');
+    end if;
+    raise notice 'OK: «Monitor» pasa a buscar los suyos dentro de «TV»';
+
+    -- Y con eso, la celda del libro reclasifica el aparato en vez de fallar.
+    v_err := public.sync_aplicar_equipo(v_sala, v_mon, 'serial', 'PRB-79-1');
+    if v_err is not null then
+      raise exception 'FALLO: la celda del libro no pudo reclasificar: %', v_err;
+    end if;
+    select asset_type_id into v_ahora from assets where id = '77777777-7777-4777-8777-777777777771';
+    if v_ahora is distinct from v_mon then
+      raise exception 'FALLO: el aparato sigue siendo un «%»',
+        (select name from asset_types where id = v_ahora);
+    end if;
+    if not exists (select 1 from asset_events
+                    where asset_id = '77777777-7777-4777-8777-777777777771' and kind = 'sustitucion') then
+      raise exception 'FALLO: reclasificar no ha dejado apunte';
+    end if;
+    raise notice 'OK: el libro reclama «PRB-79-1» en su columna y el aparato pasa a «Monitor»';
+
+    -- Teams y Zoom, fuera del inventario y con su apunte.
+    if exists (select 1 from assets
+                where id in ('77777777-7777-4777-8777-777777777772','77777777-7777-4777-8777-777777777773')
+                  and status <> 'retirado') then
+      raise exception 'FALLO: Teams o Zoom siguen instalados en el aula';
+    end if;
+    if (select count(*) from asset_events
+         where asset_id in ('77777777-7777-4777-8777-777777777772','77777777-7777-4777-8777-777777777773')
+           and kind = 'baja') <> 2 then
+      raise exception 'FALLO: retirarlos no ha dejado los dos apuntes';
+    end if;
+    raise notice 'OK: Teams y Zoom salen del inventario y queda escrito por qué';
+  end $$;
+rollback;

@@ -11,7 +11,7 @@ import {
   type ComprobacionDetalle,
   type RevisionResumen,
 } from './revisiones'
-import { assetCheckKey } from './types'
+import { ROOM_CHECKS, assetCheckKey } from './types'
 
 describe('las comprobaciones, en una frase para el Excel', () => {
   const nombres = new Map([['a1', 'Proyector'], ['a2', 'Pantalla 2']])
@@ -203,6 +203,12 @@ describe('cómo se lee una revisión pasada', () => {
 
   it('traduce el vocabulario fijo y el de antes del inventario', () => {
     expect(etiquetaDeComprobacion(comprobacion({ check_key: 'red' }))).toBe('Red')
+    // Teams y Zoom entran por la misma puerta que «Red». Estaban en el
+    // inventario, como aparatos, y no lo son: 595 fichas sin modelo ni número
+    // de serie porque no hay nada que apuntar.
+    expect(etiquetaDeComprobacion(comprobacion({ check_key: 'teams' }))).toBe('Teams')
+    expect(etiquetaDeComprobacion(comprobacion({ check_key: 'zoom' }))).toBe('Zoom')
+    expect(ROOM_CHECKS).toEqual(['red', 'teams', 'zoom'])
     // Sin esto, una revisión de 2025 se leería como `pantallas`.
     expect(etiquetaDeComprobacion(comprobacion({ check_key: 'pantallas' }))).toBe('Pantallas')
   })
