@@ -59,7 +59,13 @@ import type { FilaNueva } from './estructura'
 import { columnaANumero, numeroAColumna } from './xlsx'
 import type { Cambio, FilaLeida, ValorCelda } from './xlsx'
 import { filaDeArticulo, filaDeIncidencia, filaDeSala, filaDeUnidad, situacionDeUnidad } from './volcado'
-import type { ArticuloVolcado, IncidenciaVolcada, SalaVolcada, UnidadVolcada } from './volcado'
+import type {
+  ArticuloVolcado,
+  EquipoVolcado,
+  IncidenciaVolcada,
+  SalaVolcada,
+  UnidadVolcada,
+} from './volcado'
 
 // -----------------------------------------------------------------------------
 // Lo que sale de una pasada
@@ -1053,7 +1059,7 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
       lado === 'base' ? (sala.revisiones[0] ?? null) : fechaDeCelda(celdas.D),
   })
 
-  retenerEquiposNuevos(plan, emparejadas, e.hoja, e.respuestas ?? {}, e.crearEquipos === true)
+  retenerEquiposNuevos(plan, emparejadas, e.hoja, e.respuestas ?? {}, e.crearEquipos === true, e.salas)
 
   // Las salas vivas que el libro no tiene: fila nueva en su bloque de edificio.
   const enLaHoja = new Set(emparejadas.map((p) => p.dato.id))
@@ -1182,6 +1188,37 @@ function serialesUnicos(salas: SalaVolcada[]): Map<string, SalaVolcada> {
   }
   const out = new Map<string, SalaVolcada>()
   for (const [k, s] of vistos) if (s) out.set(k, s)
+  return out
+}
+
+/**
+ * Dónde está puesto ya cada número de serie que la aplicación conoce.
+ *
+ * `assets_serial_idx` es único **global**: un número de serie no puede estar
+ * dos veces en la base, ni siquiera en aulas distintas. Así que antes de
+ * ofrecer crear un equipo hay que mirar si ese número ya está puesto en otro,
+ * porque crearlo no fallaría a medias: lo rechazaría la base entera y la celda
+ * se quedaría atascada sin decir por qué.
+ *
+ * Y casi nunca es un aparato nuevo: es el mismo con dos nombres. El aula lo
+ * tiene como «Pantalla» y la columna del libro escribe en «Monitor», que es
+ * exactamente el enredo que costó dos rondas de capturas descubrir con el
+ * Tiny. Esto lo dice a la primera y con el nombre de los dos.
+ *
+ * Los repetidos —que el maestro no debería tener— se quedan con el primero:
+ * para avisar basta con uno, y que un serial esté en dos aulas es otro
+ * problema, que el importador ya manda a cuarentena.
+ */
+function dondeEstaCadaSerial(
+  salas: SalaVolcada[],
+): Map<string, { sala: SalaVolcada; equipo: EquipoVolcado }> {
+  const out = new Map<string, { sala: SalaVolcada; equipo: EquipoVolcado }>()
+  for (const s of salas) {
+    for (const eq of s.equipos) {
+      const k = norm(eq.serial ?? '')
+      if (k && !out.has(k)) out.set(k, { sala: s, equipo: eq })
+    }
+  }
   return out
 }
 
@@ -1758,12 +1795,40 @@ function retenerEquiposNuevos(
   hoja: Hoja,
   respuestas: Respuestas,
   crearEquipos: boolean,
+  salas: SalaVolcada[],
 ): void {
   const porFila = new Map(emparejadas.map((p) => [p.fila, p]))
   const retenidas = new Set<string>()
   const preguntas = new Map<string, { par: Emparejada<SalaVolcada>; tipo: string; celdas: HaciaLaBase[] }>()
   /** Cuántos van a entrar sin preguntar, por tipo. Solo con la casilla puesta. */
   const nuevos = new Map<string, number>()
+  /** `tipo del libro → tipo de la aplicación` de los que ya están, con ejemplos. */
+  const conOtroNombre = new Map<
+    string,
+    { delLibro: string; enLaApp: string; n: number; ejemplos: string[] }
+  >()
+
+  /*
+   * Antes de nada: qué números de serie de esta hoja YA están puestos en la
+   * aplicación, en otro equipo.
+   *
+   * Va en una pasada aparte porque la respuesta tiene que valer para las dos
+   * celdas del mismo aparato —el n.º de serie y el modelo van juntos y solo
+   * una de las dos trae el número—, y porque manda sobre todo lo demás: ni la
+   * casilla de crear ni un «sí» contestado antes pueden crear un equipo con un
+   * número de serie que ya existe. La base lo rechaza entero.
+   */
+  const dondeEsta = dondeEstaCadaSerial(salas)
+  const yaPuesto = new Map<string, { sala: SalaVolcada; equipo: EquipoVolcado }>()
+  for (const h of plan.haciaLaBase) {
+    const eq = equipoDe(h.campo)
+    if (!eq || eq.campo !== 'serial') continue
+    const par = porFila.get(h.fila)
+    if (!par) continue
+    if (par.dato.equipos.some((x) => norm(x.tipo) === norm(eq.tipo))) continue
+    const donde = dondeEsta.get(norm(String(h.valor ?? '')))
+    if (donde) yaPuesto.set(idDeDuda(hoja.nombre, h.fila, eq.tipo), donde)
+  }
 
   for (const h of plan.haciaLaBase) {
     const eq = equipoDe(h.campo)
@@ -1773,6 +1838,38 @@ function retenerEquiposNuevos(
     if (par.dato.equipos.some((x) => norm(x.tipo) === norm(eq.tipo))) continue
 
     const id = idDeDuda(hoja.nombre, h.fila, eq.tipo)
+
+    /*
+     * Ese aparato ya está en la aplicación, con otro nombre de tipo.
+     *
+     * No se pregunta, porque la única respuesta que la pantalla sabe ofrecer
+     * —«sí, que entre»— fallaría: `assets_serial_idx` es único global. Y no es
+     * lo que hace falta: dos nombres para el mismo aparato se arreglan
+     * unificando los tipos, no creando un tercero. Se retiene y se cuenta para
+     * decirlo una vez, con el nombre de los dos lados.
+     */
+    const ya = yaPuesto.get(id)
+    if (ya) {
+      retenidas.add(`${h.fila}|${h.letra}`)
+      if (eq.campo === 'serial') {
+        const k = `${norm(eq.tipo)}|${norm(ya.equipo.tipo)}`
+        const acum = conOtroNombre.get(k) ?? {
+          delLibro: eq.tipo,
+          enLaApp: ya.equipo.tipo,
+          n: 0,
+          ejemplos: [],
+        }
+        acum.n += 1
+        if (acum.ejemplos.length < 3) {
+          acum.ejemplos.push(
+            `«${h.valor ?? ''}» en ${ya.sala.id === par.dato.id ? `«${par.destino}»` : `«${ya.sala.code}» (${ya.sala.edificio})`}`,
+          )
+        }
+        conOtroNombre.set(k, acum)
+      }
+      continue
+    }
+
     const r = respuestas[id]
     if (r?.tipo === 'alta' && r.aceptar) continue
 
@@ -1799,6 +1896,14 @@ function retenerEquiposNuevos(
     const q = preguntas.get(id) ?? { par, tipo: eq.tipo, celdas: [] }
     q.celdas.push(h)
     preguntas.set(id, q)
+  }
+
+  for (const c of conOtroNombre.values()) {
+    plan.avisos.push(
+      `«${c.delLibro}» del libro ya está en la aplicación con otro nombre: ${c.n} ${
+        c.n === 1 ? 'número de serie que está puesto' : 'números de serie que están puestos'
+      } en equipos de tipo «${c.enLaApp}». No se crea ninguno: el n.º de serie es único en toda la aplicación y la base lo rechazaría. Es el mismo aparato con dos nombres, y se arregla unificando los dos tipos. Por ejemplo ${c.ejemplos.join(', ')}.`,
+    )
   }
 
   if (nuevos.size > 0) {
