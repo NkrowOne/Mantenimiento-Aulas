@@ -164,6 +164,23 @@ esac
 # a pedir, y el fallo solo aparecía en el registro del arranque, que es donde
 # nadie mira una semana después.
 migraciones='"al dia"'
+# Y por qué, si se sabe. `arranque.sh` deja aquí las líneas de error de
+# `migrar`. Es la diferencia entre «fallaron, abre la terminal» —que quien mira
+# esto desde el móvil no puede hacer— y «falló ESTE fichero por ESTO».
+motivo_migraciones='null'
+if [ -s /srv/dist/.migraciones-motivo ]; then
+	# A una sola cadena JSON: se escapan las comillas y las barras, el tabulador
+	# pasa a espacio —dentro de una cadena JSON tendría que ir escapado, y un
+	# mensaje de Postgres los trae—, se quitan los demás caracteres de control, y
+	# los saltos de línea pasan a « · » para que quepa en una tarjeta.
+	motivo_migraciones=$(
+		sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\r//g' /srv/dist/.migraciones-motivo |
+			tr '\011' ' ' |
+			tr -d '\000-\010\013\014\016-\037' |
+			awk 'BEGIN{ORS=""} NR>1{print " · "} {print}'
+	)
+	motivo_migraciones="\"${motivo_migraciones}\""
+fi
 if [ -f /srv/dist/.migraciones-fallidas ]; then
 	migraciones='"fallidas"'
 	falta 'MIGRACIONES'
@@ -213,12 +230,12 @@ fi
 json() {
 	# `ok` es `true` siempre y a propósito: dice que el servidor sirve, no que
 	# esté bien configurado. Eso lo dice `estado`.
-	printf '{"ok":true,"estado":%s,"version":%s,"commit":%s,"configurada":%s,"revisado":"arranque","instante":"%s","despliegue":%s,"construccion":{"clave_anonima":%s,"url_api":%s,"bloqueo_min":%s},"ejecucion":{"upstream":%s,"puerto":%s,"clave_de_servicio":%s,"hook_rol":%s,"migraciones":%s},"faltan":[%s],"avisos":[%s]}\n' \
+	printf '{"ok":true,"estado":%s,"version":%s,"commit":%s,"configurada":%s,"revisado":"arranque","instante":"%s","despliegue":%s,"construccion":{"clave_anonima":%s,"url_api":%s,"bloqueo_min":%s},"ejecucion":{"upstream":%s,"puerto":%s,"clave_de_servicio":%s,"hook_rol":%s,"migraciones":%s,"migraciones_motivo":%s},"faltan":[%s],"avisos":[%s]}\n' \
 		"$estado" "$version" "$commit" "$clave_anonima" \
 		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$despliegue" \
 		"$clave_anonima" "$url_api" "$bloqueo_min" \
 		"$upstream" "$puerto" "$clave_de_servicio" "$hook_rol" "$migraciones" \
-		"$faltan" "$avisos"
+		"$motivo_migraciones" "$faltan" "$avisos"
 }
 
 # Cada línea sale en su propio `printf` y con un prefijo de exactamente ocho
@@ -278,6 +295,10 @@ texto() {
 			linea '  Las migraciones no se han podido aplicar: la base puede no tener'
 			linea '  las tablas ni las funciones que la aplicación va a pedir.'
 			linea '  Relánzalas desde la terminal de este servicio con: migrar'
+			if [ -s /srv/dist/.migraciones-motivo ]; then
+				linea '  Lo que dijo:'
+				while IFS= read -r l; do linea "    $l"; done </srv/dist/.migraciones-motivo
+			fi
 			;;
 		'"esquema no cuadra"')
 			linea '  La base NO tiene las funciones que el código desplegado necesita,'

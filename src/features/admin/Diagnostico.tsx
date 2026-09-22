@@ -60,7 +60,11 @@ function migracionesQueFaltan(parte: Parte): string[] {
 interface Salud {
   estado?: string
   commit?: string | null
-  ejecucion?: { migraciones?: string }
+  ejecucion?: {
+    migraciones?: string
+    /** Las líneas de error de `migrar`, si falló. Las deja `arranque.sh`. */
+    migraciones_motivo?: string | null
+  }
   faltan?: string[]
 }
 
@@ -170,9 +174,35 @@ export function Diagnostico(): React.ReactElement {
           <p className="font-semibold text-crit">Las migraciones fallaron al arrancar.</p>
           <p className="mt-1 text-muted">
             La base puede no tener las tablas ni las funciones que la aplicación va a pedir.
-            Relánzalas desde la terminal del servicio con <span className="font-mono">migrar</span>{' '}
-            y lee lo que conteste: lo dice en una línea.
           </p>
+          {/*
+            Y qué dijo, si se sabe. Antes esto mandaba a la terminal del
+            servicio, que es justo lo que no tiene delante quien mira esta
+            pantalla: se lleva el despliegue desde el móvil, y la tarjeta le
+            decía «fallaron» y a buscarse la vida. Con la línea del error a la
+            vista, la mitad de las veces ya no hace falta entrar.
+          */}
+          {salud.ejecucion.migraciones_motivo ? (
+            <>
+              <p className="mt-2 font-semibold">Lo que dijo al arrancar:</p>
+              <p className="mt-1 whitespace-pre-wrap break-words rounded-ctl bg-crit-tint p-2 font-mono text-xs">
+                {salud.ejecucion.migraciones_motivo}
+              </p>
+              <p className="mt-2 text-muted">
+                Casi siempre es que el registro da por aplicada una migración que la base no
+                tiene, y la siguiente se encuentra sin lo que esperaba. Desde la terminal del
+                servicio, <span className="font-mono">migrar</span> lo repite con todo el detalle,
+                y <span className="font-mono">migrar --reaplicar &lt;fichero&gt;.sql</span> vuelve
+                a ejecutar de verdad la que faltaba.
+              </p>
+            </>
+          ) : (
+            <p className="mt-1 text-muted">
+              Relánzalas desde la terminal del servicio con{' '}
+              <span className="font-mono">migrar</span> y lee lo que conteste: lo dice en una
+              línea.
+            </p>
+          )}
         </div>
       )}
 
