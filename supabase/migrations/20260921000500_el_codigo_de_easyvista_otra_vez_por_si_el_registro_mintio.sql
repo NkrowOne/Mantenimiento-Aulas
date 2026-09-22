@@ -28,6 +28,49 @@
 
 alter table incidents add column if not exists easyvista_ref text;
 
+/*
+ * Antes de exigir el formato, ponerle el formato a lo que ya hay.
+ *
+ * Añadido el 22/09/2026, después de que esta misma cadena se atascara dos
+ * veces por lo mismo: un `add constraint` que pasa en desarrollo porque
+ * delante no hay ningún dato que lo incumpla, y revienta en producción, donde
+ * sí lo hay. Como `migrar` se para en la primera que falla, un solo valor
+ * raro deja detrás todas las demás sin aplicar.
+ *
+ * `easyvista_ref` lo teclea una persona y entra por tres puertas. Desde que
+ * existe `normalizar_codigo_easyvista` —más abajo en este mismo fichero— se
+ * guarda recortado, en mayúsculas y nulo si está vacío; lo que entrara antes
+ * de eso, no. Así que aquí se le pasa la misma regla a lo que ya está.
+ *
+ * Y lo que ni recortando es un código —un espacio en medio, más de 40
+ * caracteres— se guarda entero en el texto de su fila antes de vaciarlo: no
+ * es la identidad de nada, pero lo escribió alguien y se puede buscar.
+ */
+do $easyvista$
+declare
+  v_incidencias int;
+begin
+  -- Lo que solo necesita el recorte y las mayúsculas, que es lo normal.
+  update incidents
+     set easyvista_ref = nullif(upper(btrim(easyvista_ref)), '')
+   where easyvista_ref is not null
+     and easyvista_ref is distinct from nullif(upper(btrim(easyvista_ref)), '');
+
+  -- Y lo que sigue sin poder ser un código.
+  update incidents
+     set description = 'Código de EasyVista que no se pudo guardar: ' || easyvista_ref ||
+                       coalesce(chr(10) || chr(10) || description, ''),
+         easyvista_ref = null
+   where easyvista_ref is not null
+     and easyvista_ref !~ '^\S{1,40}$';
+  get diagnostics v_incidencias = row_count;
+
+  if v_incidencias > 0 then
+    raise notice 'Códigos de EasyVista apartados en % averías por no tener forma de código. Cada uno queda escrito en su descripción.', v_incidencias;
+  end if;
+end
+$easyvista$;
+
 alter table incidents drop constraint if exists incidents_easyvista_ref_formato;
 alter table incidents add constraint incidents_easyvista_ref_formato
   check (easyvista_ref is null or easyvista_ref ~ '^\S{1,40}$');
@@ -43,6 +86,32 @@ create index if not exists incidents_easyvista_idx
 -- -----------------------------------------------------------------------------
 
 alter table incident_resolutions add column if not exists easyvista_ref text;
+
+-- Lo mismo para el asiento de cierre, y aquí y no arriba porque la columna
+-- acaba de nacer: un bloque que la tocara antes reventaría en una base nueva.
+do $easyvista_cierres$
+declare
+  v_cierres int;
+begin
+  update incident_resolutions
+     set easyvista_ref = nullif(upper(btrim(easyvista_ref)), '')
+   where easyvista_ref is not null
+     and easyvista_ref is distinct from nullif(upper(btrim(easyvista_ref)), '');
+
+  -- En el texto del cierre, que es el campo que esta fila tiene para escribir.
+  update incident_resolutions
+     set resolution = resolution || chr(10) || chr(10) ||
+                      'Código de EasyVista que no se pudo guardar: ' || easyvista_ref,
+         easyvista_ref = null
+   where easyvista_ref is not null
+     and easyvista_ref !~ '^\S{1,40}$';
+  get diagnostics v_cierres = row_count;
+
+  if v_cierres > 0 then
+    raise notice 'Códigos de EasyVista apartados en % cierres por no tener forma de código. Cada uno queda escrito en su resolución.', v_cierres;
+  end if;
+end
+$easyvista_cierres$;
 
 alter table incident_resolutions drop constraint if exists incident_resolutions_easyvista_ref_formato;
 alter table incident_resolutions add constraint incident_resolutions_easyvista_ref_formato
