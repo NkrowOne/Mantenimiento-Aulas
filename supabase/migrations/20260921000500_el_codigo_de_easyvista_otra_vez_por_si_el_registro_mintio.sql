@@ -1,3 +1,15 @@
+-- reejecutable: si
+--
+-- Sus dos bloques `do` normalizan lo que ya hay antes de exigirle el formato, y
+-- lo hacen con `where` que buscan exactamente lo que ellos mismos arreglan: una
+-- segunda pasada no encuentra ni una fila. Lo demás es `add column if not
+-- exists`, `drop constraint if exists` y `create or replace`, que se repiten
+-- sin consecuencias.
+--
+-- Hace falta declararlo porque la deducción automática rechaza cualquier `do`
+-- de nivel raíz, y bien rechazado está: dentro de uno cabe cualquier cosa, y
+-- decidir por su cuenta que se puede repetir sería justo la clase de suposición
+-- que esta comprobación existe para no hacer.
 -- =============================================================================
 -- El código de EasyVista, otra vez: por si el registro dijo que ya estaba
 --

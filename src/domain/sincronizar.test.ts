@@ -1867,3 +1867,62 @@ describe('las aulas que el libro trae y el maestro no', () => {
     expect(p.altas.filter((a) => a.tipo === 'sala')).toEqual([])
   })
 })
+
+describe('los equipos que el libro trae y la sala no tiene', () => {
+  /*
+   * Setenta y cinco monitores. La pantalla del PC no estaba en la aplicación,
+   * así que NINGUNA sala tenía «monitor» y la pasada preguntaba por cada una:
+   * la misma pregunta setenta y cinco veces, pasada tras pasada, que es
+   * exactamente como no se crea ninguno.
+   */
+  const conSerie = { Y: 'SALA-000001', C: '0.1P', R: 'V3080D6Y' }
+
+  function conLaOpcion(crearEquipos: boolean) {
+    return sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, conSerie)],
+      salas: [sala({ equipos: [] })],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      crearEquipos,
+    })
+  }
+
+  it('apagada, se retiene la celda y se pregunta', () => {
+    const p = conLaOpcion(false)
+    expect(p.dudas.filter((d) => d.tipo === 'alta' && d.que === 'equipo')).toHaveLength(1)
+    // Y la celda NO viaja: sin el sí, el equipo no se crea.
+    expect(p.haciaLaBase.filter((h) => h.letra === 'R')).toEqual([])
+  })
+
+  it('encendida, la celda viaja y no se pregunta', () => {
+    const p = conLaOpcion(true)
+    expect(p.dudas.filter((d) => d.tipo === 'alta' && d.que === 'equipo')).toEqual([])
+    const celda = p.haciaLaBase.find((h) => h.letra === 'R')
+    expect(celda?.valor).toBe('V3080D6Y')
+  })
+
+  it('y se dice cuántos entran y de qué tipo, una vez', () => {
+    // Una línea con el recuento, no setenta y cinco avisos: lo que entra está
+    // celda a celda en la vista previa, que es donde se mira.
+    const p = conLaOpcion(true)
+    const aviso = p.avisos.find((a) => a.includes('sin preguntar'))
+    expect(aviso).toBeTruthy()
+    expect(aviso).toContain('1 monitor')
+  })
+
+  it('la sala que ya tiene ese equipo no cuenta como nuevo', () => {
+    // No es que se pregunte o no: es que ahí no hay nada que crear.
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, conSerie)],
+      salas: [sala({ equipos: [{ id: 'e1', tipo: 'Monitor', serial: 'V3080D6Y', model: null, desde: null }] })],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+      crearEquipos: true,
+    })
+    expect(p.avisos.filter((a) => a.includes('sin preguntar'))).toEqual([])
+  })
+})
