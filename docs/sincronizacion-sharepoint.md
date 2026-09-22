@@ -874,8 +874,20 @@ La equivalencia la confirmó quien mantiene el libro, aparato por aparato:
 | `S/N Ordenador` | el Tiny PC (ThinkCentre M70Q, 58 series) | «Ordenador Tiny» (301) |
 
 Sobrevive el nombre del libro, que es lo que se mira y lo que se sube a
-SharePoint. El absorbido no se pierde: `merge_asset_type` lo deja de **alias**,
-así que quien escriba «Pantalla» en un parte sigue encontrando el tipo.
+SharePoint. El absorbido no se pierde: queda de **alias**, así que quien escriba
+«Pantalla» o «Tiny» en un parte sigue encontrando el tipo.
+
+> **Se hace RENOMBRANDO, no fusionando** (`20260922000600`). `20260922000400` lo
+> intentó con `merge_asset_type` y **no hizo nada, en silencio**: una fusión
+> necesita dos tipos, y `Ordenador` y `TV` son nombres del maestro de ejemplo —
+> los de producción los creó el importador, y allí lo que hay es «Ordenador
+> Tiny» y «Pantalla». Sin destino, el bucle no encontró pareja y el despliegue
+> salió verde con el problema intacto.
+>
+> Ahora se renombra cuando el nombre está libre y se fusiona solo si ya está
+> cogido, y **se dice siempre lo que ha pasado con cada pareja**, incluido «no
+> había nada que hacer»: si ese mensaje no sale en el arranque, es que el
+> fichero no ha corrido, y eso también es un dato.
 
 Los **numerados** se recogen en su tipo base: «Pantalla 2» pasa a ser un segundo
 equipo del tipo «TV», con la etiqueta «TV 2». Un tipo por repetición es lo que
