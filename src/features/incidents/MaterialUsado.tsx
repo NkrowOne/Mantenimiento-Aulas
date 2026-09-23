@@ -5,7 +5,6 @@ import { v7 as uuidv7 } from 'uuid'
 import { db, enqueue } from '@/db/dexie'
 import { flush } from '@/sync/outbox'
 import { supabase } from '@/lib/supabase'
-import { norm } from '@/domain/normalize'
 import {
   lineasDeMaterial,
   mezclarApuntes,
@@ -15,6 +14,7 @@ import {
   type ApunteDeMaterial,
   type Operacion,
 } from './material'
+import { buscarArticulos } from './buscarArticulo'
 
 /**
  * El material que se ha gastado en una incidencia.
@@ -94,17 +94,9 @@ export function MaterialUsado({
     [],
   )
 
-  const coincidencias = useMemo(() => {
-    const q = norm(query)
-    if (!q) return []
-    return articulos
-      .filter((a) => norm(a.name).includes(q))
-      .sort((a, b) => {
-        const empieza = (n: string): number => (norm(n).startsWith(q) ? 0 : 1)
-        return empieza(a.name) - empieza(b.name) || a.name.localeCompare(b.name)
-      })
-      .slice(0, 6)
-  }, [articulos, query])
+  // Todos, no los seis primeros: con «HDMI» el cable gastado podía ser el
+  // séptimo y no había forma de llegar a él. Lo cuenta `buscarArticulo.ts`.
+  const coincidencias = useMemo(() => buscarArticulos(articulos, query), [articulos, query])
 
   /*
    * Lo ya apuntado en esta incidencia. Necesita conexión y por eso no bloquea
@@ -449,40 +441,62 @@ export function MaterialUsado({
       </label>
 
       {coincidencias.length > 0 && (
-        <ul className="mt-2 divide-y divide-line">
-          {coincidencias.map((a) => (
-            <li key={a.id}>
-              {/*
-                Un toque y está apuntado.
+        <>
+          {/* Cuántos hay, dicho antes de la lista: si no caben, es lo único que
+              avisa de que la lista sigue por debajo. */}
+          <p className="mt-2 text-xs text-muted" aria-live="polite">
+            {coincidencias.length === 1 ? '1 artículo' : `${coincidencias.length} artículos`}
+            {coincidencias.length > 6 && ' · desliza la lista para verlos todos'}
+          </p>
+          {/*
+            La lista desplaza por dentro, con su alto tope, y no empuja el resto
+            del cierre hasta el fondo. `overscroll-contain`: al llegar al final no
+            arrastra la pantalla de detrás, que es lo que hace que desplazar una
+            lista dentro de otra se sienta a trompicones. El tope deja asomar
+            media fila más: cortada justo entre dos filas, la lista parece
+            terminar ahí.
+          */}
+          <ul className="mt-1 max-h-[18.5rem] divide-y divide-line overflow-y-auto overscroll-contain rounded-ctl border border-line bg-surface px-3">
+            {coincidencias.map(({ articulo: a, alias }) => (
+              <li key={a.id}>
+                {/*
+                  Un toque y está apuntado.
 
-                Antes esto solo lo seleccionaba y hacía falta un segundo toque
-                en «Apuntar». Los dos pasos existían para poder elegir la
-                cantidad antes de confirmar, y la cantidad se elige igual de bien
-                después, en la línea que sale arriba — con la ventaja de que
-                ahora también se puede corregir.
-              */}
-              <button
-                type="button"
-                onClick={() => pedir(planSumar, a.id)}
-                className="flex min-h-11 w-full items-center gap-3 py-2 text-left text-sm"
-              >
-                <span className="min-w-0 flex-1">{a.name}</span>
-                {/* Cuánto queda, en la propia lista: es lo que decide cuál
-                    de los tres cables se coge, y preguntarlo después de
-                    elegir llega tarde. */}
-                {a.quedan !== null && (
-                  <span
-                    className={`shrink-0 font-mono text-xs tabular ${
-                      a.quedan <= 0 ? 'text-crit' : a.quedan <= a.min_threshold ? 'text-warn' : 'text-muted'
-                    }`}
-                  >
-                    {a.quedan} {a.unit}
+                  Antes esto solo lo seleccionaba y hacía falta un segundo toque
+                  en «Apuntar». Los dos pasos existían para poder elegir la
+                  cantidad antes de confirmar, y la cantidad se elige igual de bien
+                  después, en la línea que sale arriba — con la ventaja de que
+                  ahora también se puede corregir.
+                */}
+                <button
+                  type="button"
+                  onClick={() => pedir(planSumar, a.id)}
+                  className="flex min-h-11 w-full items-center gap-3 py-2 text-left text-sm"
+                >
+                  <span className="min-w-0 flex-1">
+                    {a.name}
+                    {/* Si ha salido por un nombre de antes, se dice cuál: si no,
+                        un resultado que no se parece a lo tecleado parece un
+                        error. */}
+                    {alias && <span className="block text-xs text-muted">antes «{alias}»</span>}
                   </span>
-                )}
-              </button>
-            </li>
-          ))}
-        </ul>
+                  {/* Cuánto queda, en la propia lista: es lo que decide cuál
+                      de los tres cables se coge, y preguntarlo después de
+                      elegir llega tarde. */}
+                  {a.quedan !== null && (
+                    <span
+                      className={`shrink-0 font-mono text-xs tabular ${
+                        a.quedan <= 0 ? 'text-crit' : a.quedan <= a.min_threshold ? 'text-warn' : 'text-muted'
+                      }`}
+                    >
+                      {a.quedan} {a.unit}
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       {/* Que no aparezca lo que se busca no es un callejón sin salida, pero

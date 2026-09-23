@@ -5,6 +5,7 @@ import { pullMaster } from '@/sync/pull'
 import type { AssetType } from '@/domain/types'
 import { Cargando, EstadoVacio, Nota, Seccion, mensajeDe } from './Seccion'
 import { useRefrescarPendientes } from './pendientes'
+import { tiposValidados, usoDeTipos } from './tiposDeEquipo'
 
 /**
  * Bandeja de tipos de equipo sin validar.
@@ -54,32 +55,10 @@ export function AssetTypeTray(): React.ReactElement {
     },
   })
 
-  const { data: confirmed } = useQuery({
-    queryKey: ['asset-types', 'confirmed'],
-    queryFn: async (): Promise<AssetType[]> => {
-      const { data } = await supabase
-        .from('asset_types')
-        .select('*')
-        .eq('confirmed', true)
-        .is('merged_into', null)
-        .order('name')
-      return (data ?? []) as AssetType[]
-    },
-  })
-
-  // Cuántos equipos usa cada tipo. Sin esto se confirma a ciegas: no es lo mismo
-  // validar algo que alguien apuntó una vez que algo instalado en treinta aulas.
-  const { data: usage } = useQuery({
-    queryKey: ['asset-types', 'usage'],
-    queryFn: async (): Promise<Record<string, number>> => {
-      const { data } = await supabase.from('assets').select('asset_type_id').neq('status', 'retirado')
-      const counts: Record<string, number> = {}
-      for (const row of (data ?? []) as Array<{ asset_type_id: string }>) {
-        counts[row.asset_type_id] = (counts[row.asset_type_id] ?? 0) + 1
-      }
-      return counts
-    },
-  })
+  // Las mismas consultas que el catálogo de «Maestro», con la misma clave:
+  // renombrar allí tiene que verse aquí. Lo explica `tiposDeEquipo.ts`.
+  const { data: confirmed } = useQuery(tiposValidados)
+  const { data: usage } = useQuery(usoDeTipos)
 
   const invalidate = (): void => {
     void qc.invalidateQueries({ queryKey: ['asset-types'] })
@@ -303,29 +282,13 @@ export function AssetTypeTray(): React.ReactElement {
         tono={act.isError ? 'crit' : 'ok'}
       />
 
-      <details className="card mt-4 p-4">
-        <summary className="cursor-pointer text-sm font-medium">
-          Catálogo validado
-          <span className="ml-2 font-normal text-muted">
-            {confirmed?.length ?? 0} {confirmed?.length === 1 ? 'tipo' : 'tipos'}
-          </span>
-        </summary>
-        <ul className="mt-2 divide-y divide-line-soft text-sm">
-          {(confirmed ?? []).map((type) => (
-            <li key={type.id} className="flex items-baseline justify-between gap-3 py-2">
-              <span>
-                {type.name}
-                {type.aliases.length > 0 && (
-                  <span className="ml-2 text-xs text-muted">también: {type.aliases.join(', ')}</span>
-                )}
-              </span>
-              <span className="shrink-0 font-mono text-xs text-muted" title="Equipos en salas">
-                {usage?.[type.id] ?? 0}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </details>
+      {/* El catálogo validado vivía aquí en solo lectura. Ahora está en
+          «Maestro», donde además se le puede cambiar el nombre a cualquiera. */}
+      <p className="mt-4 text-sm text-muted">
+        Los {confirmed?.length ?? 0} tipos ya validados, con sus alias, están en{' '}
+        <span className="font-medium text-ink">Maestro → Tipos de equipo</span>, y ahí se les
+        cambia el nombre.
+      </p>
     </Seccion>
   )
 }

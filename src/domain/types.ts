@@ -454,6 +454,12 @@ export interface StockItem {
    * proyector a un aula la aplicación sepa qué caja del almacén descontar.
    */
   asset_type_id: string | null
+  /**
+   * Otros nombres por los que se le conoce: los de antes de renombrarlo y los
+   * del Excel. El buscador de material los mira, para que quien lo pide como
+   * siempre lo siga encontrando.
+   */
+  aliases?: string[] | null
 }
 
 /**
