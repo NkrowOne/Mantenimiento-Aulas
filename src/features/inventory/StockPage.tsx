@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { v7 as uuidv7 } from 'uuid'
+import { HojaDeAcciones } from '@/components/HojaDeAcciones'
 import { supabase } from '@/lib/supabase'
+import { pullMaster } from '@/sync/pull'
 import type { Role } from '@/domain/types'
 import { UnidadesDeAlmacen } from './UnidadesDeAlmacen'
 
@@ -80,6 +82,24 @@ function esSinExistencias(error: unknown): boolean {
 function esDuplicado(error: unknown): boolean {
   if (codigoDe(error) === '23505') return true
   return /duplicate key|stock_items_norm_idx|already exists/i.test(mensajeDe(error))
+}
+
+/**
+ * Por qué no se ha cambiado el nombre, en una frase.
+ *
+ * Lo que dice `rename_stock_item` va tal cual: está escrito para esta pantalla
+ * y nombra el artículo con el que choca. Solo se traducen los dos fallos que no
+ * redacta ella: la red, y el índice único cuando dos administradores ponen el
+ * mismo nombre a la vez y los dos pasan su comprobación antes de guardar.
+ */
+function falloDelRenombrado(error: unknown): string {
+  if (!navigator.onLine || esFalloDeRed(error)) {
+    return 'Sin conexión: el nombre no se ha cambiado. Busca cobertura y repítelo.'
+  }
+  if (esDuplicado(error)) {
+    return 'Ya hay otro artículo con ese nombre, escrito con otras mayúsculas o tildes.'
+  }
+  return mensajeDe(error) || 'No se ha podido cambiar el nombre.'
 }
 
 export function StockPage({ role }: { role: Role }): React.ReactElement {
@@ -172,6 +192,62 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
     },
   })
 
+  /**
+   * Cambiar el nombre de un artículo.
+   *
+   * Por `rename_stock_item` y no con un `update` de la fila, aunque la política
+   * deje al admin escribir la tabla: el nombre es la llave con la que el Excel
+   * encuentra el artículo. La función deja el de antes como alias y no deja
+   * quitarle el nombre a otro artículo; un `update` a secas dejaría la fila del
+   * libro sin artículo en la siguiente pasada, y esa pasada ofrecería darlo de
+   * alta otra vez.
+   */
+  const [renombrando, setRenombrando] = useState<{ id: string; nombre: string } | null>(null)
+  const [nombreNuevo, setNombreNuevo] = useState('')
+  /* Lo marca el propio campo al cambiar, como en `HojaDeMaestro`: con algo
+     tecleado, un roce en el velo no puede llevárselo. */
+  const [tocado, setTocado] = useState(false)
+  const [aviso, setAviso] = useState<string | null>(null)
+
+  const renombrar = useMutation({
+    mutationFn: async (input: { id: string; antes: string; nombre: string }) => {
+      const { error } = await supabase.rpc('rename_stock_item', {
+        p_id: input.id,
+        p_name: input.nombre,
+      })
+      if (error) throw error
+    },
+    onSuccess: (_data, input) => {
+      // Solo si la hoja abierta sigue siendo la de este artículo: se puede
+      // cancelar con el guardado en vuelo y abrir la de otro.
+      setRenombrando((r) => (r?.id === input.id ? null : r))
+      // La lista vuelve ordenada por nombre, así que la fila cambia de sitio
+      // —o sale de la lista, si el filtro ya no la recoge—: la frase dice qué
+      // ha pasado aunque la fila ya no esté donde se pulsó.
+      setAviso(`«${input.antes}» pasa a llamarse «${input.nombre}».`)
+      void qc.invalidateQueries({ queryKey: ['stock-levels'] })
+      // El buscador de material de los partes no lee esta lista sino el
+      // espejo local, que sin esto seguiría ofreciendo el nombre viejo hasta el
+      // siguiente refresco.
+      void pullMaster()
+    },
+  })
+
+  const abrirRenombrado = (l: StockLevel): void => {
+    renombrar.reset()
+    setAviso(null)
+    setTocado(false)
+    setNombreNuevo(l.name)
+    setRenombrando({ id: l.stock_item_id, nombre: l.name })
+  }
+
+  const nombreLimpio = nombreNuevo.trim()
+  const puedeRenombrar =
+    renombrando !== null &&
+    !renombrar.isPending &&
+    nombreLimpio !== '' &&
+    nombreLimpio !== renombrando.nombre
+
   const rows = (levels ?? [])
     .filter((l) => l.name.toLowerCase().includes(filter.toLowerCase()))
     .filter((l) => !onlyLow || l.below_threshold)
@@ -190,6 +266,12 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
           </button>
         )}
       </div>
+
+      {/* Montada siempre, vacía hasta que hay algo que decir: una región viva
+          que nace a la vez que su texto es justo la que VoiceOver se salta. */}
+      <p role="status" className={aviso ? 'mt-3 text-sm text-ok' : 'sr-only'}>
+        {aviso ?? ''}
+      </p>
 
       {alta && (
         <form
@@ -297,7 +379,22 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
                         !
                       </span>
                     )}
-                    {l.name}
+                    {/* El nombre se corrige donde se lee mal. Sigue pareciendo
+                        texto —es la columna que se lee, no un botón más de la
+                        fila— y el subrayado punteado es la única pista de que
+                        se puede tocar. */}
+                    {esAdmin ? (
+                      <button
+                        type="button"
+                        onClick={() => abrirRenombrado(l)}
+                        aria-label={`Cambiar el nombre de ${l.name}`}
+                        className="min-h-11 text-left underline decoration-muted/60 decoration-dotted underline-offset-4"
+                      >
+                        {l.name}
+                      </button>
+                    ) : (
+                      l.name
+                    )}
                   </span>
                 </td>
                 <td
@@ -475,6 +572,61 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
       )}
 
       <UnidadesDeAlmacen role={role} />
+
+      {renombrando && (
+        <HojaDeAcciones
+          titulo="Cambiar el nombre"
+          subtitulo={renombrando.nombre}
+          acciones={[]}
+          cierrePorFondo={!tocado}
+          onCerrar={() => setRenombrando(null)}
+        >
+          {/* Un `form` para que el retorno del teclado guarde. Con «Guardar»
+              apagado —vacío, sin cambios o en vuelo— el navegador ni lo envía,
+              y el `if` de dentro lo repite por si acaso. */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (!puedeRenombrar) return
+              renombrar.mutate({
+                id: renombrando.id,
+                antes: renombrando.nombre,
+                nombre: nombreLimpio,
+              })
+            }}
+          >
+            <label className="mt-2 block text-xs text-muted">
+              Nombre
+              <input
+                type="text"
+                value={nombreNuevo}
+                onChange={(e) => {
+                  setTocado(true)
+                  setNombreNuevo(e.target.value)
+                }}
+                enterKeyHint="done"
+                autoCorrect="off"
+                spellCheck={false}
+                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-base text-ink"
+              />
+            </label>
+            <p className="mt-2 text-xs text-muted">
+              El nombre de antes se queda como alias: el Excel y quien lo busque así lo siguen
+              encontrando.
+            </p>
+            {renombrar.isError && (
+              <p className="mt-3 text-sm text-crit">{falloDelRenombrado(renombrar.error)}</p>
+            )}
+            <button
+              type="submit"
+              disabled={!puedeRenombrar}
+              className="key key-accent mt-3 min-h-touch w-full px-4 text-sm"
+            >
+              {renombrar.isPending ? 'Guardando…' : 'Guardar'}
+            </button>
+          </form>
+        </HojaDeAcciones>
+      )}
     </div>
   )
 }
