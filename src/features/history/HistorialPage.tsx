@@ -12,6 +12,11 @@ import {
   type EventoSala,
   type Familia,
 } from '@/domain/historial'
+import {
+  comoDecirElFallo,
+  señalConTope,
+  TOPE_CONSULTA_MS,
+} from '@/features/reports/informe/espera'
 import { LineaTiempo } from './LineaTiempo'
 
 /**
@@ -118,11 +123,20 @@ export function HistorialPage(): React.ReactElement {
     getNextPageParam: (ultima: EventoConSala[], todas) =>
       ultima.length < PAGINA ? undefined : todas.length * PAGINA,
     queryFn: async ({ pageParam }): Promise<EventoConSala[]> => {
+      /*
+       * Con plazo, y no es un detalle: `room_timeline` une siete consultas en
+       * una y es la más pesada que hace la aplicación de un tirón. Sin plazo
+       * bastaba con que no contestase —un pool de PostgREST agotado, una red
+       * que se cae a la mitad— para que la pantalla se quedara cargando sin
+       * error, sin pista y sin final. Es el mismo fallo que `espera.ts` vino a
+       * quitar del informe, entrando por la puerta de al lado.
+       */
       let q = supabase
         .from('room_timeline')
         .select('*')
         .order('at', { ascending: false })
         .range(pageParam as number, (pageParam as number) + PAGINA - 1)
+        .abortSignal(señalConTope(TOPE_CONSULTA_MS))
 
       // Una familia agrupa varios tipos —«Revisión» son las que salieron bien y
       // las que no—, así que el filtro va por lista y no por igualdad.
@@ -337,26 +351,72 @@ export function HistorialPage(): React.ReactElement {
 
       {consulta.isPending && <p className="mt-6 text-sm text-muted">Cargando el historial…</p>}
 
+      {/*
+        Y si falla, por qué.
+
+        Decía «Esta pantalla necesita conexión» pasara lo que pasara, y eso es
+        adivinar: la mitad de las veces la conexión estaba bien y lo que había
+        contestado era el servidor. Con la causa inventada, quien lo lee no
+        puede hacer nada y quien lo arregla tampoco — un parte de «no carga»
+        sin motivo obliga a empezar por reproducirlo.
+      */}
       {consulta.isError && (
         <div className="card mt-6 p-4">
           <p className="text-sm text-crit">No se ha podido leer el historial.</p>
-          <p className="mt-1 text-sm text-muted">Esta pantalla necesita conexión.</p>
-          <button
-            type="button"
-            onClick={() => void consulta.refetch()}
-            className="key key-quiet mt-3 min-h-11 px-3 text-sm"
-          >
-            Reintentar
-          </button>
+          <p className="mt-1 text-sm">{comoDecirElFallo(consulta.error).titulo}</p>
+          <p className="mt-1 break-words font-mono text-xs leading-relaxed text-muted">
+            {comoDecirElFallo(consulta.error).detalle}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void consulta.refetch()}
+              className="key key-quiet min-h-11 px-3 text-sm"
+            >
+              Reintentar
+            </button>
+            {/* Con filtros puestos, quitarlos es la otra salida: una consulta
+                más corta puede contestar donde la larga no llegó. */}
+            {activos > 0 && (
+              <button type="button" onClick={limpiar} className="key key-quiet min-h-11 px-3 text-sm">
+                Quitar los filtros y reintentar
+              </button>
+            )}
+          </div>
         </div>
       )}
 
+      {/*
+        Vacío no es lo mismo que roto, y con «Equipos» se confunden.
+
+        El historial de un aparato lo escriben la aplicación y sus altas: un
+        equipo que vino del Excel no tiene fecha de alta que contar, así que en
+        un parque importado esta familia sale casi vacía y se lee como que la
+        pantalla no funciona. Decirlo aquí es la diferencia entre eso y un
+        parte de «el filtro de equipos no carga».
+
+        Y la salida, al lado de donde se ve el problema: «Quitar filtros» vive
+        arriba del todo, que en un móvil con la lista desplazada no está.
+      */}
       {!consulta.isPending && !consulta.isError && eventos.length === 0 && (
-        <p className="mt-6 text-sm text-muted">
-          {activos > 0
-            ? 'Nada coincide con esos filtros.'
-            : 'Todavía no hay nada en el historial.'}
-        </p>
+        <div className="mt-6">
+          <p className="text-sm text-muted">
+            {activos > 0 ? 'Nada coincide con esos filtros.' : 'Todavía no hay nada en el historial.'}
+          </p>
+          {familia === 'equipo' && (
+            <p className="mt-1 text-sm text-muted">
+              Aquí solo salen los equipos dados de alta o tocados desde la aplicación —
+              sustituciones, bajas, traslados, levantamientos de inventario—. Los que entraron
+              con la importación del Excel no traen fecha de alta, así que no tienen nada que
+              contar todavía.
+            </p>
+          )}
+          {activos > 0 && (
+            <button type="button" onClick={limpiar} className="key key-quiet mt-3 min-h-11 px-3 text-sm">
+              Quitar filtros
+            </button>
+          )}
+        </div>
       )}
 
       {porDia.map((grupo) => (

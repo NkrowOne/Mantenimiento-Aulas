@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { conPlazo, esRedCaida, esSilencio, señalConTope } from './espera'
+import { comoDecirElFallo, conPlazo, esRedCaida, esSilencio, señalConTope } from './espera'
 
 /**
  * El fallo que estas pruebas existen para impedir no es un error: es la
@@ -105,5 +105,39 @@ describe('la red que no llega', () => {
     const red = new TypeError('Load failed')
     expect(esRedCaida(red)).toBe(true)
     expect(esSilencio(red)).toBe(false)
+  })
+})
+
+/**
+ * Y el fallo, dicho para una pantalla.
+ *
+ * Las tres causas piden respuestas distintas de quien lo lee, y confundirlas
+ * cuesta un parte de «no carga» sin motivo: el Historial decía «necesita
+ * conexión» incluso cuando la conexión estaba bien y quien había contestado
+ * era el servidor.
+ */
+describe('cómo se le cuenta un fallo a quien está mirando', () => {
+  it('la petición que no llegó a salir se dice como lo que es', () => {
+    const m = comoDecirElFallo(new TypeError('Load failed'))
+    expect(m.titulo).toContain('conectar')
+    expect(m.detalle).toContain('cobertura')
+  })
+
+  it('el silencio del servidor no se confunde con falta de cobertura', () => {
+    const m = comoDecirElFallo(new DOMException('signal timed out', 'TimeoutError'))
+    expect(m.titulo).toContain('no ha contestado')
+    expect(m.detalle).toContain('25 segundos')
+  })
+
+  it('y lo que contesta el servidor se enseña tal cual, por feo que sea', () => {
+    // Es lo único con lo que alguien puede saber qué pasó. Resumirlo aquí es
+    // volver a la causa inventada.
+    const m = comoDecirElFallo(new Error('canceling statement due to statement timeout'))
+    expect(m.titulo).toContain('error')
+    expect(m.detalle).toBe('canceling statement due to statement timeout')
+  })
+
+  it('un fallo sin mensaje lo dice, en vez de dejar el hueco', () => {
+    expect(comoDecirElFallo(new Error('')).detalle).toBe('Sin mensaje.')
   })
 })
