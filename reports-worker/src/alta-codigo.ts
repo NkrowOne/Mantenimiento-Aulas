@@ -30,20 +30,24 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import { emitirCodigo, CODE_TTL_HOURS } from './codigos.js'
+import { apiQueResponde, deQuienEsLaSesion, noSeHaPodidoPreguntar } from './api.js'
 
-const SUPABASE_URL = process.env['SUPABASE_URL'] ?? ''
 const SERVICE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? ''
 
 /** El cuerpo son un email y poco más: no hay motivo para aceptar más de esto. */
 const MAX_CUERPO = 4 * 1024
 
-let admin: SupabaseClient | null = null
-function cliente(): SupabaseClient | null {
-  if (!SUPABASE_URL || !SERVICE_KEY) return null
-  admin ??= createClient(SUPABASE_URL, SERVICE_KEY, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  })
-  return admin
+/** El cliente contra la dirección de la API que de verdad responde. */
+async function cliente(): Promise<
+  { ok: true; admin: SupabaseClient } | { ok: false; motivo: string }
+> {
+  if (!SERVICE_KEY) return { ok: false, motivo: 'falta SUPABASE_SERVICE_ROLE_KEY' }
+  const r = await apiQueResponde((url) =>
+    createClient(url, SERVICE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    }),
+  )
+  return r.ok ? { ok: true, admin: r.admin } : { ok: false, motivo: r.motivo }
 }
 
 function responder(res: ServerResponse, codigo: number, cuerpo: unknown): void {
@@ -88,21 +92,30 @@ async function quienPide(
   const jwt = (autorizacion ?? '').replace(/^Bearer\s+/i, '').trim()
   if (!jwt) return { ok: false, codigo: 401, error: 'Hace falta iniciar sesión.' }
 
-  const { data, error } = await supabase.auth.getUser(jwt)
-  if (error || !data.user) {
+  // «No vale» y «no he podido preguntar» son dos problemas distintos y se
+  // arreglan en sitios distintos. Lo explica entero `api.ts`.
+  const sesion = await deQuienEsLaSesion(supabase, jwt)
+  if (sesion.que === 'sin respuesta') {
+    return { ok: false, codigo: 503, error: noSeHaPodidoPreguntar(sesion.motivo) }
+  }
+  if (sesion.que === 'no vale') {
     return { ok: false, codigo: 401, error: 'La sesión no vale o ha caducado.' }
   }
 
-  const { data: perfil } = await supabase
+  const { data: perfil, error: fallo } = await supabase
     .from('profiles')
     .select('role, active')
-    .eq('id', data.user.id)
+    .eq('id', sesion.id)
     .maybeSingle()
+
+  // Sin poder leer el perfil nadie es administrador, y decirle «no puedes» a
+  // quien sí puede es mandarlo a pelearse con sus permisos para nada.
+  if (fallo) return { ok: false, codigo: 503, error: noSeHaPodidoPreguntar(fallo.message) }
 
   if (!perfil?.active || String(perfil.role) !== 'admin') {
     return { ok: false, codigo: 403, error: 'Solo un administrador puede dar códigos de alta.' }
   }
-  return { ok: true, id: data.user.id }
+  return { ok: true, id: sesion.id }
 }
 
 /** El perfil al que se le va a dar el código, buscado por email. */
@@ -120,11 +133,12 @@ async function perfilPorEmail(
 }
 
 export async function altaCodigo(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const supabase = cliente()
-  if (!supabase) {
-    responder(res, 503, { ok: false, error: 'El alta no está configurada en este despliegue.' })
+  const conexion = await cliente()
+  if (!conexion.ok) {
+    responder(res, 503, { ok: false, error: noSeHaPodidoPreguntar(conexion.motivo) })
     return
   }
+  const supabase = conexion.admin
 
   const quien = await quienPide(supabase, req.headers.authorization)
   if (!quien.ok) {
