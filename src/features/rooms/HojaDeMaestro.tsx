@@ -54,11 +54,11 @@
  *
  *    Renombrar una sala, crear una y renombrar una planta o un edificio NO la
  *    tienen: la hoja se cierra sola al guardar. Ahí la frase no contaba nada que
- *    no estuviera ya en la pantalla de detrás —`aplicarOperacion` actualiza el
- *    espejo y refresca ANTES de volver, así que la sala renombrada se ve
- *    renombrada en la lista— y cobrar un toque por leer lo que ya se está viendo
- *    es una traba en mitad del flujo, no una confirmación. Quien corrige la
- *    nomenclatura de un edificio hace esto veinte veces seguidas.
+ *    no estuviera ya en la pantalla de detrás —`aplicarOperacion` deja el espejo
+ *    escrito antes de volver, así que la sala renombrada se ve renombrada en la
+ *    lista— y cobrar un toque por leer lo que ya se está viendo es una traba en
+ *    mitad del flujo, no una confirmación. Quien corrige la nomenclatura de un
+ *    edificio hace esto veinte veces seguidas.
  *
  * Nota de forma: aquí no se declara ni un componente interno. Un componente
  * definido dentro del cuerpo de otro es un tipo nuevo en cada render, así que
@@ -470,12 +470,13 @@ export function HojaDeMaestro({
     /*
      * Mientras se está enviando, no hay choque que comprobar.
      *
-     * `aplicarOperacion` hace el RPC, escribe el espejo local, tira de
-     * `pullMaster()` y SOLO ENTONCES avisa para que la hoja se cierre. En esa
-     * ventana —que con mala cobertura dura lo suyo— la sala recién creada ya
-     * está en `salasDelDestino`, y el aviso salta contra ella misma: «Ya hay
-     * una sala 0.5» debajo de un botón que pone «Añadiendo…», justo mientras
-     * se añade la 0.5. Quien lo lee da por hecho que ha fallado.
+     * `aplicarOperacion` hace el RPC y escribe el espejo local antes de avisar
+     * para que la hoja se cierre, y en esa ventana la sala recién creada ya
+     * está en `salasDelDestino`: el aviso saltaba contra ella misma —«Ya hay
+     * una sala 0.5» debajo de un botón que pone «Añadiendo…», justo mientras se
+     * añade la 0.5— y quien lo lee da por hecho que ha fallado. La ventana es
+     * más corta desde que el refresco del maestro dejó de esperarse, pero sigue
+     * existiendo: el espejo se escribe dentro de ella.
      *
      * Y no hay nada que impedir: el botón ya está bloqueado y la operación ya
      * salió. Este aviso es una condición para PULSAR, no para esperar.

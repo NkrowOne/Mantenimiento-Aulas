@@ -358,3 +358,115 @@ describe('explicarFallo', () => {
     expect(explicarFallo({})).toMatch(/No se ha podido/)
   })
 })
+
+/**
+ * Lo que la hoja de «Añadir una sala» no puede volver a hacer: quedarse
+ * abierta en «Añadiendo…» con la sala ya creada.
+ *
+ * Bajar el maestro son nueve tablas paginadas —`room_overview` y `assets`
+ * dentro—, y desde un iPhone por 5G eso son decenas de segundos. La hoja no se
+ * cierra hasta que `aplicarOperacion` vuelve, así que mientras se esperaba a
+ * esa descarga el botón seguía diciendo «Añadiendo…» y, si la descarga no
+ * volvía nunca —la red que se va en un pasillo—, no se cerraba de verdad nunca.
+ *
+ * El cambio ya está hecho y guardado en el espejo antes de eso. El refresco es
+ * refresco.
+ */
+describe('aplicarOperacion · el refresco no puede retener la hoja', () => {
+  it('vuelve aunque el maestro no acabe de bajar nunca', async () => {
+    rpc.mockResolvedValue({ data: 'sala-nueva', error: null })
+    // Una descarga que no termina jamás. Con el `await` de antes, esto colgaba.
+    pullMaster.mockReturnValue(new Promise(() => {}) as ReturnType<typeof pullMaster>)
+
+    await expect(
+      aplicarOperacion(
+        { kind: 'nueva-sala', building: 'b-h', zone: 'PLANTA BAJA', code: '0.5', name: '0.5', tipo: 'aula' },
+        qc,
+      ),
+    ).resolves.toMatch(/0\.5/)
+  })
+
+  it('y aunque la descarga reviente, que es lo normal sin cobertura', async () => {
+    rpc.mockResolvedValue({ data: 'sala-nueva', error: null })
+    pullMaster.mockRejectedValue(new Error('Load failed'))
+
+    await expect(
+      aplicarOperacion(
+        { kind: 'nueva-sala', building: 'b-h', zone: 'PLANTA BAJA', code: '0.6', name: '0.6', tipo: 'aula' },
+        qc,
+      ),
+    ).resolves.toMatch(/0\.6/)
+  })
+
+  it('pero la sala ya está en el espejo al volver: por eso no hace falta esperar', async () => {
+    // Es la razón entera de que se pueda soltar el refresco. Las listas leen
+    // Dexie con `useLiveQuery`, así que con esto ya se ven repintadas.
+    rpc.mockResolvedValue({ data: 'sala-nueva', error: null })
+    pullMaster.mockReturnValue(new Promise(() => {}) as ReturnType<typeof pullMaster>)
+
+    await aplicarOperacion(
+      { kind: 'nueva-sala', building: 'b-h', zone: 'PLANTA BAJA', code: '0.7', name: '0.7', tipo: 'aula' },
+      qc,
+    )
+    expect(await db.rooms.get('sala-nueva')).toMatchObject({ code: '0.7', zone_id: 'z-baja' })
+  })
+
+  it('y quien SÍ necesita el maestro entero lo pide, y entonces espera', async () => {
+    // La sincronización del Excel: relee el libro contra la base justo después,
+    // y sin la sala recién creada delante la fila volvería a no cruzar.
+    rpc.mockResolvedValue({ data: 'sala-nueva', error: null })
+    let soltar = (): void => {}
+    pullMaster.mockReturnValue(
+      new Promise((resolve) => {
+        soltar = () => resolve({ ok: true, filas: 0, error: null, fallos: [], vacias: [], at: 0 })
+      }) as ReturnType<typeof pullMaster>,
+    )
+
+    let terminada = false
+    const tarea = aplicarOperacion(
+      { kind: 'nueva-sala', building: 'b-h', zone: 'PLANTA BAJA', code: '0.8', name: '0.8', tipo: 'aula' },
+      qc,
+      { esperarAlMaestro: true },
+    ).then((m) => {
+      terminada = true
+      return m
+    })
+
+    // Un respiro para que corra todo lo que pudiera correr sin la descarga.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(terminada).toBe(false)
+
+    soltar()
+    await expect(tarea).resolves.toMatch(/0\.8/)
+  })
+})
+
+/**
+ * La planta nueva, que es el caso de la captura: «Otra planta… → CAFETERIA».
+ *
+ * Aquí el espejo NO puede escribir la sala, y no es un descuido: `create_room`
+ * devuelve el uuid de la sala pero no el de la planta que acaba de crear, y
+ * fabricar uno dejaría la sala colgando de una planta que la descarga no
+ * reconoce —dos plantas con el mismo nombre y una sala huérfana—.
+ *
+ * Así que esa sala aparece cuando llega la descarga. Lo que no puede es que la
+ * HOJA espere a la descarga: el cambio está hecho en el servidor y la hoja se
+ * cierra, que es lo que se mira.
+ */
+describe('aplicarOperacion · una sala en una planta que aún no existe', () => {
+  it('cierra la hoja igual, aunque la sala llegue con la descarga', async () => {
+    rpc.mockResolvedValue({ data: 'sala-cafe', error: null })
+    pullMaster.mockReturnValue(new Promise(() => {}) as ReturnType<typeof pullMaster>)
+
+    await expect(
+      aplicarOperacion(
+        { kind: 'nueva-sala', building: 'b-h', zone: 'CAFETERIA', code: 'CAFETERIA', name: 'CAFETERIA', tipo: 'aula' },
+        qc,
+      ),
+    ).resolves.toMatch(/CAFETERIA/)
+
+    // Y se dice lo que no ha pasado: la fila todavía no está en el dispositivo.
+    expect(await db.rooms.get('sala-cafe')).toBeUndefined()
+  })
+})
