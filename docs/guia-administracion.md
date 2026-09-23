@@ -887,7 +887,16 @@ que desactivar el disparador a propósito, y eso se nota:
 alter table stock_movements disable trigger stock_movements_solo_alta;
 -- … la reparación, anotando qué y por qué en import_fixes …
 alter table stock_movements enable trigger stock_movements_solo_alta;
+-- Y el saldo se rehace desde el libro, por si la reparación lo descuadró:
+select stock_balances_recalcular();
 ```
+
+El saldo de cada artículo (`stock_levels.on_hand`) **sigue siendo la suma de
+sus movimientos**, pero desde el 23 de septiembre no se vuelve a sumar en cada
+lectura: `stock_balances` la lleva al día un disparador con cada asiento, y
+`stock_levels` la lee de ahí. Con los disparadores encendidos no puede
+descuadrarse; `stock_balances_recalcular()` existe para después de una
+reparación con ellos apagados.
 
 ### Las existencias no bajan de cero
 
