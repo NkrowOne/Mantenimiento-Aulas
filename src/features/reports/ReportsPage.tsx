@@ -29,6 +29,7 @@ import {
   ventanaEnBlanco,
 } from './informe/imprimir'
 import { ofrecerFichero } from '@/lib/ficheros'
+import { TOPE_CONSULTA_MS, TOPE_PDF_MS, conPlazo } from './informe/espera'
 
 interface ReportRow {
   id: string
@@ -259,13 +260,24 @@ export function ReportsPage(): React.ReactElement {
     setPdfDelArchivo(r.id)
     const mal = (texto: string): void => setAvisoPdf({ para: r.id, texto, mal: true })
     try {
-      const { data, error } = await supabase.storage.from('reports').download(r.storage_path)
+      // Con plazo, como todo lo de esta pantalla: `storage.download` no acepta
+      // señal, así que lo que se corta es la espera. Sin esto, un almacén mudo
+      // dejaba el botón en «Preparando…» antes siquiera de llegar al PDF.
+      const { data, error } = await conPlazo(
+        'El archivo de informes',
+        TOPE_PDF_MS,
+        supabase.storage.from('reports').download(r.storage_path),
+      )
       if (error || !data) {
         mal(`No se ha podido leer el informe del archivo${error ? `: ${error.message}` : ''}.`)
         return
       }
       const html = await data.text()
-      const { data: sesion } = await supabase.auth.getSession()
+      const { data: sesion } = await conPlazo(
+        'La sesión',
+        TOPE_CONSULTA_MS,
+        supabase.auth.getSession(),
+      )
       const nombre = nombreDeArchivo(r.kind, { start: r.period_start, end: r.period_end }).replace(
         /\.html$/,
         '.pdf',
@@ -281,6 +293,11 @@ export function ReportsPage(): React.ReactElement {
       }
       setPdfListo({ para: r.id, nombre: hecho.nombre, blob: hecho.blob })
       setAvisoPdf({ para: r.id, texto: LISTO_PULSA_GUARDAR, mal: false })
+    } catch (err) {
+      // El plazo salta aquí. Antes no había nada que saltara: la promesa no
+      // terminaba y el `finally` no llegaba, así que el botón se quedaba
+      // deshabilitado en «Preparando…» hasta recargar la página.
+      mal(`No se ha podido preparar el PDF: ${err instanceof Error ? err.message : String(err)}.`)
     } finally {
       setPdfDelArchivo(null)
     }
@@ -313,8 +330,24 @@ export function ReportsPage(): React.ReactElement {
       )
   }
 
-  /** El aviso del PDF, pegado al botón que lo produjo y no al final de la página. */
-  function AvisoPdf({ para }: { para: string }): React.ReactElement | null {
+  /**
+   * El aviso del PDF, pegado al botón que lo produjo y no al final de la página.
+   *
+   * Y mientras se prepara, cuánto puede tardar. No es relleno: el informe se
+   * sube entero al servidor —con las fotos del periodo dentro van varios
+   * megas—, WeasyPrint lo compone y vuelve el fichero. Son decenas de segundos
+   * por 5G, y un botón que solo pone «Preparando…» durante medio minuto se lee
+   * como un botón roto.
+   */
+  function AvisoPdf({ para, preparando }: { para: string; preparando?: boolean }): React.ReactElement | null {
+    if (preparando) {
+      return (
+        <p aria-live="polite" className="mt-2 text-sm text-muted">
+          Mandando el informe al servidor y convirtiéndolo. Puede tardar medio minuto, y algo más si
+          lleva fotos. No cierres la pantalla.
+        </p>
+      )
+    }
     if (avisoPdf?.para !== para) return null
     return (
       <p
@@ -672,9 +705,27 @@ export function ReportsPage(): React.ReactElement {
                     setAvisoPdf(null)
                     setBajandoPdf(true)
                     void (async () => {
-                      const { data } = await supabase.auth.getSession()
-                      const nombre = nombreDeArchivo(recien.kind, recien.rango).replace(/\.html$/, '.pdf')
-                      const r = await prepararPdf(recien.html, nombre, data.session?.access_token ?? null)
+                      let r: Awaited<ReturnType<typeof prepararPdf>>
+                      try {
+                        const { data } = await conPlazo(
+                          'La sesión',
+                          TOPE_CONSULTA_MS,
+                          supabase.auth.getSession(),
+                        )
+                        const nombre = nombreDeArchivo(recien.kind, recien.rango).replace(/\.html$/, '.pdf')
+                        r = await prepararPdf(recien.html, nombre, data.session?.access_token ?? null)
+                      } catch (err) {
+                        // Ninguna espera de esta pantalla puede ser infinita: el
+                        // botón se deshabilita mientras dura, así que una promesa
+                        // que no termina lo deja muerto hasta recargar.
+                        setBajandoPdf(false)
+                        setAvisoPdf({
+                          para: 'recien',
+                          mal: true,
+                          texto: `No se ha podido preparar el PDF: ${err instanceof Error ? err.message : String(err)}.`,
+                        })
+                        return
+                      }
                       setBajandoPdf(false)
                       if (r.ok) {
                         setPdfListo({ para: 'recien', nombre: r.nombre, blob: r.blob })
@@ -724,7 +775,7 @@ export function ReportsPage(): React.ReactElement {
 
           {/* Pegado a los botones. Es todo el arreglo: el PDF ya está hecho y
               falta una pulsación, y eso hay que decirlo donde está el dedo. */}
-          <AvisoPdf para="recien" />
+          <AvisoPdf para="recien" preparando={bajandoPdf} />
 
           {/* Lo que no ha salido como se pidió, dicho. Que el análisis venga
               calculado cuando se marcó «con IA» no es un detalle: quien lo pidió
@@ -780,9 +831,22 @@ export function ReportsPage(): React.ReactElement {
               r.params?.secciones && r.params.secciones.length < SECCIONES.length - 1
             const redaccion = redaccionDe(r.params)
             return (
-              <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm">
-                <span className="w-20 shrink-0 font-medium">{KIND_LABEL[r.kind]}</span>
-                <span className="min-w-0 flex-1">
+              /*
+                En columna en el móvil y en fila a partir de `sm`.
+                Estaba en fila siempre, con la fecha en un `flex-1` y la
+                etiqueta y los dos botones detrás sin dejar hueco. En un iPhone
+                eso deja la columna de la fecha en unos sesenta píxeles y
+                «del 9 al 23 de septiembre de 2026» sale **a palabra por línea**
+                —seis renglones para una fecha—, y al pulsar empeora, porque
+                «Preparando…» es más ancho que «PDF» y se come lo poco que
+                quedaba.
+              */
+              <li
+                key={r.id}
+                className="flex flex-col gap-2 py-3 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:gap-y-1"
+              >
+                <span className="font-medium sm:w-20 sm:shrink-0">{KIND_LABEL[r.kind]}</span>
+                <span className="min-w-0 sm:flex-1">
                   <span className="block">
                     {nombrePeriodo({ start: r.period_start, end: r.period_end })}
                   </span>
@@ -800,6 +864,9 @@ export function ReportsPage(): React.ReactElement {
                     </span>
                   )}
                 </span>
+                {/* La etiqueta y los botones, juntos: en el móvil bajan a su
+                    propia línea en vez de estrangular la fecha. */}
+                <div className="flex flex-wrap items-center gap-2">
                 {redaccion && (
                   <span
                     className={`shrink-0 rounded-tag px-2 py-0.5 text-[0.6875rem] font-medium ${redaccion.clase}`}
@@ -834,11 +901,9 @@ export function ReportsPage(): React.ReactElement {
                 >
                   Abrir
                 </button>
-                {/* Ancho completo para que caiga bajo su propia fila y no
-                    entre los botones de otra. */}
-                <span className="basis-full">
-                  <AvisoPdf para={r.id} />
-                </span>
+                </div>
+                {/* Debajo de su propia fila, no entre los botones de otra. */}
+                <AvisoPdf para={r.id} preparando={pdfDelArchivo === r.id} />
               </li>
             )
           })}

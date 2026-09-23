@@ -19,6 +19,29 @@
 export const TOPE_CONSULTA_MS = 25_000
 
 /**
+ * Y lo que se le da al PDF, que es otra cosa: tarda de verdad.
+ *
+ * Hay tres relojes en fila y el de fuera tiene que ser el más largo, o el que
+ * corta es él y se pierde el mensaje bueno del que está dentro:
+ *
+ *  - WeasyPrint, en el worker: 30 s (`PDF_TIMEOUT_MS`).
+ *  - Caddy esperando la cabecera de respuesta del worker: 60 s.
+ *  - Esto.
+ *
+ * Dos minutos, entonces. Holgado a propósito: subir un informe con las fotos
+ * del periodo dentro son varios megas, y por 5G esa subida tarda lo suyo antes
+ * de que el reloj de Caddy empiece siquiera a contar.
+ *
+ * Lo que no puede es no existir, que es como estaba. El botón se quedaba en
+ * «Preparando…» **para siempre** si la petición no volvía nunca —la red que se
+ * va en un pasillo, el proxy que acepta y no contesta—, sin error, sin pista y
+ * sin poder volver a pulsar. Exactamente el fallo que este módulo existe para
+ * que no vuelva a pasar.
+ */
+export const TOPE_PDF_MS = 120_000
+
+
+/**
  * Una señal que se corta sola.
  *
  * `AbortSignal.timeout` es de Safari 16. Los iPads del campus no tienen por qué

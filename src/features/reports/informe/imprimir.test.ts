@@ -140,6 +140,26 @@ describe('cuando no se puede', () => {
     expect((await prepararPdf(HTML, 'informe.pdf', 'token')).ok).toBe(true)
   })
 
+  it('una petición que no vuelve nunca se corta sola y lo dice', async () => {
+    /*
+     * Sin plazo, el botón se quedaba en «Preparando…» PARA SIEMPRE: la promesa
+     * no terminaba, el `finally` no llegaba, y como el botón se deshabilita
+     * mientras dura, no se podía ni volver a pulsar. Es lo que se veía en el
+     * iPhone y no tenía nada que ver con la hoja de compartir.
+     */
+    servidor(new DOMException('Se agotó la espera', 'TimeoutError'))
+    const r = await prepararPdf(HTML, 'informe.pdf', 'token')
+    expect(r).toMatchObject({ ok: false, sinServicio: true })
+    expect(r.ok === false && r.motivo).toContain('no ha contestado en 120 segundos')
+  })
+
+  it('y la petición sale con su señal puesta', async () => {
+    const f = servidor(new Response(new Blob(['%PDF-1.7']), { status: 200 }))
+    await prepararPdf(HTML, 'informe.pdf', 'token')
+    const [, opciones] = f.mock.calls[0] as [string, RequestInit]
+    expect(opciones.signal).toBeInstanceOf(AbortSignal)
+  })
+
   it('un PDF vacío no se entrega como si fuera bueno', async () => {
     // Un fichero de cero bytes en Archivos es peor que un error: parece que ha
     // ido bien hasta que alguien lo abre, normalmente el que lo ha recibido.

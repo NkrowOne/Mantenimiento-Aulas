@@ -22,6 +22,8 @@
  */
 
 
+import { TOPE_PDF_MS, esSilencio, señalConTope } from './espera'
+
 /** Qué se ha podido hacer, para poder decirlo en vez de dejar un botón mudo. */
 export type Resultado = 'ventana' | 'marco' | 'bloqueado'
 
@@ -176,8 +178,26 @@ export async function prepararPdf(
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ html, nombre }),
+      /*
+       * Con plazo. Sin él, una petición que no vuelve nunca —la red que se va
+       * en un pasillo, el proxy que acepta la conexión y se queda mudo— dejaba
+       * el botón en «Preparando…» para siempre: sin error, sin pista y sin
+       * poder volver a pulsar, porque el botón se deshabilita mientras dura.
+       * Es el fallo que se veía en el iPhone y no tenía nada que ver con la
+       * hoja de compartir.
+       */
+      signal: señalConTope(TOPE_PDF_MS),
     })
-  } catch {
+  } catch (err) {
+    // Que no haya contestado y que no se haya podido preguntar son cosas
+    // distintas para quien espera, y las dos llegan aquí como excepción.
+    if (esSilencio(err)) {
+      return {
+        ok: false,
+        motivo: `el servidor no ha contestado en ${Math.round(TOPE_PDF_MS / 1000)} segundos`,
+        sinServicio: true,
+      }
+    }
     // Sin red, o el servicio no está: es el caso en el que hay que caer al
     // diálogo de imprimir sin dar la lata, porque desde ahí sale igual.
     return { ok: false, motivo: 'no se ha podido hablar con el servidor', sinServicio: true }
