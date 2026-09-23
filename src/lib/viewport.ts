@@ -1,38 +1,43 @@
 /**
- * Que la barra de pestañas se quede abajo: el fondo congelado y el teclado.
+ * Lo que queda fuera del marco: las capas y el teclado.
  *
- * La barra es `fixed bottom-0`. En el WebKit del iPhone eso NO la pega a lo
- * que se ve —el viewport visual— sino al de MAQUETACIÓN, y normalmente son el
- * mismo. Dejan de serlo cuando sube el teclado: lo visual encoge, iOS desplaza
- * la página para enseñar el campo, y el de maquetación se queda donde estaba.
- * Al bajar el teclado los dos tienen que volver a coincidir, y a veces no lo
- * hacen: `visualViewport.offsetTop` se queda por encima de cero y todo lo
- * `fixed` se pinta ese trozo más arriba. Es la barra flotando con contenido
- * por debajo, y la cabecera `sticky top-0` asomando por arriba o fuera de la
- * vista. Aguanta hasta que alguien desplaza la página lo bastante —y en una
- * pantalla corta, que no desplaza, no se va nunca—.
+ * El arreglo de fondo de la barra de pestañas flotando es `components/Marco.tsx`:
+ * la barra ya no es `fixed`, así que el fallo de iOS 26 que deja varado todo lo
+ * `fixed` al bajar el teclado (WebKit 297779) ya no la alcanza. Esto cubre lo
+ * que sigue siendo `fixed` —las hojas, el visor de fotos, el aviso de versión—
+ * y lo que el fallo todavía puede tocar aunque nada sea `fixed`: que al bajar
+ * el teclado la página se quede desplazada.
+ *
+ * En WebKit lo `fixed` se coloca contra el viewport de MAQUETACIÓN y no contra
+ * lo que se ve. El teclado los separa: lo visual encoge e iOS desplaza la
+ * página para enseñar el campo. Al bajar tienen que volver a juntarse, y en
+ * iOS 26 a veces no: `visualViewport.offsetTop` se queda por encima de cero y
+ * `visualViewport.height` por debajo de `innerHeight`.
  *
  * La hoja de «Añadir una sala» lo provocaba de libro: campos de texto dentro
  * de una capa `fixed`, el fondo con `overflow: hidden` —que en iOS no impide
  * que el propio iOS desplace la página para enseñar el campo—, y al guardar,
  * tres movimientos mientras el teclado todavía está bajando: el foco salta al
  * «Entendido», la hoja se desmonta, y el foco vuelve a la fila que la abrió.
- * Los dos `focus()` desplazan la página para enseñar su elemento, calculado
- * contra un viewport visual a medio encoger.
+ * Los dos `focus()` desplazaban la página, midiendo contra un viewport visual a
+ * medio crecer.
  *
- * Dos piezas, y las dos hacen falta:
+ * Dos piezas:
  *
- *  - `congelarFondo()` para las capas: guarda dónde estaba la página, y al
- *    cerrar la deja EXACTAMENTE ahí y devuelve el foco sin desplazar. Un
- *    `scrollTo` explícito es además lo que obliga a WebKit a recalcular dónde
- *    va lo fijo.
- *  - `vigilarElTeclado()` para todo lo demás: cuando el teclado acaba de bajar
- *    —en una hoja o en el buscador, da igual—, mira si lo visual y lo de
- *    maquetación han vuelto a coincidir y, si no, los vuelve a juntar.
+ *  - `congelarFondo()` para las capas: congela lo que desplaza por detrás, y al
+ *    cerrar lo deja EXACTAMENTE donde estaba y devuelve el foco sin desplazar.
+ *  - `vigilarElTeclado()` para todo lo demás: cuando el teclado acaba de bajar,
+ *    mira si la página ha vuelto a su sitio y, si no, la devuelve.
  *
  * Lo que decide va en funciones puras (`abreTeclado`, `decidir`) porque las
  * pruebas corren en `node`, sin DOM; el resto es cablear eventos.
  */
+
+/** El `id` del `<main>` del marco: lo único que desplaza mientras está montado. */
+export const ID_CONTENIDO = 'contenido'
+
+/** La clase que pone el marco en `<html>` mientras está montado. */
+export const CLASE_MARCO = 'marco'
 
 /**
  * Medio píxel arriba o abajo es redondeo de iOS, no un desencaje.
@@ -50,7 +55,7 @@ export const HOLGURA_PX = 1
  */
 export const MS_TECLADO = 400
 
-/** Veces seguidas que se intenta juntar los viewports antes de rendirse. */
+/** Veces seguidas que se intenta devolver la página antes de rendirse. */
 export const MAX_INTENTOS = 3
 
 /**
@@ -96,7 +101,7 @@ export function abreTeclado(el: ElementoEnfocado | null | undefined): boolean {
 
 /** Lo que se mide para decidir. */
 export interface Medidas {
-  /** `visualViewport.offsetTop`: cuánto queda lo que se ve por debajo de donde se pinta lo fijo. */
+  /** Cuánto está lo que se ve fuera de donde debería, en píxeles. */
   desfase: number
   /** `visualViewport.scale`. */
   escala: number
@@ -105,21 +110,26 @@ export interface Medidas {
 }
 
 /**
- * ¿Hay que volver a juntar los viewports?
+ * ¿Hay que devolver la página a su sitio?
  *
- * Solo si están separados SIN motivo:
+ * Solo si está fuera de sitio SIN motivo:
  *
- *  - Con el teclado arriba la separación es lo normal: así enseña iOS el campo
- *    por encima del teclado. Tocarla ahí movería la página debajo del dedo
- *    mientras se escribe.
+ *  - Con el teclado arriba el desplazamiento es lo normal: así enseña iOS el
+ *    campo por encima del teclado. Tocarlo ahí movería la página debajo del
+ *    dedo mientras se escribe.
  *  - Con la página ampliada también: es la única forma de moverse por ella, y
  *    si alguien ha conseguido ampliar a pesar de los tres bloqueos, lo ha
  *    querido.
  */
-export function decidir(m: Medidas): 'nada' | 'juntar' {
+export function decidir(m: Medidas): 'nada' | 'devolver' {
   if (m.teclado) return 'nada'
   if (Math.abs(m.escala - 1) > 0.01) return 'nada'
-  return Math.abs(m.desfase) > HOLGURA_PX ? 'juntar' : 'nada'
+  return Math.abs(m.desfase) > HOLGURA_PX ? 'devolver' : 'nada'
+}
+
+/** Algo con estilo en línea, para congelarlo y descongelarlo. */
+interface ConEstilo {
+  style: { overflow: string }
 }
 
 /** Lo que hace falta del navegador. Se inyecta para poder probarlo sin DOM. */
@@ -132,7 +142,8 @@ export interface Entorno {
   }
   document: Pick<Document, 'addEventListener' | 'removeEventListener'> & {
     activeElement: ElementoEnfocado | null
-    documentElement: { style: { overflow: string } }
+    documentElement: ConEstilo & { classList: { contains: (clase: string) => boolean } }
+    getElementById: (id: string) => ConEstilo | null
   }
   /** `requestAnimationFrame`, o lo que haga sus veces en una prueba. */
   alSiguienteMarco: (fn: () => void) => void
@@ -161,14 +172,22 @@ function entornoReal(): Entorno {
  * con `overflow: hidden` para siempre —una página que ya no desplaza—.
  */
 let congeladas = 0
-let antes: { overflow: string; x: number; y: number } | null = null
+let antes: {
+  documento: string
+  contenido: { el: ConEstilo; overflow: string } | null
+  x: number
+  y: number
+} | null = null
 
 /**
- * Congela el documento de detrás de una capa, y devuelve cómo descongelarlo.
+ * Congela lo que desplaza detrás de una capa, y devuelve cómo descongelarlo.
+ *
+ * Lo que desplaza es el contenido del marco o, fuera de él, el documento: se
+ * congelan los dos, que cuesta lo mismo y no hay que saber cuál toca.
  *
  * `origen` es a quién se le devuelve el foco al cerrar: la fila o el botón que
  * abrió la capa. Se devuelve **sin desplazar** —con `preventScroll`—: estaba
- * a la vista cuando se tocó, y el scroll ya se deja donde estaba a mano.
+ * a la vista cuando se tocó, y la página ya se deja donde estaba a mano.
  */
 export function congelarFondo(
   origen: { focus: (o?: FocusOptions) => void } | null,
@@ -176,8 +195,15 @@ export function congelarFondo(
 ): () => void {
   const { window: w, document: d } = entorno
   if (congeladas === 0) {
-    antes = { overflow: d.documentElement.style.overflow, x: w.scrollX, y: w.scrollY }
+    const el = d.getElementById(ID_CONTENIDO)
+    antes = {
+      documento: d.documentElement.style.overflow,
+      contenido: el ? { el, overflow: el.style.overflow } : null,
+      x: w.scrollX,
+      y: w.scrollY,
+    }
     d.documentElement.style.overflow = 'hidden'
+    if (el) el.style.overflow = 'hidden'
   }
   congeladas++
 
@@ -187,13 +213,13 @@ export function congelarFondo(
     hecho = true
     congeladas = Math.max(0, congeladas - 1)
     if (congeladas === 0 && antes) {
-      const { overflow, x, y } = antes
+      const { documento, contenido, x, y } = antes
       antes = null
-      d.documentElement.style.overflow = overflow
+      d.documentElement.style.overflow = documento
+      if (contenido) contenido.el.style.overflow = contenido.overflow
       // Donde estaba, al píxel. iOS desplaza la página para enseñar un campo
-      // aunque tenga `overflow: hidden`, y sin esto la lista reaparecía movida
-      // —y lo fijo, calculado para la posición de antes—. El `scrollTo` es,
-      // de paso, lo que obliga a WebKit a recolocar la barra.
+      // aunque tenga `overflow: hidden`, y sin esto se quedaba movida. Con el
+      // marco montado es (0, 0), que es justo donde tiene que estar.
       w.scrollTo(x, y)
     }
     origen?.focus({ preventScroll: true })
@@ -209,21 +235,29 @@ export function _reiniciarFondo(): void {
 /* ────────────────────────────── El teclado ────────────────────────────── */
 
 /**
- * Vigila el teclado, y cuando baja, vuelve a juntar los viewports si hace falta.
+ * Vigila el teclado, y cuando baja, devuelve la página a su sitio si hace falta.
  *
  * Se instala una vez, al arrancar, desde `main.tsx`. Devuelve cómo quitarlo.
  *
  * Qué dispara la comprobación:
  *
  *  - `focusout` cuyo foco no acaba en otro campo: el teclado va a bajar. Se
- *    espera a que termine de bajar (`MS_TECLADO`).
+ *    espera a que termine (`MS_TECLADO`).
  *  - `resize` del viewport visual: es lo que avisa de que el teclado ha
  *    terminado de bajar —o de un giro—.
  *
- * Y el remedio es llevar la página a donde ya está lo visual: el viewport de
- * maquetación se va con ella y lo fijo vuelve a pintarse donde se ve. Como
- * mucho `MAX_INTENTOS` seguidos, por si alguna versión de iOS no se deja: una
- * página que se mueve sola en bucle sería peor que la barra fuera de sitio.
+ * Cuál es «su sitio» depende de quién desplaza:
+ *
+ *  - **Con el marco** el documento no desplaza nunca, así que su sitio es
+ *    arriba del todo: cualquier cosa distinta de (0, 0) con el teclado abajo es
+ *    el fallo. Es el caso de la aplicación.
+ *  - **Sin él** —el candado, la carga— el sitio es donde está lo visual: se
+ *    lleva la página ahí y el viewport de maquetación se va con ella. Si la
+ *    página ya dice estar ahí, un `scrollTo` a lo mismo no recalcula nada: un
+ *    píxel de ida y vuelta, que durante un fotograma no se ve.
+ *
+ * Como mucho `MAX_INTENTOS` seguidos, por si alguna versión de iOS no se deja:
+ * una página que se mueve sola en bucle sería peor que un desfase.
  */
 export function vigilarElTeclado(entorno: Entorno = entornoReal()): () => void {
   const { window: w, document: d } = entorno
@@ -234,22 +268,21 @@ export function vigilarElTeclado(entorno: Entorno = entornoReal()): () => void {
   let espera: ReturnType<typeof setTimeout> | null = null
   let marcoPedido = false
 
+  const enMarco = (): boolean => d.documentElement.classList.contains(CLASE_MARCO)
+
   const medir = (): Medidas => ({
-    desfase: vv.offsetTop,
+    desfase: enMarco()
+      ? Math.max(Math.abs(vv.offsetTop), Math.abs(vv.pageTop), Math.abs(w.scrollY))
+      : vv.offsetTop,
     escala: vv.scale,
     teclado: abreTeclado(d.activeElement),
   })
 
-  /**
-   * Lleva la página a donde ya está lo visual: el de maquetación se va con ella.
-   *
-   * `pageTop` es dónde está lo que se ve dentro del documento. Si la página ya
-   * dice estar ahí —en WebKit `scrollY` puede seguir a lo visual y no a lo de
-   * maquetación—, un `scrollTo` a la misma posición no mueve nada y WebKit no
-   * recalcula nada: hay que moverse de verdad, un píxel y de vuelta. Un píxel
-   * durante un fotograma no se ve.
-   */
-  const juntar = (): void => {
+  const devolver = (): void => {
+    if (enMarco()) {
+      w.scrollTo(0, 0)
+      return
+    }
     const x = w.scrollX
     const destino = Math.max(0, Math.round(vv.pageTop))
     if (Math.round(w.scrollY) !== destino) {
@@ -273,7 +306,7 @@ export function vigilarElTeclado(entorno: Entorno = entornoReal()): () => void {
       }
       if (intentos >= MAX_INTENTOS) return
       intentos++
-      juntar()
+      devolver()
       comprobar()
     })
   }

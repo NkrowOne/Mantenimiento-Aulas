@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { FilaConAcciones } from '@/components/FilaConAcciones'
+import { Marco } from '@/components/Marco'
 import { InsigniaAveria, detalleDeAverias } from '@/components/InsigniaAveria'
 import { SyncChip } from '@/components/SyncChip'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
@@ -844,56 +845,135 @@ export function App(): React.ReactElement {
   const inspecting = tab === 'revisar' && view.name === 'revision'
 
   return (
-    <div className={`min-h-dvh ${inspecting ? '' : 'pb-20'}`}>
-      {/* Sin `backdrop-blur`: obliga a WebKit a recapturar y desenfocar el fondo
-          en cada frame de desplazamiento —de lo más caro que se puede poner en un
-          `sticky` de un iPad— y aquí ni se veía: `--ground` es un color sólido y
-          el 95% dejaba pasar un 5% de nada. */}
-      {/* `solo-pantalla`: dentro de esta cabecera se imprimen dos hojas —las
-          placas y el inventario—, y sin esto el PDF que se firma y se archiva
-          salía encabezado por «Aulas · admin» y un botón de «Cerrar sesión».
-          Chrome además repite los elementos fijos en cada página. */}
-      <header className="solo-pantalla sticky top-0 z-10 border-b border-line bg-ground">
-        <div className="flex items-center justify-between gap-2 px-4 py-2">
-          {/* El rol, a la vista. Es lo que decide qué pestañas hay, así que
-              esconderlo convierte «no tengo el botón» en un misterio: quien es
-              admin y se ve como técnico lo detecta aquí, de un vistazo. */}
-          <span className="eyebrow truncate">Aulas · {role}</span>
-          <div className="flex shrink-0 items-center gap-2">
-            <SyncChip />
-            <button
-              type="button"
-              onClick={() => {
-                /*
-                 * Es la única forma de que la sesión termine: no caduca sola.
-                 * Por eso se confirma — cerrarla sin querer obliga a teclear el
-                 * PIN otra vez en mitad de una ronda.
-                 *
-                 * Y con la cola llena se avisa de qué se está haciendo. Cerrar
-                 * sesión no borra nada —el trabajo sigue aquí y sube al volver a
-                 * entrar—, pero sí para la subida en seco: sin sesión, `flush()`
-                 * no puede mandar nada. Quien cierra creyendo que «así se
-                 * guarda» está haciendo lo contrario de lo que quiere.
-                 */
-                const aviso =
-                  sinSubir > 0
-                    ? `Quedan ${sinSubir} cambios sin subir. No se pierden —siguen en este ` +
-                      'dispositivo y subirán cuando vuelvas a entrar—, pero mientras la sesión ' +
-                      'esté cerrada no se sube nada. ¿Cerrar sesión igualmente?'
-                    : '¿Cerrar sesión?'
-                if (confirm(aviso)) {
-                  void lock().then(() => setUnlocked(false))
-                }
-              }}
-              className="key key-quiet px-3 py-1.5 text-xs font-medium text-muted"
-              title="La sesión no caduca sola: solo termina aquí."
+    <Marco
+      cabecera={
+        <>
+          {/* Sin `backdrop-blur`: obliga a WebKit a recapturar y desenfocar el fondo
+              en cada frame de desplazamiento —de lo más caro que se puede poner encima
+              de lo que desplaza en un iPad— y aquí ni se veía: `--ground` es un color
+              sólido y el 95% dejaba pasar un 5% de nada. Tampoco es `sticky`: es el
+              primer hijo del marco, y el contenido desplaza por debajo de ella. */}
+          {/* `solo-pantalla`: dentro de esta cabecera se imprimen dos hojas —las
+              placas y el inventario—, y sin esto el PDF que se firma y se archiva
+              salía encabezado por «Aulas · admin» y un botón de «Cerrar sesión».
+              Chrome además repite los elementos fijos en cada página. */}
+          <header className="solo-pantalla flex-none border-b border-line bg-ground">
+            <div className="flex items-center justify-between gap-2 px-4 py-2">
+              {/* El rol, a la vista. Es lo que decide qué pestañas hay, así que
+                  esconderlo convierte «no tengo el botón» en un misterio: quien es
+                  admin y se ve como técnico lo detecta aquí, de un vistazo. */}
+              <span className="eyebrow truncate">Aulas · {role}</span>
+              <div className="flex shrink-0 items-center gap-2">
+                <SyncChip />
+                <button
+                  type="button"
+                  onClick={() => {
+                    /*
+                     * Es la única forma de que la sesión termine: no caduca sola.
+                     * Por eso se confirma — cerrarla sin querer obliga a teclear el
+                     * PIN otra vez en mitad de una ronda.
+                     *
+                     * Y con la cola llena se avisa de qué se está haciendo. Cerrar
+                     * sesión no borra nada —el trabajo sigue aquí y sube al volver a
+                     * entrar—, pero sí para la subida en seco: sin sesión, `flush()`
+                     * no puede mandar nada. Quien cierra creyendo que «así se
+                     * guarda» está haciendo lo contrario de lo que quiere.
+                     */
+                    const aviso =
+                      sinSubir > 0
+                        ? `Quedan ${sinSubir} cambios sin subir. No se pierden —siguen en este ` +
+                          'dispositivo y subirán cuando vuelvas a entrar—, pero mientras la sesión ' +
+                          'esté cerrada no se sube nada. ¿Cerrar sesión igualmente?'
+                        : '¿Cerrar sesión?'
+                    if (confirm(aviso)) {
+                      void lock().then(() => setUnlocked(false))
+                    }
+                  }}
+                  className="key key-quiet px-3 py-1.5 text-xs font-medium text-muted"
+                  title="La sesión no caduca sola: solo termina aquí."
+                >
+                  Cerrar sesión
+                </button>
+              </div>
+            </div>
+          </header>
+        </>
+      }
+      /*
+       * La navegación se queda abajo: es donde llega el pulgar sin recolocar la
+       * mano, y respeta la zona de gestos del iPhone. No es `fixed`: es el
+       * último hijo del marco, y por eso el teclado de iOS no la puede dejar
+       * flotando a media pantalla — lo cuenta `components/Marco.tsx`.
+       *
+       * Se oculta durante la revisión, que tiene su propia barra de acción en
+       * esa misma posición: con las dos, los botones de guardar quedaban debajo
+       * y no se podían pulsar.
+       */
+      pie={
+        /*
+         * El aviso de versión nueva va justo encima de la barra, en la columna.
+         * No sale en la revisión: la barra de acción vive en ese mismo sitio y
+         * su «Actualizar» caía justo donde está «Guardar y siguiente sala», así
+         * que el pulgar recargaba la aplicación en mitad de un aula. Reaparece
+         * al volver a la lista, que es cuando recargar no cuesta nada.
+         */
+        !inspecting && (
+          <>
+            <UpdatePrompt enFlujo />
+            <nav
+              /* Y la barra tampoco va al papel: es navegación, y en una hoja impresa
+                 es una fila de palabras que no se pueden pulsar cruzada por encima del
+                 inventario. */
+              className="solo-pantalla flex-none border-t border-line bg-surface"
+              style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
             >
-              Cerrar sesión
-            </button>
-          </div>
-        </div>
-      </header>
-
+              <ul className="scroll-x flex">
+                {visibleTabs.map((t) => (
+                  <li key={t.id} className="flex-1">
+                    <button
+                      type="button"
+                      onClick={() => setTab(t.id)}
+                      aria-current={tab === t.id ? 'page' : undefined}
+                      className={`flex h-touch w-full items-center justify-center whitespace-nowrap px-3 text-xs font-medium ${
+                        tab === t.id
+                          ? 'border-t-2 border-accent -mt-px text-accent'
+                          : 'text-muted'
+                      }`}
+                    >
+                      {t.label}
+                      {/* Solo aquí y no en cada pestaña: es la única cuyo trabajo
+                          crece solo sin que nadie lo vea, y la barra ya ha filtrado
+                          por rol, así que el contador no se le pide a un técnico. */}
+                      {t.id === 'datos' && <PendientesEnLaBarra />}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          </>
+        )
+      }
+      capas={
+        escaneando && (
+          <Suspense fallback={<div className="fixed inset-0 z-50 bg-black" />}>
+            <EscanerQR
+              onCerrar={() => setEscaneando(false)}
+              onLeido={(texto) => {
+                setEscaneando(false)
+                const sala = salaDeTextoQR(texto)
+                if (!sala) {
+                  setAvisoQR('Ese código no es de una sala.')
+                  return
+                }
+                void abrirSala(sala).then((ok) => {
+                  if (!ok) setAvisoQR('Ese QR no corresponde a ninguna sala de las que puedes ver.')
+                })
+              }}
+            />
+          </Suspense>
+        )
+      }
+    >
       {escaneoFallido && (
         <div className="solo-pantalla border-b border-line bg-warn-tint px-4 py-3">
           <p className="text-sm text-warn">
@@ -1332,69 +1412,6 @@ export function App(): React.ReactElement {
           {tab === 'datos' && puedeVer('datos', role) && <CleanupPage yo={userId} />}
         </Suspense>
       )}
-
-      {/* La navegación se queda abajo: es donde llega el pulgar sin recolocar
-          la mano, y respeta la zona de gestos del iPhone.
-          Se oculta durante la revisión, que tiene su propia barra de acción en
-          esa misma posición: con las dos, los botones de guardar quedaban
-          debajo y no se podían pulsar. */}
-      {!inspecting && (
-      <nav
-        /* Y la barra tampoco va al papel: es navegación, y en una hoja impresa
-           es una fila de palabras que no se pueden pulsar cruzada por encima del
-           inventario. */
-        className="solo-pantalla fixed inset-x-0 bottom-0 z-10 border-t border-line bg-surface"
-        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
-      >
-        <ul className="scroll-x flex">
-          {visibleTabs.map((t) => (
-            <li key={t.id} className="flex-1">
-              <button
-                type="button"
-                onClick={() => setTab(t.id)}
-                aria-current={tab === t.id ? 'page' : undefined}
-                className={`flex h-touch w-full items-center justify-center whitespace-nowrap px-3 text-xs font-medium ${
-                  tab === t.id
-                    ? 'border-t-2 border-accent -mt-px text-accent'
-                    : 'text-muted'
-                }`}
-              >
-                {t.label}
-                {/* Solo aquí y no en cada pestaña: es la única cuyo trabajo
-                    crece solo sin que nadie lo vea, y la barra ya ha filtrado
-                    por rol, así que el contador no se le pide a un técnico. */}
-                {t.id === 'datos' && <PendientesEnLaBarra />}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </nav>
-      )}
-
-      {escaneando && (
-        <Suspense fallback={<div className="fixed inset-0 z-50 bg-black" />}>
-          <EscanerQR
-            onCerrar={() => setEscaneando(false)}
-            onLeido={(texto) => {
-              setEscaneando(false)
-              const sala = salaDeTextoQR(texto)
-              if (!sala) {
-                setAvisoQR('Ese código no es de una sala.')
-                return
-              }
-              void abrirSala(sala).then((ok) => {
-                if (!ok) setAvisoQR('Ese QR no corresponde a ninguna sala de las que puedes ver.')
-              })
-            }}
-          />
-        </Suspense>
-      )}
-
-      {/* El aviso lleva z-30 y la barra de la revisión vive en la misma esquina:
-          su «Actualizar» caía justo donde está «Guardar y siguiente sala», así
-          que el pulgar recargaba la aplicación en mitad de un aula. Reaparece al
-          volver a la lista, que es cuando recargar no cuesta nada. */}
-      {!inspecting && <UpdatePrompt />}
-    </div>
+    </Marco>
   )
 }

@@ -423,8 +423,10 @@ export function HistorialPage(): React.ReactElement {
         <section key={grupo.dia} className="mt-5">
           {/* El día se queda pegado arriba al desplazar: en una lista larga, sin
               esto se pierde de vista en cuanto pasan cuatro filas y deja de
-              saberse de cuándo es lo que se está leyendo. */}
-          <h2 className="sticky top-12 z-[1] -mx-4 bg-ground px-4 py-1.5 text-xs font-semibold capitalize text-muted">
+              saberse de cuándo es lo que se está leyendo. `top-0` y no el hueco
+              de la cabecera: lo que desplaza es el contenido del marco, que ya
+              empieza debajo de ella. */}
+          <h2 className="sticky top-0 z-[1] -mx-4 bg-ground px-4 py-1.5 text-xs font-semibold capitalize text-muted">
             {grupo.dia}
           </h2>
           <LineaTiempo eventos={grupo.eventos} salaDe={roomId ? undefined : nombreDeSala} />

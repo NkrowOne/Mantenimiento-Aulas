@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { StatTile } from '@/components/StatTile'
+import { subirArriba } from '@/components/Marco'
 import { fechaCorta } from '@/domain/fechas'
 import { Actividad } from './Actividad'
 import { AssetTypeTray } from './AssetTypeTray'
@@ -99,8 +100,9 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
     setSeccion(s)
     recordarSeccion(s)
     // Que el usuario ya esté abajo del todo no importa: cambiar de sección es
-    // cambiar de pantalla, y una pantalla nueva empieza por arriba.
-    window.scrollTo({ top: 0 })
+    // cambiar de pantalla, y una pantalla nueva empieza por arriba. Lo que
+    // desplaza es el contenido del marco, no la ventana.
+    subirArriba()
   }
 
   const actual = SECCIONES.find((s) => s.id === seccion)!

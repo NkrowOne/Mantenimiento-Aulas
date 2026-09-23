@@ -17,13 +17,6 @@
      * mano— sacaba la pantalla de sitio en mitad de una revisión.
      */
     overscroll-behavior: none;
-
-    /*
-     * La barra de acción de la revisión mide ~138px y es `fixed`. Sin esto, al
-     * enfocar un campo cercano al final el navegador lo desplaza justo debajo de
-     * la barra: el técnico escribe a ciegas.
-     */
-    scroll-padding-bottom: 10rem;
   }
 
   body {
@@ -56,6 +49,26 @@
   }
 
   /*
+   * El marco: mientras la aplicación está dentro, el documento no desplaza.
+   *
+   * Lo que desplaza es el `<main>` de `components/Marco.tsx`, y la cabecera y la
+   * barra de pestañas van encima y debajo de él en la maquetación normal, sin
+   * `fixed` ni `sticky`. Es lo que las pone a salvo del teclado de iOS, que al
+   * bajar puede dejar varado todo lo `fixed` hasta reiniciar (WebKit 297779).
+   *
+   * `100%` y no `100dvh`: el alto dinámico es justo lo que ese mismo fallo deja
+   * mal medido al cerrar el teclado, y el bloque contenedor inicial no se mueve.
+   * Solo con la clase puesta: el candado y la carga siguen desplazando, porque
+   * en un teléfono pequeño con el teclado arriba su botón puede quedar debajo.
+   */
+  html.marco,
+  html.marco body,
+  html.marco #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  /*
    * Ningún campo por debajo de 16px.
    *
    * Safari de iOS AMPLÍA la página al enfocar un `input`, `textarea` o `select`
@@ -65,7 +78,7 @@
    * iPad pidiendo la versión de escritorio, otros navegadores—. Ampliada, lo
    * `fixed` deja de coincidir con lo que se ve, igual que cuando el teclado se
    * despista al bajar: la barra de pestañas fuera de sitio. Lo de la barra lo
-   * cuenta entero `lib/viewport.ts`.
+   * cuenta entero `components/Marco.tsx`.
    *
    * Cuarenta campos de la aplicación estaban en `text-sm`, catorce píxeles.
    *
@@ -387,6 +400,24 @@
   }
 
   /*
+   * El marco, desplegado. En pantalla solo desplaza el contenido y todo lo demás
+   * mide lo que la pantalla; en papel no desplaza nada, y un alto fijo o un
+   * `overflow` que quedaran puestos cortarían el inventario en la primera hoja.
+   */
+  html.marco,
+  html.marco body,
+  html.marco #root,
+  .marco-columna,
+  .marco-contenido {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .marco-columna {
+    display: block !important;
+  }
+
+  /*
    * Papel blanco y tinta negra pase lo que pase.
    *
    * La aplicación puede estar en modo oscuro cuando alguien pulsa Imprimir, y
@@ -550,9 +581,8 @@
  * Tailwind, y `campos-sin-zoom.test.ts` solo ve las clases escritas en la propia
  * etiqueta. Se le escapaban justo las más usadas: los diez campos de «Añadir una
  * sala» llevaban la clase en una constante (`CAMPO`) y los del inventario en una
- * prop (`inputClassName`). Por esos se despegaba la barra de pestañas: se toca
- * el campo, iOS amplía la página, y la barra se queda flotando en mitad de la
- * pantalla hasta que alguien deshace el zoom a mano.
+ * prop (`inputClassName`). En el iPhone el `meta` de index.html ya impide que
+ * la página se amplíe al tocarlos; esto es para donde no se respeta.
  *
  * Por qué gana: `input[class*="text-sm"]` pesa (0,1,1) y `.text-sm` (0,1,0), así
  * que da igual el orden en que salgan; y va fuera de `@layer` para que Tailwind

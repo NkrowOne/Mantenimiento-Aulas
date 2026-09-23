@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  CLASE_MARCO,
+  ID_CONTENIDO,
   MAX_INTENTOS,
   MS_TECLADO,
   _reiniciarFondo,
@@ -16,7 +18,9 @@ import {
  * Un navegador de mentira con lo justo: el viewport visual con su desfase, el
  * foco, y una cola de fotogramas que se vacía a mano.
  */
-function navegador(opciones: { desfase?: number; pageTop?: number; scrollY?: number; conVisual?: boolean } = {}) {
+function navegador(
+  opciones: { desfase?: number; pageTop?: number; scrollY?: number; conVisual?: boolean; marco?: boolean } = {},
+) {
   const vv = Object.assign(new EventTarget(), {
     offsetTop: opciones.desfase ?? 0,
     pageTop: opciones.pageTop ?? 0,
@@ -31,9 +35,12 @@ function navegador(opciones: { desfase?: number; pageTop?: number; scrollY?: num
       llamadas.push([x, y])
     }),
   })
+  const clases = new Set<string>(opciones.marco ? [CLASE_MARCO] : [])
+  const contenido = { style: { overflow: '' } }
   const doc = Object.assign(new EventTarget(), {
     activeElement: { tagName: 'BODY' } as ElementoEnfocado | null,
-    documentElement: { style: { overflow: '' } },
+    documentElement: { style: { overflow: '' }, classList: { contains: (c: string) => clases.has(c) } },
+    getElementById: (id: string) => (opciones.marco && id === ID_CONTENIDO ? contenido : null),
   })
   const marcos: Array<() => void> = []
   const entorno = {
@@ -48,7 +55,7 @@ function navegador(opciones: { desfase?: number; pageTop?: number; scrollY?: num
   const pintar = (): void => {
     for (let vueltas = 0; marcos.length > 0 && vueltas < 50; vueltas++) marcos.shift()!()
   }
-  return { vv, win, doc, entorno, llamadas, pintar }
+  return { vv, win, doc, contenido, entorno, llamadas, pintar }
 }
 
 describe('abreTeclado', () => {
@@ -79,9 +86,9 @@ describe('abreTeclado', () => {
 })
 
 describe('decidir', () => {
-  it('separados sin teclado y sin ampliar: hay que juntarlos', () => {
-    expect(decidir({ desfase: 180, escala: 1, teclado: false })).toBe('juntar')
-    expect(decidir({ desfase: -40, escala: 1, teclado: false })).toBe('juntar')
+  it('fuera de sitio sin teclado y sin ampliar: hay que devolverla', () => {
+    expect(decidir({ desfase: 180, escala: 1, teclado: false })).toBe('devolver')
+    expect(decidir({ desfase: -40, escala: 1, teclado: false })).toBe('devolver')
   })
 
   it('con el teclado arriba la separación es lo normal: no se toca', () => {
@@ -132,6 +139,19 @@ describe('congelarFondo', () => {
     expect(llamadas).toEqual([[0, 120]])
   })
 
+  it('con el marco congela también el contenido, que es lo que desplaza, y lo devuelve como estaba', () => {
+    const { entorno, doc, contenido } = navegador({ marco: true })
+    contenido.style.overflow = ''
+
+    const soltar = congelarFondo(null, entorno)
+    expect(contenido.style.overflow).toBe('hidden')
+    expect(doc.documentElement.style.overflow).toBe('hidden')
+
+    soltar()
+    expect(contenido.style.overflow).toBe('')
+    expect(doc.documentElement.style.overflow).toBe('')
+  })
+
   it('soltar dos veces es soltar una', () => {
     const { entorno, doc } = navegador()
     const soltarA = congelarFondo(null, entorno)
@@ -149,7 +169,7 @@ describe('vigilarElTeclado', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
-  it('al bajar el teclado con la barra desplazada, junta los viewports', () => {
+  it('al bajar el teclado con la página desplazada, la devuelve a donde está lo visual', () => {
     const n = navegador({ desfase: 180, pageTop: 1180, scrollY: 1000 })
     vigilarElTeclado(n.entorno)
 
@@ -256,6 +276,44 @@ describe('vigilarElTeclado', () => {
     n.pintar()
 
     expect(n.llamadas).toHaveLength(MAX_INTENTOS)
+  })
+
+  it('con el marco, el sitio es arriba del todo: cualquier desplazamiento con el teclado abajo es el fallo', () => {
+    const n = navegador({ marco: true, desfase: 0, pageTop: 180, scrollY: 0 })
+    vigilarElTeclado(n.entorno)
+    n.win.scrollTo.mockImplementation((x: number, y: number) => {
+      n.llamadas.push([x, y])
+      n.vv.pageTop = 0
+    })
+
+    n.doc.dispatchEvent(new Event('focusout'))
+    vi.advanceTimersByTime(MS_TECLADO)
+    n.pintar()
+
+    expect(n.llamadas).toEqual([[0, 0]])
+  })
+
+  it('con el marco y todo en su sitio, ni un scroll de más', () => {
+    const n = navegador({ marco: true })
+    vigilarElTeclado(n.entorno)
+
+    n.doc.dispatchEvent(new Event('focusout'))
+    vi.advanceTimersByTime(MS_TECLADO)
+    n.vv.dispatchEvent(new Event('resize'))
+    n.pintar()
+
+    expect(n.llamadas).toEqual([])
+  })
+
+  it('con el marco y el teclado arriba, no se toca aunque esté desplazado', () => {
+    const n = navegador({ marco: true, desfase: 120, pageTop: 120 })
+    vigilarElTeclado(n.entorno)
+    n.doc.activeElement = { tagName: 'TEXTAREA' }
+
+    n.vv.dispatchEvent(new Event('resize'))
+    n.pintar()
+
+    expect(n.llamadas).toEqual([])
   })
 
   it('sin `visualViewport` no hace nada y no rompe', () => {
