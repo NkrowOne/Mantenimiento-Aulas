@@ -204,6 +204,23 @@ async function canjearCodigo(email: string, code: string): Promise<Canje> {
     }
   }
 
+  /*
+   * Un 503 CON explicación es el worker diciendo que ahora no puede —no llega a
+   * la base—, y eso se enseña tal cual. No es «no hay endpoint»: el endpoint
+   * está y ha contestado.
+   *
+   * Tratarlo como lo segundo mandaba al flujo antiguo, el del código como
+   * contraseña, que con una cuenta que ya tiene un aparato dentro no puede
+   * funcionar —la contraseña no se toca precisamente para no echar a ese
+   * aparato— y fallaba con otro mensaje que tampoco era verdad. Un 502 o un
+   * 404 sí siguen significando que el worker no está: eso lo pone Caddy, y sin
+   * cuerpo nuestro.
+   */
+  if (respuesta.status === 503) {
+    const cuerpo = (await respuesta.json().catch(() => null)) as { error?: string } | null
+    if (cuerpo?.error) return { estado: 'rechazado', error: cuerpo.error }
+  }
+
   if (!respuesta.ok) return { estado: 'sin-endpoint' }
 
   const cuerpo = (await respuesta.json().catch(() => null)) as { token_hash?: string } | null

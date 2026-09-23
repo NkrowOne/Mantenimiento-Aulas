@@ -10,7 +10,7 @@
  */
 
 import { createServer } from 'node:http'
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { conectar } from './db.js'
 import { loadReportData } from './data.js'
 import { ZONA, periodFor } from './periods.js'
@@ -21,6 +21,7 @@ import { configurarIA, redactar } from './ia.js'
 import { leerOpciones } from './opciones.js'
 import { canjearAlta, leerCuerpoPequeno } from './alta.js'
 import { altaCodigo } from './alta-codigo.js'
+import { apiQueResponde } from './api.js'
 import { informePdf } from './informe-pdf.js'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type postgres from 'postgres'
@@ -28,7 +29,6 @@ import type postgres from 'postgres'
 const PORT = Number(process.env['PORT'] ?? 8080)
 const TOKEN = process.env['WORKER_TOKEN'] ?? ''
 const DATABASE_URL = process.env['DATABASE_URL'] ?? ''
-const SUPABASE_URL = process.env['SUPABASE_URL'] ?? ''
 const SERVICE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? ''
 
 /**
@@ -76,8 +76,19 @@ function tokenValido(cabecera: string | undefined): boolean {
 // Con tope por consulta: ninguna query del informe puede quedarse colgada
 // reteniendo una de las dos conexiones con el healthcheck en verde.
 const sql = conectar(DATABASE_URL, 2, undefined, { statementTimeoutMs: 120_000 })
-const storage =
-  SUPABASE_URL && SERVICE_KEY ? createClient(SUPABASE_URL, SERVICE_KEY) : null
+/*
+ * El almacén de los PDF, contra la dirección de la API que de verdad responde.
+ *
+ * Era un cliente fijo contra `SUPABASE_URL`, y con esa dirección sin respuesta
+ * los informes programados se generaban enteros —datos, análisis, WeasyPrint—
+ * y morían en el último paso, al subir el fichero. Ahora prueba también
+ * `SUPABASE_UPSTREAM`, como el resto del worker; ver `api.ts`.
+ */
+async function almacen(): Promise<SupabaseClient | null> {
+  if (!SERVICE_KEY) return null
+  const r = await apiQueResponde((url) => createClient(url, SERVICE_KEY))
+  return r.ok ? r.admin : null
+}
 
 /**
  * Los ajustes de IA guardados en la base.
@@ -180,6 +191,7 @@ export async function generate(
   const hash = createHash('sha256').update(pdf).digest('hex').slice(0, 12)
   const path = `${kind}/${period.start}_${period.end}_${hash}.pdf`
 
+  const storage = await almacen()
   if (storage) {
     const { error } = await storage.storage
       .from('reports')

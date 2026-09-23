@@ -26,7 +26,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { createHash, randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
-const SUPABASE_URL = process.env['SUPABASE_URL'] ?? ''
+import { apiQueResponde } from './api.js'
+
 const SERVICE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? ''
 
 /**
@@ -42,14 +43,40 @@ export const MAX_DISPOSITIVOS = 3
 const RECHAZO = 'Email o código incorrectos, o el código ha caducado.'
 const PAUSA_RECHAZO_MS = 300
 
-let admin: SupabaseClient | null = null
-function cliente(): SupabaseClient | null {
-  if (!SUPABASE_URL || !SERVICE_KEY) return null
-  admin ??= createClient(SUPABASE_URL, SERVICE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  })
-  return admin
+/*
+ * Contra la dirección de la API que de verdad responde, como el resto del
+ * worker. Esto se quedó mirando solo `SUPABASE_URL` cuando lo demás pasó a
+ * probar también `SUPABASE_UPSTREAM`, y el efecto fue el peor posible: dar el
+ * código funcionaba y canjearlo no, porque cada mitad hablaba con una
+ * dirección distinta y una de las dos no llegaba. Lo explica `api.ts`.
+ */
+async function cliente(): Promise<SupabaseClient | null> {
+  if (!SERVICE_KEY) return null
+  const r = await apiQueResponde((url) =>
+    createClient(url, SERVICE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    }),
+  )
+  if (!r.ok) {
+    console.error('[alta] No se llega a Supabase:', r.motivo)
+    return null
+  }
+  return r.admin
 }
+
+/*
+ * Lo que se le dice a quien intenta canjear cuando el fallo es del servidor.
+ *
+ * Genérico a propósito: esta ruta es pública —quien llama todavía no tiene
+ * sesión— y el detalle (qué dirección, qué variable) no le sirve de nada a
+ * quien está delante de la pantalla de alta y sí a quien esté tanteando. El
+ * detalle va al registro del contenedor.
+ *
+ * Lo que NO puede es decir «código incorrecto», que es lo que decía: la
+ * persona vuelve a teclearlo, pide otro, y el problema sigue sin ser el código.
+ */
+const SIN_SERVIDOR =
+  'El servidor no puede comprobar el código ahora mismo. No es tu código: vuelve a intentarlo en un rato, y si se repite, avisa a quien administra la aplicación.'
 
 function responder(res: ServerResponse, status: number, cuerpo: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(cuerpo))
@@ -103,9 +130,9 @@ export async function canjearAlta(
   res: ServerResponse,
   cuerpo: Buffer,
 ): Promise<void> {
-  const supabase = cliente()
+  const supabase = await cliente()
   if (!supabase) {
-    responder(res, 503, { ok: false, error: 'El alta no está configurada en este despliegue.' })
+    responder(res, 503, { ok: false, error: SIN_SERVIDOR })
     return
   }
 
@@ -126,23 +153,44 @@ export async function canjearAlta(
     return
   }
 
-  const { data: perfil } = await supabase
+  /*
+   * Las dos consultas miran su `error`, y no por limpieza.
+   *
+   * Antes se leía solo `data`, y una consulta que no llegaba a la base
+   * devolvía `data: null` — exactamente lo mismo que un email que no existe o
+   * un código que no coincide. Así que un servidor sin conexión contestaba
+   * «Email o código incorrectos»: la persona volvía a teclearlo, pedía otro
+   * código, y nada de eso podía funcionar porque el código estaba bien. Pasó.
+   */
+  const { data: perfil, error: falloPerfil } = await supabase
     .from('profiles')
     .select('id')
     .ilike('email', email)
     .maybeSingle()
+  if (falloPerfil) {
+    console.error('[alta] No se pudo leer el perfil:', falloPerfil.message)
+    responder(res, 503, { ok: false, error: SIN_SERVIDOR })
+    return
+  }
 
   const hash = createHash('sha256').update(code).digest('hex')
-  const { data: codigo } = perfil
-    ? await supabase
-        .from('enrollment_codes')
-        .select('id')
-        .eq('profile_id', perfil.id)
-        .eq('code_hash', hash)
-        .is('consumed_at', null)
-        .gt('expires_at', new Date().toISOString())
-        .maybeSingle()
-    : { data: null }
+  let codigo: { id: string } | null = null
+  if (perfil) {
+    const { data, error: falloCodigo } = await supabase
+      .from('enrollment_codes')
+      .select('id')
+      .eq('profile_id', perfil.id)
+      .eq('code_hash', hash)
+      .is('consumed_at', null)
+      .gt('expires_at', new Date().toISOString())
+      .maybeSingle()
+    if (falloCodigo) {
+      console.error('[alta] No se pudo leer el código:', falloCodigo.message)
+      responder(res, 503, { ok: false, error: SIN_SERVIDOR })
+      return
+    }
+    codigo = data as { id: string } | null
+  }
 
   if (!perfil || !codigo) {
     await rechazar(res)
