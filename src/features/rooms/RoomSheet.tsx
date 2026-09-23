@@ -307,6 +307,8 @@ export function RoomSheet({
   const cerrarAlGuardar = useRef(false)
   /** La que se acaba de abrir para cerrarla del tirón, hasta que se ve. */
   const [recienAbierta, setRecienAbierta] = useState<string | null>(null)
+  /** Lo escrito al abrir una avería express, con lo que se rellena su cierre. */
+  const [motivoExpress, setMotivoExpress] = useState<string | null>(null)
   /* El acuse del cierre, y por qué no comparte el de registrar: la avería
      desaparece de la lista en el acto, y sin una frase que lo diga el gesto se
      lee como si la ficha hubiera perdido la fila. */
@@ -506,9 +508,9 @@ export function RoomSheet({
       }
       void flush()
 
-      return { id: fila.id, completo: titulo.length > 0, fotos: fotosNuevas.length }
+      return { id: fila.id, titulo, completo: titulo.length > 0, fotos: fotosNuevas.length }
     },
-    onSuccess: ({ id, completo, fotos }) => {
+    onSuccess: ({ id, titulo, completo, fotos }) => {
       const conFotos = fotos > 0 ? ` Con ${cuantos(fotos, 'foto', 'fotos')}.` : ''
 
       /*
@@ -528,15 +530,19 @@ export function RoomSheet({
       if (express) {
         setResolviendo(id)
         setRecienAbierta(id)
+        // El motivo, para no pedirlo dos veces: lo que se acaba de escribir es
+        // lo que se ha hecho. Ver `explicacion` en `ResolverIncidencia`.
+        setMotivoExpress(titulo)
       }
       cerrarAlGuardar.current = false
 
       setGuardado(
         express
           ? // El aviso tiene que decir que falta un paso, porque falta: la
-            // avería está abierta y el cierre, esperando abajo con el teclado
-            // ya a punto. Sin esto, «registrada» se lee como «ya está».
-            `${INCIDENT_KIND_LABELS[kind]} registrada.${conFotos} Abajo, en Averías abiertas, cuenta qué has hecho para cerrarla.`
+            // avería está abierta y el cierre, esperando abajo. Sin esto,
+            // «registrada» se lee como «ya está». Lo que ya NO falta es contar
+            // otra vez lo mismo: el cierre viene con el motivo puesto.
+            `${INCIDENT_KIND_LABELS[kind]} registrada.${conFotos} Abajo tienes el cierre con el motivo ya puesto: apunta el material si has gastado y pulsa «Resolver».`
           : completo
             ? `${INCIDENT_KIND_LABELS[kind]} registrada.${conFotos} Sube en cuanto haya cobertura.`
             : `Guardado sin describir.${conFotos} Aparecerá en Incidencias para que lo completes.`,
@@ -914,13 +920,13 @@ export function RoomSheet({
               {texto.trim() ? (
                 <>
                   El <Rayo className="inline h-3.5 w-3.5 align-[-0.2em]" /> la guarda y te abre su
-                  cierre aquí mismo, para lo que ya has arreglado.
+                  cierre aquí mismo, con este mismo texto puesto: apuntas el material y listo.
                 </>
               ) : (
                 <>
                   Escribe qué ocurre y se activa el{' '}
                   <Rayo className="inline h-3.5 w-3.5 align-[-0.2em]" />: guardar y cerrar de una
-                  vez, para lo que ya has arreglado.
+                  vez, sin volver a escribirlo.
                 </>
               )}
             </p>
@@ -1012,8 +1018,16 @@ export function RoomSheet({
                       incidencia={i}
                       equipo={equipo}
                       roomId={room.id}
+                      /* Solo en la express: en una avería de hace tres días, lo
+                         que se escribió al abrirla es el problema, no el
+                         arreglo, y rellenarlo aquí sería poner en el cierre
+                         algo que nadie ha hecho. */
+                      explicacion={recienAbierta === i.id ? (motivoExpress ?? '') : ''}
+                      conMaterial={recienAbierta === i.id}
                       onCerrada={() => {
                         setResolviendo(null)
+                        setRecienAbierta(null)
+                        setMotivoExpress(null)
                         setResuelto(
                           'Resuelta. Sube en cuanto haya cobertura y queda en el historial de la sala.',
                         )
@@ -1022,7 +1036,11 @@ export function RoomSheet({
                         // contestarían lo de antes. Los vuelve a pedir
                         // `useCierresEnCola` cuando sube de verdad.
                       }}
-                      onCancelar={() => setResolviendo(null)}
+                      onCancelar={() => {
+                        setResolviendo(null)
+                        setRecienAbierta(null)
+                        setMotivoExpress(null)
+                      }}
                     />
                   )}
                 </li>
