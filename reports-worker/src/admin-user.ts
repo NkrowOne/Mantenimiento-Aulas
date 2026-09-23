@@ -981,6 +981,55 @@ Las opciones con nombre (--email, --nombre, --rol) siguen valiendo y ganan.
 }
 
 /**
+ * ¿Este fallo es «no se ha podido ni conectar»?
+ *
+ * Node contesta a eso con dos palabras —«fetch failed»— y esconde el motivo de
+ * verdad en `cause`, que es donde está todo lo que sirve: `ENOTFOUND kong` no
+ * es lo mismo que `ECONNREFUSED`, y de esas dos salen arreglos distintos. Sin
+ * mirarlo, el técnico ve «fetch failed · código de salida 1» y no tiene por
+ * dónde empezar. Pasó, y por eso está esto.
+ */
+function esSinConexion(err: unknown): boolean {
+  const m = err instanceof Error ? err.message : String(err ?? '')
+  return /fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|network/i.test(m)
+}
+
+/** El motivo que Node guarda debajo de «fetch failed», desenterrado. */
+function causaDeRed(err: unknown): string {
+  const partes: string[] = []
+  let actual: unknown = err
+  for (let i = 0; i < 4 && actual instanceof Error; i++) {
+    const c = (actual as Error & { code?: string }).code
+    const h = (actual as Error & { hostname?: string }).hostname
+    const trozo = [c, actual.message, h ? `(${h})` : ''].filter(Boolean).join(' ')
+    if (trozo && !partes.includes(trozo)) partes.push(trozo)
+    actual = (actual as { cause?: unknown }).cause
+  }
+  return partes.join(' → ') || 'sin detalle'
+}
+
+/**
+ * Y si el motivo sigue sin aparecer, se pregunta a pelo.
+ *
+ * `supabase-js` envuelve el fallo de red en un error propio y por el camino se
+ * deja `cause`, que es donde Node guarda lo único que sirve: `ENOTFOUND kong`,
+ * `ECONNREFUSED`, `ETIMEDOUT`. Así que se repite la conexión con `fetch` a
+ * secas —una petición, y solo cuando algo ya ha fallado— para poder decir qué
+ * pasa de verdad. Es lo mismo que hace `quienResponde` para el otro caso.
+ */
+async function porQueNoConecta(url: string): Promise<string> {
+  try {
+    await fetch(`${url.replace(/\/+$/, '')}/auth/v1/health`, {
+      signal: AbortSignal.timeout(8000),
+    })
+    // Ha contestado ahora: entonces no es la red, es intermitente.
+    return 'la conexión funciona al repetirla, así que el corte ha sido momentáneo'
+  } catch (err) {
+    return causaDeRed(err)
+  }
+}
+
+/**
  * ¿El fallo es de leer como JSON algo que no lo era?
  *
  * Es el síntoma de que la URL configurada no lleva a la puerta de entrada de
@@ -1018,6 +1067,34 @@ async function quienResponde(url: string, clave: string): Promise<string> {
 run().catch(async (err) => {
   console.error(err instanceof Error ? err.message : err)
   explicarEsquema(err instanceof Error ? err.message : String(err))
+
+  if (esSinConexion(err)) {
+    console.error(`
+  No se ha podido ni abrir la conexión con la API. Motivo real:
+
+  ${await porQueNoConecta(SUPABASE_URL)}
+
+  Se intentó contra ${SUPABASE_URL}
+  (de ${VARIABLE_DE_LA_URL}).
+
+  Los tres motivos, y se distinguen por el código de arriba:
+
+  ENOTFOUND / EAI_AGAIN — ese nombre no se resuelve desde aquí. Es lo que pasa
+    cuando la orden NO se ejecuta dentro del servicio que está corriendo, sino
+    en un contenedor suelto que la plataforma levanta para el comando: hereda
+    las variables pero no la red interna, así que «kong» no existe para él.
+    Ejecútala dentro del contenedor que sirve la aplicación.
+
+  ECONNREFUSED — el nombre resuelve pero ahí no hay nadie escuchando: Kong
+    parado, o el puerto equivocado en ${VARIABLE_DE_LA_URL}.
+
+  ETIMEDOUT — hay ruta pero nadie contesta. Suele ser un dominio público
+    puesto en ${VARIABLE_DE_LA_URL}: ahí va el host:puerto de Kong en la red
+    privada (p. ej. kong:8000), no la dirección por la que entra la gente.
+`)
+    process.exit(1)
+  }
+
   if (esRespuestaNoJson(err)) {
     console.error(`
   La API ha contestado algo que no es JSON, así que ${VARIABLE_DE_LA_URL} no
