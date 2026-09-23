@@ -485,3 +485,67 @@ una concordancia de género en la entradilla, el pie de la tabla de edificios
 que llamaba «sin actividad» a los recortados por sitio, y el diario recortado
 afirmando «ningún movimiento» de días cuyos movimientos no cabían. Verificado
 re-renderizando los dos PDF de prueba (con datos y de periodo vacío).
+
+## 9. Cuarta pasada (23 de septiembre): el Historial que no cargaba
+
+La pestaña Historial se quedaba dando vueltas y no terminaba. Ni con el filtro
+de equipos ni sin filtro ninguno.
+
+**No era la vista.** `room_timeline` une siete consultas, y medida contra la base
+de verificación con 7.765 filas dentro tarda **15 ms**. La misma consulta, los
+mismos datos, ejecutada como un técnico —o sea con RLS puesta— tardaba **31
+segundos**.
+
+Lo que lo explica está en el plan:
+
+```
+Seq Scan on rooms r  (cost=0.00..150.48 rows=5) (actual rows=276)
+  Filter: (auth_role() = ANY ('{tecnico,supervisor,admin}'))
+->  Nested Loop  (loops=276)
+```
+
+`auth_role()` es una llamada a función, y de una llamada a función el
+planificador no tiene estadísticas: supone que filtra casi todo, estima **5**
+filas donde hay **276**, y con esa estimación elige un bucle anidado que
+**recalcula la unión entera una vez por aula**. Doscientas setenta y seis veces.
+
+### El arreglo
+
+Envolver la llamada en un `(select ...)`. Deja de ser un filtro por fila y pasa
+a ser un `InitPlan` que se evalúa una vez, cuyo resultado el planificador sí
+sabe tratar. Las funciones son `stable`, así que dentro de una misma sentencia
+devuelven lo mismo llamadas una vez o un millón: la equivalencia es exacta.
+
+Mismo servidor, mismos datos, mismo técnico:
+
+| | antes | después |
+|---|---|---|
+| Historial sin filtro | 31.118 ms | **14,5 ms** |
+| Historial, filtro de equipos | 30.159 ms | **8,4 ms** |
+
+Son 71 políticas y las reescribe `20260923000100` desde `pg_policies`, no a
+mano: el texto que guarda el catálogo es el que la base ha deparseado, así que
+reescribirlo no puede introducir una diferencia que el catálogo no tuviera ya.
+
+**No es solo el Historial.** Esas políticas están en todas las lecturas de la
+aplicación; el Historial es donde primero dolió porque es la consulta que más
+tablas junta de un tirón.
+
+### La regla, a partir de ahora
+
+En una política de RLS, **toda llamada a `is_staff()`, `is_admin()`,
+`is_supervisor()`, `auth_role()`, `auth.uid()` o `auth.jwt()` va envuelta en un
+`(select ...)`**. La prueba 80 de `rls-test.sql` lo comprueba sobre el catálogo
+vivo y falla nombrando la política que se haya dejado suelta.
+
+Tres detalles que costaron una vuelta cada uno, por si hay que volver a tocar
+ese regex:
+
+- Postgres guarda la política **deparseada**, y ahí el `select` vuelve en
+  mayúsculas: `( SELECT is_staff() AS is_staff)`. Con el regex en minúsculas, lo
+  ya envuelto parecía crudo y se envolvía otra vez, sin tope.
+- El nombre corto está dentro del largo: en `public.is_staff()` la coincidencia
+  puede empezar en `is_staff` y saltarse la comprobación del `select` de
+  delante. De ahí el `(?<!\.)`.
+- `uid` y `jwt` solo cuentan detrás de `auth.`: sueltas son palabras demasiado
+  cortas para andar por un `where`.

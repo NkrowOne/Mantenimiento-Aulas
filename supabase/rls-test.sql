@@ -4499,3 +4499,34 @@ begin;
     raise notice 'OK: Teams y Zoom salen del inventario y queda escrito por qué';
   end $$;
 rollback;
+
+\echo ''
+\echo '=== 80. Ninguna política se llama a sí misma una vez por fila ==='
+-- Es una prueba de forma, no de permisos, y está aquí porque el precio de
+-- romperla no se ve: la política sigue dejando pasar exactamente lo mismo y la
+-- pantalla que la usa deja de cargar. Medido sobre esta misma base, el
+-- Historial pasaba de 15 ms a 31 SEGUNDOS por esto — una llamada a función no
+-- se puede estimar, el planificador supone que filtra casi todo, y elige un
+-- bucle que recalcula la consulta entera una vez por aula.
+--
+-- Envuelta en `(select ...)` se evalúa una vez. Las funciones son `stable`, así
+-- que lo que la política deja pasar no cambia: lo comprueban las 79 pruebas de
+-- arriba, que son las que miran los permisos de verdad.
+do $$
+declare
+  v_re    text := '(?i)(?<!select )(?<!\.)\m((public\.)?(auth_role|is_staff|is_admin|is_supervisor)|auth\.(uid|jwt))\(\)';
+  v_malas text;
+  v_n     int;
+begin
+  select count(*), string_agg(format('%s → «%s»', tablename, policyname), ', ' order by tablename)
+    into v_n, v_malas
+    from pg_policies
+   where schemaname = 'public'
+     and (coalesce(qual, '') ~ v_re or coalesce(with_check, '') ~ v_re);
+
+  if v_n > 0 then
+    raise exception 'FALLO: % políticas llaman a la función por fila: %', v_n, v_malas;
+  end if;
+  raise notice 'OK: las % políticas de public resuelven quién pregunta una sola vez',
+    (select count(*) from pg_policies where schemaname = 'public');
+end $$;

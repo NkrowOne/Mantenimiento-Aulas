@@ -191,6 +191,22 @@ interface Props {
   onInventario?: () => void
 }
 
+/**
+ * El rayo de «guardar y cerrar de una vez».
+ *
+ * Un componente y no dos copias porque se pinta en dos sitios —la tecla y la
+ * línea que la explica— y si dejan de ser el mismo dibujo, la explicación deja
+ * de señalar nada. El tamaño lo pone quien lo usa: 20 en la tecla, 14 dentro
+ * de una línea de texto.
+ */
+function Rayo({ className }: { className?: string }): React.ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+      <path d="M14.5 2 6 13.2h4.6L9.5 22 18 10.8h-4.6L14.5 2Z" />
+    </svg>
+  )
+}
+
 export function RoomSheet({
   room,
   buildingName,
@@ -281,6 +297,16 @@ export function RoomSheet({
   /* Qué avería tiene abierto el formulario de cierre. Solo una: se cierra lo que
      se acaba de arreglar, no se despacha una lista. */
   const [resolviendo, setResolviendo] = useState<string | null>(null)
+  /*
+   * Si el botón que se pulsó fue «Guardar y cerrar».
+   *
+   * Un `ref` y no un estado porque se lee dentro de la mutación, que arranca en
+   * el mismo gesto que lo pone: un `setState` no habría llegado a tiempo y la
+   * avería se guardaría sin abrir su cierre, que es justo lo que se pidió.
+   */
+  const cerrarAlGuardar = useRef(false)
+  /** La que se acaba de abrir para cerrarla del tirón, hasta que se ve. */
+  const [recienAbierta, setRecienAbierta] = useState<string | null>(null)
   /* El acuse del cierre, y por qué no comparte el de registrar: la avería
      desaparece de la lista en el acto, y sin una frase que lo diga el gesto se
      lee como si la ficha hubiera perdido la fila. */
@@ -418,6 +444,21 @@ export function RoomSheet({
    * —'incident' está en `IGNORE_DUPLICATES`—. Aquí no hay clave ajena a una
    * revisión que ordenar: `opened_from_inspection_id` va nulo.
    */
+  /*
+   * Y llevar la vista hasta ella.
+   *
+   * El cierre se abre dentro de «Averías abiertas», que en un móvil queda una
+   * pantalla y media más abajo: sin esto, pulsar «Guardar y cerrar» parecía no
+   * hacer nada más que vaciar el formulario. Se salta a la cabecera de la
+   * sección y no al formulario porque la cabecera ya está pintada; el
+   * formulario aparece en el mismo fotograma, justo debajo.
+   */
+  useEffect(() => {
+    if (!recienAbierta) return
+    document.getElementById('sec-averias')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setRecienAbierta(null)
+  }, [recienAbierta])
+
   const registrar = useMutation({
     mutationFn: async () => {
       // Segunda capa: la pantalla ya lo enseña. La base lo rechazaría en la
@@ -465,14 +506,40 @@ export function RoomSheet({
       }
       void flush()
 
-      return { completo: titulo.length > 0, fotos: fotosNuevas.length }
+      return { id: fila.id, completo: titulo.length > 0, fotos: fotosNuevas.length }
     },
-    onSuccess: ({ completo, fotos }) => {
+    onSuccess: ({ id, completo, fotos }) => {
       const conFotos = fotos > 0 ? ` Con ${cuantos(fotos, 'foto', 'fotos')}.` : ''
+
+      /*
+       * Y si se pidió cerrarla del tirón, se abre su cierre aquí mismo.
+       *
+       * Es el caso de quien llega, ve el cable suelto y lo enchufa: abrir y
+       * cerrar son el mismo minuto, y hasta ahora eran dos pantallas —guardar
+       * aquí, irse a Incidencias, buscarla en una lista de trescientas y
+       * resolverla allí—, con el aula ya a la espalda. El formulario de cierre
+       * es el mismo de siempre, con sus fotos y su material: lo único que
+       * cambia es que se abre solo, encima de la avería recién creada.
+       *
+       * Solo con descripción: un borrador no se puede resolver —`sePuedeResolver`
+       * exige `abierta`— y ofrecerlo sería un botón que no hace nada.
+       */
+      const express = cerrarAlGuardar.current && completo
+      if (express) {
+        setResolviendo(id)
+        setRecienAbierta(id)
+      }
+      cerrarAlGuardar.current = false
+
       setGuardado(
-        completo
-          ? `${INCIDENT_KIND_LABELS[kind]} registrada.${conFotos} Sube en cuanto haya cobertura.`
-          : `Guardado sin describir.${conFotos} Aparecerá en Incidencias para que lo completes.`,
+        express
+          ? // El aviso tiene que decir que falta un paso, porque falta: la
+            // avería está abierta y el cierre, esperando abajo con el teclado
+            // ya a punto. Sin esto, «registrada» se lee como «ya está».
+            `${INCIDENT_KIND_LABELS[kind]} registrada.${conFotos} Abajo, en Averías abiertas, cuenta qué has hecho para cerrarla.`
+          : completo
+            ? `${INCIDENT_KIND_LABELS[kind]} registrada.${conFotos} Sube en cuanto haya cobertura.`
+            : `Guardado sin describir.${conFotos} Aparecerá en Incidencias para que lo completes.`,
       )
       setTexto('')
       setCodigo('')
@@ -785,17 +852,78 @@ export function RoomSheet({
               </p>
             )}
 
-            <button
-              type="submit"
-              disabled={registrar.isPending}
-              className="key key-accent mt-3 min-h-11 w-full px-3 text-sm"
-            >
-              {registrar.isPending
-                ? 'Guardando…'
-                : texto.trim()
-                  ? `Guardar ${INCIDENT_KIND_LABELS[kind].toLowerCase()}`
-                  : 'Guardar borrador'}
-            </button>
+            {/*
+              Guardar, y al lado el rayo: guardar y cerrar de una vez.
+
+              Un cable suelto que se enchufa, una regleta que se cambia. Abrir y
+              cerrar son el mismo gesto, y hasta ahora eran dos pantallas: se
+              guardaba aquí, había que irse a Incidencias, buscarla entre
+              trescientas y resolverla allí — con el aula ya a la espalda y
+              muchas veces sin cobertura para cargar la lista. Queda igual de
+              apuntada: la avería existe, con su hora de apertura y su hora de
+              cierre, y el informe la cuenta como cualquier otra.
+
+              **Van en un bloque y no en dos botones**, con el mismo recorte
+              redondeado y un filete entre medias: es el mismo gesto —guardar
+              esto— con dos finales, y dos teclas sueltas una debajo de otra se
+              leen como dos decisiones distintas. Es el patrón que ya usa la
+              fila del maestro para colgarle su menú: `FilaConAcciones`.
+
+              El recorte lo lleva cada mitad por su lado y NO un `overflow-hidden`
+              en el bloque: el foco de esta aplicación es un `outline` con
+              `outline-offset`, y un ancestro que recorta se lo come. Con las
+              esquinas repartidas se ve igual y el teclado sigue sabiendo dónde
+              está.
+
+              El rayo se queda apagado mientras no haya descripción, en vez de
+              desaparecer: un botón que aparece y desaparece bajo el pulgar no
+              se aprende nunca, y lo que le falta lo dice la línea de debajo.
+              Sin descripción la avería nace borrador, y un borrador no se puede
+              resolver.
+            */}
+            <div className="mt-3 flex">
+              <button
+                type="submit"
+                disabled={registrar.isPending}
+                className="key key-accent min-h-11 flex-1 rounded-r-none px-3 text-sm"
+              >
+                {registrar.isPending
+                  ? 'Guardando…'
+                  : texto.trim()
+                    ? `Guardar ${INCIDENT_KIND_LABELS[kind].toLowerCase()}`
+                    : 'Guardar borrador'}
+              </button>
+              <button
+                type="button"
+                disabled={registrar.isPending || texto.trim() === ''}
+                onClick={() => {
+                  setTocado(true)
+                  if (problemaCodigo !== null) return
+                  cerrarAlGuardar.current = true
+                  registrar.mutate()
+                }}
+                aria-label={`Guardar y cerrar: la ${INCIDENT_KIND_LABELS[kind].toLowerCase()} ya está resuelta`}
+                title={`Guardar y cerrar: la ${INCIDENT_KIND_LABELS[kind].toLowerCase()} ya está resuelta`}
+                className="key key-accent flex min-h-11 w-touch shrink-0 items-center justify-center rounded-l-none border-l border-line-soft px-0"
+              >
+                <Rayo className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="mt-2 text-xs leading-relaxed text-muted">
+              {texto.trim() ? (
+                <>
+                  El <Rayo className="inline h-3.5 w-3.5 align-[-0.2em]" /> la guarda y te abre su
+                  cierre aquí mismo, para lo que ya has arreglado.
+                </>
+              ) : (
+                <>
+                  Escribe qué ocurre y se activa el{' '}
+                  <Rayo className="inline h-3.5 w-3.5 align-[-0.2em]" />: guardar y cerrar de una
+                  vez, para lo que ya has arreglado.
+                </>
+              )}
+            </p>
           </form>
         )}
 

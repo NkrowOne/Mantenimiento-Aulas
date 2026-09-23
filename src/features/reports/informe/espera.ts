@@ -102,3 +102,37 @@ export function conPlazo<T>(que: string, ms: number, tarea: PromiseLike<T>): Pro
     )
   })
 }
+
+/**
+ * Un fallo cualquiera, dicho para una pantalla.
+ *
+ * Existe porque el Historial decía «Esta pantalla necesita conexión» pasara lo
+ * que pasara, y eso es adivinar: la mitad de las veces la conexión estaba bien
+ * y lo que había contestado era el servidor. Quien lo lee no puede hacer nada
+ * con una causa inventada, y quien lo arregla tampoco: un parte de «no carga»
+ * sin el motivo obliga a empezar por reproducirlo.
+ *
+ * Tres causas y tres respuestas distintas, que es justo lo que `esSilencio` y
+ * `esRedCaida` ya sabían separar y no se estaba usando fuera del informe. El
+ * mensaje del servidor va tal cual: es feo, y es lo único que sirve para saber
+ * qué pasó.
+ */
+export function comoDecirElFallo(err: unknown): { titulo: string; detalle: string } {
+  if (esRedCaida(err)) {
+    return {
+      titulo: 'No se ha podido conectar.',
+      detalle: 'La petición no llegó a salir del dispositivo. Suele ser cobertura.',
+    }
+  }
+  if (esSilencio(err)) {
+    return {
+      titulo: 'El servidor no ha contestado a tiempo.',
+      detalle: `Se esperó ${Math.round(TOPE_CONSULTA_MS / 1000)} segundos. Vuelve a intentarlo; si se repite, díselo a quien lleva el servidor.`,
+    }
+  }
+  const texto = err instanceof Error ? err.message : String(err ?? '')
+  return {
+    titulo: 'El servidor ha contestado con un error.',
+    detalle: texto || 'Sin mensaje.',
+  }
+}
