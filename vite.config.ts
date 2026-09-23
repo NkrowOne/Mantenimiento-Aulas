@@ -163,6 +163,33 @@ export default defineConfig(({ mode }) => {
         workbox: {
           globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
           /*
+           * Y de esa red se quedan fuera las tres pantallas pesadas.
+           *
+           * El precache se baja ENTERO en cuanto el worker se instala, o sea en
+           * cuanto alguien abre la aplicación después de un despliegue. Eran
+           * 2,7 MB, y 1,4 de ellos —más de la mitad— son cosas que un técnico
+           * no abre en todo el día:
+           *
+           *   echarts       1019 kB   los gráficos del panel y del informe
+           *   CleanupPage    229 kB   el motor del Excel entero
+           *   ReportsPage    139 kB   el informe
+           *
+           * Con 5G en un edificio, ese megabyte y medio va por el mismo tubo
+           * que las consultas de la pantalla que se está mirando, así que la
+           * aplicación compite consigo misma justo al arrancar. Es la respuesta
+           * a «todo carga muy lento», y se notaba más cuanto más se desplegaba.
+           *
+           * Se siguen pudiendo abrir: se bajan al entrar y `runtimeCaching` las
+           * guarda para la próxima. Lo que se pierde es abrirlas **sin red la
+           * primera vez**, y las tres necesitan servidor para hacer su trabajo
+           * —el panel consulta, el informe lo compone el servidor y el Excel va
+           * contra la base—, así que sin red no servían de nada de todos modos.
+           *
+           * Lo que NO sale del precache: el escáner QR (`jsQR`), que se usa en
+           * el aula y justo donde no hay cobertura, y todo lo que entra en el
+           * arranque.
+           */
+          /*
            * El rescate de dispositivos atascados en una versión vieja, dentro
            * del propio service worker: es el único código nuevo que ejecuta un
            * dispositivo cuyo código de página nunca va a activar el worker en
@@ -171,7 +198,32 @@ export default defineConfig(({ mode }) => {
            * precachearlo solo duplicaría la copia.
            */
           importScripts: ['rescate-sw.js'],
-          globIgnores: ['**/rescate-sw.js'],
+          globIgnores: [
+            '**/rescate-sw.js',
+            '**/echarts-*.js',
+            '**/CleanupPage-*.js',
+            '**/ReportsPage-*.js',
+            '**/DashboardPage-*.js',
+          ],
+          /*
+           * Lo que no se precachea se guarda la primera vez que se pide.
+           *
+           * El nombre lleva el hash del contenido, así que una respuesta
+           * guardada no puede quedarse vieja: un despliegue cambia el nombre y
+           * el fichero de antes deja de pedirse. Por eso `CacheFirst` y no
+           * `StaleWhileRevalidate`: no hay nada que revalidar.
+           */
+          runtimeCaching: [
+            {
+              urlPattern: /\/assets\/.*\.(?:js|css)$/,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'trozos-bajo-demanda',
+                expiration: { maxEntries: 40, maxAgeSeconds: 60 * 60 * 24 * 60 },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
+          ],
           // El API nunca se cachea: los datos vienen de Dexie, no del service worker.
           // Cachear PostgREST daría lecturas rancias indistinguibles de las frescas.
           //
@@ -185,6 +237,25 @@ export default defineConfig(({ mode }) => {
         },
       }),
     ],
+    build: {
+      rollupOptions: {
+        output: {
+          /*
+           * `echarts` en su propio trozo, y con nombre.
+           *
+           * Salía en un `index-<hash>.js` anónimo de 1 MB —el fichero más
+           * grande del despliegue, más que la aplicación entera— porque lo
+           * comparten el panel y el informe. Sin nombre no se puede dejar fuera
+           * del precache sin dejar fuera también el arranque, que se llama
+           * igual.
+           */
+          manualChunks(id: string) {
+            if (/node_modules[/\\](echarts|zrender)[/\\]/.test(id)) return 'echarts'
+            return undefined
+          },
+        },
+      },
+    },
     resolve: {
       alias: { '@': path.resolve(__dirname, './src') },
     },

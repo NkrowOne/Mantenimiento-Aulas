@@ -151,3 +151,52 @@ export function planQuitar(apuntes: ApunteDeMaterial[], stockItemId: string): Op
 
   return ops
 }
+
+/**
+ * Juntar de dónde puede venir un apunte sin perder ninguno y sin contar dos.
+ *
+ * Son tres sitios y hasta ahora se miraban dos, que es de donde salía el
+ * material apuntado por duplicado:
+ *
+ *  1. **La cola del dispositivo.** Lo que se acaba de apuntar y no ha salido.
+ *  2. **El servidor.** Lo que ya está guardado.
+ *  3. **Lo que esta pantalla ha encolado y ya no está en la cola**, que es el
+ *     hueco: la cola BORRA la fila al subirla, y la lista del servidor se pedía
+ *     una vez al abrir el panel y no se volvía a pedir nunca. Entre que la fila
+ *     sale de la cola y el servidor la cuenta, el apunte **no estaba en ningún
+ *     sitio**: la línea desaparecía de la pantalla con el cable ya descontado.
+ *     Y quien no ve lo que acaba de apuntar, lo apunta otra vez.
+ *
+ * Contra eso, la pantalla se acuerda de lo que ella misma ha encolado y esos
+ * apuntes cuentan como subidos hasta que el servidor los confirme. Lo peor que
+ * puede pasar entonces es enseñar un momento de más algo que sí ocurrió; lo que
+ * pasaba antes era enseñar de menos algo que ya estaba descontado, y eso lo
+ * paga el almacén.
+ *
+ * El id manda: es el mismo en la cola, en lo recordado y en la fila del
+ * servidor —se genera en el dispositivo y viaja con el movimiento— así que la
+ * misma cosa vista desde dos sitios no se cuenta dos veces. Gana la cola, que
+ * es la única que sabe si el apunte todavía se puede tocar.
+ */
+export function mezclarApuntes(
+  enCola: ApunteDeMaterial[],
+  enElServidor: ApunteDeMaterial[],
+  apuntadosAqui: ApunteDeMaterial[],
+): ApunteDeMaterial[] {
+  const vistos = new Set(enCola.map((a) => a.id))
+  const out = [...enCola]
+
+  // Lo recordado va antes que lo del servidor: es lo más reciente, y así una
+  // línea no salta de sitio en la lista cuando su apunte acaba de subir.
+  for (const a of apuntadosAqui) {
+    if (vistos.has(a.id)) continue
+    vistos.add(a.id)
+    out.push({ ...a, donde: 'arriba' })
+  }
+  for (const a of enElServidor) {
+    if (vistos.has(a.id)) continue
+    vistos.add(a.id)
+    out.push({ ...a, donde: 'arriba' })
+  }
+  return out
+}

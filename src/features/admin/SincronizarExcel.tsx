@@ -269,6 +269,10 @@ export function SincronizarExcel(): React.ReactElement {
     await aplicarOperacion(
       { kind: 'nueva-sala', building: alta.edificioId, zone: alta.zona, code: alta.code, name: alta.code, tipo: 'aula' },
       qc,
+      // Aquí sí se espera al maestro: lo siguiente es releer el libro CONTRA LA
+      // BASE, y sin la sala recién creada delante la fila volvería a no cruzar
+      // y a preguntar la misma duda.
+      { esperarAlMaestro: true },
     )
     const respuestas = { ...analisis.respuestas }
     // La duda deja de existir en cuanto la fila cruza; si por lo que sea sigue,

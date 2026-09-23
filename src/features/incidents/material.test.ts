@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   lineasDeMaterial,
+  mezclarApuntes,
   planQuitar,
   planRestar,
   planSumar,
@@ -148,5 +149,50 @@ describe('quitar el artículo entero', () => {
 
   it('un artículo que no está en la avería no hace nada', () => {
     expect(planQuitar([consumo('m1', 1, 'arriba')], REGLETA)).toEqual([])
+  })
+})
+
+describe('juntar la cola, lo recordado y el servidor', () => {
+  it('un apunte que ya subió pero que el servidor todavía no cuenta no desaparece', () => {
+    /*
+     * El fallo entero, en una prueba. La cola BORRA la fila al subirla y la
+     * lista del servidor se pedía una vez al abrir el panel: entre las dos
+     * cosas, el apunte no estaba en ningún sitio y la línea se iba de la
+     * pantalla con el cable ya descontado. Quien no ve lo que acaba de
+     * apuntar, lo apunta otra vez — y eso lo paga el almacén.
+     */
+    const r = mezclarApuntes([], [], [consumo('m1', 2, 'en_cola')])
+    expect(r).toEqual([{ ...consumo('m1', 2, 'en_cola'), donde: 'arriba' }])
+    expect(unidadesUsadas(r, CABLE)).toBe(2)
+  })
+
+  it('y cuando el servidor lo cuenta, no se cuenta dos veces', () => {
+    const r = mezclarApuntes([], [consumo('m1', 2, 'arriba')], [consumo('m1', 2, 'en_cola')])
+    expect(r).toHaveLength(1)
+    expect(unidadesUsadas(r, CABLE)).toBe(2)
+  })
+
+  it('manda la cola, que es la única que sabe si todavía se puede tocar', () => {
+    const r = mezclarApuntes(
+      [consumo('m1', 2, 'en_cola')],
+      [consumo('m1', 2, 'arriba')],
+      [consumo('m1', 2, 'en_cola')],
+    )
+    expect(r).toEqual([consumo('m1', 2, 'en_cola')])
+  })
+
+  it('lo que está saliendo tampoco se duplica con lo recordado', () => {
+    const r = mezclarApuntes([consumo('m1', 1, 'saliendo')], [], [consumo('m1', 1, 'en_cola')])
+    expect(r).toEqual([consumo('m1', 1, 'saliendo')])
+  })
+
+  it('y las tres fuentes a la vez dan cada apunte una sola vez', () => {
+    const r = mezclarApuntes(
+      [consumo('m3', 1, 'en_cola')],
+      [consumo('m1', 2, 'arriba'), devolucion('m2', 1, 'arriba')],
+      [consumo('m1', 2, 'en_cola'), consumo('m3', 1, 'en_cola')],
+    )
+    expect(r.map((a) => a.id)).toEqual(['m3', 'm1', 'm2'])
+    expect(unidadesUsadas(r, CABLE)).toBe(2)
   })
 })

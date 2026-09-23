@@ -58,6 +58,8 @@ export function ResolverIncidencia({
   incidencia,
   equipo,
   roomId,
+  explicacion = '',
+  conMaterial = false,
   onCerrada,
   onCancelar,
 }: {
@@ -80,12 +82,26 @@ export function ResolverIncidencia({
    * importaron sin sala identificada.
    */
   roomId: string | null
+  /**
+   * Con qué empieza la explicación del cierre. Vacío salvo en el cierre express.
+   *
+   * En el express —abrir y cerrar en el mismo minuto, el cable que se ve suelto
+   * y se enchufa— lo que se acaba de escribir arriba **es** lo que se hizo:
+   * pedirlo otra vez es pedir lo mismo dos veces, y quien lo escribe por segunda
+   * vez lo escribe peor o se lo salta. Viene relleno y se puede cambiar.
+   */
+  explicacion?: string
+  /**
+   * Si el apunte de material empieza abierto. También del express: ahí el
+   * siguiente gesto es elegir el material, no buscar el botón que lo enseña.
+   */
+  conMaterial?: boolean
   onCerrada: () => void
   onCancelar: () => void
 }): React.ReactElement {
   const ayudaId = useId()
   const ayudaCodigoId = useId()
-  const [texto, setTexto] = useState('')
+  const [texto, setTexto] = useState(explicacion)
   /*
    * El ticket de EasyVista, si se tiene al cerrar. Arranca con el que ya
    * tuviera la incidencia —puesto al abrirla— para que cerrar no lo borre ni
@@ -98,8 +114,9 @@ export function ResolverIncidencia({
   const [fotoError, setFotoError] = useState<string | null>(null)
   const [guardandoFoto, setGuardandoFoto] = useState(false)
   /* Si el apunte de material está abierto. Cerrado de partida: la mayoría de las
-     averías se arreglan sin gastar nada, y quien sí ha gastado se acuerda. */
-  const [material, setMaterial] = useState(false)
+     averías se arreglan sin gastar nada, y quien sí ha gastado se acuerda. En
+     el express se abre solo, que es el gesto que viene después de escribir. */
+  const [material, setMaterial] = useState(conMaterial)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const problema = problemaDeExplicacion(texto)

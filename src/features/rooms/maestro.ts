@@ -369,18 +369,70 @@ async function espejo(op: OperacionDeMaestro, respuesta: string | null): Promise
  *     Las dos listas de trabajo no lo necesitan: leen Dexie con `useLiveQuery`
  *     y ya se han repintado en el paso 2.
  *
+ * **Y los pasos 3 y 4 no se esperan.** El cambio está hecho y guardado al
+ * acabar el 2: lo que viene después es refresco, no parte de la operación.
+ * Esperarlo costaba lo que cuesta bajar el maestro ENTERO —nueve tablas
+ * paginadas, con `room_overview` y `assets` dentro— y eso, desde un iPhone por
+ * 5G en el sótano de un edificio, son decenas de segundos en los que la hoja de
+ * «Añadir una sala» se quedaba en «Añadiendo…» con la sala ya creada. Quien la
+ * miraba veía una hoja que no se cierra nunca; y si la descarga no volvía —la
+ * red que se va en un pasillo—, no se cerraba de verdad nunca.
+ *
+ * Que no haga falta esperarlo no es una apuesta: lo dice el propio paso 4. Las
+ * listas leen Dexie con `useLiveQuery` y el paso 2 ya las ha repintado, y el
+ * panel de «Datos» se refresca solo cuando la invalidación llegue, un momento
+ * después. Quien de verdad necesite el maestro entero antes de seguir —hoy solo
+ * la sincronización del Excel, que relee el libro contra la base— lo pide con
+ * `esperarAlMaestro`.
+ *
+ * Queda un caso en el que el paso 2 no puede escribir nada, y aun así vale la
+ * pena no esperar: una sala en una **planta que todavía no existe** («Otra
+ * planta… → CAFETERIA»). `create_room` devuelve el uuid de la sala pero no el
+ * de la planta que acaba de crear, y fabricar uno dejaría la sala colgando de
+ * una planta que la descarga no reconoce: dos plantas con el mismo nombre y una
+ * sala huérfana. Así que esa sala aparece en la lista cuando llegue la
+ * descarga, unos segundos después. Es mucho mejor que lo de antes, que era una
+ * hoja que no se cerraba mientras tanto.
+ *
  * Devuelve la frase que se enseña, ya compuesta con lo que el servidor decidió.
  */
-export async function aplicarOperacion(op: OperacionDeMaestro, qc: QueryClient): Promise<string> {
+export interface OpcionesDeOperacion {
+  /**
+   * Esperar a que el maestro entero haya vuelto a bajar antes de dar por
+   * terminada la operación. Por defecto **no**: ver arriba.
+   */
+  esperarAlMaestro?: boolean
+}
+
+export async function aplicarOperacion(
+  op: OperacionDeMaestro,
+  qc: QueryClient,
+  opciones: OpcionesDeOperacion = {},
+): Promise<string> {
   // La interfaz ya deshabilita las acciones sin cobertura; esto cubre la
   // ventana entre abrir la hoja y pulsar, que en un pasillo dura lo que dura.
   if (!navigator.onLine) throw new Error(AVISO_SIN_RED)
 
   const respuesta = await rpcDe(op)
   await espejo(op, respuesta)
-  await pullMaster()
-  void qc.invalidateQueries({ queryKey: ['maestro'] })
-  void qc.invalidateQueries({ queryKey: ['buildings'] })
+
+  /*
+   * El refresco, suelto. Con su `catch` puesto **antes** de soltarlo: una
+   * promesa sin dueño que reviente es un `unhandledrejection`, y aquí reventar
+   * es lo normal —basta con salir del edificio a mitad de descarga—. Lo que no
+   * puede es tumbar nada: el cambio ya está hecho, y `pullMaster` deja su
+   * propio parte en `db.meta` para el diagnóstico de la barra de sincronía.
+   */
+  const refresco = pullMaster()
+    .catch((e: unknown) => {
+      console.warn('El maestro no se ha podido refrescar tras la operación:', e)
+    })
+    .then(() => {
+      void qc.invalidateQueries({ queryKey: ['maestro'] })
+      void qc.invalidateQueries({ queryKey: ['buildings'] })
+    })
+
+  if (opciones.esperarAlMaestro) await refresco
 
   return mensajeDeOperacion(op, respuesta)
 }

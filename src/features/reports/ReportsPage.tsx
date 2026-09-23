@@ -29,6 +29,7 @@ import {
   ventanaEnBlanco,
 } from './informe/imprimir'
 import { ofrecerFichero } from '@/lib/ficheros'
+import { TOPE_CONSULTA_MS, TOPE_PDF_MS, conPlazo } from './informe/espera'
 
 interface ReportRow {
   id: string
@@ -52,6 +53,16 @@ const KIND_LABEL: Record<Kind, string> = {
   semanal: 'Semanal',
   personalizado: 'Del periodo',
 }
+
+/**
+ * Lo que se dice entre las dos pulsaciones.
+ *
+ * Es el texto que sostiene todo el arreglo del iPhone: el PDF ya existe y la
+ * única forma de que llegue a Archivos es un segundo toque. Sin decirlo, el
+ * botón cambia de nombre y parece que no ha pasado nada.
+ */
+const LISTO_PULSA_GUARDAR =
+  'El PDF ya está hecho. Pulsa «Guardar el PDF» para llevártelo: en el iPhone y el iPad se abre la hoja de compartir, y desde ahí va a Archivos, a Correo o a SharePoint.'
 
 const PASOS: Record<Paso, string> = {
   datos: 'Leyendo los datos del periodo',
@@ -127,7 +138,19 @@ export function ReportsPage(): React.ReactElement {
     nombre: string
     blob: Blob
   } | null>(null)
-  const [pdfEntregado, setPdfEntregado] = useState<'compartido' | 'descargado' | null>(null)
+  /*
+   * Y el aviso del PDF, **con el informe al que pertenece dentro**.
+   *
+   * Antes esto era `falloDescarga`, que se pinta al final de la página, detrás
+   * del archivo entero. El botón está arriba, en la tarjeta del informe recién
+   * hecho: quien lo pulsaba veía «Preparando…», luego el botón volver a su
+   * sitio, y nada más — ni el «ya está, pulsa para guardarlo» ni el error, los
+   * dos a varias pantallas de scroll por debajo, pasado todo el archivo. En un
+   * móvil eso es exactamente lo mismo que no decir nada.
+   */
+  const [avisoPdf, setAvisoPdf] = useState<{ para: string; texto: string; mal: boolean } | null>(
+    null,
+  )
 
   const marco = useRef<HTMLIFrameElement>(null)
 
@@ -169,7 +192,7 @@ export function ReportsPage(): React.ReactElement {
       // Un informe nuevo deja obsoleto el PDF del anterior, y el botón dice
       // «Guardar PDF» sin distinguirlos: se guardaría el de antes.
       setPdfListo(null)
-      setPdfEntregado(null)
+      setAvisoPdf(null)
       setFalloDescarga(null)
       return generarInforme(eleccion, (fase, detalle, fallo) =>
         setPaso({ fase, ...(detalle ? { detalle } : {}), ...(fallo ? { fallo: true } : {}) }),
@@ -233,23 +256,35 @@ export function ReportsPage(): React.ReactElement {
   }): Promise<void> {
     setFalloDescarga(null)
     setPdfListo(null)
-    setPdfEntregado(null)
+    setAvisoPdf(null)
     setPdfDelArchivo(r.id)
+    const mal = (texto: string): void => setAvisoPdf({ para: r.id, texto, mal: true })
     try {
-      const { data, error } = await supabase.storage.from('reports').download(r.storage_path)
+      // Con plazo, como todo lo de esta pantalla: `storage.download` no acepta
+      // señal, así que lo que se corta es la espera. Sin esto, un almacén mudo
+      // dejaba el botón en «Preparando…» antes siquiera de llegar al PDF.
+      const { data, error } = await conPlazo(
+        'El archivo de informes',
+        TOPE_PDF_MS,
+        supabase.storage.from('reports').download(r.storage_path),
+      )
       if (error || !data) {
-        setFalloDescarga(`No se ha podido leer el informe del archivo${error ? `: ${error.message}` : ''}.`)
+        mal(`No se ha podido leer el informe del archivo${error ? `: ${error.message}` : ''}.`)
         return
       }
       const html = await data.text()
-      const { data: sesion } = await supabase.auth.getSession()
+      const { data: sesion } = await conPlazo(
+        'La sesión',
+        TOPE_CONSULTA_MS,
+        supabase.auth.getSession(),
+      )
       const nombre = nombreDeArchivo(r.kind, { start: r.period_start, end: r.period_end }).replace(
         /\.html$/,
         '.pdf',
       )
       const hecho = await prepararPdf(html, nombre, sesion.session?.access_token ?? null)
       if (!hecho.ok) {
-        setFalloDescarga(
+        mal(
           hecho.sinServicio
             ? `No se ha podido preparar el PDF (${hecho.motivo}). Con «Abrir» sale el informe y desde ahí se imprime a PDF.`
             : `No se ha podido preparar el PDF: ${hecho.motivo}.`,
@@ -257,6 +292,12 @@ export function ReportsPage(): React.ReactElement {
         return
       }
       setPdfListo({ para: r.id, nombre: hecho.nombre, blob: hecho.blob })
+      setAvisoPdf({ para: r.id, texto: LISTO_PULSA_GUARDAR, mal: false })
+    } catch (err) {
+      // El plazo salta aquí. Antes no había nada que saltara: la promesa no
+      // terminaba y el `finally` no llegaba, así que el botón se quedaba
+      // deshabilitado en «Preparando…» hasta recargar la página.
+      mal(`No se ha podido preparar el PDF: ${err instanceof Error ? err.message : String(err)}.`)
     } finally {
       setPdfDelArchivo(null)
     }
@@ -271,12 +312,51 @@ export function ReportsPage(): React.ReactElement {
    * querer —o comparte por correo y además quiere guardarlo en Archivos— vuelve
    * a pulsar y ya está, sin otra vuelta al servidor.
    */
-  function guardarPdf(listo: { nombre: string; blob: Blob }): void {
-    setFalloDescarga(null)
-    setPdfEntregado(null)
+  function guardarPdf(listo: { para: string; nombre: string; blob: Blob }): void {
+    setAvisoPdf(null)
     void ofrecerFichero(listo.nombre, listo.blob)
-      .then((via) => setPdfEntregado(via))
-      .catch((e: Error) => setFalloDescarga(`No se ha podido guardar el PDF: ${e.message}`))
+      .then((via) =>
+        setAvisoPdf({
+          para: listo.para,
+          texto:
+            via === 'compartido'
+              ? 'PDF compartido. Ya lo tienes donde lo hayas mandado.'
+              : 'PDF descargado.',
+          mal: false,
+        }),
+      )
+      .catch((e: Error) =>
+        setAvisoPdf({ para: listo.para, texto: `No se ha podido guardar el PDF: ${e.message}`, mal: true }),
+      )
+  }
+
+  /**
+   * El aviso del PDF, pegado al botón que lo produjo y no al final de la página.
+   *
+   * Y mientras se prepara, cuánto puede tardar. No es relleno: el informe se
+   * sube entero al servidor —con las fotos del periodo dentro van varios
+   * megas—, WeasyPrint lo compone y vuelve el fichero. Son decenas de segundos
+   * por 5G, y un botón que solo pone «Preparando…» durante medio minuto se lee
+   * como un botón roto.
+   */
+  function AvisoPdf({ para, preparando }: { para: string; preparando?: boolean }): React.ReactElement | null {
+    if (preparando) {
+      return (
+        <p aria-live="polite" className="mt-2 text-sm text-muted">
+          Mandando el informe al servidor y convirtiéndolo. Puede tardar medio minuto, y algo más si
+          lleva fotos. No cierres la pantalla.
+        </p>
+      )
+    }
+    if (avisoPdf?.para !== para) return null
+    return (
+      <p
+        {...(avisoPdf.mal ? { role: 'alert' as const } : { 'aria-live': 'polite' as const })}
+        className={`mt-2 text-sm ${avisoPdf.mal ? 'text-crit' : 'text-ok'}`}
+      >
+        {avisoPdf.texto}
+      </p>
+    )
   }
 
   const alternar = (clave: string): void =>
@@ -622,15 +702,34 @@ export function ReportsPage(): React.ReactElement {
                   onClick={() => {
                     setFalloDescarga(null)
                     setPdfListo(null)
-                    setPdfEntregado(null)
+                    setAvisoPdf(null)
                     setBajandoPdf(true)
                     void (async () => {
-                      const { data } = await supabase.auth.getSession()
-                      const nombre = nombreDeArchivo(recien.kind, recien.rango).replace(/\.html$/, '.pdf')
-                      const r = await prepararPdf(recien.html, nombre, data.session?.access_token ?? null)
+                      let r: Awaited<ReturnType<typeof prepararPdf>>
+                      try {
+                        const { data } = await conPlazo(
+                          'La sesión',
+                          TOPE_CONSULTA_MS,
+                          supabase.auth.getSession(),
+                        )
+                        const nombre = nombreDeArchivo(recien.kind, recien.rango).replace(/\.html$/, '.pdf')
+                        r = await prepararPdf(recien.html, nombre, data.session?.access_token ?? null)
+                      } catch (err) {
+                        // Ninguna espera de esta pantalla puede ser infinita: el
+                        // botón se deshabilita mientras dura, así que una promesa
+                        // que no termina lo deja muerto hasta recargar.
+                        setBajandoPdf(false)
+                        setAvisoPdf({
+                          para: 'recien',
+                          mal: true,
+                          texto: `No se ha podido preparar el PDF: ${err instanceof Error ? err.message : String(err)}.`,
+                        })
+                        return
+                      }
                       setBajandoPdf(false)
                       if (r.ok) {
                         setPdfListo({ para: 'recien', nombre: r.nombre, blob: r.blob })
+                        setAvisoPdf({ para: 'recien', texto: LISTO_PULSA_GUARDAR, mal: false })
                         return
                       }
                       /*
@@ -641,14 +740,21 @@ export function ReportsPage(): React.ReactElement {
                        */
                       if (r.sinServicio) {
                         const via = imprimirDocumento(recien.html, marco.current)
-                        setFalloDescarga(
-                          via === 'bloqueado'
-                            ? `No se ha podido preparar el PDF (${r.motivo}) y el navegador ha bloqueado la ventana del informe. Permite las ventanas emergentes de esta página, o usa «Descargar el original».`
-                            : `El servidor no ha podido preparar el PDF (${r.motivo}): se ha abierto el informe con el diálogo de imprimir, que también lo guarda como PDF.`,
-                        )
+                        setAvisoPdf({
+                          para: 'recien',
+                          mal: true,
+                          texto:
+                            via === 'bloqueado'
+                              ? `No se ha podido preparar el PDF (${r.motivo}) y el navegador ha bloqueado la ventana del informe. Permite las ventanas emergentes de esta página, o usa «Descargar el original».`
+                              : `El servidor no ha podido preparar el PDF (${r.motivo}): se ha abierto el informe con el diálogo de imprimir, que también lo guarda como PDF.`,
+                        })
                         return
                       }
-                      setFalloDescarga(`No se ha podido preparar el PDF: ${r.motivo}.`)
+                      setAvisoPdf({
+                        para: 'recien',
+                        mal: true,
+                        texto: `No se ha podido preparar el PDF: ${r.motivo}.`,
+                      })
                     })()
                   }}
                   className="key key-accent min-h-11 px-3 text-sm"
@@ -666,6 +772,10 @@ export function ReportsPage(): React.ReactElement {
               </button>
             </div>
           </div>
+
+          {/* Pegado a los botones. Es todo el arreglo: el PDF ya está hecho y
+              falta una pulsación, y eso hay que decirlo donde está el dedo. */}
+          <AvisoPdf para="recien" preparando={bajandoPdf} />
 
           {/* Lo que no ha salido como se pidió, dicho. Que el análisis venga
               calculado cuando se marcó «con IA» no es un detalle: quien lo pidió
@@ -697,14 +807,16 @@ export function ReportsPage(): React.ReactElement {
             className="mt-4 h-[70vh] w-full rounded-card border border-line bg-white"
           />
           {/*
-            Lo que hace cada botón, en una línea. «Descargar PDF» ya baja un
-            fichero de verdad —lo convierte el servidor— y el original en HTML
-            se queda para quien quiera archivarlo o reenviarlo tal cual.
+            Lo que hace cada botón, en una línea. Y por qué son dos pulsaciones,
+            que es lo que más desconcierta de esta pantalla: el PDF lo convierte
+            el servidor y la hoja de compartir del iPhone caduca con el gesto que
+            la pidió, así que no se puede hacer y entregar de un solo toque.
           */}
           <p className="mt-2 text-xs text-muted">
-            «Descargar PDF» baja el documento ya convertido: en el iPad se abre la hoja de compartir
-            para guardarlo en Archivos, y en el ordenador cae en la carpeta de descargas. «Descargar
-            el original» baja el mismo informe en HTML, que es de donde sale.
+            El PDF lo convierte el servidor, y por eso va en dos toques: «Preparar el PDF» lo pide y
+            «Guardar el PDF» te lo lleva. En el iPhone y el iPad se abre la hoja de compartir —a
+            Archivos, a Correo o a SharePoint— y en el ordenador cae en la carpeta de descargas.
+            «Descargar el original» baja el mismo informe en HTML, que es de donde sale.
           </p>
         </section>
       )}
@@ -719,9 +831,22 @@ export function ReportsPage(): React.ReactElement {
               r.params?.secciones && r.params.secciones.length < SECCIONES.length - 1
             const redaccion = redaccionDe(r.params)
             return (
-              <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm">
-                <span className="w-20 shrink-0 font-medium">{KIND_LABEL[r.kind]}</span>
-                <span className="min-w-0 flex-1">
+              /*
+                En columna en el móvil y en fila a partir de `sm`.
+                Estaba en fila siempre, con la fecha en un `flex-1` y la
+                etiqueta y los dos botones detrás sin dejar hueco. En un iPhone
+                eso deja la columna de la fecha en unos sesenta píxeles y
+                «del 9 al 23 de septiembre de 2026» sale **a palabra por línea**
+                —seis renglones para una fecha—, y al pulsar empeora, porque
+                «Preparando…» es más ancho que «PDF» y se come lo poco que
+                quedaba.
+              */
+              <li
+                key={r.id}
+                className="flex flex-col gap-2 py-3 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:gap-y-1"
+              >
+                <span className="font-medium sm:w-20 sm:shrink-0">{KIND_LABEL[r.kind]}</span>
+                <span className="min-w-0 sm:flex-1">
                   <span className="block">
                     {nombrePeriodo({ start: r.period_start, end: r.period_end })}
                   </span>
@@ -739,6 +864,9 @@ export function ReportsPage(): React.ReactElement {
                     </span>
                   )}
                 </span>
+                {/* La etiqueta y los botones, juntos: en el móvil bajan a su
+                    propia línea en vez de estrangular la fecha. */}
+                <div className="flex flex-wrap items-center gap-2">
                 {redaccion && (
                   <span
                     className={`shrink-0 rounded-tag px-2 py-0.5 text-[0.6875rem] font-medium ${redaccion.clase}`}
@@ -773,6 +901,9 @@ export function ReportsPage(): React.ReactElement {
                 >
                   Abrir
                 </button>
+                </div>
+                {/* Debajo de su propia fila, no entre los botones de otra. */}
+                <AvisoPdf para={r.id} preparando={pdfDelArchivo === r.id} />
               </li>
             )
           })}
@@ -797,21 +928,6 @@ export function ReportsPage(): React.ReactElement {
         )}
       </section>
 
-      {/*
-        El PDF hecho y el PDF guardado son dos cosas distintas, y en el iPhone la
-        diferencia importa: entre las dos hay una pulsación que hay que dar. Si
-        el botón se quedara solo diciendo «Guardar PDF» sin explicar por qué ha
-        cambiado, quien lo pulsó una vez creería que no ha pasado nada.
-      */}
-      {(pdfListo || pdfEntregado) && (
-        <p aria-live="polite" className="mt-3 text-sm text-ok">
-          {pdfEntregado === 'compartido'
-            ? 'PDF compartido. Ya lo tienes donde lo hayas mandado.'
-            : pdfEntregado === 'descargado'
-              ? 'PDF descargado.'
-              : 'El PDF está hecho. Pulsa «Guardar PDF» para llevártelo: en el iPhone y el iPad se abre la hoja de compartir, y desde ahí va a Archivos, a Correo o a SharePoint.'}
-        </p>
-      )}
     </div>
   )
 }

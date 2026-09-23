@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { v7 as uuidv7 } from 'uuid'
 import { db, enqueue } from '@/db/dexie'
@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { norm } from '@/domain/normalize'
 import {
   lineasDeMaterial,
+  mezclarApuntes,
   planQuitar,
   planRestar,
   planSumar,
@@ -53,6 +54,22 @@ export function MaterialUsado({
 }): React.ReactElement {
   const [query, setQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const qc = useQueryClient()
+
+  /*
+   * Lo que ESTA pantalla ha encolado, recordado aparte.
+   *
+   * Es el tercer sitio de donde puede venir un apunte, y el que faltaba. La
+   * cola BORRA la fila al subirla y la lista del servidor se pedía una sola vez
+   * al abrir el panel: entre esas dos cosas el apunte no estaba en ningún lado
+   * y la línea desaparecía de la pantalla con el cable ya descontado. Quien no
+   * ve lo que acaba de apuntar, lo apunta otra vez — y eso es exactamente el
+   * material duplicado que se veía.
+   *
+   * En un `ref` y no en estado: no pinta nada por sí solo —lo pinta la mezcla—
+   * y cambiarlo dentro de una operación no tiene por qué provocar un render.
+   */
+  const apuntadosAqui = useRef<ApunteDeMaterial[]>([])
 
   /*
    * Del espejo local: la lista de artículos ya está en el dispositivo, y con
@@ -149,23 +166,30 @@ export function MaterialUsado({
   )
 
   /*
-   * Los dos, sin repetir: mientras el movimiento está subiendo puede llegar por
-   * los dos lados a la vez, y comparten id. Gana el de la cola, que es el que
-   * sabe si ya salió.
+   * Los tres sitios, sin repetir ni perder ninguno. La regla está en
+   * `material.ts`, que es donde se prueba.
    */
-  const idsEnCola = new Set(enCola.map((m) => m.id))
-  const apuntes: ApunteDeMaterial[] = [
-    ...enCola,
-    ...(enElServidor ?? [])
-      .filter((m) => !idsEnCola.has(m.id))
-      .map((m) => ({
-        id: m.id,
-        qty: m.qty,
-        stockItemId: m.stock_item_id,
-        kind: m.kind,
-        donde: 'arriba' as const,
-      })),
-  ]
+  const delServidor: ApunteDeMaterial[] = (enElServidor ?? []).map((m) => ({
+    id: m.id,
+    qty: m.qty,
+    stockItemId: m.stock_item_id,
+    kind: m.kind,
+    donde: 'arriba' as const,
+  }))
+  const apuntes = mezclarApuntes(enCola, delServidor, apuntadosAqui.current)
+
+  /*
+   * En cuanto el servidor cuenta un apunte, se deja de recordar.
+   *
+   * El recuerdo es una red para el hueco entre la cola y el servidor, no un
+   * segundo almacén: mantenerlo después sería quedarse con una copia que ya no
+   * se refresca, y una devolución hecha desde otro sitio no la tocaría.
+   */
+  useEffect(() => {
+    if (!enElServidor) return
+    const arriba = new Set(enElServidor.map((m) => m.id))
+    apuntadosAqui.current = apuntadosAqui.current.filter((a) => !arriba.has(a.id))
+  }, [enElServidor])
 
   const lineas = lineasDeMaterial(apuntes)
 
@@ -191,6 +215,10 @@ export function MaterialUsado({
       occurred_at: new Date().toISOString(),
       by_user: data.session?.user.id ?? null,
     })
+    apuntadosAqui.current = [
+      ...apuntadosAqui.current,
+      { id, qty, stockItemId, kind: qty < 0 ? 'consumo' : 'devolucion', donde: 'arriba' },
+    ]
   }
 
   /**
@@ -237,23 +265,87 @@ export function MaterialUsado({
    * asiento nuevo, que es lo que el plan habría dicho de haberlo sabido. La
    * diferencia entre lo que pedía y lo que había dice de qué signo es.
    */
-  async function ejecutar(ops: Operacion[], stockItemId: string): Promise<void> {
+  async function ejecutar(ops: Operacion[], stockItemId: string, base: ApunteDeMaterial[]): Promise<void> {
     setError(null)
     try {
       for (const op of ops) {
         if (op.tipo === 'consumo') await apuntarNuevo(stockItemId, -op.unidades)
         else if (op.tipo === 'devolucion') await apuntarNuevo(stockItemId, op.unidades)
         else {
-          const antes = apuntes.find((a) => a.id === op.id)?.qty ?? 0
+          const antes = base.find((a) => a.id === op.id)?.qty ?? 0
           const despues = op.tipo === 'borrar' ? 0 : op.qty
           const hecho = await tocarLaCola(op.id, op.tipo === 'borrar' ? 'borrar' : { qty: op.qty })
-          if (!hecho) await apuntarNuevo(stockItemId, despues - antes)
+          if (hecho) {
+            // Lo recordado sigue a la cola: si no, borrar un apunte que aún no
+            // había salido lo dejaría en pantalla para siempre.
+            apuntadosAqui.current =
+              op.tipo === 'borrar'
+                ? apuntadosAqui.current.filter((a) => a.id !== op.id)
+                : apuntadosAqui.current.map((a) => (a.id === op.id ? { ...a, qty: op.qty } : a))
+          } else {
+            await apuntarNuevo(stockItemId, despues - antes)
+          }
         }
       }
-      void flush()
+      /*
+       * Y cuando la cola acabe de subir, se vuelve a preguntar al servidor.
+       *
+       * Faltaba: `['incident-materials']` se pedía al abrir el panel y no se
+       * invalidaba en ningún sitio del proyecto —una sola aparición en todo el
+       * código—, así que la lista del servidor se quedaba congelada en la foto
+       * del principio mientras la cola iba vaciándose debajo.
+       */
+      void flush().then(() => qc.invalidateQueries({ queryKey: ['incident-materials', incidentId] }))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se ha podido apuntar')
     }
+  }
+
+  /**
+   * Un toque, una operación, **y en fila**.
+   *
+   * Dos motivos, y los dos producían material duplicado:
+   *
+   *  - El plan se calculaba con lo que había PINTADO. Entre dos toques
+   *    seguidos —y en un móvil eso son un par de dedos torpes— la lista aún no
+   *    se ha repintado, así que el segundo toque planificaba sobre la foto de
+   *    antes: donde debía subir a dos el apunte que acababa de crear, abría
+   *    otro de uno.
+   *  - Y se ejecutaban a la vez, con lo cual ni siquiera el orden estaba claro.
+   *
+   * Así que el plan se calcula **al ejecutar**, releyendo la cola de Dexie, y
+   * las operaciones van una detrás de otra. El `catch` del encadenado es para
+   * que una que falle no rompa la fila: el error ya se enseña dentro.
+   */
+  const enFila = useRef<Promise<unknown>>(Promise.resolve())
+
+  function pedir(
+    plan: (a: ApunteDeMaterial[], stockItemId: string) => Operacion[],
+    stockItemId: string,
+  ): void {
+    enFila.current = enFila.current.then(
+      async () => {
+        const frescos = mezclarApuntes(await colaDeAhora(), delServidor, apuntadosAqui.current)
+        await ejecutar(plan(frescos, stockItemId), stockItemId, frescos)
+      },
+      () => undefined,
+    )
+  }
+
+  /** La cola tal y como está AHORA, sin pasar por el render. */
+  async function colaDeAhora(): Promise<ApunteDeMaterial[]> {
+    const filas = await db.outbox.where('entity').equals('stock_movement').toArray()
+    return filas
+      .filter((e) => e.payload['incident_id'] === incidentId)
+      .map((e) => ({
+        id: e.id,
+        qty: Number(e.payload['qty'] ?? 0),
+        stockItemId: String(e.payload['stock_item_id'] ?? ''),
+        kind: (e.payload['kind'] === 'devolucion' ? 'devolucion' : 'consumo') as
+          | 'consumo'
+          | 'devolucion',
+        donde: (e.status === 'enviando' ? 'saliendo' : 'en_cola') as 'saliendo' | 'en_cola',
+      }))
   }
 
   return (
@@ -272,7 +364,7 @@ export function MaterialUsado({
                 <span className="inline-flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => void ejecutar(planRestar(apuntes, l.stockItemId), l.stockItemId)}
+                    onClick={() => pedir(planRestar, l.stockItemId)}
                     className="key key-quiet h-11 w-11"
                     aria-label={`Una unidad menos de ${nombreDe(l.stockItemId)}`}
                   >
@@ -286,7 +378,7 @@ export function MaterialUsado({
                   </span>
                   <button
                     type="button"
-                    onClick={() => void ejecutar(planSumar(apuntes, l.stockItemId), l.stockItemId)}
+                    onClick={() => pedir(planSumar, l.stockItemId)}
                     className="key key-quiet h-11 w-11"
                     aria-label={`Una unidad más de ${nombreDe(l.stockItemId)}`}
                   >
@@ -297,7 +389,7 @@ export function MaterialUsado({
                       apuntó de más, que es la corrección de verdad. */}
                   <button
                     type="button"
-                    onClick={() => void ejecutar(planQuitar(apuntes, l.stockItemId), l.stockItemId)}
+                    onClick={() => pedir(planQuitar, l.stockItemId)}
                     className="key key-quiet h-11 w-11 text-crit"
                     aria-label={`Quitar ${nombreDe(l.stockItemId)} de esta avería`}
                   >
@@ -371,7 +463,7 @@ export function MaterialUsado({
               */}
               <button
                 type="button"
-                onClick={() => void ejecutar(planSumar(apuntes, a.id), a.id)}
+                onClick={() => pedir(planSumar, a.id)}
                 className="flex min-h-11 w-full items-center gap-3 py-2 text-left text-sm"
               >
                 <span className="min-w-0 flex-1">{a.name}</span>

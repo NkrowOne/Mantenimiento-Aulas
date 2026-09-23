@@ -22,6 +22,8 @@
  */
 
 
+import { TOPE_PDF_MS, esSilencio, señalConTope } from './espera'
+
 /** Qué se ha podido hacer, para poder decirlo en vez de dejar un botón mudo. */
 export type Resultado = 'ventana' | 'marco' | 'bloqueado'
 
@@ -176,8 +178,26 @@ export async function prepararPdf(
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ html, nombre }),
+      /*
+       * Con plazo. Sin él, una petición que no vuelve nunca —la red que se va
+       * en un pasillo, el proxy que acepta la conexión y se queda mudo— dejaba
+       * el botón en «Preparando…» para siempre: sin error, sin pista y sin
+       * poder volver a pulsar, porque el botón se deshabilita mientras dura.
+       * Es el fallo que se veía en el iPhone y no tenía nada que ver con la
+       * hoja de compartir.
+       */
+      signal: señalConTope(TOPE_PDF_MS),
     })
-  } catch {
+  } catch (err) {
+    // Que no haya contestado y que no se haya podido preguntar son cosas
+    // distintas para quien espera, y las dos llegan aquí como excepción.
+    if (esSilencio(err)) {
+      return {
+        ok: false,
+        motivo: `el servidor no ha contestado en ${Math.round(TOPE_PDF_MS / 1000)} segundos`,
+        sinServicio: true,
+      }
+    }
     // Sin red, o el servicio no está: es el caso en el que hay que caer al
     // diálogo de imprimir sin dar la lata, porque desde ahí sale igual.
     return { ok: false, motivo: 'no se ha podido hablar con el servidor', sinServicio: true }
@@ -205,6 +225,31 @@ export async function prepararPdf(
   if (blob.size === 0) {
     return { ok: false, motivo: 'el PDF ha llegado vacío', sinServicio: true }
   }
+
+  /*
+   * Y que lo que ha llegado **sea** un PDF, no solo que tenga bytes.
+   *
+   * Un 200 no basta. `/informe/pdf` lo atiende el worker y hasta él llega por
+   * un proxy: si esa regla no está publicada —un Caddyfile viejo, el worker
+   * apagado, un despliegue a medias— la petición cae en el comodín que sirve la
+   * aplicación, y lo que vuelve es un `index.html` con 200 y varios kilobytes.
+   * Sin esta comprobación eso se guardaba tal cual, con nombre `.pdf` y tipo
+   * `application/pdf`: un fichero que parece bueno hasta que alguien lo abre,
+   * normalmente el que lo ha recibido por correo.
+   *
+   * Un PDF empieza siempre por `%PDF-`. Cinco bytes, y convierten un fichero
+   * roto en un mensaje que dice dónde mirar.
+   */
+  const cabecera = new TextDecoder().decode(await blob.slice(0, 5).arrayBuffer())
+  if (cabecera !== '%PDF-') {
+    return {
+      ok: false,
+      motivo:
+        'el servidor ha contestado, pero lo que ha llegado no es un PDF (lo normal es que la ruta «/informe/pdf» no esté publicada o el worker esté parado)',
+      sinServicio: true,
+    }
+  }
+
   // El tipo se pone aquí y no se hereda: un servidor que conteste
   // `application/octet-stream` haría que iOS ofreciera «documento» en vez de
   // «PDF» y que Archivos lo guardara sin icono ni vista previa.
