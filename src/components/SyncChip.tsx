@@ -35,6 +35,24 @@ export function SyncChip(): React.ReactElement {
   const [bajando, setBajando] = useState(false)
   const [resultado, setResultado] = useState<string | null>(null)
   const [copiando, setCopiando] = useState(false)
+  /*
+   * La copia ya hecha, esperando el toque que la guarda.
+   *
+   * Hacerla y entregarla son dos pulsaciones por lo mismo que el PDF de los
+   * informes: en iOS la hoja de compartir solo se abre mientras dura la
+   * pulsación que la pidió, y leer de IndexedDB veinte revisiones con sus fotos
+   * —megas de blobs— tarda de sobra para que el permiso caduque. Cuando caduca,
+   * `navigator.share` falla y el `<a download>` de red sobre un `blob:` en iOS
+   * no hace nada: ni descarga, ni abre, ni avisa. Justo en el botón que existe
+   * para que el trabajo de una jornada no dependa de un solo iPad.
+   */
+  const [copiaLista, setCopiaLista] = useState<{
+    nombre: string
+    blob: Blob
+    entradas: number
+    fotos: number
+    fotosIlegibles: number
+  } | null>(null)
   const raiz = useRef<HTMLDivElement>(null)
   const summary = useLiveQuery(() => pendingSummary(), [], null)
   // El parte de la última bajada. `ultimoPull()` existía y no lo leía nadie.
@@ -326,38 +344,60 @@ export function SyncChip(): React.ReactElement {
             permanente enseña a ignorarlo.
           */}
           {pending + rejected > 0 && (
-            <button
-              type="button"
-              disabled={copiando}
-              onClick={() => {
-                setCopiando(true)
-                void (async () => {
-                  try {
-                    const copia = await exportarPendientes()
-                    const via = await ofrecerFichero(copia.nombre, copia.blob)
-                    setResultado(
-                      `Copia de ${copia.entradas} cambios y ${copia.fotos} fotos ` +
-                        `${via === 'compartido' ? 'compartida' : 'guardada'}. ` +
-                        'Mándasela a administración: con ella el trabajo ya no depende de este dispositivo.' +
-                        // Dar por salvado lo que no lo está es peor que no tener
-                        // copia, así que lo que se ha quedado fuera se dice.
-                        (copia.fotosIlegibles > 0
-                          ? ` Ojo: ${copia.fotosIlegibles} fotos no han entrado porque el dispositivo ya no puede leerlas. Hay que repetirlas.`
-                          : ''),
+            copiaLista ? (
+              <button
+                type="button"
+                /* Sin un solo `await` por delante: la hoja de compartir se abre
+                   mientras dura el gesto y un turno de espera la cierra. */
+                onClick={() => {
+                  const copia = copiaLista
+                  void ofrecerFichero(copia.nombre, copia.blob)
+                    .then((via) =>
+                      setResultado(
+                        `Copia de ${copia.entradas} cambios y ${copia.fotos} fotos ` +
+                          `${via === 'compartido' ? 'compartida' : 'guardada'}. ` +
+                          'Mándasela a administración: con ella el trabajo ya no depende de este dispositivo.' +
+                          // Dar por salvado lo que no lo está es peor que no tener
+                          // copia, así que lo que se ha quedado fuera se dice.
+                          (copia.fotosIlegibles > 0
+                            ? ` Ojo: ${copia.fotosIlegibles} fotos no han entrado porque el dispositivo ya no puede leerlas. Hay que repetirlas.`
+                            : ''),
+                      ),
                     )
-                  } catch (err) {
-                    setResultado(
-                      `No se ha podido hacer la copia: ${err instanceof Error ? err.message : String(err)}`,
-                    )
-                  } finally {
-                    setCopiando(false)
-                  }
-                })()
-              }}
-              className="key key-quiet mt-2 w-full px-3 py-2 text-xs"
-            >
-              {copiando ? 'Preparando copia…' : 'Guardar copia de lo pendiente'}
-            </button>
+                    .catch((err: Error) => setResultado(`No se ha podido guardar la copia: ${err.message}`))
+                }}
+                className="key key-accent mt-2 w-full px-3 py-2 text-xs"
+              >
+                Guardar la copia ({copiaLista.entradas} cambios, {copiaLista.fotos} fotos)
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={copiando}
+                onClick={() => {
+                  setCopiando(true)
+                  void (async () => {
+                    try {
+                      const copia = await exportarPendientes()
+                      setCopiaLista(copia)
+                      setResultado(
+                        `Copia preparada: ${copia.entradas} cambios y ${copia.fotos} fotos. ` +
+                          'Pulsa «Guardar la copia» para llevártela.',
+                      )
+                    } catch (err) {
+                      setResultado(
+                        `No se ha podido hacer la copia: ${err instanceof Error ? err.message : String(err)}`,
+                      )
+                    } finally {
+                      setCopiando(false)
+                    }
+                  })()
+                }}
+                className="key key-quiet mt-2 w-full px-3 py-2 text-xs"
+              >
+                {copiando ? 'Preparando copia…' : 'Guardar copia de lo pendiente'}
+              </button>
+            )
           )}
 
           {/* Aquí es donde se viene cuando «algo no va», así que aquí tiene que

@@ -4,6 +4,7 @@ import {
   avisoDeCodigoDeEdificio,
   chocaCodigo,
   mismaPlanta,
+  SIN_CHOQUE,
   normServidor,
   plantaQueAbsorbe,
   sanearCodigo,
@@ -58,6 +59,24 @@ describe('sanearCodigo · el signo menos de la pantalla', () => {
     // Recortar en cada tecla es lo que impide teclear «AULA MAGNA»: el espacio
     // desaparecía antes de llegar a la M.
     expect(sanearCodigo('AULA ')).toBe('AULA ')
+  })
+})
+
+describe('«no choca» es un solo valor', () => {
+  /*
+   * `SIN_CHOQUE` se exporta para que una pantalla pueda decidir que no hay
+   * choque sin preguntar: mientras el alta va de camino, la sala recién creada
+   * ya está en el espejo local y el aviso saltaría contra ella misma —«Ya hay
+   * una sala 0.5» debajo de un botón que pone «Añadiendo…»—.
+   *
+   * Esto ata las dos formas de decir que no hay choque. Si la función empezara
+   * a devolver otra cosa, la pantalla seguiría enseñando la suya y el aviso
+   * volvería por donde vino.
+   */
+  it('el que devuelve la función y el que exporta el módulo son el mismo', () => {
+    expect(chocaCodigo('', [])).toEqual(SIN_CHOQUE)
+    expect(chocaCodigo('9.9', [{ id: 'r1', code: '1.1' }])).toEqual(SIN_CHOQUE)
+    expect(SIN_CHOQUE.con).toBeNull()
   })
 })
 

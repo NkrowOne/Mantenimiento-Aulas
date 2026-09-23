@@ -49,7 +49,9 @@ import { formasDeEscribir, resolverSala } from './cruce'
 import type { Indice, SalaConocida } from './cruce'
 import { idDeDuda } from './dudas'
 import type { Duda, Respuestas, SalaCandidata } from './dudas'
+import { cuantos } from '../lib/plural'
 import { diaEnMadrid } from './fechas'
+import { conFormulasAlDia } from './formulas'
 import { canonizarFila, fusionarCelda, iguales } from './fusion'
 import type { Decision, Dueno, Referencia, Valor } from './fusion'
 import { TITULO_DE_SITUACION, comprobarCabeceras, equipoDe, mesDe } from './mapa'
@@ -2000,15 +2002,41 @@ function valorDeLaFormula(c: Columna, art: ArticuloVolcado, hoja: Hoja): number 
   return null
 }
 
-export function sincronizarBolsa(e: EntradaDeBolsa): Plan {
-  const plan = planVacio(e.hoja.nombre)
-  const cabecera = e.filas.find((f) => f.fila === e.hoja.cabecera)
-  plan.desajustes = comprobarCabeceras(e.hoja, cabecera?.celdas ?? {}).map((d) => ({
+export function sincronizarBolsa(entrada: EntradaDeBolsa): Plan {
+  const plan = planVacio(entrada.hoja.nombre)
+  const cabecera = entrada.filas.find((f) => f.fila === entrada.hoja.cabecera)
+  plan.desajustes = comprobarCabeceras(entrada.hoja, cabecera?.celdas ?? {}).map((d) => ({
     letra: d.letra,
     esperada: d.esperada,
     encontrada: d.encontrada,
   }))
   if (plan.desajustes.length > 0) return plan
+
+  // Antes de comparar nada, las fórmulas se rehacen con los números de la hoja.
+  //
+  // Un `.xlsx` guarda el resultado de cada fórmula junto a la fórmula, y ese
+  // resultado se queda viejo en cuanto la aplicación escribe una celda de las
+  // que depende: calcular fórmulas no se puede hacer aquí, por eso el libro se
+  // marca con `fullCalcOnLoad` para que las rehaga Excel al abrirlo. Hasta
+  // entonces el número guardado miente, y quien lee el fichero —esto— se lo
+  // cree. En el libro de hoy mienten 48 de las 100 celdas de fórmula de la
+  // bolsa, y en cadena: `O8` es `P8−N8` y el `N8` guardado también está viejo.
+  //
+  // No es un detalle cosmético: «Stock Disponible» es la celda contra la que,
+  // cuando manda el Excel, el almacén se cuadra con un movimiento de ajuste.
+  // `O8` trae guardado un 19 y la fórmula da 50; cuadrar contra el 19 borra
+  // treinta y un cables del almacén y no lo ve nadie hasta que alguien cuenta.
+  const { filas: filasAlDia, corregidas } = conFormulasAlDia(entrada.filas)
+  if (corregidas.length > 0) {
+    const peores = corregidas
+      .slice(0, 3)
+      .map((c) => `${c.ref} traía ${c.cacheado} y la fórmula da ${c.real}`)
+      .join('; ')
+    plan.avisos.push(
+      `${cuantos(corregidas.length, 'celda de fórmula traía', 'celdas de fórmula traían')} guardado un resultado viejo (${peores}${corregidas.length > 3 ? '; …' : ''}). Se ha usado lo que dan las fórmulas, que es lo que enseña Excel al abrir el libro.`,
+    )
+  }
+  const e: EntradaDeBolsa = { ...entrada, filas: filasAlDia }
 
   const colNombre = e.hoja.identidad.tipo === 'articulo' ? e.hoja.identidad.columna : 'A'
   const porId = new Map(e.articulos.map((a) => [a.id, a]))

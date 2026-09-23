@@ -299,7 +299,7 @@ lo elegido. Los artículos no llevan fecha y no entran.
 | Fecha de revisión | ✅ | ✅ | Escribirla en el Excel **crea una revisión sin autor**, con `source = 'sharepoint'`, igual que hizo el importador con el histórico. Nunca pisa una revisión hecha en la app con fecha posterior |
 | Quién revisó, checks, fotos, resolución | ⛔ columna de la app | ✅ | Una celda no puede contener una revisión con sus checks y su autor. Va de la app al Excel; si alguien escribe ahí, la pasada siguiente lo devuelve a su valor y lo dice en la hoja `Sincronización` |
 | Incidencias y material consumido | ⛔ columna de la app | ✅ | Ídem: se registran en el aula, con foto y autor |
-| Stock disponible | ⛔ celda de fórmula (`=Comprado − Instalado`) | ⛔ es una suma | En la base es `sum(qty)` sobre `stock_movements` y en el Excel lo calcula la propia hoja. Si los dos números discrepan, entra un movimiento de `ajuste` con nota diciendo de qué celda salió |
+| Stock disponible | ⛔ celda de fórmula (`=Comprado − Instalado`) | ⛔ es una suma | En la base es `sum(qty)` sobre `stock_movements` y en el Excel lo calcula la propia hoja. Si los dos números discrepan, entra un movimiento de `ajuste` con nota diciendo de qué celda salió. El número que se usa es **el que da la fórmula**, no el que el fichero trae cacheado: ver «El valor cacheado de una fórmula miente» |
 
 Las tres filas con ⛔ no son una restricción que se elija: son cosas que una
 celda de texto no puede representar.
@@ -356,6 +356,42 @@ Dos detalles del parcheo:
   de la que cuelga una fórmula: si no, el total cacheado sigue diciendo lo de antes
   hasta que alguien fuerce el recálculo. Hoy el libro trae
   `<calcPr calcId="191028" calcCompleted="0"/>`, sin esa marca.
+
+### El valor cacheado de una fórmula miente, y hay que calcularla
+
+`fullCalcOnLoad` arregla lo que ve **una persona**: Excel rehace las fórmulas al
+abrir el libro y enseña el número bueno. No arregla lo que lee **un programa**.
+
+Un `.xlsx` guarda cada fórmula dos veces —la fórmula (`<f>P8-N8</f>`) y el último
+resultado que alguien calculó (`<v>19</v>`)— y calcular fórmulas no es algo que se
+pueda hacer en el navegador. Así que en cuanto la aplicación escribe una celda de
+las que la fórmula depende, ese `<v>` se queda viejo dentro del fichero hasta que
+alguien lo abra con Excel. En el libro del 23/09/2026: **48 de las 100 celdas de
+fórmula de `Bolsa 2026` traían un resultado viejo** (`O8` decía `19` cuando
+`P8−N8` son `54−4 = 50`). En `Bolsa 2025`, que la aplicación no escribe, las 206
+estaban bien — que es la prueba de dónde viene.
+
+Eso **no ensucia el Excel**: una columna de fórmula no se escribe nunca, así que
+la hoja conserva su fórmula y su número bueno. El peligro va al revés, y tiene una
+víctima concreta: `Stock Disponible` es la celda contra la que —cuando manda el
+Excel— el almacén se cuadra con un movimiento de `ajuste`. Cuadrarlo contra el 19
+en vez de contra el 50 borra treinta y un cables del almacén sin que salte nada, y
+el parte diría que manda el Excel.
+
+Por eso `domain/formulas.ts` **recalcula las fórmulas con los números de la propia
+hoja** antes de comparar nada, y lo dice en el parte. Cubre la aritmética que estos
+libros usan de verdad —`+ - * /`, paréntesis, `SUM` con rangos y referencias a
+otras filas, resolviendo en cadena una fórmula que depende de otra— y tiene una
+regla firme: **lo que no se entiende devuelve `null`** y quien pregunta se queda
+con el valor guardado, que es exactamente lo que había antes. Inventarse el
+resultado de una fórmula que no se sabe leer sería peor que leer uno viejo.
+
+Lo que queda fuera a propósito: el fichero que sale sigue llevando esos `<v>`
+viejos en las celdas de fórmula. A quien lo abra con Excel, LibreOffice o Google
+Sheets le da igual —`fullCalcOnLoad` los rehace— y repararlos obligaría a escribir
+en celdas que hoy no se tocan, que es justo lo que este parcheador promete no
+hacer. Un programa distinto que leyera el fichero sin recalcular sí se los
+creería.
 
 Lo que se paga: alguien tiene que acordarse de hacerlo, y entre que descargas y subes
 puede editarlo otro en SharePoint. Lo segundo **no rompe nada**: se guarda el hash del

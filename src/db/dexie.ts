@@ -326,9 +326,18 @@ export async function leerLibroSincronizado(): Promise<LibroGuardado | null> {
   return (await db.libros.get(ULTIMO_LIBRO)) ?? null
 }
 
-export async function olvidarLibroSincronizado(): Promise<void> {
-  await db.libros.delete(ULTIMO_LIBRO)
-}
+/*
+ * No hay «olvidar el libro», y es a propósito.
+ *
+ * Lo hubo: un botón «Ya lo he subido» que lo borraba de aquí. La idea era no
+ * dejar a la vista un fichero que ya había cumplido, y el efecto era el
+ * contrario del que hace falta: la única copia entera de los datos fuera de la
+ * base desaparecía de un toque, y quien lo pulsaba antes de comprobar que la
+ * subida a SharePoint había ido bien se quedaba sin las dos.
+ *
+ * Es una copia, no un recado. Se queda hasta que la sustituye la sincronización
+ * siguiente, que es cuando deja de ser la buena.
+ */
 
 /**
  * Traslada a `photoBlobs` los bytes de las fotos guardadas por versiones
