@@ -20,6 +20,7 @@ import { lecturaCalculada, senales } from './analisis.js'
 import { configurarIA, redactar } from './ia.js'
 import { leerOpciones } from './opciones.js'
 import { canjearAlta, leerCuerpoPequeno } from './alta.js'
+import { altaCodigo } from './alta-codigo.js'
 import { informePdf } from './informe-pdf.js'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type postgres from 'postgres'
@@ -232,6 +233,19 @@ const server = createServer((req, res) => {
       const cuerpo = await leerCuerpoPequeno(req, res)
       if (cuerpo === null) return
       await canjearAlta(req, res, cuerpo)
+      return
+    }
+
+    /*
+     * Y el código de alta, pedido desde la pantalla de Usuarios. Al revés que
+     * el canje, ESTE sí exige sesión —y de administrador—: lo comprueba
+     * `alta-codigo.ts` contra Supabase y contra el perfil, igual que el PDF.
+     *
+     * Bajo `/alta/*` porque es la ruta que el proxy ya expone y la que se sabe
+     * que funciona, no por parentesco con el canje.
+     */
+    if (req.method === 'POST' && req.url?.startsWith('/alta/codigo')) {
+      await altaCodigo(req, res)
       return
     }
 

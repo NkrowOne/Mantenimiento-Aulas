@@ -45,11 +45,11 @@
  */
 
 import { createClient } from '@supabase/supabase-js'
-import { createHash, randomInt } from 'node:crypto'
 // El mismo número que aplica el canje, importado y no copiado: si los dos se
 // separan, esta orden diría que queda hueco justo cuando `/alta/canjear` está
 // devolviendo 403, y no habría por dónde entender el desacuerdo.
 import { MAX_DISPOSITIVOS } from './alta.js'
+import { CODE_TTL_HOURS, emitirCodigo, generateCode, guardarCodigoNuevo } from './codigos.js'
 
 /**
  * En el contenedor de la PWA no hay `SUPABASE_URL`, pero sí `SUPABASE_UPSTREAM`
@@ -93,25 +93,14 @@ const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 })
 
-/** Horas que dura un código antes de caducar. */
-const CODE_TTL_HOURS = 24
-
-/**
- * Alfabeto sin caracteres confundibles: nada de O/0, I/1/l, S/5.
- * El código se dicta en voz alta o se apunta en un papel, y un carácter ambiguo
- * se traduce en una llamada al admin.
+/*
+ * El alfabeto, el hash, la caducidad y el guardado están en `codigos.ts`.
+ *
+ * Estaban aquí, y desde que la pantalla de Usuarios también emite códigos
+ * serían dos copias: exactamente lo que la cabecera de este fichero avisa que
+ * no puede pasar, porque en cuanto una de las dos cambiara el síntoma sería un
+ * código que la aplicación no reconoce.
  */
-const ALPHABET = 'ABCDEFGHJKMNPQRTUVWXYZ2346789'
-
-function generateCode(): string {
-  const pick = (): string => ALPHABET[randomInt(ALPHABET.length)]!
-  const group = (): string => Array.from({ length: 4 }, pick).join('')
-  return `${group()}-${group()}-${group()}`
-}
-
-function hashCode(code: string): string {
-  return createHash('sha256').update(code).digest('hex')
-}
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)
@@ -236,21 +225,7 @@ async function findUserByEmail(email: string): Promise<{ id: string } | null> {
 }
 
 /** Registra el código y caduca los anteriores del mismo usuario. */
-async function storeCode(profileId: string, code: string): Promise<void> {
-  await admin
-    .from('enrollment_codes')
-    .update({ consumed_at: new Date().toISOString() })
-    .eq('profile_id', profileId)
-    .is('consumed_at', null)
 
-  const expires = new Date(Date.now() + CODE_TTL_HOURS * 3600_000)
-  const { error } = await admin.from('enrollment_codes').insert({
-    profile_id: profileId,
-    code_hash: hashCode(code),
-    expires_at: expires.toISOString(),
-  })
-  if (error) throw error
-}
 
 function announce(email: string, code: string, role: Role, renovado = false): void {
   console.log(`
@@ -285,23 +260,17 @@ ${renovado ? '\n  Ya existía: este código sustituye al anterior, que queda anu
  * los despliegues que no tengan el worker.
  */
 async function nuevoCodigo(id: string, email: string, renovado: boolean): Promise<void> {
-  const code = generateCode()
-
-  const dispositivos = await dispositivosDe(id)
-  const conectados = dispositivos.length
-  // Aparatos, no filas: es el criterio del canje, y contar filas aquí daría un
-  // número distinto del que decide si el código va a servir.
-  const aparatos = new Set(dispositivos.map((d) => d.user_agent ?? '')).size
-
-  if (conectados === 0) {
-    const { error } = await admin.auth.admin.updateUserById(id, { password: code })
-    if (error) {
-      console.error('No se pudo generar el código:', error.message)
-      process.exit(1)
-    }
+  // El trabajo lo hace `codigos.ts`, que es el mismo que usa el botón de la
+  // pantalla de Usuarios. Aquí solo se cuenta lo que ha pasado, que es lo único
+  // en lo que la consola y la pantalla se diferencian.
+  let emitido
+  try {
+    emitido = await emitirCodigo(admin, id)
+  } catch (e) {
+    console.error('No se pudo generar el código:', e instanceof Error ? e.message : String(e))
+    process.exit(1)
   }
-
-  await storeCode(id, code)
+  const { code, dispositivos: conectados, aparatos, cupoLleno } = emitido
 
   if (conectados > 0) {
     console.log(
@@ -326,7 +295,7 @@ async function nuevoCodigo(id: string, email: string, renovado: boolean): Promis
    * justo el caso en que quien administra jura que no tiene ningún dispositivo
    * dentro — y tiene razón—, mientras la tabla dice que tiene tres.
    */
-  if (aparatos >= MAX_DISPOSITIVOS) {
+  if (cupoLleno) {
     console.warn(
       `\n  ⚠ El cupo está lleno (${aparatos} de ${MAX_DISPOSITIVOS} aparatos), así que este código\n` +
         '    NO va a servir en un aparato nuevo: el canje lo rechaza antes de mirarlo.\n' +
@@ -484,7 +453,7 @@ async function crear(): Promise<void> {
     }
   }
 
-  await storeCode(data.user.id, code)
+  await guardarCodigoNuevo(admin, data.user.id, code)
   announce(email, code, role)
 }
 
@@ -981,6 +950,55 @@ Las opciones con nombre (--email, --nombre, --rol) siguen valiendo y ganan.
 }
 
 /**
+ * ¿Este fallo es «no se ha podido ni conectar»?
+ *
+ * Node contesta a eso con dos palabras —«fetch failed»— y esconde el motivo de
+ * verdad en `cause`, que es donde está todo lo que sirve: `ENOTFOUND kong` no
+ * es lo mismo que `ECONNREFUSED`, y de esas dos salen arreglos distintos. Sin
+ * mirarlo, el técnico ve «fetch failed · código de salida 1» y no tiene por
+ * dónde empezar. Pasó, y por eso está esto.
+ */
+function esSinConexion(err: unknown): boolean {
+  const m = err instanceof Error ? err.message : String(err ?? '')
+  return /fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|network/i.test(m)
+}
+
+/** El motivo que Node guarda debajo de «fetch failed», desenterrado. */
+function causaDeRed(err: unknown): string {
+  const partes: string[] = []
+  let actual: unknown = err
+  for (let i = 0; i < 4 && actual instanceof Error; i++) {
+    const c = (actual as Error & { code?: string }).code
+    const h = (actual as Error & { hostname?: string }).hostname
+    const trozo = [c, actual.message, h ? `(${h})` : ''].filter(Boolean).join(' ')
+    if (trozo && !partes.includes(trozo)) partes.push(trozo)
+    actual = (actual as { cause?: unknown }).cause
+  }
+  return partes.join(' → ') || 'sin detalle'
+}
+
+/**
+ * Y si el motivo sigue sin aparecer, se pregunta a pelo.
+ *
+ * `supabase-js` envuelve el fallo de red en un error propio y por el camino se
+ * deja `cause`, que es donde Node guarda lo único que sirve: `ENOTFOUND kong`,
+ * `ECONNREFUSED`, `ETIMEDOUT`. Así que se repite la conexión con `fetch` a
+ * secas —una petición, y solo cuando algo ya ha fallado— para poder decir qué
+ * pasa de verdad. Es lo mismo que hace `quienResponde` para el otro caso.
+ */
+async function porQueNoConecta(url: string): Promise<string> {
+  try {
+    await fetch(`${url.replace(/\/+$/, '')}/auth/v1/health`, {
+      signal: AbortSignal.timeout(8000),
+    })
+    // Ha contestado ahora: entonces no es la red, es intermitente.
+    return 'la conexión funciona al repetirla, así que el corte ha sido momentáneo'
+  } catch (err) {
+    return causaDeRed(err)
+  }
+}
+
+/**
  * ¿El fallo es de leer como JSON algo que no lo era?
  *
  * Es el síntoma de que la URL configurada no lleva a la puerta de entrada de
@@ -1018,6 +1036,34 @@ async function quienResponde(url: string, clave: string): Promise<string> {
 run().catch(async (err) => {
   console.error(err instanceof Error ? err.message : err)
   explicarEsquema(err instanceof Error ? err.message : String(err))
+
+  if (esSinConexion(err)) {
+    console.error(`
+  No se ha podido ni abrir la conexión con la API. Motivo real:
+
+  ${await porQueNoConecta(SUPABASE_URL)}
+
+  Se intentó contra ${SUPABASE_URL}
+  (de ${VARIABLE_DE_LA_URL}).
+
+  Los tres motivos, y se distinguen por el código de arriba:
+
+  ENOTFOUND / EAI_AGAIN — ese nombre no se resuelve desde aquí. Es lo que pasa
+    cuando la orden NO se ejecuta dentro del servicio que está corriendo, sino
+    en un contenedor suelto que la plataforma levanta para el comando: hereda
+    las variables pero no la red interna, así que «kong» no existe para él.
+    Ejecútala dentro del contenedor que sirve la aplicación.
+
+  ECONNREFUSED — el nombre resuelve pero ahí no hay nadie escuchando: Kong
+    parado, o el puerto equivocado en ${VARIABLE_DE_LA_URL}.
+
+  ETIMEDOUT — hay ruta pero nadie contesta. Suele ser un dominio público
+    puesto en ${VARIABLE_DE_LA_URL}: ahí va el host:puerto de Kong en la red
+    privada (p. ej. kong:8000), no la dirección por la que entra la gente.
+`)
+    process.exit(1)
+  }
+
   if (esRespuestaNoJson(err)) {
     console.error(`
   La API ha contestado algo que no es JSON, así que ${VARIABLE_DE_LA_URL} no

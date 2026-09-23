@@ -131,6 +131,24 @@ ni buscar otro comando: repite el mismo `crear`. Si el email ya existe le da un
 código nuevo y **anula el anterior**, y deja el nombre y el rol como estaban
 salvo que los escribas.
 
+### Un código nuevo, desde la propia aplicación
+
+Es lo que hace falta casi siempre —alguien que cambia de móvil, un iPad
+reinstalado, un código caducado— y desde **Datos → Usuarios** se hace sin tocar
+el servidor: el botón **«Dar código»** de cada fila.
+
+El código sale a la vista, con su caducidad y con el aviso de si el cupo de
+dispositivos está lleno (que es cuando un código no va a servir por mucho que
+parezca bueno). **No vuelve a mostrarse**: lo que se guarda es su huella, no el
+código. Si se pierde, se pide otro.
+
+Lo pide `POST /alta/codigo`, que es donde vive la clave de servicio; el
+navegador manda solo la sesión de quien pulsa y allí se comprueba que sea un
+administrador activo. La clave nunca sale del servidor.
+
+Lo que sigue necesitando la terminal: **crear a alguien que no existe** (decide
+su email y su rol de partida) y **liberar el cupo de dispositivos**.
+
 ### Si el despliegue está sobre una plataforma (Skyway, Railway, Fly…)
 
 Ahí no hay repositorio ni `npm`: la imagen del servicio es Caddy sirviendo la

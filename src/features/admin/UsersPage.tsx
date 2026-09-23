@@ -13,17 +13,27 @@
  * Con esto, un administrador que funcione puede arreglar a cualquiera desde el
  * propio dispositivo, sin abrir una terminal.
  *
- * Lo que sigue SIN poder hacerse aquí, y no es un olvido: **crear usuarios y
- * generar códigos de alta**. Eso exige la clave de servicio de Supabase, que
- * salta RLS entera; meterla en el navegador convertiría cualquier sesión robada
- * en el control del sistema completo. Sigue siendo `alta crear`, ejecutado en el
- * servidor, y así debe seguir.
+ * **Y dar un código de alta, que antes tampoco se podía.** El razonamiento de
+ * por qué no era correcto —exige la clave de servicio de Supabase, que salta
+ * RLS entera, y meterla en el navegador convertiría cualquier sesión robada en
+ * el control del sistema completo— pero la conclusión sobraba: la clave no
+ * tiene que ir al navegador para que el botón exista. Se pide a
+ * `POST /alta/codigo`, donde la clave ya vive, mandando la sesión de quien
+ * pulsa; allí se comprueba que sea un administrador activo antes de emitir
+ * nada. Es el mismo reparto que usa el PDF del informe, y más estricto: aquel
+ * lo puede pedir cualquiera del personal.
+ *
+ * Lo que sigue SIN poder hacerse aquí: **crear usuarios**. Dar de alta a
+ * alguien que no existe decide su email y su rol de partida, y eso no es lo que
+ * pide quien pulsa un botón junto a una fila que ya está en la lista. Sigue
+ * siendo `alta crear`, ejecutado en el servidor.
  */
 
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { norm } from '@/domain/normalize'
+import { cuantos } from '@/lib/plural'
 import type { Role } from '@/domain/types'
 import { Cargando, EstadoVacio, FalloDeCarga, Nota, Seccion, mensajeDe } from './Seccion'
 
@@ -43,6 +53,15 @@ const ROLES: Array<{ value: Role; label: string; que: string }> = [
 
 /** A partir de cuántas personas hace falta buscar en vez de leer. */
 const CON_BUSCADOR = 8
+
+/** Lo que contesta `POST /alta/codigo` cuando sale bien. */
+interface CodigoDeAlta {
+  code: string
+  horas: number
+  dispositivos: number
+  aparatos: number
+  cupoLleno: boolean
+}
 
 export function UsersPage({ yo }: { yo: string | null }): React.ReactElement {
   const qc = useQueryClient()
@@ -74,6 +93,55 @@ export function UsersPage({ yo }: { yo: string | null }): React.ReactElement {
       setTocado(input.id)
       void qc.invalidateQueries({ queryKey: ['perfiles'] })
     },
+  })
+
+  /*
+   * El código recién emitido, en pantalla y en memoria: **no se puede volver a
+   * consultar**. Lo que se guarda en la base es su hash, así que si se pierde
+   * hay que emitir otro. Por eso se queda a la vista hasta que se cierra a
+   * propósito, en vez de irse solo con un temporizador.
+   */
+  const [codigo, setCodigo] = useState<{ email: string; datos: CodigoDeAlta } | null>(null)
+  const [falloCodigo, setFalloCodigo] = useState<string | null>(null)
+
+  const pedirCodigo = useMutation({
+    mutationFn: async (p: Perfil): Promise<{ email: string; datos: CodigoDeAlta }> => {
+      const { data: sesion } = await supabase.auth.getSession()
+      const token = sesion.session?.access_token
+      if (!token) throw new Error('No hay sesión con la que pedirlo.')
+
+      const res = await fetch('/alta/codigo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ email: p.email }),
+      })
+      /*
+       * El cuerpo se lee como texto y luego se intenta JSON, no al revés: un
+       * error de este endpoint SIEMPRE trae `{ ok:false, error }`, así que un
+       * código sin ese texto significa que quien contesta no es el worker —un
+       * frontal, un proxy que ya no enruta— y eso se arregla en otro sitio.
+       */
+      const texto = await res.text().catch(() => '')
+      let cuerpo: { ok?: boolean; error?: string } & Partial<CodigoDeAlta> = {}
+      try {
+        cuerpo = JSON.parse(texto) as typeof cuerpo
+      } catch {
+        throw new Error(
+          `El servidor ha respondido ${res.status} y no es el alta quien contesta: ` +
+            `${texto.trim().replace(/\s+/g, ' ').slice(0, 120) || 'cuerpo vacío'}`,
+        )
+      }
+      if (!res.ok || !cuerpo.ok || !cuerpo.code) {
+        throw new Error(cuerpo.error ?? `El servidor ha respondido ${res.status}.`)
+      }
+      return { email: p.email, datos: cuerpo as unknown as CodigoDeAlta }
+    },
+    onMutate: () => {
+      setCodigo(null)
+      setFalloCodigo(null)
+    },
+    onSuccess: (r) => setCodigo(r),
+    onError: (e: Error) => setFalloCodigo(e.message),
   })
 
   const todos = perfiles ?? []
@@ -181,6 +249,23 @@ export function UsersPage({ yo }: { yo: string | null }): React.ReactElement {
                     </button>
                   ))}
 
+                  {/* Solo a quien está de alta: un código para alguien de baja
+                      es una llave que no debería existir, y el servidor lo
+                      rechaza igual. Mejor no ofrecerlo que explicarlo después. */}
+                  {p.active && (
+                    <button
+                      type="button"
+                      disabled={pedirCodigo.isPending}
+                      onClick={() => pedirCodigo.mutate(p)}
+                      title="Un código nuevo para que entre en un dispositivo"
+                      className="key key-quiet ml-auto min-h-11 px-3 text-xs"
+                    >
+                      {pedirCodigo.isPending && pedirCodigo.variables?.id === p.id
+                        ? 'Generando…'
+                        : 'Dar código'}
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     disabled={cambiar.isPending || ultimoAdmin}
@@ -188,11 +273,56 @@ export function UsersPage({ yo }: { yo: string | null }): React.ReactElement {
                       if (p.active && !confirm(`¿Dar de baja a ${p.full_name}? No podrá entrar hasta que se reactive; lo que hizo se conserva.`)) return
                       cambiar.mutate({ id: p.id, patch: { active: !p.active } })
                     }}
-                    className="key key-quiet ml-auto min-h-11 px-3 text-xs text-muted"
+                    className={`key key-quiet min-h-11 px-3 text-xs text-muted ${p.active ? '' : 'ml-auto'}`}
                   >
                     {p.active ? 'Dar de baja' : 'Reactivar'}
                   </button>
                 </div>
+
+                {/* El código y su fallo, pegados a la fila que los pidió: en una
+                    lista de veinte personas, un mensaje al final de la página no
+                    dice de quién es. */}
+                {falloCodigo && pedirCodigo.variables?.id === p.id && (
+                  <p role="alert" className="mt-2 text-xs text-crit">
+                    {falloCodigo}
+                  </p>
+                )}
+
+                {codigo?.email === p.email && (
+                  <div className="mt-2 rounded-ctl border border-accent/40 bg-accent-tint p-3">
+                    <p className="eyebrow">Código de alta</p>
+                    <p className="mt-1 select-all font-mono text-xl font-semibold tracking-wider">
+                      {codigo.datos.code}
+                    </p>
+                    <p className="mt-1.5 text-xs text-muted">
+                      Caduca en {codigo.datos.horas} horas y solo sirve una vez. Se lo dictas junto a
+                      su email la primera vez que abra la aplicación, y después elige su PIN.{' '}
+                      <strong>No vuelve a mostrarse</strong>: lo que se guarda es su huella, no el
+                      código. Si se pierde, pide otro.
+                    </p>
+                    {codigo.datos.dispositivos > 0 && !codigo.datos.cupoLleno && (
+                      <p className="mt-1.5 text-xs text-muted">
+                        Ya tiene {cuantos(codigo.datos.aparatos, 'aparato conectado', 'aparatos conectados')}:
+                        siguen dentro, este código solo sirve para añadir o recuperar uno.
+                      </p>
+                    )}
+                    {codigo.datos.cupoLleno && (
+                      <p className="mt-1.5 rounded-ctl bg-warn-tint p-2 text-xs text-warn">
+                        Ojo: el cupo está lleno ({codigo.datos.aparatos} aparatos), así que este
+                        código <strong>no va a servir en uno nuevo</strong> — el canje lo rechaza
+                        antes de mirarlo. Hay que liberar hueco primero, y eso todavía se hace en el
+                        servidor: <code>alta revocar {codigo.email} --todos</code>.
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setCodigo(null)}
+                      className="key key-quiet mt-2 min-h-11 px-3 text-xs"
+                    >
+                      Ya lo he apuntado
+                    </button>
+                  </div>
+                )}
 
                 {ultimoAdmin && (
                   <p className="mt-2 text-xs text-muted">

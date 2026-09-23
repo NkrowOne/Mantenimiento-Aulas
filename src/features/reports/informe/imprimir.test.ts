@@ -116,6 +116,35 @@ describe('cuando no se puede', () => {
     expect(r).toEqual({ ok: false, motivo: 'no puedes', sinServicio: false })
   })
 
+  it('y si el cuerpo no es el nuestro, se enseña lo que haya venido', async () => {
+    /*
+     * `/informe/pdf` contesta siempre `{ok:false, error}` cuando dice que no.
+     * Un código sin ese texto significa que quien contesta NO es el worker —un
+     * frontal, un portero por delante, una regla de proxy que ya no enruta— y
+     * eso se arregla en otro sitio que una sesión caducada. Antes las dos cosas
+     * se resumían en «el servidor ha respondido 401» y ahí moría la pista.
+     */
+    servidor(
+      new Response('<html><head><title>401 Unauthorized</title></head><body>nginx</body></html>', {
+        status: 401,
+        headers: { 'content-type': 'text/html' },
+      }),
+    )
+    const r = await prepararPdf(HTML, 'informe.pdf', 'token')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.motivo).toContain('401')
+    expect(r.motivo).toContain('no es el informe quien contesta')
+    expect(r.motivo).toContain('text/html')
+    expect(r.motivo).toContain('401 Unauthorized')
+  })
+
+  it('y un cuerpo vacío se dice también, en vez de callarse', async () => {
+    servidor(new Response('', { status: 401 }))
+    const r = await prepararPdf(HTML, 'informe.pdf', 'token')
+    expect(r.ok === false && r.motivo).toContain('cuerpo vacío')
+  })
+
   it('un 200 que trae el index.html no es un PDF', async () => {
     /*
      * `/informe/pdf` lo atiende el worker y hasta él llega por un proxy. Si esa
