@@ -2019,12 +2019,13 @@ export function sincronizarBolsa(entrada: EntradaDeBolsa): Plan {
   // que depende: calcular fórmulas no se puede hacer aquí, por eso el libro se
   // marca con `fullCalcOnLoad` para que las rehaga Excel al abrirlo. Hasta
   // entonces el número guardado miente, y quien lee el fichero —esto— se lo
-  // cree. En el libro de hoy mienten 32 de las 51 filas de la bolsa.
+  // cree. En el libro de hoy mienten 48 de las 100 celdas de fórmula de la
+  // bolsa, y en cadena: `O8` es `P8−N8` y el `N8` guardado también está viejo.
   //
   // No es un detalle cosmético: «Stock Disponible» es la celda contra la que,
   // cuando manda el Excel, el almacén se cuadra con un movimiento de ajuste.
-  // `O8` trae guardado un 19 y `P8−N8` es 45; cuadrar contra el 19 borra
-  // veintiséis cables del almacén y no lo ve nadie hasta que alguien cuenta.
+  // `O8` trae guardado un 19 y la fórmula da 50; cuadrar contra el 19 borra
+  // treinta y un cables del almacén y no lo ve nadie hasta que alguien cuenta.
   const { filas: filasAlDia, corregidas } = conFormulasAlDia(entrada.filas)
   if (corregidas.length > 0) {
     const peores = corregidas

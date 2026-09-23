@@ -10,13 +10,15 @@
  * Y ese número **se queda viejo en cuanto la aplicación escribe una celda de las
  * que la fórmula depende**, porque calcular fórmulas no es algo que se pueda
  * hacer aquí: el libro se marca con `fullCalcOnLoad` para que Excel las rehaga
- * al abrirlo, y hasta entonces el `<v>` miente. En el libro de hoy mienten 32 de
- * las 51 filas de la bolsa: `O8` trae guardado un 19 cuando `P8−N8` es 54−9=45.
+ * al abrirlo, y hasta entonces el `<v>` miente. En el libro de hoy mienten 48 de
+ * las 100 celdas de fórmula de la bolsa, y mienten **en cadena**: `O8` trae
+ * guardado un 19, su fórmula es `P8−N8`, y el 9 que `N8` trae guardado también
+ * está viejo —los meses suman 4—, así que el número bueno es 54−4 = 50.
  *
  * Eso no ensucia el Excel —una columna de fórmula no se escribe nunca— pero sí
  * al revés: «Stock Disponible» es la celda con la que, cuando manda el Excel, el
  * almacén se cuadra con un movimiento de ajuste. Cuadrarlo contra un 19 en vez
- * de contra un 45 borra veintiséis cables del almacén sin que salte nada.
+ * de contra un 50 borra treinta y un cables del almacén sin que salte nada.
  *
  * Así que la fórmula se calcula. Solo la aritmética que este libro usa de
  * verdad —`+ - * /`, paréntesis, `SUM` con rangos— y con una regla firme: **lo

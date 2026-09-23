@@ -7,9 +7,11 @@
  * fichero trae ese resultado guardado de la última vez que alguien abrió el
  * libro con Excel, y la aplicación escribe en `P` y en los meses de los que
  * depende `N`, así que el número guardado se queda viejo en cuanto hay una
- * pasada. En el libro de hoy: `O8` dice 19 y `P8−N8` es 54−9 = 45.
+ * pasada. En el libro de hoy `O8` dice 19, y miente en cadena: su fórmula es
+ * `P8−N8`, `P8` vale 54 y el 9 que `N8` trae guardado también está viejo —los
+ * meses suman 4—, así que el número bueno es 50.
  *
- * Cuadrar el almacén contra el 19 borra veintiséis cables y no lo ve nadie.
+ * Cuadrar el almacén contra el 19 borra treinta y un cables y no lo ve nadie.
  */
 import { describe, expect, it } from 'vitest'
 

@@ -1385,7 +1385,7 @@ describe('«Stock Disponible» cuando manda el Excel', () => {
   it('y si el valor guardado de la fórmula está viejo, manda la fórmula', () => {
     /*
      * El caso del libro real, fila 8: la celda trae guardado un 19 de cuando
-     * `P` valía 28, pero `P` ya vale 54 y la fórmula da 45. Excel enseña 45 al
+     * `P` valía 33, pero `P` ya vale 59 y la fórmula da 45. Excel enseña 45 al
      * abrir el libro —se marca con `fullCalcOnLoad` justo para eso— y quien
      * corrigió el inventario en la hoja vio 45.
      *
