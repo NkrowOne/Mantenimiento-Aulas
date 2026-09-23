@@ -45,11 +45,11 @@
  */
 
 import { createClient } from '@supabase/supabase-js'
-import { createHash, randomInt } from 'node:crypto'
 // El mismo número que aplica el canje, importado y no copiado: si los dos se
 // separan, esta orden diría que queda hueco justo cuando `/alta/canjear` está
 // devolviendo 403, y no habría por dónde entender el desacuerdo.
 import { MAX_DISPOSITIVOS } from './alta.js'
+import { CODE_TTL_HOURS, emitirCodigo, generateCode, guardarCodigoNuevo } from './codigos.js'
 
 /**
  * En el contenedor de la PWA no hay `SUPABASE_URL`, pero sí `SUPABASE_UPSTREAM`
@@ -93,25 +93,14 @@ const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 })
 
-/** Horas que dura un código antes de caducar. */
-const CODE_TTL_HOURS = 24
-
-/**
- * Alfabeto sin caracteres confundibles: nada de O/0, I/1/l, S/5.
- * El código se dicta en voz alta o se apunta en un papel, y un carácter ambiguo
- * se traduce en una llamada al admin.
+/*
+ * El alfabeto, el hash, la caducidad y el guardado están en `codigos.ts`.
+ *
+ * Estaban aquí, y desde que la pantalla de Usuarios también emite códigos
+ * serían dos copias: exactamente lo que la cabecera de este fichero avisa que
+ * no puede pasar, porque en cuanto una de las dos cambiara el síntoma sería un
+ * código que la aplicación no reconoce.
  */
-const ALPHABET = 'ABCDEFGHJKMNPQRTUVWXYZ2346789'
-
-function generateCode(): string {
-  const pick = (): string => ALPHABET[randomInt(ALPHABET.length)]!
-  const group = (): string => Array.from({ length: 4 }, pick).join('')
-  return `${group()}-${group()}-${group()}`
-}
-
-function hashCode(code: string): string {
-  return createHash('sha256').update(code).digest('hex')
-}
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)
@@ -236,21 +225,7 @@ async function findUserByEmail(email: string): Promise<{ id: string } | null> {
 }
 
 /** Registra el código y caduca los anteriores del mismo usuario. */
-async function storeCode(profileId: string, code: string): Promise<void> {
-  await admin
-    .from('enrollment_codes')
-    .update({ consumed_at: new Date().toISOString() })
-    .eq('profile_id', profileId)
-    .is('consumed_at', null)
 
-  const expires = new Date(Date.now() + CODE_TTL_HOURS * 3600_000)
-  const { error } = await admin.from('enrollment_codes').insert({
-    profile_id: profileId,
-    code_hash: hashCode(code),
-    expires_at: expires.toISOString(),
-  })
-  if (error) throw error
-}
 
 function announce(email: string, code: string, role: Role, renovado = false): void {
   console.log(`
@@ -285,23 +260,17 @@ ${renovado ? '\n  Ya existía: este código sustituye al anterior, que queda anu
  * los despliegues que no tengan el worker.
  */
 async function nuevoCodigo(id: string, email: string, renovado: boolean): Promise<void> {
-  const code = generateCode()
-
-  const dispositivos = await dispositivosDe(id)
-  const conectados = dispositivos.length
-  // Aparatos, no filas: es el criterio del canje, y contar filas aquí daría un
-  // número distinto del que decide si el código va a servir.
-  const aparatos = new Set(dispositivos.map((d) => d.user_agent ?? '')).size
-
-  if (conectados === 0) {
-    const { error } = await admin.auth.admin.updateUserById(id, { password: code })
-    if (error) {
-      console.error('No se pudo generar el código:', error.message)
-      process.exit(1)
-    }
+  // El trabajo lo hace `codigos.ts`, que es el mismo que usa el botón de la
+  // pantalla de Usuarios. Aquí solo se cuenta lo que ha pasado, que es lo único
+  // en lo que la consola y la pantalla se diferencian.
+  let emitido
+  try {
+    emitido = await emitirCodigo(admin, id)
+  } catch (e) {
+    console.error('No se pudo generar el código:', e instanceof Error ? e.message : String(e))
+    process.exit(1)
   }
-
-  await storeCode(id, code)
+  const { code, dispositivos: conectados, aparatos, cupoLleno } = emitido
 
   if (conectados > 0) {
     console.log(
@@ -326,7 +295,7 @@ async function nuevoCodigo(id: string, email: string, renovado: boolean): Promis
    * justo el caso en que quien administra jura que no tiene ningún dispositivo
    * dentro — y tiene razón—, mientras la tabla dice que tiene tres.
    */
-  if (aparatos >= MAX_DISPOSITIVOS) {
+  if (cupoLleno) {
     console.warn(
       `\n  ⚠ El cupo está lleno (${aparatos} de ${MAX_DISPOSITIVOS} aparatos), así que este código\n` +
         '    NO va a servir en un aparato nuevo: el canje lo rechaza antes de mirarlo.\n' +
@@ -484,7 +453,7 @@ async function crear(): Promise<void> {
     }
   }
 
-  await storeCode(data.user.id, code)
+  await guardarCodigoNuevo(admin, data.user.id, code)
   announce(email, code, role)
 }
 
