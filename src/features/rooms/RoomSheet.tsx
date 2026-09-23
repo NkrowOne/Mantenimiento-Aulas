@@ -191,6 +191,22 @@ interface Props {
   onInventario?: () => void
 }
 
+/**
+ * El rayo de «guardar y cerrar de una vez».
+ *
+ * Un componente y no dos copias porque se pinta en dos sitios —la tecla y la
+ * línea que la explica— y si dejan de ser el mismo dibujo, la explicación deja
+ * de señalar nada. El tamaño lo pone quien lo usa: 20 en la tecla, 14 dentro
+ * de una línea de texto.
+ */
+function Rayo({ className }: { className?: string }): React.ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+      <path d="M14.5 2 6 13.2h4.6L9.5 22 18 10.8h-4.6L14.5 2Z" />
+    </svg>
+  )
+}
+
 export function RoomSheet({
   room,
   buildingName,
@@ -836,20 +852,8 @@ export function RoomSheet({
               </p>
             )}
 
-            <button
-              type="submit"
-              disabled={registrar.isPending}
-              className="key key-accent mt-3 min-h-11 w-full px-3 text-sm"
-            >
-              {registrar.isPending
-                ? 'Guardando…'
-                : texto.trim()
-                  ? `Guardar ${INCIDENT_KIND_LABELS[kind].toLowerCase()}`
-                  : 'Guardar borrador'}
-            </button>
-
             {/*
-              Y la vía rápida: lo que se abre y se cierra en el mismo minuto.
+              Guardar, y al lado el rayo: guardar y cerrar de una vez.
 
               Un cable suelto que se enchufa, una regleta que se cambia. Abrir y
               cerrar son el mismo gesto, y hasta ahora eran dos pantallas: se
@@ -859,25 +863,67 @@ export function RoomSheet({
               apuntada: la avería existe, con su hora de apertura y su hora de
               cierre, y el informe la cuenta como cualquier otra.
 
-              Solo aparece con descripción, porque sin ella la avería nace
-              borrador y un borrador no se puede resolver. Y va en tecla
-              secundaria: cerrar en el acto es lo raro, no lo normal.
+              **Van en un bloque y no en dos botones**, con el mismo recorte
+              redondeado y un filete entre medias: es el mismo gesto —guardar
+              esto— con dos finales, y dos teclas sueltas una debajo de otra se
+              leen como dos decisiones distintas. Es el patrón que ya usa la
+              fila del maestro para colgarle su menú: `FilaConAcciones`.
+
+              El recorte lo lleva cada mitad por su lado y NO un `overflow-hidden`
+              en el bloque: el foco de esta aplicación es un `outline` con
+              `outline-offset`, y un ancestro que recorta se lo come. Con las
+              esquinas repartidas se ve igual y el teclado sigue sabiendo dónde
+              está.
+
+              El rayo se queda apagado mientras no haya descripción, en vez de
+              desaparecer: un botón que aparece y desaparece bajo el pulgar no
+              se aprende nunca, y lo que le falta lo dice la línea de debajo.
+              Sin descripción la avería nace borrador, y un borrador no se puede
+              resolver.
             */}
-            {texto.trim() && (
+            <div className="mt-3 flex">
+              <button
+                type="submit"
+                disabled={registrar.isPending}
+                className="key key-accent min-h-11 flex-1 rounded-r-none px-3 text-sm"
+              >
+                {registrar.isPending
+                  ? 'Guardando…'
+                  : texto.trim()
+                    ? `Guardar ${INCIDENT_KIND_LABELS[kind].toLowerCase()}`
+                    : 'Guardar borrador'}
+              </button>
               <button
                 type="button"
-                disabled={registrar.isPending}
+                disabled={registrar.isPending || texto.trim() === ''}
                 onClick={() => {
                   setTocado(true)
                   if (problemaCodigo !== null) return
                   cerrarAlGuardar.current = true
                   registrar.mutate()
                 }}
-                className="key key-quiet mt-2 min-h-11 w-full px-3 text-sm"
+                aria-label={`Guardar y cerrar: la ${INCIDENT_KIND_LABELS[kind].toLowerCase()} ya está resuelta`}
+                title={`Guardar y cerrar: la ${INCIDENT_KIND_LABELS[kind].toLowerCase()} ya está resuelta`}
+                className="key key-accent flex min-h-11 w-touch shrink-0 items-center justify-center rounded-l-none border-l border-line-soft px-0"
               >
-                Guardar y cerrar ahora, ya está resuelto
+                <Rayo className="h-5 w-5" />
               </button>
-            )}
+            </div>
+
+            <p className="mt-2 text-xs leading-relaxed text-muted">
+              {texto.trim() ? (
+                <>
+                  El <Rayo className="inline h-3.5 w-3.5 align-[-0.2em]" /> la guarda y te abre su
+                  cierre aquí mismo, para lo que ya has arreglado.
+                </>
+              ) : (
+                <>
+                  Escribe qué ocurre y se activa el{' '}
+                  <Rayo className="inline h-3.5 w-3.5 align-[-0.2em]" />: guardar y cerrar de una
+                  vez, para lo que ya has arreglado.
+                </>
+              )}
+            </p>
           </form>
         )}
 
