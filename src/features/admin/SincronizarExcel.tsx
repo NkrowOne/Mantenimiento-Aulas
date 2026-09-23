@@ -22,11 +22,7 @@ import { columnaDeCampo, hojaPorNombre } from '@/domain/mapa'
 import type { MovimientoPrevisto } from '@/domain/movimientos'
 import type { Alta, Plan, Referencia } from '@/domain/sincronizar'
 import { fechaCorta, horaCorta } from '@/domain/fechas'
-import {
-  guardarLibroSincronizado,
-  leerLibroSincronizado,
-  olvidarLibroSincronizado,
-} from '@/db/dexie'
+import { guardarLibroSincronizado, leerLibroSincronizado } from '@/db/dexie'
 import type { LibroGuardado } from '@/db/dexie'
 import { Seccion } from './Seccion'
 
@@ -346,6 +342,27 @@ export function SincronizarExcel(): React.ReactElement {
       .finally(() => setEntregando(false))
   }
 
+  /**
+   * Volver a leer el libro guardado contra la aplicación **de ahora**.
+   *
+   * Es lo mismo que elegirlo con el selector de ficheros, sin tener que ir a
+   * buscarlo: la copia ya está en el aparato. Sirve para lo que no tenía
+   * respuesta hasta ahora —«quiero el Excel al día con lo que la aplicación
+   * lleva desde entonces» y «he arreglado un alias del catálogo, ¿entra ya esa
+   * fila?»— sin bajar el fichero, volver a subirlo y perder el sitio.
+   *
+   * No toca la base: deja el análisis en pantalla, que es donde se ve lo que
+   * pasaría. De ahí salen «Ver cómo quedaría el libro» —que tampoco toca nada—
+   * y «Sincronizar».
+   */
+  const ponerAlDia = (g: LibroGuardado): void => {
+    setFallo(null)
+    const fichero = new File([blobDe(new Uint8Array(g.bytes))], g.nombre, {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    leer.mutate({ fichero })
+  }
+
   /*
    * El libro de la última sincronización, esté o no esta pantalla recién
    * abierta. Es lo que contesta «sincronicé esta mañana y ahora quiero subirlo».
@@ -395,7 +412,14 @@ export function SincronizarExcel(): React.ReactElement {
       {/* Antes que nada: el libro de la última sincronización, que es a lo que
           más gente entra aquí. Se esconde mientras hay uno recién hecho en
           pantalla, para no ofrecer dos descargas que se parecen. */}
-      {guardado && !libro && (
+      {/*
+        Se esconde solo cuando hay un libro NUEVO Y SINCRONIZADO en pantalla,
+        que es el único caso en que esta copia ha dejado de ser la buena. Con una
+        vista previa delante sigue estando: la vista previa no se sube a
+        SharePoint, y dejar la copia de verdad oculta detrás de algo que no se
+        puede subir es justo cuando más falta hace tenerla a mano.
+      */}
+      {guardado && !libro?.sincronizado && (
         <ElUltimoLibro
           guardado={guardado}
           ultimaDelServidor={
@@ -406,7 +430,8 @@ export function SincronizarExcel(): React.ReactElement {
           entregado={entregado}
           entregando={entregando}
           onEntregar={() => entregar(guardado.nombre, new Uint8Array(guardado.bytes))}
-          onOlvidar={() => void olvidarLibroSincronizado()}
+          onPonerAlDia={() => ponerAlDia(guardado)}
+          poniendoAlDia={leer.isPending}
         />
       )}
 
@@ -1270,6 +1295,17 @@ interface LibroGenerado {
  * Con la fecha delante y el aviso de si el servidor conoce una salida más
  * nueva: bajar un libro viejo y subirlo a SharePoint devuelve el inventario a
  * una foto anterior, y eso no se nota hasta la sincronización siguiente.
+ *
+ * **No se puede quitar de aquí.** Había un «Ya lo he subido» que lo borraba, y
+ * hacía justo lo contrario de lo que esta tarjeta existe para hacer: la única
+ * copia entera de los datos fuera de la base se iba de un toque, y quien lo
+ * pulsaba antes de comprobar que SharePoint la había aceptado se quedaba sin
+ * las dos. Es una copia, no un recado: se queda hasta que la sustituye la
+ * sincronización siguiente, que es cuando deja de ser la buena.
+ *
+ * En su sitio hay «Ponerlo al día», que es lo que de verdad hacía falta cuando
+ * uno vuelve a esta pantalla: volver a leer **este mismo libro** contra la
+ * aplicación de ahora, sin ir a buscar el fichero ni subirlo otra vez.
  */
 /**
  * ¿El libro guardado aquí sigue siendo el que hay que subir?
@@ -1304,14 +1340,16 @@ function ElUltimoLibro({
   entregado,
   entregando,
   onEntregar,
-  onOlvidar,
+  onPonerAlDia,
+  poniendoAlDia,
 }: {
   guardado: LibroGuardado
   ultimaDelServidor: UltimaSalida | null
   entregado: 'compartido' | 'descargado' | null
   entregando: boolean
   onEntregar: () => void
-  onOlvidar: () => void
+  onPonerAlDia: () => void
+  poniendoAlDia: boolean
 }): React.ReactElement {
   const estado = comoEstaElLibro(guardado, ultimaDelServidor)
 
@@ -1326,7 +1364,9 @@ function ElUltimoLibro({
       <p className="mt-1 text-sm text-muted">
         {estado.que === 'hay otro mas nuevo'
           ? 'Guardado en este aparato, pero no es el último.'
-          : 'Guardado en este aparato. Súbelo a SharePoint sustituyendo el original.'}
+          : 'Guardado en este aparato. Súbelo a SharePoint sustituyendo el original.'}{' '}
+        Se queda aquí siempre: es la copia de los datos a mano, y solo la sustituye la
+        sincronización siguiente.
       </p>
       <p className="mt-1 text-xs text-muted">{guardado.resumen}</p>
 
@@ -1355,8 +1395,14 @@ function ElUltimoLibro({
         >
           {entregando ? 'Entregando…' : 'Descargar el libro'}
         </button>
-        <button type="button" className="key key-quiet min-h-11 px-3 text-sm" onClick={onOlvidar}>
-          Ya lo he subido
+        <button
+          type="button"
+          className="key key-quiet min-h-11 px-3 text-sm"
+          disabled={poniendoAlDia}
+          onClick={onPonerAlDia}
+          title="Vuelve a leer este mismo libro contra la aplicación de ahora"
+        >
+          {poniendoAlDia ? 'Leyéndolo…' : 'Ponerlo al día'}
         </button>
       </div>
       <p className="mt-2 text-xs text-muted">{guardado.nombre}</p>
