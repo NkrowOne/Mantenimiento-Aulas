@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { Tira, useFotos } from '@/components/Fotos'
 import { displayRoomCode, norm } from '@/domain/normalize'
+import { cuantos } from '@/lib/plural'
 import { salasQueCasan, type SalaBuscable } from './busqueda'
 import { CodigoEasyVista } from './CodigoEasyVista'
 import { MaterialUsado } from './MaterialUsado'
@@ -86,7 +87,6 @@ interface Props {
 }
 
 export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
-  const qc = useQueryClient()
   const [showResolved, setShowResolved] = useState(false)
   const [query, setQuery] = useState('')
   /* Qué incidencia tiene abierto el apunte de material. Solo una: el técnico
@@ -343,44 +343,24 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
   }, [fotos])
 
   /*
-   * Empezar una incidencia. **Cerrarla ya no pasa por aquí.**
+   * Aquí ya no se cambia el estado de una incidencia a mano.
    *
-   * Cerrar era este mismo UPDATE con `state: 'resuelta'` y nada más: ni una
-   * palabra sobre qué se hizo, aunque la columna `resolution` lleva ahí desde el
-   * primer esquema. El histórico de las salas es el resultado — «Resuelta:
-   * Proyector: no da imagen» y punto—, y la próxima avería del mismo proyector
-   * empieza a ciegas. Ahora se cierra por `ResolverIncidencia`, que exige la
-   * explicación y va por la cola de salida, igual desde el escritorio que desde
-   * el aula sin cobertura.
+   * Había un botón «Empezar» que la pasaba a `en_curso`, y el estado que
+   * marcaba no lo usa nadie: lo que se abre se atiende y se cierra, casi
+   * siempre el mismo día, y en medio no hay nada que contar. Lo que sí hacía
+   * era pedir tres decisiones en una fila que solo tiene dos —apuntar material,
+   * o darla por resuelta— y dejar la barra de acciones desordenada.
+   *
+   * `en_curso` sigue existiendo en la base y en la etiqueta de estado: hay
+   * incidencias así del histórico importado, y una fila sin nombre para su
+   * propio estado es peor que un botón de más.
+   *
+   * Cerrar tampoco pasa por aquí. Era un UPDATE con `state: 'resuelta'` y nada
+   * más: ni una palabra sobre qué se hizo, aunque la columna `resolution` lleva
+   * ahí desde el primer esquema. Ahora se cierra por `ResolverIncidencia`, que
+   * exige la explicación y va por la cola de salida, igual desde el escritorio
+   * que desde el aula sin cobertura.
    */
-  const advance = useMutation({
-    mutationFn: async (input: { id: string; state: IncidentState }) => {
-      const patch: Record<string, unknown> = { state: input.state }
-
-      /*
-       * Se pide la fila de vuelta, y sin ella esto es un fallo.
-       *
-       * Un UPDATE que no alcanza ninguna fila **no es un error** para PostgREST:
-       * responde 204 con `error` a null. Y a un técnico no le alcanza ninguna —la
-       * única política de UPDATE que le sirve exige que sea su propio borrador—,
-       * así que pulsar el botón entraba por `onSuccess`, invalidaba la consulta,
-       * la lista se redibujaba igual y la incidencia seguía como estaba. Sin un
-       * mensaje, sin un error, sin nada: la pantalla decía que sí y el servidor
-       * decía que no. Y el aviso que hay escrito ahí abajo cuelga de
-       * `advance.isError`, o sea que nunca se pintaba.
-       */
-      const { data, error } = await supabase
-        .from('incidents')
-        .update(patch)
-        .eq('id', input.id)
-        .select('id')
-      if (error) throw error
-      if (!data || data.length === 0) {
-        throw new Error('El servidor no ha aplicado el cambio: hace falta ser supervisor.')
-      }
-    },
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['incidents'] }),
-  })
 
   return (
     <div className="mx-auto max-w-4xl p-4">
@@ -524,7 +504,9 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
                         distinta de haberlo apuntado desde el escritorio. */}
                     {i.opened_from_inspection_id && <>de la revisión · </>}
                     abierta hace{' '}
-                    <span className={stale ? 'font-semibold text-crit' : ''}>{days} días</span>
+                    <span className={stale ? 'font-semibold text-crit' : ''}>
+                      {cuantos(days, 'día', 'días')}
+                    </span>
                   </p>
                   {/* Lo que el técnico escribió en el aula. Estaba guardado y no
                       se pintaba en ningún sitio: quien tiene que arreglarlo leía
@@ -540,11 +522,6 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
                   {resolviendo !== i.id && (
                     <Tira entityType="incident" fotos={fotosPorIncidencia.get(i.id) ?? []} />
                   )}
-                  {/* El ticket de EasyVista se pone o se cambia desde aquí, y
-                      también en una resuelta: es la puerta de «a posteriori». */}
-                  {!esperandoSubir && (
-                    <CodigoEasyVista incidentId={i.id} codigo={i.easyvista_ref} />
-                  )}
                 </div>
 
                 {esperandoSubir && (
@@ -552,45 +529,60 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
                     sin subir
                   </span>
                 )}
+              </div>
 
-                {i.state !== 'resuelta' && !esperandoSubir && (
-                  <div className="ml-auto flex shrink-0 gap-2">
-                    {i.state === 'abierta' && (
+              {/*
+                Una sola barra de acciones, y todo en la misma línea de base.
+
+                Antes eran dos renglones sueltos: el código de EasyVista colgando
+                a la izquierda dentro del bloque de texto, y debajo los botones
+                pegados a la derecha. Dos cosas que se hacen desde la misma fila
+                pintadas como si no tuvieran nada que ver, y un escalón entre
+                medias que no separaba nada.
+
+                El código va a la izquierda porque es un dato con puerta —dice
+                cuál es el ticket y deja cambiarlo—, y las dos acciones a la
+                derecha, donde cae el pulgar. Cuando no caben, bajan juntas y
+                siguen alineadas.
+
+                La barra se pinta también en una resuelta: ponerle el ticket a
+                posteriori es justo lo que se hace desde aquí, y ahí las dos
+                acciones no salen.
+              */}
+              {!esperandoSubir && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <CodigoEasyVista incidentId={i.id} codigo={i.easyvista_ref} className="" />
+
+                  {i.state !== 'resuelta' && (
+                    <div className="ml-auto flex shrink-0 gap-2">
+                      {/* El material también se apunta dentro del cierre, que es
+                          donde alguien se acuerda del cable que ha puesto. Este
+                          botón se queda para la avería que sigue abierta: la
+                          pieza que se cambió mientras se espera otra, que se
+                          gastó igual aunque la avería no se cierre hoy. */}
                       <button
                         type="button"
-                        onClick={() => advance.mutate({ id: i.id, state: 'en_curso' })}
+                        aria-expanded={apuntando === i.id}
+                        onClick={() => setApuntando((a) => (a === i.id ? null : i.id))}
                         className="key key-quiet min-h-11 px-3 text-xs"
                       >
-                        Empezar
+                        Material
                       </button>
-                    )}
-                    {/* El material también se apunta dentro del cierre, que es
-                        donde alguien se acuerda del cable que ha puesto. Este
-                        botón se queda para la avería que sigue abierta: la
-                        pieza que se cambió mientras se espera otra, que se
-                        gastó igual aunque la avería no se cierre hoy. */}
-                    <button
-                      type="button"
-                      aria-expanded={apuntando === i.id}
-                      onClick={() => setApuntando((a) => (a === i.id ? null : i.id))}
-                      className="key key-quiet min-h-11 px-3 text-xs"
-                    >
-                      Material
-                    </button>
-                    {/* Abre el formulario; ya no cierra de un toque. Lo que
-                        pide —qué se ha hecho— es lo único que hace legible el
-                        cierre dentro de seis meses. */}
-                    <button
-                      type="button"
-                      aria-expanded={resolviendo === i.id}
-                      onClick={() => setResolviendo((a) => (a === i.id ? null : i.id))}
-                      className="key key-accent min-h-11 px-3 text-xs"
-                    >
-                      {resolviendo === i.id ? 'Cancelar' : 'Resolver'}
-                    </button>
-                  </div>
-                )}
-              </div>
+                      {/* Abre el formulario; ya no cierra de un toque. Lo que
+                          pide —qué se ha hecho— es lo único que hace legible el
+                          cierre dentro de seis meses. */}
+                      <button
+                        type="button"
+                        aria-expanded={resolviendo === i.id}
+                        onClick={() => setResolviendo((a) => (a === i.id ? null : i.id))}
+                        className="key key-accent min-h-11 px-3 text-xs"
+                      >
+                        {resolviendo === i.id ? 'Cancelar' : 'Resolver'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {apuntando === i.id && <MaterialUsado incidentId={i.id} roomId={i.room_id} />}
 
@@ -661,14 +653,6 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
           </button>
         )}
 
-      {/* `role="alert"` porque ahora sí llega: es la respuesta a un botón que
-          parecía funcionar y no hacía nada. Habla solo de «Empezar»: cerrar ya
-          no pasa por aquí, y lo hace quien la arregló. */}
-      {advance.isError && (
-        <p role="alert" className="mt-4 text-sm text-crit">
-          No se ha podido marcar como empezada: eso es cosa de un supervisor.
-        </p>
-      )}
     </div>
   )
 }

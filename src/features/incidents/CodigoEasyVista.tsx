@@ -24,10 +24,20 @@ import { normalizarCodigoEasyVista, problemaDeCodigoEasyVista } from '@/domain/e
 export function CodigoEasyVista({
   incidentId,
   codigo,
+  className = 'mt-2',
 }: {
   incidentId: string
   /** El que tiene ahora, o nulo. */
   codigo: string | null
+  /**
+   * El aire de arriba, que lo pone quien lo coloca.
+   *
+   * En la ficha de la sala va suelto debajo del texto y necesita su margen; en
+   * la lista de incidencias va dentro de la barra de acciones, alineado con
+   * «Material» y «Resolver», y ahí un margen propio lo dejaría ocho píxeles más
+   * abajo que sus compañeros.
+   */
+  className?: string
 }): React.ReactElement {
   const qc = useQueryClient()
   const ayudaId = useId()
@@ -70,22 +80,26 @@ export function CodigoEasyVista({
           guardar.reset()
           setEditando(true)
         }}
-        className="key key-quiet mt-2 min-h-11 px-3 text-xs"
+        aria-label={codigo ? `Cambiar el código de EasyVista, ahora ${codigo}` : undefined}
+        className={`key key-quiet min-h-11 px-3 text-xs ${className}`}
       >
-        {codigo ? (
-          <>
-            EasyVista <span className="font-mono font-semibold">{codigo}</span> · cambiar
-          </>
-        ) : (
-          'Poner el código de EasyVista'
-        )}
+        {/*
+          Sin repetir el número.
+
+          La línea de datos de la fila ya lo lleva, al lado del número del
+          libro y con la palabra delante, que es donde tiene sentido leerlo:
+          son dos números con la misma pinta y ahí se distinguen. Repetirlo en
+          el botón no añadía nada y le daba a la tecla el ancho de media
+          pantalla, que es lo que descuadraba la barra de acciones.
+        */}
+        {codigo ? 'EasyVista · cambiar' : 'Poner el código de EasyVista'}
       </button>
     )
   }
 
   return (
     <form
-      className="mt-2 rounded-ctl border border-line bg-raised p-3"
+      className={`w-full rounded-ctl border border-line bg-raised p-3 ${className}`}
       onSubmit={(e) => {
         e.preventDefault()
         setTocado(true)
