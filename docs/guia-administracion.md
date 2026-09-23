@@ -924,6 +924,33 @@ update stock_items set name = 'Canaleta de suelo', active = true
 where name = 'mts canaleta de suelo';
 ```
 
+### Retirar, restaurar y renombrar desde la aplicación
+
+Desde el 23 de septiembre no hace falta la terminal para esto. En la pestaña
+**Almacén**, cada artículo lleva dos acciones que **solo ve el administrador**
+(y que la base solo acepta de un administrador, que es quien manda):
+
+- **Retirar del almacén.** Pide un **motivo de al menos diez caracteres**;
+  sin él no se puede confirmar, y la base lo rechaza igual. El artículo pasa a
+  inactivo: sale de la lista y deja de contarse, y **no se borra nada**: sus
+  movimientos, las incidencias que lo citan y los ordenadores ya instalados
+  en las aulas siguen exactamente donde estaban. Quién lo retiró, cuándo y por
+  qué queda en la fila (`retired_at`, `retired_by`, `retired_reason`) y en
+  `Datos → Actividad`.
+- **Ver los artículos retirados → Restaurar.** Lo devuelve al almacén. El
+  motivo se vacía en la fila, pero sigue en el registro de actividad.
+- **Renombrar.** Cambia el nombre y **deja el anterior como alias**, así el
+  Excel y los partes que lo escriban como siempre lo siguen encontrando. Si ya
+  hay otro artículo con ese nombre, lo dice y no cambia nada. Tampoco deja poner
+  un nombre que ya es **alias de otro artículo** —las filas del Excel que hoy
+  caen en ese otro empezarían a caer en este— y dice de cuál es. Y si otro
+  artículo tenía de alias el nombre de antes, se lo quita: desde ese momento
+  empataría con este.
+
+En SQL son `stock_item_retirar(id, motivo)`, `stock_item_restaurar(id)` y
+`stock_item_renombrar(id, nombre)`; las tres comprueban el rol y las dos
+primeras nunca tocan `stock_movements`, `stock_units` ni `assets`.
+
 Cada fusión y cada renombrado quedó registrado con su nombre original:
 
 ```sql
@@ -961,7 +988,10 @@ teclea en la hoja entra aquí (la pasada lo pregunta antes).
   historial), descuenta una unidad del artículo del almacén y deja la unidad
   como «Instalado en 2.1 C · 08/09/2026». Todo en una sola operación: no puede
   quedar un ordenador en dos sitios.
-- **Dar de baja** (supervisor): para el que no va a instalarse.
+- **Dar de baja** (administrador): para el que no va a instalarse. Pide un
+  **motivo de al menos diez caracteres**, que queda en las observaciones de la
+  unidad. Un ordenador instalado en un aula no se da de baja desde aquí: se
+  retira desde el aula, con su destino.
 - Si un equipo que vino de aquí se retira después desde el aula con destino
   «almacén», la unidad vuelve sola a «disponible»; con destino «baja», a
   «baja».
