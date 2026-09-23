@@ -205,6 +205,31 @@ export async function prepararPdf(
   if (blob.size === 0) {
     return { ok: false, motivo: 'el PDF ha llegado vacío', sinServicio: true }
   }
+
+  /*
+   * Y que lo que ha llegado **sea** un PDF, no solo que tenga bytes.
+   *
+   * Un 200 no basta. `/informe/pdf` lo atiende el worker y hasta él llega por
+   * un proxy: si esa regla no está publicada —un Caddyfile viejo, el worker
+   * apagado, un despliegue a medias— la petición cae en el comodín que sirve la
+   * aplicación, y lo que vuelve es un `index.html` con 200 y varios kilobytes.
+   * Sin esta comprobación eso se guardaba tal cual, con nombre `.pdf` y tipo
+   * `application/pdf`: un fichero que parece bueno hasta que alguien lo abre,
+   * normalmente el que lo ha recibido por correo.
+   *
+   * Un PDF empieza siempre por `%PDF-`. Cinco bytes, y convierten un fichero
+   * roto en un mensaje que dice dónde mirar.
+   */
+  const cabecera = new TextDecoder().decode(await blob.slice(0, 5).arrayBuffer())
+  if (cabecera !== '%PDF-') {
+    return {
+      ok: false,
+      motivo:
+        'el servidor ha contestado, pero lo que ha llegado no es un PDF (lo normal es que la ruta «/informe/pdf» no esté publicada o el worker esté parado)',
+      sinServicio: true,
+    }
+  }
+
   // El tipo se pone aquí y no se hereda: un servidor que conteste
   // `application/octet-stream` haría que iOS ofreciera «documento» en vez de
   // «PDF» y que Archivos lo guardara sin icono ni vista previa.

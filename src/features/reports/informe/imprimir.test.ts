@@ -116,6 +116,30 @@ describe('cuando no se puede', () => {
     expect(r).toEqual({ ok: false, motivo: 'no puedes', sinServicio: false })
   })
 
+  it('un 200 que trae el index.html no es un PDF', async () => {
+    /*
+     * `/informe/pdf` lo atiende el worker y hasta él llega por un proxy. Si esa
+     * regla no está publicada —un Caddyfile viejo, el worker parado, un
+     * despliegue a medias— la petición cae en el comodín que sirve la
+     * aplicación: 200, varios kilobytes, y un `index.html` dentro. Sin mirar la
+     * cabecera eso se guardaba con nombre `.pdf` y tipo `application/pdf`: un
+     * fichero que parece bueno hasta que lo abre quien lo ha recibido.
+     */
+    servidor(
+      new Response(new Blob(['<!doctype html><html lang="es"><body>app</body></html>']), {
+        status: 200,
+      }),
+    )
+    const r = await prepararPdf(HTML, 'informe.pdf', 'token')
+    expect(r).toMatchObject({ ok: false, sinServicio: true })
+    expect(r.ok === false && r.motivo).toContain('no es un PDF')
+  })
+
+  it('y un PDF de verdad pasa aunque venga sin tipo', async () => {
+    servidor(new Response(new Blob(['%PDF-1.7\n…']), { status: 200 }))
+    expect((await prepararPdf(HTML, 'informe.pdf', 'token')).ok).toBe(true)
+  })
+
   it('un PDF vacío no se entrega como si fuera bueno', async () => {
     // Un fichero de cero bytes en Archivos es peor que un error: parece que ha
     // ido bien hasta que alguien lo abre, normalmente el que lo ha recibido.
