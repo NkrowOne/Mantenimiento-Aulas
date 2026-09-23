@@ -1347,13 +1347,20 @@ describe('un mes a cero es un mes en blanco', () => {
 
 describe('«Stock Disponible» cuando manda el Excel', () => {
   const cab = fila(1, Object.fromEntries(BOLSA_2026.columnas.map((c) => [c.letra, c.cabecera])))
-  // La hoja dice 19 disponibles con sus fórmulas intactas; la app calcula 28 − 9 = 19 también
-  // en meses, pero su saldo real es otro. Lo que se manda a la base es lo que dice la celda.
+  // La hoja tiene sus fórmulas intactas y la app un saldo distinto: lo que se
+  // manda a la base es lo que dice la celda.
+  //
+  // `P` se calcula a partir del disponible que pide la prueba en vez de ser un
+  // número fijo, y eso no es comodidad: con `P` clavado en 32, pedir 19 dejaba
+  // una fila donde la fórmula da 18 y el valor guardado dice 19 —exactamente el
+  // libro de verdad, con su resultado viejo— y la prueba daba por bueno que la
+  // aplicación se creyera el 19. Una fila que se contradice a sí misma no puede
+  // ser la que dice qué está bien.
   const art = articulo({ meses: [1, 0, 0, 0, 0, 0, 0, 4, 9, 0, 0, 0], comprado: 32, saldo: 28 })
   const filaBolsa = (o: number): FilaLeida =>
     ({
       fila: 2,
-      celdas: { A: art.nombre, B: 1, I: 4, J: 9, N: 14, O: o, P: 32 },
+      celdas: { A: art.nombre, B: 1, I: 4, J: 9, N: 14, O: o, P: o + 14 },
       formulas: { N: 'B2+C2+D2+E2+F2+G2+H2+I2+J2+K2+L2+M2', O: 'P2-N2' },
     }) as FilaLeida
 
@@ -1375,6 +1382,37 @@ describe('«Stock Disponible» cuando manda el Excel', () => {
     expect(p.celdas.some((c) => c.celda === 'O2')).toBe(false)
   })
 
+  it('y si el valor guardado de la fórmula está viejo, manda la fórmula', () => {
+    /*
+     * El caso del libro real, fila 8: la celda trae guardado un 19 de cuando
+     * `P` valía 28, pero `P` ya vale 54 y la fórmula da 45. Excel enseña 45 al
+     * abrir el libro —se marca con `fullCalcOnLoad` justo para eso— y quien
+     * corrigió el inventario en la hoja vio 45.
+     *
+     * Cuadrar el almacén contra el 19 borraría veintiséis cables sin dejar
+     * rastro, y el aviso saldría diciendo que manda el Excel.
+     */
+    const viejo: FilaLeida = {
+      fila: 2,
+      celdas: { A: art.nombre, B: 1, I: 4, J: 9, N: 14, O: 19, P: 59 },
+      formulas: { N: 'B2+C2+D2+E2+F2+G2+H2+I2+J2+K2+L2+M2', O: 'P2-N2' },
+    } as FilaLeida
+    const p = sincronizarBolsa({
+      hoja: BOLSA_2026,
+      filas: [cab, viejo],
+      articulos: [art],
+      resolver: () => art.id,
+      referencia: 'excel',
+    })
+    expect(p.haciaLaBase).toContainEqual(
+      expect.objectContaining({ campo: 'articulo.disponible', letra: 'O', valor: 45 }),
+    )
+    expect(p.haciaLaBase.some((h) => h.campo === 'articulo.disponible' && h.valor === 19)).toBe(false)
+    expect(p.avisos.join(' ')).toContain('O2 traía 19 y la fórmula da 45')
+    // Y la celda sigue sin tocarse: una columna de fórmula no se escribe nunca.
+    expect(p.celdas.some((c) => c.celda === 'O2')).toBe(false)
+  })
+
   it('un disponible negativo no se cuadra: se dice que hay que revisar lo comprado', () => {
     const p = sincronizarBolsa({
       hoja: BOLSA_2026,
@@ -1384,7 +1422,7 @@ describe('«Stock Disponible» cuando manda el Excel', () => {
       referencia: 'excel',
     })
     expect(p.haciaLaBase.filter((h) => h.campo === 'articulo.disponible')).toEqual([])
-    expect(p.avisos.join(' ')).toContain('Total Comprado')
+    expect(p.avisos.join(' ')).toContain('El disponible es negativo')
   })
 
   it('si la hoja y la app coinciden no hay nada que ajustar', () => {
