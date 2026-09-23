@@ -211,12 +211,41 @@ export async function prepararPdf(
      * que arreglar y hay que decirlo.
      */
     const sinServicio = respuesta.status === 404 || respuesta.status === 502 || respuesta.status === 503
+
+    /*
+     * Y si el cuerpo no es el nuestro, se enseña lo que sea que haya venido.
+     *
+     * `/informe/pdf` contesta SIEMPRE `{ ok: false, error: '...' }` cuando dice
+     * que no, así que un código sin ese texto significa que quien ha contestado
+     * **no es el worker**: un frontal de la plataforma, un portero por delante,
+     * una regla de proxy que ya no enruta. Antes eso se resumía en «el servidor
+     * ha respondido 401» y ahí se acababa la pista: el mismo mensaje para «tu
+     * sesión ha caducado» que para «hay algo delante que ni siquiera deja
+     * llegar». Son dos problemas distintos y se arreglan en sitios distintos.
+     *
+     * El cuerpo se lee como texto —no como JSON— porque justo cuando no es JSON
+     * es cuando hace falta verlo. Recortado, en una línea, y sin cabeceras:
+     * basta con las primeras palabras para distinguir un JSON nuestro de un
+     * «<html>…401 Unauthorized…».
+     */
+    const texto = await respuesta.text().catch(() => '')
     let motivo = `el servidor ha respondido ${respuesta.status}`
+    let nuestro = false
     try {
-      const cuerpo = (await respuesta.json()) as { error?: string }
-      if (cuerpo.error) motivo = cuerpo.error
+      const cuerpo = JSON.parse(texto) as { error?: string }
+      if (cuerpo.error) {
+        motivo = cuerpo.error
+        nuestro = true
+      }
     } catch {
-      // Sin cuerpo legible se queda el código, que ya dice algo.
+      // No era JSON. Justo el caso que hay que contar.
+    }
+    if (!nuestro) {
+      const tipo = respuesta.headers.get('content-type') ?? 'sin tipo'
+      const muestra = texto.trim().replace(/\s+/g, ' ').slice(0, 120)
+      motivo =
+        `el servidor ha respondido ${respuesta.status}, y no es el informe quien contesta ` +
+        `(${tipo}): ${muestra || 'cuerpo vacío'}`
     }
     return { ok: false, motivo, sinServicio }
   }
