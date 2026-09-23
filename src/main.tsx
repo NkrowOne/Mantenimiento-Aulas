@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from './App'
 import { registrarServiceWorker } from './sw'
+import { vigilarElTeclado } from './lib/viewport'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -36,6 +37,13 @@ const queryClient = new QueryClient({
 for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
   document.addEventListener(type, (e) => e.preventDefault(), { passive: false })
 }
+
+/*
+ * La barra de pestañas, abajo aunque el teclado de iOS se despiste al bajar:
+ * si al cerrarse deja lo que se ve separado de donde se pinta lo fijo, se
+ * vuelven a juntar. Lo cuenta entero `lib/viewport.ts`.
+ */
+vigilarElTeclado()
 
 /*
  * Antes de pintar nada, y en particular antes del candado: si lo que impide

@@ -56,26 +56,16 @@
   }
 
   /*
-   * Ningún campo por debajo de 16px. Es lo que fija el menú abajo.
+   * Ningún campo por debajo de 16px.
    *
    * Safari de iOS AMPLÍA la página al enfocar un `input`, `textarea` o `select`
    * con la letra por debajo de 16px. No es el pellizco del usuario: lo hace el
-   * navegador, y las tres defensas que hay contra el zoom en esta aplicación
-   * —`user-scalable=no` y `maximum-scale=1` en el `meta` de index.html,
-   * `touch-action` aquí arriba, y los `preventDefault` de `gesture*` en
-   * main.tsx— atacan las tres el pellizco. Ninguna toca este.
-   *
-   * Y ampliada, la aplicación se rompe por un sitio que no parece tener nada que
-   * ver: en WebKit un elemento `fixed` no se pega a lo que se ve —el viewport
-   * visual— sino al de MAQUETACIÓN, que a escala 1 son el mismo y a partir de
-   * ahí no. El de maquetación solo se arrastra cuando el visual choca contra uno
-   * de sus bordes, así que basta con bajar del todo y volver a subir un poco
-   * para que su borde inferior quede varado EN MITAD de la pantalla. Ahí es
-   * donde se pinta `bottom: 0`. El resultado es una barra de pestañas flotando
-   * en medio con contenido por encima y por debajo, y una cabecera `sticky
-   * top-0` pegada a un borde superior que queda fuera de la vista. Los dos
-   * síntomas a la vez, y el estado aguanta hasta que se deshace el zoom: da
-   * tiempo de sobra a hacer una captura y a pensar que la barra está rota.
+   * navegador. En el iPhone ya lo frena el `maximum-scale=1` del `meta` de
+   * index.html; esto es la segunda red, para donde ese `meta` no se respeta —el
+   * iPad pidiendo la versión de escritorio, otros navegadores—. Ampliada, lo
+   * `fixed` deja de coincidir con lo que se ve, igual que cuando el teclado se
+   * despista al bajar: la barra de pestañas fuera de sitio. Lo de la barra lo
+   * cuenta entero `lib/viewport.ts`.
    *
    * Cuarenta campos de la aplicación estaban en `text-sm`, catorce píxeles.
    *

@@ -286,7 +286,12 @@ export function HojaDeMaestro({
    * anuncia la frase y deja el objetivo donde ya está la mano.
    */
   useEffect(() => {
-    if (hecho !== null) botonEntendido.current?.focus()
+    // Sin desplazar. Este es EL momento delicado: el campo que se estaba
+    // escribiendo acaba de desaparecer y el teclado está bajando. Un `focus()`
+    // a secas le pedía a iOS que enseñara el botón midiendo contra un viewport
+    // a medio crecer, y la barra de pestañas se quedaba flotando a media
+    // pantalla. El botón ya está a la vista: está en la hoja, que es `fixed`.
+    if (hecho !== null) botonEntendido.current?.focus({ preventScroll: true })
   }, [hecho])
 
   const ejecutar = (op: OperacionDeMaestro): void => {

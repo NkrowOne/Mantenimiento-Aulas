@@ -19,6 +19,8 @@
 
 import { useEffect, useId, useRef } from 'react'
 
+import { congelarFondo } from '@/lib/viewport'
+
 export interface AccionDeHoja {
   id: string
   etiqueta: string
@@ -99,20 +101,20 @@ export function HojaDeAcciones({
      */
     const origen = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const primera = panel.current?.querySelector<HTMLElement>('button:not([disabled])')
-    if (primera && acciones.length > 0) primera.focus()
-    else panel.current?.focus()
+    // Sin desplazar: la hoja es `fixed` y ya está a la vista. Un `focus()` a
+    // secas le pide a iOS que la enseñe, y con el teclado a medio bajar eso
+    // mueve la página por debajo y deja la barra de pestañas flotando — lo
+    // cuenta entero `lib/viewport.ts`.
+    if (primera && acciones.length > 0) primera.focus({ preventScroll: true })
+    else panel.current?.focus({ preventScroll: true })
 
     // Y el documento de detrás se congela: `overscroll-contain` corta el
     // encadenado en los límites del scroll propio, pero cuando la hoja es corta
     // no hay scroll propio que consumir e iOS pasa el gesto a la lista de
-    // debajo — que entonces se desplaza detrás de la hoja abierta.
-    const previo = document.documentElement.style.overflow
-    document.documentElement.style.overflow = 'hidden'
-
-    return () => {
-      document.documentElement.style.overflow = previo
-      origen?.focus()
-    }
+    // debajo — que entonces se desplaza detrás de la hoja abierta. Al cerrar,
+    // la página vuelve a donde estaba al píxel y el foco a la fila, sin mover
+    // nada.
+    return congelarFondo(origen)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- solo al montar, a propósito
   }, [])
 
