@@ -24,8 +24,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { PdfError, htmlToPdf } from './pdf.js'
+import { apiQueResponde, deQuienEsLaSesion, noSeHaPodidoPreguntar } from './api.js'
 
-const SUPABASE_URL = process.env['SUPABASE_URL'] ?? ''
 const SERVICE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? ''
 
 /**
@@ -40,13 +40,17 @@ const MAX_HTML = 24 * 1024 * 1024
 
 const ROLES = new Set(['tecnico', 'supervisor', 'admin'])
 
-let admin: SupabaseClient | null = null
-function cliente(): SupabaseClient | null {
-  if (!SUPABASE_URL || !SERVICE_KEY) return null
-  admin ??= createClient(SUPABASE_URL, SERVICE_KEY, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  })
-  return admin
+/** El cliente contra la dirección de la API que de verdad responde. */
+async function cliente(): Promise<
+  { ok: true; admin: SupabaseClient } | { ok: false; motivo: string }
+> {
+  if (!SERVICE_KEY) return { ok: false, motivo: 'falta SUPABASE_SERVICE_ROLE_KEY' }
+  const r = await apiQueResponde((url) =>
+    createClient(url, SERVICE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    }),
+  )
+  return r.ok ? { ok: true, admin: r.admin } : { ok: false, motivo: r.motivo }
 }
 
 function responder(res: ServerResponse, codigo: number, cuerpo: unknown): void {
@@ -94,28 +98,44 @@ async function leerCuerpo(req: IncomingMessage, res: ServerResponse): Promise<Bu
 async function quienPide(
   autorizacion: string | undefined,
 ): Promise<{ ok: true; id: string } | { ok: false; codigo: number; error: string }> {
-  const supabase = cliente()
-  if (!supabase) {
-    return { ok: false, codigo: 503, error: 'El PDF no está configurado en este despliegue.' }
+  const conexion = await cliente()
+  if (!conexion.ok) {
+    return { ok: false, codigo: 503, error: noSeHaPodidoPreguntar(conexion.motivo) }
   }
+  const supabase = conexion.admin
   const jwt = (autorizacion ?? '').replace(/^Bearer\s+/i, '').trim()
   if (!jwt) return { ok: false, codigo: 401, error: 'Hace falta iniciar sesión.' }
 
-  const { data, error } = await supabase.auth.getUser(jwt)
-  if (error || !data.user) return { ok: false, codigo: 401, error: 'La sesión no vale o ha caducado.' }
+  /*
+   * «No vale» y «no he podido preguntar» no son lo mismo, y los dos llegan como
+   * `error`. Decirle «tu sesión ha caducado» a quien la tiene bien lo manda a
+   * cerrar sesión y volver a entrar, que no arregla nada y hace perder la
+   * tarde. Lo explica entero `api.ts`.
+   */
+  const sesion = await deQuienEsLaSesion(supabase, jwt)
+  if (sesion.que === 'sin respuesta') {
+    return { ok: false, codigo: 503, error: noSeHaPodidoPreguntar(sesion.motivo) }
+  }
+  if (sesion.que === 'no vale') {
+    return { ok: false, codigo: 401, error: 'La sesión no vale o ha caducado.' }
+  }
 
   // Y el perfil, no solo el token: una cuenta dada de baja conserva su JWT
   // hasta que caduca, y ese rato no puede seguir sacando documentos del campus.
-  const { data: perfil } = await supabase
+  const { data: perfil, error: fallo } = await supabase
     .from('profiles')
     .select('role, active')
-    .eq('id', data.user.id)
+    .eq('id', sesion.id)
     .maybeSingle()
+
+  // Y lo mismo aquí: sin poder leer el perfil, nadie tiene rol y todo el mundo
+  // sería «esta cuenta no puede», que es acusar a quien no ha hecho nada.
+  if (fallo) return { ok: false, codigo: 503, error: noSeHaPodidoPreguntar(fallo.message) }
 
   if (!perfil?.active || !ROLES.has(String(perfil.role))) {
     return { ok: false, codigo: 403, error: 'Esta cuenta no puede generar informes.' }
   }
-  return { ok: true, id: data.user.id }
+  return { ok: true, id: sesion.id }
 }
 
 /**
@@ -124,10 +144,46 @@ async function quienPide(
  * El nombre del fichero lo pone quien llama y se sanea aquí: viaja en una
  * cabecera y una comilla suelta en `filename` rompe la descarga en Safari.
  */
+/**
+ * Descarta lo que quede del cuerpo antes de contestar que no.
+ *
+ * Es la misma cortesía que `/generate` con su 413, explicada allí, y aquí hace
+ * falta por una razón que se ve desde la pantalla: el informe pesa megas y la
+ * comprobación de sesión pasa ANTES de leerlo. Contestar con el cuerpo a medio
+ * subir cierra el socket de golpe, y el navegador recibe el estado pero no el
+ * JSON — «401 (application/json): cuerpo vacío», que es exactamente lo que se
+ * veía—. Sin el JSON no hay motivo, y sin motivo no hay nada que arreglar.
+ *
+ * Se descarta sin acumular, y con `Connection: close` para que el cliente no
+ * reutilice esta conexión.
+ */
+async function decirQueNo(
+  req: IncomingMessage,
+  res: ServerResponse,
+  codigo: number,
+  error: string,
+): Promise<void> {
+  try {
+    for await (const _ of req) {
+      // Se lee y se tira: lo que importa es llegar al final.
+    }
+  } catch {
+    // Si el cliente corta a mitad, tampoco hay a quién contestar.
+  }
+  const texto = JSON.stringify({ ok: false, error })
+  res
+    .writeHead(codigo, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': String(Buffer.byteLength(texto)),
+      Connection: 'close',
+    })
+    .end(texto)
+}
+
 export async function informePdf(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const quien = await quienPide(req.headers.authorization)
   if (!quien.ok) {
-    responder(res, quien.codigo, { ok: false, error: quien.error })
+    await decirQueNo(req, res, quien.codigo, quien.error)
     return
   }
 
