@@ -225,6 +225,9 @@ const CAMPOS: Record<string, string> = {
   requested_by: 'Pedida por',
   decided_at: 'Decidida el',
   decided_by: 'Decidida por',
+  retired_at: 'Retirado el',
+  retired_by: 'Retirado por',
+  retired_reason: 'Motivo de la retirada',
   note: 'Nota',
 }
 
@@ -285,6 +288,7 @@ function mapaDe(tabla: string, campo: string, n: Nombres): Map<string, string> |
     case 'resolved_by':
     case 'requested_by':
     case 'decided_by':
+    case 'retired_by':
     case 'by_user':
       return n.personas
     default:
