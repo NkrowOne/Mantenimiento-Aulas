@@ -281,6 +281,16 @@ export function RoomSheet({
   /* Qué avería tiene abierto el formulario de cierre. Solo una: se cierra lo que
      se acaba de arreglar, no se despacha una lista. */
   const [resolviendo, setResolviendo] = useState<string | null>(null)
+  /*
+   * Si el botón que se pulsó fue «Guardar y cerrar».
+   *
+   * Un `ref` y no un estado porque se lee dentro de la mutación, que arranca en
+   * el mismo gesto que lo pone: un `setState` no habría llegado a tiempo y la
+   * avería se guardaría sin abrir su cierre, que es justo lo que se pidió.
+   */
+  const cerrarAlGuardar = useRef(false)
+  /** La que se acaba de abrir para cerrarla del tirón, hasta que se ve. */
+  const [recienAbierta, setRecienAbierta] = useState<string | null>(null)
   /* El acuse del cierre, y por qué no comparte el de registrar: la avería
      desaparece de la lista en el acto, y sin una frase que lo diga el gesto se
      lee como si la ficha hubiera perdido la fila. */
@@ -418,6 +428,21 @@ export function RoomSheet({
    * —'incident' está en `IGNORE_DUPLICATES`—. Aquí no hay clave ajena a una
    * revisión que ordenar: `opened_from_inspection_id` va nulo.
    */
+  /*
+   * Y llevar la vista hasta ella.
+   *
+   * El cierre se abre dentro de «Averías abiertas», que en un móvil queda una
+   * pantalla y media más abajo: sin esto, pulsar «Guardar y cerrar» parecía no
+   * hacer nada más que vaciar el formulario. Se salta a la cabecera de la
+   * sección y no al formulario porque la cabecera ya está pintada; el
+   * formulario aparece en el mismo fotograma, justo debajo.
+   */
+  useEffect(() => {
+    if (!recienAbierta) return
+    document.getElementById('sec-averias')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setRecienAbierta(null)
+  }, [recienAbierta])
+
   const registrar = useMutation({
     mutationFn: async () => {
       // Segunda capa: la pantalla ya lo enseña. La base lo rechazaría en la
@@ -465,14 +490,40 @@ export function RoomSheet({
       }
       void flush()
 
-      return { completo: titulo.length > 0, fotos: fotosNuevas.length }
+      return { id: fila.id, completo: titulo.length > 0, fotos: fotosNuevas.length }
     },
-    onSuccess: ({ completo, fotos }) => {
+    onSuccess: ({ id, completo, fotos }) => {
       const conFotos = fotos > 0 ? ` Con ${cuantos(fotos, 'foto', 'fotos')}.` : ''
+
+      /*
+       * Y si se pidió cerrarla del tirón, se abre su cierre aquí mismo.
+       *
+       * Es el caso de quien llega, ve el cable suelto y lo enchufa: abrir y
+       * cerrar son el mismo minuto, y hasta ahora eran dos pantallas —guardar
+       * aquí, irse a Incidencias, buscarla en una lista de trescientas y
+       * resolverla allí—, con el aula ya a la espalda. El formulario de cierre
+       * es el mismo de siempre, con sus fotos y su material: lo único que
+       * cambia es que se abre solo, encima de la avería recién creada.
+       *
+       * Solo con descripción: un borrador no se puede resolver —`sePuedeResolver`
+       * exige `abierta`— y ofrecerlo sería un botón que no hace nada.
+       */
+      const express = cerrarAlGuardar.current && completo
+      if (express) {
+        setResolviendo(id)
+        setRecienAbierta(id)
+      }
+      cerrarAlGuardar.current = false
+
       setGuardado(
-        completo
-          ? `${INCIDENT_KIND_LABELS[kind]} registrada.${conFotos} Sube en cuanto haya cobertura.`
-          : `Guardado sin describir.${conFotos} Aparecerá en Incidencias para que lo completes.`,
+        express
+          ? // El aviso tiene que decir que falta un paso, porque falta: la
+            // avería está abierta y el cierre, esperando abajo con el teclado
+            // ya a punto. Sin esto, «registrada» se lee como «ya está».
+            `${INCIDENT_KIND_LABELS[kind]} registrada.${conFotos} Abajo, en Averías abiertas, cuenta qué has hecho para cerrarla.`
+          : completo
+            ? `${INCIDENT_KIND_LABELS[kind]} registrada.${conFotos} Sube en cuanto haya cobertura.`
+            : `Guardado sin describir.${conFotos} Aparecerá en Incidencias para que lo completes.`,
       )
       setTexto('')
       setCodigo('')
@@ -796,6 +847,37 @@ export function RoomSheet({
                   ? `Guardar ${INCIDENT_KIND_LABELS[kind].toLowerCase()}`
                   : 'Guardar borrador'}
             </button>
+
+            {/*
+              Y la vía rápida: lo que se abre y se cierra en el mismo minuto.
+
+              Un cable suelto que se enchufa, una regleta que se cambia. Abrir y
+              cerrar son el mismo gesto, y hasta ahora eran dos pantallas: se
+              guardaba aquí, había que irse a Incidencias, buscarla entre
+              trescientas y resolverla allí — con el aula ya a la espalda y
+              muchas veces sin cobertura para cargar la lista. Queda igual de
+              apuntada: la avería existe, con su hora de apertura y su hora de
+              cierre, y el informe la cuenta como cualquier otra.
+
+              Solo aparece con descripción, porque sin ella la avería nace
+              borrador y un borrador no se puede resolver. Y va en tecla
+              secundaria: cerrar en el acto es lo raro, no lo normal.
+            */}
+            {texto.trim() && (
+              <button
+                type="button"
+                disabled={registrar.isPending}
+                onClick={() => {
+                  setTocado(true)
+                  if (problemaCodigo !== null) return
+                  cerrarAlGuardar.current = true
+                  registrar.mutate()
+                }}
+                className="key key-quiet mt-2 min-h-11 w-full px-3 text-sm"
+              >
+                Guardar y cerrar ahora, ya está resuelto
+              </button>
+            )}
           </form>
         )}
 
