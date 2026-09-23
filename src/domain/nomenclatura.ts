@@ -74,7 +74,18 @@ export interface Choque {
   etiqueta: string | null
 }
 
-const SIN_CHOQUE: Choque = { con: null, etiqueta: null }
+/**
+ * Ningún choque.
+ *
+ * Se exporta porque hay un caso en el que la pantalla tiene que decidir que no
+ * lo hay sin preguntar: mientras el alta va de camino. El espejo local se
+ * escribe ANTES de que la hoja se cierre —`aplicarOperacion` hace el RPC,
+ * escribe el espejo, tira de `pullMaster()` y solo entonces avisa—, así que en
+ * esa ventana la sala recién creada YA está en la lista contra la que se
+ * comprueba, y el aviso salta contra ella misma: «Ya hay una sala 0.5» debajo
+ * de un botón que pone «Añadiendo…», justo mientras se añade la 0.5.
+ */
+export const SIN_CHOQUE: Choque = { con: null, etiqueta: null }
 
 /**
  * ¿Choca este código con otro de la lista, ignorando mayúsculas y tildes?

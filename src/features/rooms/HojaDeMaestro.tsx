@@ -75,6 +75,7 @@ import { displayRoomCode } from '@/domain/normalize'
 import {
   avisoDeCodigoDeEdificio,
   chocaCodigo,
+  SIN_CHOQUE,
   mismaPlanta,
   plantaQueAbsorbe,
   sanearCodigo,
@@ -466,7 +467,20 @@ export function HojaDeMaestro({
 
   if (paso === 'nueva-sala') {
     const sinEmpezar = codigo.trim() === '' && nombre.trim() === ''
-    const choque = chocaCodigo(codigo, salasDelDestino)
+    /*
+     * Mientras se está enviando, no hay choque que comprobar.
+     *
+     * `aplicarOperacion` hace el RPC, escribe el espejo local, tira de
+     * `pullMaster()` y SOLO ENTONCES avisa para que la hoja se cierre. En esa
+     * ventana —que con mala cobertura dura lo suyo— la sala recién creada ya
+     * está en `salasDelDestino`, y el aviso salta contra ella misma: «Ya hay
+     * una sala 0.5» debajo de un botón que pone «Añadiendo…», justo mientras
+     * se añade la 0.5. Quien lo lee da por hecho que ha fallado.
+     *
+     * Y no hay nada que impedir: el botón ya está bloqueado y la operación ya
+     * salió. Este aviso es una condición para PULSAR, no para esperar.
+     */
+    const choque = enviando ? SIN_CHOQUE : chocaCodigo(codigo, salasDelDestino)
     const motivo =
       validarSala(codigo, nombre) ??
       (plantaId === PLANTA_NUEVA && plantaNueva.trim() !== ''

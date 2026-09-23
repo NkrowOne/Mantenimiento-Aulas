@@ -5,6 +5,7 @@ import { pullMaster } from '@/sync/pull'
 import {
   avisoDeCodigoDeEdificio,
   chocaCodigo,
+  SIN_CHOQUE,
   sanearCodigoDeEdificio,
   validarEdificio,
 } from '@/domain/nomenclatura'
@@ -158,7 +159,12 @@ export function MaestroSalas(): React.ReactElement {
   }
 
   const codigoNuevo = sanearCodigoDeEdificio(codigoEd)
-  const choque = chocaCodigo(codigoNuevo, vecinos)
+  // Mientras el alta va de camino, no se comprueba: `pullMaster()` mete el
+  // edificio recién creado en la lista de vecinos antes de que `onSuccess`
+  // vacíe el campo, y el aviso chocaría contra él mismo. Es la misma ventana
+  // que la de la hoja de salas, y por lo mismo no hay nada que impedir: el
+  // botón ya está bloqueado y la llamada ya salió.
+  const choque = alta.isPending ? SIN_CHOQUE : chocaCodigo(codigoNuevo, vecinos)
   const problemaEd =
     codigoEd.trim() === '' && nombreEd.trim() === ''
       ? null
