@@ -21,7 +21,6 @@
  * hace bien.
  */
 
-import { ofrecerFichero } from '@/lib/ficheros'
 
 /** Qué se ha podido hacer, para poder decirlo en vez de dejar un botón mudo. */
 export type Resultado = 'ventana' | 'marco' | 'bloqueado'
@@ -137,12 +136,29 @@ export function descargarDocumento(html: string, nombre: string): void {
  * esto en todo: pesa más, no se puede buscar y las tablas se parten donde
  * quieren.
  */
+/**
+ * **Prepara** el PDF, no lo entrega: eso es un segundo toque, y es a propósito.
+ *
+ * En iOS la hoja de compartir —el único camino que lleva un fichero a Archivos o
+ * a SharePoint desde el iPhone— solo se abre **mientras dura la pulsación que la
+ * pidió**. Hacer el PDF es una vuelta al servidor con WeasyPrint dentro: para
+ * cuando vuelve, ese permiso caducó hace segundos. Entonces `navigator.share`
+ * falla con `NotAllowedError`, se cae al `<a download>` de red, y en iOS un
+ * `<a download>` sobre un `blob:` fuera del gesto **no hace nada**: ni descarga,
+ * ni abre, ni avisa. Quien pulsaba «Descargar PDF» en el iPhone no recibía el
+ * fichero y tampoco un error que explicara por qué.
+ *
+ * Por eso esto devuelve el fichero y quien llama lo entrega desde su propia
+ * pulsación. Es la misma regla que ya cumplen el libro de Excel y la copia de
+ * emergencia, y la que `ofrecerFichero` lleva escrita en su cabecera desde el
+ * principio: generar y entregar son dos botones, no uno.
+ */
 export type ResultadoPdf =
-  | { ok: true; via: 'compartido' | 'descargado' }
+  | { ok: true; nombre: string; blob: Blob }
   /** No se pudo, y por qué. Quien llama decide si cae al diálogo de imprimir. */
   | { ok: false; motivo: string; sinServicio: boolean }
 
-export async function descargarPdf(
+export async function prepararPdf(
   html: string,
   nombre: string,
   token: string | null,
@@ -189,6 +205,8 @@ export async function descargarPdf(
   if (blob.size === 0) {
     return { ok: false, motivo: 'el PDF ha llegado vacío', sinServicio: true }
   }
-  const via = await ofrecerFichero(nombre, new Blob([blob], { type: 'application/pdf' }))
-  return { ok: true, via }
+  // El tipo se pone aquí y no se hereda: un servidor que conteste
+  // `application/octet-stream` haría que iOS ofreciera «documento» en vez de
+  // «PDF» y que Archivos lo guardara sin icono ni vista previa.
+  return { ok: true, nombre, blob: new Blob([blob], { type: 'application/pdf' }) }
 }

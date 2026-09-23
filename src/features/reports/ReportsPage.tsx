@@ -23,11 +23,12 @@ import {
 } from './informe/generar'
 import {
   descargarDocumento,
-  descargarPdf,
   imprimirDocumento,
   mostrarEn,
+  prepararPdf,
   ventanaEnBlanco,
 } from './informe/imprimir'
+import { ofrecerFichero } from '@/lib/ficheros'
 
 interface ReportRow {
   id: string
@@ -108,6 +109,25 @@ export function ReportsPage(): React.ReactElement {
   const [bajandoPdf, setBajandoPdf] = useState(false)
   /** Qué informe del archivo se está convirtiendo, para no dejar el botón mudo. */
   const [pdfDelArchivo, setPdfDelArchivo] = useState<string | null>(null)
+  /*
+   * El PDF ya hecho, esperando el toque que lo guarda.
+   *
+   * Hacerlo y guardarlo son dos pulsaciones, y no por gusto: en iOS la hoja de
+   * compartir —lo único que lleva un fichero a Archivos o a SharePoint desde el
+   * iPhone— solo se abre mientras dura la pulsación que la pidió, y hacer el PDF
+   * es una vuelta al servidor. Con una sola pulsación el permiso caducaba por el
+   * camino, `navigator.share` fallaba, y el `<a download>` de red sobre un
+   * `blob:` fuera del gesto en iOS no hace nada: ni descarga, ni abre, ni avisa.
+   *
+   * `para` dice de qué informe es: el recién hecho (`recien`) o la fila del
+   * archivo. Así un PDF preparado no se ofrece desde el botón de otro.
+   */
+  const [pdfListo, setPdfListo] = useState<{
+    para: string
+    nombre: string
+    blob: Blob
+  } | null>(null)
+  const [pdfEntregado, setPdfEntregado] = useState<'compartido' | 'descargado' | null>(null)
 
   const marco = useRef<HTMLIFrameElement>(null)
 
@@ -146,6 +166,11 @@ export function ReportsPage(): React.ReactElement {
   const generar = useMutation({
     mutationFn: async (): Promise<InformeGenerado> => {
       setRecien(null)
+      // Un informe nuevo deja obsoleto el PDF del anterior, y el botón dice
+      // «Guardar PDF» sin distinguirlos: se guardaría el de antes.
+      setPdfListo(null)
+      setPdfEntregado(null)
+      setFalloDescarga(null)
       return generarInforme(eleccion, (fase, detalle, fallo) =>
         setPaso({ fase, ...(detalle ? { detalle } : {}), ...(fallo ? { fallo: true } : {}) }),
       )
@@ -207,6 +232,8 @@ export function ReportsPage(): React.ReactElement {
     period_end: string
   }): Promise<void> {
     setFalloDescarga(null)
+    setPdfListo(null)
+    setPdfEntregado(null)
     setPdfDelArchivo(r.id)
     try {
       const { data, error } = await supabase.storage.from('reports').download(r.storage_path)
@@ -220,17 +247,36 @@ export function ReportsPage(): React.ReactElement {
         /\.html$/,
         '.pdf',
       )
-      const hecho = await descargarPdf(html, nombre, sesion.session?.access_token ?? null)
+      const hecho = await prepararPdf(html, nombre, sesion.session?.access_token ?? null)
       if (!hecho.ok) {
         setFalloDescarga(
           hecho.sinServicio
             ? `No se ha podido preparar el PDF (${hecho.motivo}). Con «Abrir» sale el informe y desde ahí se imprime a PDF.`
             : `No se ha podido preparar el PDF: ${hecho.motivo}.`,
         )
+        return
       }
+      setPdfListo({ para: r.id, nombre: hecho.nombre, blob: hecho.blob })
     } finally {
       setPdfDelArchivo(null)
     }
+  }
+
+  /**
+   * Entregar el PDF que ya está hecho. **Se llama desde la pulsación**, sin un
+   * solo `await` por delante: la hoja de compartir de iOS se abre mientras dura
+   * el gesto y un turno de espera la cierra.
+   *
+   * El fichero no se tira al entregarlo: quien cancela la hoja de compartir sin
+   * querer —o comparte por correo y además quiere guardarlo en Archivos— vuelve
+   * a pulsar y ya está, sin otra vuelta al servidor.
+   */
+  function guardarPdf(listo: { nombre: string; blob: Blob }): void {
+    setFalloDescarga(null)
+    setPdfEntregado(null)
+    void ofrecerFichero(listo.nombre, listo.blob)
+      .then((via) => setPdfEntregado(via))
+      .catch((e: Error) => setFalloDescarga(`No se ha podido guardar el PDF: ${e.message}`))
   }
 
   const alternar = (clave: string): void =>
@@ -556,40 +602,60 @@ export function ReportsPage(): React.ReactElement {
               </p>
             </div>
             <div className="flex shrink-0 flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={bajandoPdf}
-                onClick={() => {
-                  setFalloDescarga(null)
-                  setBajandoPdf(true)
-                  void (async () => {
-                    const { data } = await supabase.auth.getSession()
-                    const nombre = nombreDeArchivo(recien.kind, recien.rango).replace(/\.html$/, '.pdf')
-                    const r = await descargarPdf(recien.html, nombre, data.session?.access_token ?? null)
-                    setBajandoPdf(false)
-                    if (r.ok) return
-                    /*
-                     * Sin servicio de PDF —un servidor que aún no lo tiene, el
-                     * worker caído— se cae al camino de siempre en vez de dejar
-                     * a nadie sin documento: la ventana con el diálogo de
-                     * imprimir, que también da un PDF.
-                     */
-                    if (r.sinServicio) {
-                      const via = imprimirDocumento(recien.html, marco.current)
-                      setFalloDescarga(
-                        via === 'bloqueado'
-                          ? `No se ha podido preparar el PDF (${r.motivo}) y el navegador ha bloqueado la ventana del informe. Permite las ventanas emergentes de esta página, o usa «Descargar el original».`
-                          : `El servidor no ha podido preparar el PDF (${r.motivo}): se ha abierto el informe con el diálogo de imprimir, que también lo guarda como PDF.`,
-                      )
-                      return
-                    }
-                    setFalloDescarga(`No se ha podido preparar el PDF: ${r.motivo}.`)
-                  })()
-                }}
-                className="key key-accent min-h-11 px-3 text-sm"
-              >
-                {bajandoPdf ? 'Preparando el PDF…' : 'Descargar PDF'}
-              </button>
+              {/*
+                Dos botones y no uno: ver el comentario de `pdfListo`. En el
+                iPhone la hoja de compartir caduca con la pulsación que la pidió,
+                y hacer el PDF es una vuelta al servidor.
+              */}
+              {pdfListo?.para === 'recien' ? (
+                <button
+                  type="button"
+                  onClick={() => guardarPdf(pdfListo)}
+                  className="key key-accent min-h-11 px-3 text-sm"
+                >
+                  Guardar el PDF
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={bajandoPdf}
+                  onClick={() => {
+                    setFalloDescarga(null)
+                    setPdfListo(null)
+                    setPdfEntregado(null)
+                    setBajandoPdf(true)
+                    void (async () => {
+                      const { data } = await supabase.auth.getSession()
+                      const nombre = nombreDeArchivo(recien.kind, recien.rango).replace(/\.html$/, '.pdf')
+                      const r = await prepararPdf(recien.html, nombre, data.session?.access_token ?? null)
+                      setBajandoPdf(false)
+                      if (r.ok) {
+                        setPdfListo({ para: 'recien', nombre: r.nombre, blob: r.blob })
+                        return
+                      }
+                      /*
+                       * Sin servicio de PDF —un servidor que aún no lo tiene, el
+                       * worker caído— se cae al camino de siempre en vez de dejar
+                       * a nadie sin documento: la ventana con el diálogo de
+                       * imprimir, que también da un PDF.
+                       */
+                      if (r.sinServicio) {
+                        const via = imprimirDocumento(recien.html, marco.current)
+                        setFalloDescarga(
+                          via === 'bloqueado'
+                            ? `No se ha podido preparar el PDF (${r.motivo}) y el navegador ha bloqueado la ventana del informe. Permite las ventanas emergentes de esta página, o usa «Descargar el original».`
+                            : `El servidor no ha podido preparar el PDF (${r.motivo}): se ha abierto el informe con el diálogo de imprimir, que también lo guarda como PDF.`,
+                        )
+                        return
+                      }
+                      setFalloDescarga(`No se ha podido preparar el PDF: ${r.motivo}.`)
+                    })()
+                  }}
+                  className="key key-accent min-h-11 px-3 text-sm"
+                >
+                  {bajandoPdf ? 'Preparando el PDF…' : 'Preparar el PDF'}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => descargarDocumento(recien.html, nombreDeArchivo(recien.kind, recien.rango))}
@@ -680,15 +746,26 @@ export function ReportsPage(): React.ReactElement {
                     {redaccion.etiqueta}
                   </span>
                 )}
-                <button
-                  type="button"
-                  disabled={pdfDelArchivo !== null}
-                  onClick={() => void pdfArchivado(r)}
-                  className="key key-accent min-h-11 px-3 text-xs"
-                  title="El informe archivado, en PDF"
-                >
-                  {pdfDelArchivo === r.id ? 'Preparando…' : 'PDF'}
-                </button>
+                {pdfListo?.para === r.id ? (
+                  <button
+                    type="button"
+                    onClick={() => guardarPdf(pdfListo)}
+                    className="key key-accent min-h-11 px-3 text-xs"
+                    title="El PDF ya está hecho: pulsa para guardarlo"
+                  >
+                    Guardar PDF
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={pdfDelArchivo !== null}
+                    onClick={() => void pdfArchivado(r)}
+                    className="key key-accent min-h-11 px-3 text-xs"
+                    title="El informe archivado, en PDF"
+                  >
+                    {pdfDelArchivo === r.id ? 'Preparando…' : 'PDF'}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => void abrir(r.storage_path)}
@@ -719,6 +796,22 @@ export function ReportsPage(): React.ReactElement {
           </p>
         )}
       </section>
+
+      {/*
+        El PDF hecho y el PDF guardado son dos cosas distintas, y en el iPhone la
+        diferencia importa: entre las dos hay una pulsación que hay que dar. Si
+        el botón se quedara solo diciendo «Guardar PDF» sin explicar por qué ha
+        cambiado, quien lo pulsó una vez creería que no ha pasado nada.
+      */}
+      {(pdfListo || pdfEntregado) && (
+        <p aria-live="polite" className="mt-3 text-sm text-ok">
+          {pdfEntregado === 'compartido'
+            ? 'PDF compartido. Ya lo tienes donde lo hayas mandado.'
+            : pdfEntregado === 'descargado'
+              ? 'PDF descargado.'
+              : 'El PDF está hecho. Pulsa «Guardar PDF» para llevártelo: en el iPhone y el iPad se abre la hoja de compartir, y desde ahí va a Archivos, a Correo o a SharePoint.'}
+        </p>
+      )}
     </div>
   )
 }
