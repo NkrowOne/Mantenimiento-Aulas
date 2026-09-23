@@ -2,8 +2,10 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { v7 as uuidv7 } from 'uuid'
 import { supabase } from '@/lib/supabase'
+import { fechaCorta } from '@/domain/fechas'
 import type { Role } from '@/domain/types'
 import { UnidadesDeAlmacen } from './UnidadesDeAlmacen'
+import { MOTIVO_MIN, faltanParaElMotivo, motivoValido } from './motivo'
 
 interface StockLevel {
   stock_item_id: string
@@ -14,6 +16,17 @@ interface StockLevel {
   total_consumed: number
   below_threshold: boolean
 }
+
+/** Un artículo retirado del almacén: fuera de la lista, pero no de la base. */
+interface ArticuloRetirado {
+  id: string
+  name: string
+  retired_at: string | null
+  retired_reason: string | null
+}
+
+/** Lo que el administrador tiene abierto en una fila: el nombre, o el motivo de retirarla. */
+type Edicion = { id: string; que: 'renombrar' | 'retirar' }
 
 /**
  * Almacén.
@@ -79,7 +92,24 @@ function esSinExistencias(error: unknown): boolean {
  */
 function esDuplicado(error: unknown): boolean {
   if (codigoDe(error) === '23505') return true
-  return /duplicate key|stock_items_norm_idx|already exists/i.test(mensajeDe(error))
+  return /duplicate key|stock_items_norm_idx|already exists|ya hay otro artículo/i.test(mensajeDe(error))
+}
+
+/** El servidor ha dicho que no por el rol: el botón no debía estar, o el rol cambió después de abrir. */
+function esFaltaDePermiso(error: unknown): boolean {
+  return codigoDe(error) === '42501' || /solo un administrador|insufficient_privilege/i.test(mensajeDe(error))
+}
+
+/**
+ * Qué decir cuando retirar, restaurar o renombrar ha fallado. Los mensajes de
+ * la base ya vienen en español y dicen qué pasó («Ese artículo ya está
+ * retirado»); solo los dos que llegan en jerga se traducen.
+ */
+function falloDeAdministracion(error: unknown): string {
+  if (esFaltaDePermiso(error)) return 'Solo un administrador puede hacer esto.'
+  if (esDuplicado(error)) return 'Ya hay otro artículo con ese nombre: búscalo en la lista.'
+  if (!navigator.onLine || esFalloDeRed(error)) return 'Sin conexión: no se ha guardado. Busca cobertura y repítelo.'
+  return mensajeDe(error) || 'No se ha podido guardar.'
 }
 
 export function StockPage({ role }: { role: Role }): React.ReactElement {
@@ -87,6 +117,9 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
   const [filter, setFilter] = useState('')
   const [onlyLow, setOnlyLow] = useState(false)
   const [alta, setAlta] = useState(false)
+  const [edicion, setEdicion] = useState<Edicion | null>(null)
+  const [verRetirados, setVerRetirados] = useState(false)
+  const [falloAdmin, setFalloAdmin] = useState<string | null>(null)
   const esAdmin = role === 'admin'
 
   const { data: levels, isPending, isError, refetch } = useQuery({
@@ -171,6 +204,80 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
       void qc.invalidateQueries({ queryKey: ['stock-levels'] })
     },
   })
+
+  /*
+   * Retirar, restaurar y renombrar: de administrador, y lo decide la base
+   * (`is_admin()` en cada función). La pantalla esconde los botones al resto
+   * por lo mismo que esconde «Nuevo artículo»: un botón que el servidor va a
+   * rechazar no es un permiso. Retirar pide un motivo de diez caracteres, que
+   * también comprueba la base; aquí solo se evita mandar lo que va a volver.
+   *
+   * Nada de esto borra: el artículo retirado sale de la lista y deja de
+   * contarse, y sus movimientos, las incidencias que lo citan y los
+   * ordenadores instalados en las aulas siguen donde estaban. Por eso hay
+   * «Restaurar».
+   */
+  const retirar = useMutation({
+    mutationFn: async (input: { id: string; motivo: string }) => {
+      const { error } = await supabase.rpc('stock_item_retirar', { p_item: input.id, p_motivo: input.motivo.trim() })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      setEdicion(null)
+      setFalloAdmin(null)
+      void qc.invalidateQueries({ queryKey: ['stock-levels'] })
+      void qc.invalidateQueries({ queryKey: ['stock-retirados'] })
+    },
+    onError: (e: unknown) => setFalloAdmin(falloDeAdministracion(e)),
+  })
+
+  const restaurar = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.rpc('stock_item_restaurar', { p_item: id })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      setFalloAdmin(null)
+      void qc.invalidateQueries({ queryKey: ['stock-levels'] })
+      void qc.invalidateQueries({ queryKey: ['stock-retirados'] })
+    },
+    onError: (e: unknown) => setFalloAdmin(falloDeAdministracion(e)),
+  })
+
+  /*
+   * El nombre anterior se queda como alias (lo hace la base): el Excel y los
+   * partes lo seguirán escribiendo como siempre y se seguirá encontrando.
+   */
+  const renombrar = useMutation({
+    mutationFn: async (input: { id: string; nombre: string }) => {
+      const { error } = await supabase.rpc('stock_item_renombrar', { p_item: input.id, p_nombre: input.nombre.trim() })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      setEdicion(null)
+      setFalloAdmin(null)
+      void qc.invalidateQueries({ queryKey: ['stock-levels'] })
+    },
+    onError: (e: unknown) => setFalloAdmin(falloDeAdministracion(e)),
+  })
+
+  /* Los retirados solo se piden cuando el administrador los quiere ver. */
+  const retirados = useQuery({
+    queryKey: ['stock-retirados'],
+    queryFn: async (): Promise<ArticuloRetirado[]> => {
+      const { data, error } = await supabase
+        .from('stock_items')
+        .select('id, name, retired_at, retired_reason')
+        .eq('active', false)
+        .order('retired_at', { ascending: false, nullsFirst: false })
+        .order('name')
+      if (error) throw error
+      return (data ?? []) as ArticuloRetirado[]
+    },
+    enabled: esAdmin && verRetirados,
+  })
+
+  const ocupadoAdmin = retirar.isPending || restaurar.isPending || renombrar.isPending
 
   const rows = (levels ?? [])
     .filter((l) => l.name.toLowerCase().includes(filter.toLowerCase()))
@@ -286,81 +393,70 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
           </thead>
           <tbody className="divide-y divide-line">
             {rows.map((l) => (
-              <tr key={l.stock_item_id}>
-                <td className="py-2 pr-2">
-                  <span className="flex items-center gap-2">
-                    {l.below_threshold && (
-                      <span
-                        aria-label="Bajo mínimo"
-                        className="rounded-tag bg-crit-tint px-1.5 py-0.5 text-xs font-semibold text-crit"
-                      >
-                        !
-                      </span>
-                    )}
-                    {l.name}
-                  </span>
-                </td>
-                <td
-                  className={`py-2 text-right font-mono tabular ${
-                    l.below_threshold ? 'text-crit' : ''
-                  }`}
-                >
-                  {l.on_hand}
-                </td>
-                <td className="py-2 text-right font-mono text-muted tabular">
-                  {l.min_threshold || '—'}
-                </td>
-                <td className="py-2 text-right">
-                  <span className="inline-flex gap-2">
-                    {/* Deshabilitados mientras vuela el anterior: la cifra no se
-                        movía hasta que volvía el servidor, así que el técnico
-                        pulsaba otra vez y se registraban dos movimientos. */}
-                    {/* Y a cero, el `−` no lleva a ningún sitio: el servidor lo
-                        rechaza. Enseñarlo pulsable es prometer algo que no va a
-                        pasar, y el técnico se entera cuatro toques después. */}
-                    <button
-                      type="button"
-                      disabled={move.isPending || l.on_hand <= 0}
-                      onClick={() =>
-                        move.mutate({
-                          id: uuidv7(),
-                          itemId: l.stock_item_id,
-                          qty: -1,
-                          kind: 'consumo',
-                        })
-                      }
-                      className="key key-quiet h-11 w-11"
-                      aria-label={
-                        l.on_hand <= 0
-                          ? `No quedan unidades de ${l.name}`
-                          : `Consumir una unidad de ${l.name}`
-                      }
-                    >
-                      −
-                    </button>
-                    <button
-                      type="button"
-                      disabled={move.isPending}
-                      onClick={() =>
-                        move.mutate({
-                          id: uuidv7(),
-                          itemId: l.stock_item_id,
-                          qty: 1,
-                          kind: 'compra',
-                        })
-                      }
-                      className="key key-quiet h-11 w-11"
-                      aria-label={`Añadir una unidad de ${l.name}`}
-                    >
-                      +
-                    </button>
-                  </span>
-                </td>
-              </tr>
+              <FilaDeArticulo
+                key={l.stock_item_id}
+                nivel={l}
+                esAdmin={esAdmin}
+                ocupado={move.isPending}
+                ocupadoAdmin={ocupadoAdmin}
+                edicion={edicion?.id === l.stock_item_id ? edicion.que : null}
+                onAbrir={(que) => {
+                  setFalloAdmin(null)
+                  setEdicion(que ? { id: l.stock_item_id, que } : null)
+                }}
+                onMover={(qty, kind) => move.mutate({ id: uuidv7(), itemId: l.stock_item_id, qty, kind })}
+                onRenombrar={(nombre) => renombrar.mutate({ id: l.stock_item_id, nombre })}
+                onRetirar={(motivo) => retirar.mutate({ id: l.stock_item_id, motivo })}
+              />
             ))}
           </tbody>
         </table>
       </div>
+
+      {falloAdmin && <p className="mt-3 rounded-ctl bg-crit-fill p-3 text-sm text-crit-ink">{falloAdmin}</p>}
+
+      {esAdmin && (
+        <section className="mt-6">
+          <button
+            type="button"
+            onClick={() => setVerRetirados((v) => !v)}
+            aria-expanded={verRetirados}
+            className="key key-quiet min-h-11 px-3 text-sm"
+          >
+            {verRetirados ? 'Ocultar los artículos retirados' : 'Ver los artículos retirados'}
+          </button>
+          {verRetirados && (
+            <div className="mt-3">
+              {retirados.isPending && <p className="text-sm text-muted">Cargando…</p>}
+              {retirados.isError && <p className="text-sm text-crit">No se han podido leer los artículos retirados.</p>}
+              {retirados.data && retirados.data.length === 0 && (
+                <p className="text-sm text-muted">No hay ningún artículo retirado.</p>
+              )}
+              {retirados.data && retirados.data.length > 0 && (
+                <ul className="divide-y divide-hair">
+                  {retirados.data.map((a) => (
+                    <li key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+                      <span className="text-sm">{a.name}</span>
+                      <span className="text-xs text-muted">
+                        {a.retired_at ? `Retirado el ${fechaCorta(a.retired_at)}` : 'Retirado'}
+                        {a.retired_reason ? ` · ${a.retired_reason}` : ''}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={ocupadoAdmin}
+                        onClick={() => restaurar.mutate(a.id)}
+                        className="key key-quiet ml-auto h-10 px-3 text-sm"
+                      >
+                        Restaurar
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </section>
+      )}
 
       {isPending && <p className="mt-6 text-sm text-muted">Cargando el almacén…</p>}
 
@@ -476,5 +572,191 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
 
       <UnidadesDeAlmacen role={role} />
     </div>
+  )
+}
+
+/**
+ * Una fila del almacén: el artículo, sus existencias y los botones de mover.
+ * Para el administrador, además, «Renombrar» y «Retirar», que se abren debajo
+ * de la fila —como el instalar y la baja de los ordenadores— en vez de en un
+ * diálogo que tape la lista.
+ */
+function FilaDeArticulo({
+  nivel,
+  esAdmin,
+  ocupado,
+  ocupadoAdmin,
+  edicion,
+  onAbrir,
+  onMover,
+  onRenombrar,
+  onRetirar,
+}: {
+  nivel: StockLevel
+  esAdmin: boolean
+  ocupado: boolean
+  ocupadoAdmin: boolean
+  edicion: Edicion['que'] | null
+  onAbrir: (que: Edicion['que'] | null) => void
+  onMover: (qty: number, kind: 'compra' | 'consumo') => void
+  onRenombrar: (nombre: string) => void
+  onRetirar: (motivo: string) => void
+}): React.ReactElement {
+  const l = nivel
+  const [nombre, setNombre] = useState(l.name)
+  const [motivo, setMotivo] = useState('')
+  const idMotivo = `retirar-motivo-${l.stock_item_id}`
+  const nombreCambiado = nombre.trim() !== '' && nombre.trim() !== l.name
+
+  return (
+    <>
+      <tr>
+        <td className="py-2 pr-2">
+          <span className="flex items-center gap-2">
+            {l.below_threshold && (
+              <span
+                aria-label="Bajo mínimo"
+                className="rounded-tag bg-crit-tint px-1.5 py-0.5 text-xs font-semibold text-crit"
+              >
+                !
+              </span>
+            )}
+            {l.name}
+          </span>
+          {esAdmin && edicion === null && (
+            <span className="mt-1 flex flex-wrap gap-x-3 text-xs">
+              <button
+                type="button"
+                disabled={ocupadoAdmin}
+                onClick={() => {
+                  setNombre(l.name)
+                  onAbrir('renombrar')
+                }}
+                className="min-h-8 text-muted underline-offset-2 hover:underline"
+              >
+                Renombrar
+              </button>
+              <button
+                type="button"
+                disabled={ocupadoAdmin}
+                onClick={() => {
+                  setMotivo('')
+                  onAbrir('retirar')
+                }}
+                className="min-h-8 text-muted underline-offset-2 hover:text-crit hover:underline"
+              >
+                Retirar
+              </button>
+            </span>
+          )}
+        </td>
+        <td className={`py-2 text-right font-mono tabular ${l.below_threshold ? 'text-crit' : ''}`}>
+          {l.on_hand}
+        </td>
+        <td className="py-2 text-right font-mono text-muted tabular">{l.min_threshold || '—'}</td>
+        <td className="py-2 text-right">
+          <span className="inline-flex gap-2">
+            {/* Deshabilitados mientras vuela el anterior: la cifra no se
+                movía hasta que volvía el servidor, así que el técnico
+                pulsaba otra vez y se registraban dos movimientos. */}
+            {/* Y a cero, el `−` no lleva a ningún sitio: el servidor lo
+                rechaza. Enseñarlo pulsable es prometer algo que no va a
+                pasar, y el técnico se entera cuatro toques después. */}
+            <button
+              type="button"
+              disabled={ocupado || l.on_hand <= 0}
+              onClick={() => onMover(-1, 'consumo')}
+              className="key key-quiet h-11 w-11"
+              aria-label={l.on_hand <= 0 ? `No quedan unidades de ${l.name}` : `Consumir una unidad de ${l.name}`}
+            >
+              −
+            </button>
+            <button
+              type="button"
+              disabled={ocupado}
+              onClick={() => onMover(1, 'compra')}
+              className="key key-quiet h-11 w-11"
+              aria-label={`Añadir una unidad de ${l.name}`}
+            >
+              +
+            </button>
+          </span>
+        </td>
+      </tr>
+
+      {edicion === 'renombrar' && (
+        <tr>
+          <td colSpan={4} className="pb-3">
+            <form
+              className="flex flex-wrap items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (nombreCambiado) onRenombrar(nombre)
+              }}
+            >
+              <input
+                value={nombre}
+                onChange={(e) => setNombre(e.target.value)}
+                aria-label={`Nuevo nombre de ${l.name}`}
+                autoFocus
+                required
+                className="h-10 min-w-56 flex-1 rounded-ctl border border-line bg-surface px-2 text-base"
+              />
+              <button type="submit" disabled={ocupadoAdmin || !nombreCambiado} className="key key-accent h-10 px-3 text-sm">
+                Guardar el nombre
+              </button>
+              <button type="button" className="key key-quiet h-10 px-3 text-sm" onClick={() => onAbrir(null)}>
+                Cancelar
+              </button>
+              <p className="basis-full text-xs text-muted">
+                El nombre de ahora se queda como alias: el Excel y los partes que lo escriban como siempre lo
+                seguirán encontrando.
+              </p>
+            </form>
+          </td>
+        </tr>
+      )}
+
+      {edicion === 'retirar' && (
+        <tr>
+          <td colSpan={4} className="pb-3">
+            <form
+              className="flex flex-wrap items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (motivoValido(motivo)) onRetirar(motivo)
+              }}
+            >
+              <input
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+                placeholder={`Por qué se retira (mínimo ${MOTIVO_MIN} caracteres)`}
+                aria-label={`Motivo para retirar ${l.name}`}
+                aria-describedby={idMotivo}
+                minLength={MOTIVO_MIN}
+                required
+                autoFocus
+                className="h-10 min-w-56 flex-1 rounded-ctl border border-line bg-surface px-2 text-base"
+              />
+              <button type="submit" disabled={ocupadoAdmin || !motivoValido(motivo)} className="key key-quiet h-10 px-3 text-sm">
+                Retirar del almacén
+              </button>
+              <button type="button" className="key key-quiet h-10 px-3 text-sm" onClick={() => onAbrir(null)}>
+                Cancelar
+              </button>
+              {/* Qué va a pasar, y cuánto falta, en vez de un botón apagado sin explicación. */}
+              <p id={idMotivo} className="basis-full text-xs text-muted">
+                {faltanParaElMotivo(motivo) > 0
+                  ? `El motivo es obligatorio: faltan ${faltanParaElMotivo(motivo)} caracteres.`
+                  : 'Con este motivo el artículo sale del almacén y deja de contarse.'}{' '}
+                No se borra nada: sus movimientos, las incidencias que lo citan y lo ya instalado en las aulas
+                siguen igual, y se puede restaurar.
+                {l.on_hand > 0 && ` Ahora mismo quedan ${l.on_hand} ${l.unit}: dejarán de verse hasta que se restaure.`}
+              </p>
+            </form>
+          </td>
+        </tr>
+      )}
+    </>
   )
 }

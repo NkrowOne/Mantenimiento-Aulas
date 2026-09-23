@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaCorta } from '@/domain/fechas'
 import type { Role } from '@/domain/types'
+import { MOTIVO_MIN, faltanParaElMotivo, motivoValido } from './motivo'
 
 /**
  * Los ordenadores de repuesto: los PCs del almacén, uno por número de serie.
@@ -53,6 +54,9 @@ export function UnidadesDeAlmacen({ role }: { role: Role }): React.ReactElement 
   const [verTodas, setVerTodas] = useState(false)
   const [fallo, setFallo] = useState<string | null>(null)
   const esSupervisor = role === 'supervisor' || role === 'admin'
+  // La baja es de administrador y con motivo: lo decide `stock_unit_baja` en
+  // la base; aquí solo se esconde el botón al que no puede.
+  const esAdmin = role === 'admin'
 
   const { data: unidades, isPending, isError } = useQuery({
     queryKey: ['stock-units'],
@@ -129,7 +133,7 @@ export function UnidadesDeAlmacen({ role }: { role: Role }): React.ReactElement 
 
   const baja = useMutation({
     mutationFn: async (input: { unidad: string; nota: string }) => {
-      const { error } = await supabase.rpc('stock_unit_baja', { p_unit: input.unidad, p_note: input.nota || null })
+      const { error } = await supabase.rpc('stock_unit_baja', { p_unit: input.unidad, p_note: input.nota.trim() })
       if (error) throw error
     },
     onSuccess: () => {
@@ -222,7 +226,7 @@ export function UnidadesDeAlmacen({ role }: { role: Role }): React.ReactElement 
             edificios={maestro?.edificios ?? []}
             ocupado={ocupado}
             puedeInstalar
-            puedeDarDeBaja={esSupervisor}
+            puedeDarDeBaja={esAdmin}
             onInstalar={(sala) => instalar.mutate({ unidad: u.id, sala })}
             onBaja={(nota) => baja.mutate({ unidad: u.id, nota })}
           />
@@ -394,15 +398,20 @@ function FilaDeUnidad({
           <input
             value={nota}
             onChange={(e) => setNota(e.target.value)}
-            placeholder="Por qué (opcional)"
+            placeholder={`Por qué (mínimo ${MOTIVO_MIN} caracteres)`}
             aria-label="Motivo de la baja"
+            aria-describedby={`baja-motivo-${unidad.id}`}
+            minLength={MOTIVO_MIN}
+            required
+            autoFocus
             className="h-10 min-w-56 rounded-ctl border border-line bg-surface px-2 text-base"
           />
           <button
             type="button"
-            disabled={ocupado}
+            disabled={ocupado || !motivoValido(nota)}
             onClick={() => {
-              onBaja(nota)
+              if (!motivoValido(nota)) return
+              onBaja(nota.trim())
               setAbierto(null)
             }}
             className="key key-quiet h-10 px-3 text-sm"
@@ -412,6 +421,12 @@ function FilaDeUnidad({
           <button type="button" className="key key-quiet h-10 px-3 text-sm" onClick={() => setAbierto(null)}>
             Cancelar
           </button>
+          {/* Cuánto falta, en vez de un botón apagado sin explicación. */}
+          <p id={`baja-motivo-${unidad.id}`} className="basis-full text-xs text-muted">
+            {faltanParaElMotivo(nota) > 0
+              ? `El motivo es obligatorio: faltan ${faltanParaElMotivo(nota)} caracteres. Queda escrito en la unidad y en el registro de actividad.`
+              : 'La unidad queda de baja con este motivo. Un ordenador instalado en un aula no se da de baja desde aquí: se retira desde el aula.'}
+          </p>
         </div>
       )}
     </li>
