@@ -204,6 +204,22 @@ export default defineConfig(({ mode }) => {
             '**/CleanupPage-*.js',
             '**/ReportsPage-*.js',
             '**/DashboardPage-*.js',
+            /*
+             * Los subconjuntos de la monoespaciada que ningún texto de la
+             * aplicación usa. El CSS los declara con `unicode-range`, así que el
+             * navegador no los pediría nunca; precachearlos era bajar seis
+             * ficheros en cada instalación para no leerlos jamás.
+             */
+            '**/ibm-plex-mono-cyrillic*',
+            '**/ibm-plex-mono-vietnamese*',
+            /*
+             * Los iconos grandes del manifiesto los pide el sistema al instalar
+             * la aplicación en la pantalla de inicio, no la página: 130 kB que
+             * el worker guardaba y nadie volvía a leer. El de 192 se queda: es
+             * el que enseña la pantalla de bloqueo.
+             */
+            '**/icon-512.png',
+            '**/icon-maskable-512.png',
           ],
           /*
            * Lo que no se precachea se guarda la primera vez que se pide.

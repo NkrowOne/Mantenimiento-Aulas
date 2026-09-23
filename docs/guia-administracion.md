@@ -609,6 +609,14 @@ En los demás dispositivos esto tarda **hasta dos minutos** en verse, o lo que
 tarde el iPad en volver a primer plano o a tener red. No hay que pedirle nada a
 nadie.
 
+Cada dos minutos el dispositivo no se baja el maestro: **pregunta** primero a
+`espejo_version()` si algo ha cambiado desde su última bajada completa (el
+último cambio auditado y las marcas de revisiones, inventarios y movimientos)
+y solo baja si la respuesta es distinta. Como red de seguridad se baja entero
+al menos cada media hora, y **Sincronizar** a mano baja siempre. Un servidor
+sin esa función (anterior al 23 de septiembre) hace que el dispositivo baje
+como antes, cada dos minutos.
+
 ### El equipamiento por defecto
 
 `Datos → Equipamiento por defecto` declara **lo que toda sala lleva**, para que

@@ -7,7 +7,12 @@ import { HojaDeAcciones, type AccionDeHoja } from '@/components/HojaDeAcciones'
 import { SyncChip } from '@/components/SyncChip'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { LockScreen } from '@/features/auth/LockScreen'
-import { Diagnostico } from '@/features/admin/Diagnostico'
+/* El diagnóstico del servidor va en diferido: solo se abre cuando algo falla o
+   desde Datos, nunca con el dedo apoyado, y son trescientas líneas que el
+   arranque de cada iPad cargaba para nada. */
+const Diagnostico = lazy(() =>
+  import('@/features/admin/Diagnostico').then((m) => ({ default: m.Diagnostico })),
+)
 import { PendientesEnLaBarra } from '@/features/admin/PendientesEnLaBarra'
 import { InspectionPage } from '@/features/inspection/InspectionPage'
 import type { Correccion } from '@/features/inspection/useInspection'
@@ -384,7 +389,9 @@ function SinDatos({
       <button type="button" onClick={onReintentar} className="key key-quiet mt-3 min-h-11 px-3 text-sm">
         Reintentar descarga
       </button>
-      <Diagnostico />
+      <Suspense fallback={<p className="mt-2 text-sm text-muted">Cargando el diagnóstico…</p>}>
+            <Diagnostico />
+          </Suspense>
     </div>
   )
 }
@@ -1224,7 +1231,9 @@ export function App(): React.ReactElement {
       {rolError && (
         <div className="solo-pantalla border-b border-line px-4 py-3">
           <p className="text-sm text-crit">{rolError}</p>
-          <Diagnostico />
+          <Suspense fallback={<p className="mt-2 text-sm text-muted">Cargando el diagnóstico…</p>}>
+            <Diagnostico />
+          </Suspense>
         </div>
       )}
 

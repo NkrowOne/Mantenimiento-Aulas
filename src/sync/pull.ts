@@ -29,11 +29,14 @@
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { descargaEntera, type Descarga, type Pagina } from './paginada'
+import { claveDeVersion, hayQueBajar, type VersionGuardada } from './version'
 import type { Asset, AssetRemoval, AssetType, Building, Incident, Room, StockItem,
   StockLevel, Zone } from '@/domain/types'
 
 /** Dónde queda el parte de la última descarga, para que la interfaz lo lea. */
 export const DIAGNOSTICO_PULL = 'ultimo-pull'
+/** La versión del servidor con la que se hizo la última bajada completa. */
+export const VERSION_ESPEJO = 'espejo-version'
 
 export interface FalloDeTabla {
   tabla: string
@@ -51,6 +54,11 @@ export interface ResultadoPull {
   /** Cuántas tablas han contestado bien pero con cero filas. */
   vacias: string[]
   at: number
+  /**
+   * El servidor dijo que nada había cambiado desde la última bajada completa
+   * y no se bajó nada: `filas` es 0 porque no hacía falta, no porque fallara.
+   */
+  sinCambios?: boolean
 }
 
 /**
@@ -93,7 +101,33 @@ function diagnosticarVacio(): string {
   )
 }
 
-export async function pullMaster(): Promise<ResultadoPull> {
+/**
+ * La versión del espejo según el servidor, lista para comparar. `null` cuando
+ * no se puede saber: un servidor sin la migración del 23 de septiembre
+ * contesta que la función no existe, y entonces se baja como siempre.
+ */
+export async function versionDelEspejo(): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.rpc('espejo_version')
+    if (error) return null
+    return claveDeVersion(data)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Baja el maestro del servidor al espejo del dispositivo.
+ *
+ * Con `soloSiCambio`, antes pregunta a `espejo_version()` y, si el servidor no
+ * ha cambiado desde la última bajada completa (y esa no es de hace más de
+ * media hora), no baja nada: nueve tablas y dos vistas caras cada dos minutos
+ * por dispositivo, para no traer nada nuevo casi siempre, y encima cada
+ * pantalla abierta se volvía a pintar al reescribirse el espejo. Es lo que usa
+ * el refresco automático; quien llama tras escribir algo, o «Sincronizar» a
+ * mano, baja siempre.
+ */
+export async function pullMaster(opts: { soloSiCambio?: boolean } = {}): Promise<ResultadoPull> {
   const parte = async (r: ResultadoPull): Promise<ResultadoPull> => {
     await db.meta.put({ key: DIAGNOSTICO_PULL, value: r })
     return r
@@ -123,6 +157,17 @@ export async function pullMaster(): Promise<ResultadoPull> {
       vacias: [],
       at: Date.now(),
     })
+  }
+
+  // La versión se lee ANTES de bajar: lo que cambie mientras se baja quedará
+  // fuera de lo guardado y se recogerá en la siguiente vuelta.
+  const version = await versionDelEspejo()
+  if (opts.soloSiCambio) {
+    const guardada = (await db.meta.get(VERSION_ESPEJO))?.value as VersionGuardada | undefined
+    if (!hayQueBajar(version, guardada, Date.now())) {
+      ultimoIntento = Date.now()
+      return parte({ ok: true, filas: 0, error: null, fallos: [], vacias: [], at: Date.now(), sinCambios: true })
+    }
   }
 
   const vacio: Respuesta<Record<string, unknown>> = { data: [], error: null, completa: false }
@@ -446,6 +491,14 @@ export async function pullMaster(): Promise<ResultadoPull> {
 
   if (filas > 0) await db.meta.put({ key: 'last-pull', value: Date.now() })
 
+  // La versión solo se guarda tras una bajada COMPLETA y buena: con una tabla
+  // fallida, o con el servidor sin dejar leer, la siguiente vuelta tiene que
+  // volver a intentarlo aunque el sello no se haya movido.
+  if (error === null && version !== null) {
+    const guardada: VersionGuardada = { version, at: Date.now() }
+    await db.meta.put({ key: VERSION_ESPEJO, value: guardada })
+  }
+
   // Cualquier descarga cuenta para el freno del refresco automático, también la
   // que se pide a mano desde el panel: si no, pulsar «Sincronizar» y cambiar de
   // aplicación volvería a bajarlo todo un segundo después.
@@ -469,6 +522,10 @@ export async function ultimoPull(): Promise<ResultadoPull | null> {
  *
  * Dos minutos es el punto donde deja de notarse la espera y todavía no se nota
  * el gasto: el trabajo de un compañero tarda como mucho eso en aparecer.
+ *
+ * Y desde que el servidor contesta a `espejo_version()`, cada dos minutos se
+ * hace una pregunta de una fila, no una bajada: solo se baja cuando algo ha
+ * cambiado, o cada media hora como red de seguridad (`src/sync/version.ts`).
  */
 const REFRESCO_MIN_MS = 2 * 60 * 1000
 
@@ -496,7 +553,9 @@ export function startPull(alTerminar?: (r: ResultadoPull) => void): () => void {
     const ahora = Date.now()
     if (ahora - ultimoIntento < REFRESCO_MIN_MS) return
     ultimoIntento = ahora
-    void pullMaster().then((r) => alTerminar?.(r))
+    // El refresco automático pregunta primero: si el servidor no ha cambiado,
+    // no se baja nada (ver `versionDelEspejo`).
+    void pullMaster({ soloSiCambio: true }).then((r) => alTerminar?.(r))
   }
 
   const alVolverLaRed = (): void => {
