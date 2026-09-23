@@ -186,7 +186,7 @@ function DudaDeSala({
           )}
           <div className="flex flex-wrap items-center gap-2">
             <select
-              className="h-10 min-w-40 rounded-ctl border border-line bg-surface px-2 text-sm"
+              className="h-11 min-w-40 rounded-ctl border border-line bg-surface px-2 text-base"
               value={edificio}
               onChange={(e) => setEdificio(e.target.value)}
               aria-label="Edificio"
@@ -199,7 +199,7 @@ function DudaDeSala({
               ))}
             </select>
             <select
-              className="h-10 min-w-40 rounded-ctl border border-line bg-surface px-2 text-sm"
+              className="h-11 min-w-40 rounded-ctl border border-line bg-surface px-2 text-base"
               disabled={edificio === ''}
               value=""
               onChange={(e) => {
@@ -301,7 +301,7 @@ function CrearSala({
       </p>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <select
-          className="h-10 min-w-40 rounded-ctl border border-line bg-surface px-2 text-sm"
+          className="h-11 min-w-40 rounded-ctl border border-line bg-surface px-2 text-base"
           value={edificioId}
           onChange={(e) => setEdificioId(e.target.value)}
           aria-label="Edificio de la sala nueva"
@@ -315,7 +315,7 @@ function CrearSala({
           ))}
         </select>
         <input
-          className="h-10 min-w-32 rounded-ctl border border-line bg-surface px-2 text-sm"
+          className="h-11 min-w-32 rounded-ctl border border-line bg-surface px-2 text-base"
           value={zona}
           onChange={(e) => setZona(e.target.value)}
           placeholder="Planta / módulo"
@@ -323,7 +323,7 @@ function CrearSala({
           disabled={estado.tipo === 'creando'}
         />
         <input
-          className="h-10 min-w-32 rounded-ctl border border-line bg-surface px-2 text-sm"
+          className="h-11 min-w-32 rounded-ctl border border-line bg-surface px-2 text-base"
           value={code}
           onChange={(e) => setCode(e.target.value)}
           placeholder="Código del aula"

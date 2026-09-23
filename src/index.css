@@ -551,3 +551,29 @@
     margin: 10mm;
   }
 }
+
+/*
+ * Y la red que no se puede saltar: un campo con `text-sm` o `text-xs` sube a
+ * 16px venga de donde venga la clase.
+ *
+ * El suelo de `@layer base` —más arriba— pierde siempre contra una utilidad de
+ * Tailwind, y `campos-sin-zoom.test.ts` solo ve las clases escritas en la propia
+ * etiqueta. Se le escapaban justo las más usadas: los diez campos de «Añadir una
+ * sala» llevaban la clase en una constante (`CAMPO`) y los del inventario en una
+ * prop (`inputClassName`). Por esos se despegaba la barra de pestañas: se toca
+ * el campo, iOS amplía la página, y la barra se queda flotando en mitad de la
+ * pantalla hasta que alguien deshace el zoom a mano.
+ *
+ * Por qué gana: `input[class*="text-sm"]` pesa (0,1,1) y `.text-sm` (0,1,0), así
+ * que da igual el orden en que salgan; y va fuera de `@layer` para que Tailwind
+ * no lo recoloque. `*=` y no `~=` para cazar también `md:text-sm`, que en un iPad
+ * sí se aplica y también amplía. Sin `@media (pointer: coarse)` a propósito: un
+ * iPad con teclado y trackpad dice `fine` y sigue ampliando, y 16px en un campo
+ * de escritorio es simplemente el tamaño por defecto del navegador.
+ *
+ * Solo sube los pequeños: un campo con `text-lg` no lleva ninguna de las dos
+ * clases y no se toca.
+ */
+:is(input, textarea, select):is([class*='text-sm'], [class*='text-xs']) {
+  font-size: 16px;
+}
