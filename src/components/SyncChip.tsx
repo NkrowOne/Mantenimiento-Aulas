@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { pendingSummary } from '@/db/dexie'
 import { flush, getUltimoErrorSync, onSyncState, retryRejected, type SyncState } from '@/sync/outbox'
@@ -6,7 +6,6 @@ import { pullMaster, ultimoPull } from '@/sync/pull'
 import { ofrecerFichero } from '@/lib/ficheros'
 import { exportarPendientes } from '@/sync/rescate'
 import { aplicarActualizacion, buscarActualizacion, onVersionNueva } from '@/sw'
-import { Diagnostico } from '@/features/admin/Diagnostico'
 
 /**
  * La lámpara de estado.
@@ -29,6 +28,11 @@ import { Diagnostico } from '@/features/admin/Diagnostico'
  * La confirmación explícita de que el trabajo está a salvo la da la barra de la
  * revisión («Guardado» / «Guardando…»), que es donde el técnico la necesita.
  */
+/* Igual que en App: el diagnóstico solo se abre cuando algo no va. */
+const Diagnostico = lazy(() =>
+  import('@/features/admin/Diagnostico').then((m) => ({ default: m.Diagnostico })),
+)
+
 export function SyncChip(): React.ReactElement {
   const [state, setState] = useState<SyncState>('inactivo')
   const [open, setOpen] = useState(false)
@@ -195,7 +199,9 @@ export function SyncChip(): React.ReactElement {
           {ultimo && (
             <p className={`mt-1 ${ultimo.ok ? 'text-muted' : 'text-crit'}`}>
               {ultimo.ok
-                ? `Última descarga: ${ultimo.filas} filas.`
+                ? ultimo.sinCambios
+                  ? 'Al día: el servidor no ha cambiado desde la última descarga.'
+                  : `Última descarga: ${ultimo.filas} filas.`
                 : `La última descarga falló: ${ultimo.error}`}
             </p>
           )}
@@ -404,7 +410,9 @@ export function SyncChip(): React.ReactElement {
               estar. Antes solo se llegaba al diagnóstico desde la lista de
               edificios vacía, o sea desde una de las pantallas que el propio
               fallo deja en blanco. */}
-          <Diagnostico />
+          <Suspense fallback={<p className="text-sm text-muted">Cargando el diagnóstico…</p>}>
+            <Diagnostico />
+          </Suspense>
 
           {/*
             Qué versión ejecuta ESTE dispositivo.
