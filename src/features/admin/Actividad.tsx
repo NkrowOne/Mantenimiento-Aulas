@@ -140,7 +140,7 @@ export function Actividad(): React.ReactElement {
         value={dias}
         onChange={(e) => setDias(Number(e.target.value))}
         aria-label="Periodo"
-        className="h-11 rounded-ctl border border-line bg-surface px-2 text-sm"
+        className="h-11 rounded-ctl border border-line bg-surface px-2 text-base"
       >
         {PERIODOS.map((p) => (
           <option key={p.dias} value={p.dias}>
@@ -152,7 +152,7 @@ export function Actividad(): React.ReactElement {
         value={tabla}
         onChange={(e) => setTabla(e.target.value)}
         aria-label="Qué"
-        className="h-11 rounded-ctl border border-line bg-surface px-2 text-sm"
+        className="h-11 rounded-ctl border border-line bg-surface px-2 text-base"
       >
         <option value="">Todo</option>
         {Object.entries(TABLAS).map(([id, t]) => (
@@ -165,7 +165,7 @@ export function Actividad(): React.ReactElement {
         value={persona}
         onChange={(e) => setPersona(e.target.value)}
         aria-label="Quién"
-        className="h-11 max-w-48 rounded-ctl border border-line bg-surface px-2 text-sm"
+        className="h-11 max-w-48 rounded-ctl border border-line bg-surface px-2 text-base"
       >
         <option value="">Cualquiera</option>
         {(perfiles ?? []).map((p) => (

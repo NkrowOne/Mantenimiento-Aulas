@@ -481,7 +481,7 @@ function AssetFixer({
             }
           }}
           sugerencias={sugEtiqueta}
-          inputClassName="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+          inputClassName="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
         />
         {clash && (
           <p className="text-xs text-crit">
@@ -514,7 +514,7 @@ function AssetFixer({
             onValor={setBrand}
             onCommit={(v) => v.trim() !== (asset.brand ?? '') && onPatch({ brand: v.trim() || null })}
             sugerencias={sugMarca}
-            inputClassName="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+            inputClassName="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
             /* La marca es un nombre propio, no una frase: el corrector de iOS
                convierte «NEC» en «NEC.» y «Epson» en «Época» sin avisar. */
             inputProps={{ autoCapitalize: 'words', autoCorrect: 'off', enterKeyHint: 'next' }}
@@ -526,7 +526,7 @@ function AssetFixer({
             onValor={setModel}
             onCommit={(v) => v.trim() !== (asset.model ?? '') && onPatch({ model: v.trim() || null })}
             sugerencias={sugModelo}
-            inputClassName="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink"
+            inputClassName="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
             inputProps={{ autoCapitalize: 'off', autoCorrect: 'off', enterKeyHint: 'done' }}
           />
         </div>

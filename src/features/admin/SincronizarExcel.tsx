@@ -803,7 +803,7 @@ function QuienManda({
             <input
               id="excel-corte"
               type="date"
-              className="h-10 min-w-40 rounded-ctl border border-line bg-surface px-2 text-sm"
+              className="h-11 min-w-40 rounded-ctl border border-line bg-surface px-2 text-base"
               value={corte ?? ''}
               disabled={disabled}
               onChange={(ev) => onCorte(ev.target.value || null)}

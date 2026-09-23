@@ -166,7 +166,13 @@ const TIPOS: Array<{ value: RoomKind; label: string }> = [
    de objetivo táctil y la misma monoespaciada para lo que es una matrícula. Dos
    formularios que hacen lo mismo con dos aspectos distintos se leen como dos
    funciones distintas. */
-const CAMPO = 'mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-sm text-ink'
+/*
+ * 16px y no 14: estos diez campos son los de «Añadir una sala», y un campo por
+ * debajo de 16px hace que Safari de iOS AMPLÍE la página al tocarlo. Ampliada,
+ * la barra de pestañas se despega del borde y se queda flotando en mitad de la
+ * pantalla. Ver `campos-sin-zoom.test.ts` e `index.css`.
+ */
+const CAMPO = 'mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink'
 const CAMPO_CODIGO = `${CAMPO} font-mono`
 
 export function HojaDeMaestro({
