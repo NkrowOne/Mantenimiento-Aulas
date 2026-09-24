@@ -42,9 +42,11 @@ alter table stock_balances enable row level security;
 
 -- Lo lee el personal (la vista corre con los permisos de quien consulta);
 -- lo escribe solo el disparador, con permisos propios.
+-- `(select …)` y no la llamada a secas: envuelta se evalúa una vez por consulta
+-- y no una por fila (lo vigila la prueba 80 de `rls-test.sql`).
 drop policy if exists "personal lee saldos" on stock_balances;
 create policy "personal lee saldos" on stock_balances
-  for select to authenticated using (public.is_staff());
+  for select to authenticated using ((select public.is_staff()));
 
 -- -----------------------------------------------------------------------------
 -- 2 — El disparador que lo mantiene
@@ -81,12 +83,17 @@ security definer
 set search_path = public
 as $$
 begin
+  -- `kind` es el enum `stock_movement_kind` y la función recibe `text`: al
+  -- resolver la llamada Postgres no convierte un enum a texto por su cuenta
+  -- («function stock_balance_sumar(uuid, integer, stock_movement_kind) does
+  -- not exist»), así que sin el `::text` el primer asiento que entrara
+  -- rompería el alta. Lo enseñó `npm run db:verify` al cargar el seed.
   -- Corrección o borrado: se deshace lo que aportaba la fila anterior.
   if tg_op in ('UPDATE', 'DELETE') then
-    perform public.stock_balance_sumar(old.stock_item_id, -old.qty, old.kind);
+    perform public.stock_balance_sumar(old.stock_item_id, -old.qty, old.kind::text);
   end if;
   if tg_op in ('INSERT', 'UPDATE') then
-    perform public.stock_balance_sumar(new.stock_item_id, new.qty, new.kind);
+    perform public.stock_balance_sumar(new.stock_item_id, new.qty, new.kind::text);
   end if;
   return null;
 end $$;
