@@ -26,6 +26,7 @@ const TABLE: Record<OutboxEntry['entity'], string> = {
   inspection_check: 'inspection_checks',
   incident: 'incidents',
   incident_resolution: 'incident_resolutions',
+  incident_material: 'incident_materials',
   stock_movement: 'stock_movements',
   attachment: 'attachments',
   asset_event: 'asset_events',
@@ -44,16 +45,21 @@ const ORDER: Record<OutboxEntry['entity'], number> = {
   inspection: 2,
   inspection_check: 3,
   incident: 4,
+  // El parte de material va detrás de su incidencia —cuelga de ella— y DELANTE
+  // del cierre: es al cerrar cuando el servidor descuenta lo que el parte
+  // dice, y lo que llegara después se descontaría aparte, con la fecha de la
+  // llegada en vez de la del cierre.
+  incident_material: 5,
   // Detrás de la incidencia que cierra, por la misma razón: el cierre de una
   // avería recién abierta viaja en la misma pasada que ella.
-  incident_resolution: 5,
-  asset_event: 6,
-  stock_movement: 7,
-  room_inventory: 8,
+  incident_resolution: 6,
+  asset_event: 7,
+  stock_movement: 8,
+  room_inventory: 9,
   // Detrás del equipo al que apunta: pedir la retirada de un aparato que
   // todavía no ha subido chocaría contra su clave ajena.
-  asset_removal: 9,
-  attachment: 10,
+  asset_removal: 10,
+  attachment: 11,
 }
 
 export type SyncState = 'inactivo' | 'sincronizando' | 'sin-conexion' | 'error'

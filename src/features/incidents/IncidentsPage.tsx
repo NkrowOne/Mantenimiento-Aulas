@@ -558,8 +558,9 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
                       {/* El material también se apunta dentro del cierre, que es
                           donde alguien se acuerda del cable que ha puesto. Este
                           botón se queda para la avería que sigue abierta: la
-                          pieza que se cambió mientras se espera otra, que se
-                          gastó igual aunque la avería no se cierre hoy. */}
+                          pieza que se cambió mientras se espera otra. Lo que se
+                          apunte aquí es el parte de la avería, y el almacén lo
+                          descuenta cuando se cierre. */}
                       <button
                         type="button"
                         aria-expanded={apuntando === i.id}
@@ -584,7 +585,7 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
                 </div>
               )}
 
-              {apuntando === i.id && <MaterialUsado incidentId={i.id} roomId={i.room_id} />}
+              {apuntando === i.id && <MaterialUsado incidentId={i.id} />}
 
               {resolviendo === i.id && (
                 <ResolverIncidencia
@@ -595,7 +596,6 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
                      pregunta «¿cuál de las tres?» se hace en la ficha del aula,
                      que es donde hay tres. */
                   equipo={null}
-                  roomId={i.room_id}
                   /* Solo se cierra el formulario. La lista NO se vuelve a
                      pedir aquí: el cierre acaba de entrar en la cola y el
                      servidor todavía diría «abierta». La pide `useCierresEnCola`

@@ -57,7 +57,6 @@ export interface IncidenciaQueSeCierra {
 export function ResolverIncidencia({
   incidencia,
   equipo,
-  roomId,
   explicacion = '',
   conMaterial = false,
   onCerrada,
@@ -73,15 +72,6 @@ export function ResolverIncidencia({
    * pantalla desplazándose, y la respuesta tiene que seguir a la vista.
    */
   equipo: string | null
-  /**
-   * Dónde se ha gastado el material, si se sabe.
-   *
-   * Va aquí y no dentro del apunte porque el almacén sabe cuánto queda y no
-   * dónde fue, y esa es justo la pregunta que se hace después: cuánto material
-   * se lleva un edificio. Nulo en las 118 incidencias del histórico que se
-   * importaron sin sala identificada.
-   */
-  roomId: string | null
   /**
    * Con qué empieza la explicación del cierre. Vacío salvo en el cierre express.
    *
@@ -308,10 +298,14 @@ export function ResolverIncidencia({
         alguien se acuerda del cable que ha puesto es exactamente este, contando
         qué ha hecho, y no un toque anterior en otra pantalla.
 
-        Cada apunte sale del almacén en cuanto se pulsa «Apuntar»: es un
-        movimiento de consumo con su incidencia y su sala, y resta del inventario
-        igual que cualquier otra salida. Por eso no espera al cierre — el
-        material se gastó aunque la avería se quede sin cerrar hoy.
+        Lo que se apunta es el parte de material de la incidencia, y el almacén
+        no se descuenta hasta que se cierra: ahí el servidor apunta un asiento
+        por artículo, con la fecha del cierre y cargado a la sala de la
+        incidencia —por eso la sala ya no viaja con el apunte—. Antes cada
+        toque era un asiento, y como un asiento no se reescribe, el Historial de
+        la sala enseñaba «+1 +1 −1 −1 −1» para un hub con la solicitud todavía
+        abierta. Mientras está abierta, el parte se corrige las veces que haga
+        falta sin que el almacén se mueva.
 
         **Y va PLEGADO**, que es lo único que hace verdad la palabra «opcional».
         Muchas averías se arreglan sin gastar nada —un cable suelto, una entrada
@@ -325,10 +319,10 @@ export function ResolverIncidencia({
         <div className="mt-3">
           <p className="eyebrow">Material usado</p>
           <p className="mt-1 text-xs leading-relaxed text-muted">
-            Lo que apuntes sale del almacén y queda cargado a esta sala. Puedes cerrar la avería
-            sin apuntar nada.
+            Lo que apuntes se descuenta del almacén al cerrar la avería y queda cargado a esta sala.
+            Puedes cerrar sin apuntar nada.
           </p>
-          <MaterialUsado incidentId={incidencia.id} roomId={roomId} />
+          <MaterialUsado incidentId={incidencia.id} />
         </div>
       ) : (
         <button

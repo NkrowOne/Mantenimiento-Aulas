@@ -290,12 +290,20 @@ enseñar. La foto es opcional a propósito: una regleta nueva se ve, un ajuste d
 la matriz de vídeo no.
 
 **Si has gastado material, ahí mismo lo apuntas.** Pulsa «¿Has usado material?
-Apúntalo», busca el artículo, pon las unidades y dale a «Apuntar»: sale del
-almacén y queda cargado a esa aula. Al lado de cada artículo ves cuánto queda
-—en rojo si está a cero—, así que se distingue de un vistazo cuál de los tres
-cables coger. Si apuntas más de lo que el almacén cree que hay, la aplicación te
-lo dice pero te deja apuntarlo: la cifra del dispositivo puede estar vieja y tú
-tienes el cable en la mano.
+Apúntalo», busca el artículo y tócalo: queda apuntado con una unidad, y en la
+línea que sale puedes subir, bajar o quitar las veces que haga falta. Al lado
+de cada artículo ves cuánto queda —en rojo si está a cero—, así que se
+distingue de un vistazo cuál de los tres cables coger. Si apuntas más de lo que
+el almacén cree que hay, la aplicación te lo dice pero te deja apuntarlo: la
+cifra del dispositivo puede estar vieja y tú tienes el cable en la mano.
+
+**El almacén se descuenta al cerrar, no al apuntar.** Mientras la avería está
+abierta, lo apuntado es su parte de material y se corrige sin que el almacén se
+mueva; al pulsar «Resolver», el servidor descuenta lo que diga el parte —una
+línea por artículo, con la fecha del cierre— y así aparece en el Historial de
+la sala. Si al cerrar no hay existencias de algo que has apuntado, el cierre
+vuelve rechazado a la cola con el motivo: se registra la compra que falta, o
+se baja la cantidad, y se reintenta.
 
 **Y si no has gastado nada, cierras sin más.** Lo único que no se puede saltar
 es la frase de qué has hecho; la foto y el material son opcionales de verdad —el
@@ -317,7 +325,8 @@ pantalla con red.
 > Apuntar el material es lo que hace que el informe sepa dónde se va el
 > almacén. No hace falta cerrar la avería para apuntarlo: si has cambiado una
 > pieza y sigues esperando otra, apúntalo igual desde la pestaña de
-> Incidencias, con el botón «Material».
+> Incidencias, con el botón «Material». Queda en el parte de la avería y sale
+> del almacén cuando la cierres.
 
 Es obligatorio porque esa frase es lo que lee quien atienda la próxima avería de
 esa aula. Con ella, «el proyector no da imagen» en abril se lee sabiendo que en

@@ -7,12 +7,12 @@ import { flush } from '@/sync/outbox'
 import { supabase } from '@/lib/supabase'
 import {
   lineasDeMaterial,
-  mezclarApuntes,
+  mezclarParte,
   planQuitar,
   planRestar,
   planSumar,
-  type ApunteDeMaterial,
-  type Operacion,
+  type Cambio,
+  type LineaDelParte,
 } from './material'
 import { buscarArticulos } from './buscarArticulo'
 
@@ -38,20 +38,21 @@ import { buscarArticulos } from './buscarArticulo'
  *
  * **Un toque apunta, y lo apuntado se puede deshacer.** Antes hacían falta dos
  * pasos —elegir el artículo y confirmar con «Apuntar»— y una vez apuntado no
- * había forma de quitarlo desde aquí: el movimiento estaba mal, la avería se
- * cerraba igual y el descuadre se arreglaba semanas después desde el Almacén,
- * si alguien lo veía. Ahora tocar el artículo lo apunta, y la línea que sale
- * lleva su `−`, su `+` y su `×`. Qué significa cada uno según dónde esté el
- * apunte —en la cola, saliendo o ya arriba— lo decide `material.ts`, que es
- * donde está probado.
+ * había forma de quitarlo desde aquí. Ahora tocar el artículo lo apunta, y la
+ * línea que sale lleva su `−`, su `+` y su `×`.
+ *
+ * **Y el almacén no se entera hasta que la avería se cierra.** Lo que se apunta
+ * aquí es el **parte de material** de la incidencia —una fila por artículo en
+ * `incident_materials`, con las unidades que dice el parte— y cada toque
+ * reenvía esa misma fila con la cantidad nueva. Antes cada toque era un asiento
+ * del almacén, y como un asiento no se reescribe, corregir un toque de más era
+ * otro asiento: el Historial de la sala enseñaba «+1 +1 −1 −1 −1» para un hub y
+ * el almacén se movía con la solicitud todavía abierta. Ahora el servidor
+ * descuenta la diferencia neta al cerrar —un asiento por artículo, con la fecha
+ * del cierre— y si el parte llega detrás del cierre, lo descuenta al llegar. A
+ * qué fila va cada toque lo decide `material.ts`, que es donde está probado.
  */
-export function MaterialUsado({
-  incidentId,
-  roomId,
-}: {
-  incidentId: string
-  roomId: string | null
-}): React.ReactElement {
+export function MaterialUsado({ incidentId }: { incidentId: string }): React.ReactElement {
   const [query, setQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
   const qc = useQueryClient()
@@ -59,17 +60,17 @@ export function MaterialUsado({
   /*
    * Lo que ESTA pantalla ha encolado, recordado aparte.
    *
-   * Es el tercer sitio de donde puede venir un apunte, y el que faltaba. La
-   * cola BORRA la fila al subirla y la lista del servidor se pedía una sola vez
-   * al abrir el panel: entre esas dos cosas el apunte no estaba en ningún lado
-   * y la línea desaparecía de la pantalla con el cable ya descontado. Quien no
-   * ve lo que acaba de apuntar, lo apunta otra vez — y eso es exactamente el
-   * material duplicado que se veía.
+   * Es el tercer sitio de donde puede venir una fila del parte, y el que
+   * faltaba. La cola BORRA la fila al subirla y la lista del servidor se pedía
+   * una sola vez al abrir el panel: entre esas dos cosas la fila no estaba en
+   * ningún lado y la línea desaparecía de la pantalla. Quien no ve lo que acaba
+   * de apuntar, lo apunta otra vez — y eso es exactamente el material duplicado
+   * que se veía.
    *
    * En un `ref` y no en estado: no pinta nada por sí solo —lo pinta la mezcla—
    * y cambiarlo dentro de una operación no tiene por qué provocar un render.
    */
-  const apuntadosAqui = useRef<ApunteDeMaterial[]>([])
+  const apuntadasAqui = useRef<LineaDelParte[]>([])
 
   /*
    * Del espejo local: la lista de artículos ya está en el dispositivo, y con
@@ -77,9 +78,10 @@ export function MaterialUsado({
    *
    * La cifra es una foto, no la verdad —el saldo se calcula en el servidor
    * sumando movimientos—, pero enseñarla dentro del aula es lo que evita el
-   * apunte que el servidor va a rechazar: las existencias no pueden quedar en
-   * negativo, y ese rechazo llega horas después, en una cola que mira otra
-   * persona, con el material ya instalado y nadie a quien preguntarle.
+   * cierre que el servidor va a rechazar: las existencias no pueden quedar en
+   * negativo, el almacén se descuenta al cerrar, y ese rechazo llega horas
+   * después, en una cola que mira otra persona, con el material ya instalado y
+   * nadie a quien preguntarle.
    */
   const articulos = useLiveQuery(
     async () => {
@@ -99,59 +101,55 @@ export function MaterialUsado({
   const coincidencias = useMemo(() => buscarArticulos(articulos, query), [articulos, query])
 
   /*
-   * Lo ya apuntado en esta incidencia. Necesita conexión y por eso no bloquea
-   * nada: sin ella se apunta igual. Está para lo de siempre —dos técnicos, o el
-   * mismo técnico dos veces— que sin verlo acaba en el material contado doble.
+   * El parte tal y como está en el servidor. Necesita conexión y por eso no
+   * bloquea nada: sin ella se apunta igual. Está para lo de siempre —dos
+   * técnicos, o el mismo técnico dos veces— que sin verlo acaba en el material
+   * contado doble.
    *
-   * Las devoluciones vienen con los consumos, y no es un detalle: la cuenta de
-   * lo gastado es la resta de las dos. Sin ellas, quitar una línea que ya había
-   * subido la dejaría en pantalla como si el `×` no hubiera hecho nada.
+   * Vienen también las filas que trajo el Excel y las que están a cero: las
+   * primeras se corrigen desde aquí igual que las demás, y las segundas son
+   * artículos quitados, que no se enseñan pero sí cuentan para saber a qué
+   * fila va el siguiente toque.
    */
   const { data: enElServidor } = useQuery({
     queryKey: ['incident-materials', incidentId],
     queryFn: async () => {
       const { data, error: err } = await supabase
-        .from('stock_movements')
-        .select('id, qty, stock_item_id, kind')
+        .from('incident_materials')
+        .select('id, qty, stock_item_id')
         .eq('incident_id', incidentId)
-        .in('kind', ['consumo', 'devolucion'])
+        .not('stock_item_id', 'is', null)
       if (err) throw err
-      return (data ?? []) as Array<{
-        id: string
-        qty: number
-        stock_item_id: string
-        kind: 'consumo' | 'devolucion'
-      }>
+      return (data ?? []) as Array<{ id: string; qty: number; stock_item_id: string }>
     },
     retry: false,
   })
 
   /*
-   * Y lo apuntado que **todavía está en la cola**, que sin cobertura es todo.
+   * Y las filas del parte que **todavía están en la cola**, que sin cobertura
+   * son todas.
    *
    * Faltaba, y se notaba justo donde más duele: en el aula, sin red, la lista
    * de arriba no contesta y lo que se acababa de apuntar no aparecía en ninguna
    * parte. O sea que la pantalla decía lo mismo tanto si el cable estaba
    * apuntado como si no — que es la manera exacta de apuntarlo dos veces.
    *
-   * El estado de la cola viaja con cada apunte porque de él depende qué hace el
-   * `×`: lo que no ha salido se borra y lo que sí, se devuelve. Un `enviando`
-   * cuenta como salido: ya va por el aire.
+   * Una fila que está saliendo se trata como cualquiera de la cola: tocarla la
+   * reencola con la cantidad nueva y la cola, al terminar la subida en vuelo,
+   * ve que ha cambiado y la vuelve a mandar. Es lo bueno de que sea un parte y
+   * no un asiento: la última cantidad pisa, y no hay nada que compensar.
    */
+  const filaDeLaCola = (e: { id: string; payload: Record<string, unknown> }): LineaDelParte => ({
+    id: e.id,
+    qty: Number(e.payload['qty'] ?? 0),
+    stockItemId: String(e.payload['stock_item_id'] ?? ''),
+    donde: 'en_cola',
+  })
+
   const enCola = useLiveQuery(
     async () => {
-      const filas = await db.outbox.where('entity').equals('stock_movement').toArray()
-      return filas
-        .filter((e) => e.payload['incident_id'] === incidentId)
-        .map((e) => ({
-          id: e.id,
-          qty: Number(e.payload['qty'] ?? 0),
-          stockItemId: String(e.payload['stock_item_id'] ?? ''),
-          kind: (e.payload['kind'] === 'devolucion' ? 'devolucion' : 'consumo') as
-            | 'consumo'
-            | 'devolucion',
-          donde: (e.status === 'enviando' ? 'saliendo' : 'en_cola') as 'saliendo' | 'en_cola',
-        }))
+      const filas = await db.outbox.where('entity').equals('incident_material').toArray()
+      return filas.filter((e) => e.payload['incident_id'] === incidentId).map(filaDeLaCola)
     },
     [incidentId],
     [],
@@ -161,29 +159,28 @@ export function MaterialUsado({
    * Los tres sitios, sin repetir ni perder ninguno. La regla está en
    * `material.ts`, que es donde se prueba.
    */
-  const delServidor: ApunteDeMaterial[] = (enElServidor ?? []).map((m) => ({
+  const delServidor: LineaDelParte[] = (enElServidor ?? []).map((m) => ({
     id: m.id,
     qty: m.qty,
     stockItemId: m.stock_item_id,
-    kind: m.kind,
     donde: 'arriba' as const,
   }))
-  const apuntes = mezclarApuntes(enCola, delServidor, apuntadosAqui.current)
+  const parte = mezclarParte(enCola, delServidor, apuntadasAqui.current)
 
   /*
-   * En cuanto el servidor cuenta un apunte, se deja de recordar.
+   * En cuanto el servidor devuelve una fila, se deja de recordar.
    *
    * El recuerdo es una red para el hueco entre la cola y el servidor, no un
    * segundo almacén: mantenerlo después sería quedarse con una copia que ya no
-   * se refresca, y una devolución hecha desde otro sitio no la tocaría.
+   * se refresca, y una corrección hecha desde otro dispositivo no la tocaría.
    */
   useEffect(() => {
     if (!enElServidor) return
     const arriba = new Set(enElServidor.map((m) => m.id))
-    apuntadosAqui.current = apuntadosAqui.current.filter((a) => !arriba.has(a.id))
+    apuntadasAqui.current = apuntadasAqui.current.filter((l) => !arriba.has(l.id))
   }, [enElServidor])
 
-  const lineas = lineasDeMaterial(apuntes)
+  const lineas = lineasDeMaterial(parte)
 
   const articuloDe = (id: string): { name: string; quedan: number | null; unit: string } | null =>
     articulos.find((a) => a.id === id) ?? null
@@ -191,101 +188,41 @@ export function MaterialUsado({
   const nombreDe = (id: string): string =>
     articuloDe(id)?.name ?? 'Artículo retirado del catálogo'
 
-  /** Un movimiento nuevo, del signo que toque. `consumo` va en negativo. */
-  async function apuntarNuevo(stockItemId: string, qty: number): Promise<void> {
-    const { data } = await supabase.auth.getSession()
-    // El id va en los dos sitios: es la clave de la cola y la de la fila. Con
-    // el mismo valor, reenviar el apunte es no hacer nada.
-    const id = uuidv7()
-    await enqueue('stock_movement', id, {
-      id,
-      stock_item_id: stockItemId,
-      qty,
-      kind: qty < 0 ? 'consumo' : 'devolucion',
+  /**
+   * Una fila del parte con su cantidad, a la cola. La misma fila cada vez.
+   *
+   * El id va en los dos sitios: es la clave de la cola y la de la fila. Con el
+   * mismo valor, reencolar es reescribir la entrada que hubiera —`enqueue`
+   * pisa— y en el servidor es un UPDATE de la fila que ya está. Reenviarla no
+   * duplica nada, y una entrada que estuviera en vuelo vuelve a salir con la
+   * cantidad nueva cuando la subida termine.
+   */
+  async function apuntar(cambio: Cambio): Promise<void> {
+    await enqueue('incident_material', cambio.id, {
+      id: cambio.id,
       incident_id: incidentId,
-      room_id: roomId,
-      occurred_at: new Date().toISOString(),
-      by_user: data.session?.user.id ?? null,
+      stock_item_id: cambio.stockItemId,
+      qty: cambio.qty,
+      origen: 'app',
     })
-    apuntadosAqui.current = [
-      ...apuntadosAqui.current,
-      { id, qty, stockItemId, kind: qty < 0 ? 'consumo' : 'devolucion', donde: 'arriba' },
-    ]
+    const recordada = apuntadasAqui.current.some((l) => l.id === cambio.id)
+    apuntadasAqui.current = recordada
+      ? apuntadasAqui.current.map((l) => (l.id === cambio.id ? { ...l, qty: cambio.qty } : l))
+      : [...apuntadasAqui.current, { ...cambio, donde: 'arriba' }]
   }
 
-  /**
-   * Cambiar o borrar una fila de la cola, **comprobando dentro que sigue ahí**.
-   *
-   * La comprobación tiene que ir dentro de la transacción y no antes porque
-   * entre leer la lista y pulsar el botón cabe una pasada de la cola. Y lo que
-   * pasa si se pierde esa carrera no es un error a la vista: `stock_movement`
-   * sube con «no pises lo que ya esté», así que una fila reencolada después de
-   * salir se manda, el servidor la ignora por repetida, y la pantalla se queda
-   * enseñando una cantidad que arriba no existe.
-   *
-   * @returns `true` si se aplicó; `false` si la fila ya había salido.
-   */
-  async function tocarLaCola(
-    id: string,
-    cambio: { qty: number } | 'borrar',
-  ): Promise<boolean> {
-    return await db.transaction('rw', db.outbox, async () => {
-      const fila = await db.outbox.get(id)
-      // `enviando` va por el aire; lo demás —pendiente, rechazado— no ha salido.
-      if (!fila || fila.status === 'enviando') return false
-      if (cambio === 'borrar') {
-        await db.outbox.delete(id)
-        return true
-      }
-      await db.outbox.put({
-        ...fila,
-        payload: { ...fila.payload, qty: cambio.qty },
-        attempts: 0,
-        nextAttemptAt: 0,
-        status: 'pendiente',
-        lastError: null,
-      })
-      return true
-    })
-  }
-
-  /**
-   * Y hacer lo que `material.ts` haya decidido.
-   *
-   * Cuando la carrera se pierde —la fila salió justo entre el plan y el toque—
-   * no se deja a medias: lo que se quería cambiar se consigue igual con un
-   * asiento nuevo, que es lo que el plan habría dicho de haberlo sabido. La
-   * diferencia entre lo que pedía y lo que había dice de qué signo es.
-   */
-  async function ejecutar(ops: Operacion[], stockItemId: string, base: ApunteDeMaterial[]): Promise<void> {
+  /** Y hacer lo que `material.ts` haya decidido. */
+  async function ejecutar(cambios: Cambio[]): Promise<void> {
     setError(null)
     try {
-      for (const op of ops) {
-        if (op.tipo === 'consumo') await apuntarNuevo(stockItemId, -op.unidades)
-        else if (op.tipo === 'devolucion') await apuntarNuevo(stockItemId, op.unidades)
-        else {
-          const antes = base.find((a) => a.id === op.id)?.qty ?? 0
-          const despues = op.tipo === 'borrar' ? 0 : op.qty
-          const hecho = await tocarLaCola(op.id, op.tipo === 'borrar' ? 'borrar' : { qty: op.qty })
-          if (hecho) {
-            // Lo recordado sigue a la cola: si no, borrar un apunte que aún no
-            // había salido lo dejaría en pantalla para siempre.
-            apuntadosAqui.current =
-              op.tipo === 'borrar'
-                ? apuntadosAqui.current.filter((a) => a.id !== op.id)
-                : apuntadosAqui.current.map((a) => (a.id === op.id ? { ...a, qty: op.qty } : a))
-          } else {
-            await apuntarNuevo(stockItemId, despues - antes)
-          }
-        }
-      }
+      for (const c of cambios) await apuntar(c)
       /*
        * Y cuando la cola acabe de subir, se vuelve a preguntar al servidor.
        *
        * Faltaba: `['incident-materials']` se pedía al abrir el panel y no se
-       * invalidaba en ningún sitio del proyecto —una sola aparición en todo el
-       * código—, así que la lista del servidor se quedaba congelada en la foto
-       * del principio mientras la cola iba vaciándose debajo.
+       * invalidaba en ningún sitio del proyecto, así que la lista del servidor
+       * se quedaba congelada en la foto del principio mientras la cola iba
+       * vaciándose debajo.
        */
       void flush().then(() => qc.invalidateQueries({ queryKey: ['incident-materials', incidentId] }))
     } catch (e) {
@@ -294,50 +231,40 @@ export function MaterialUsado({
   }
 
   /**
-   * Un toque, una operación, **y en fila**.
+   * Un toque, un cambio, **y en fila**.
    *
    * Dos motivos, y los dos producían material duplicado:
    *
    *  - El plan se calculaba con lo que había PINTADO. Entre dos toques
    *    seguidos —y en un móvil eso son un par de dedos torpes— la lista aún no
    *    se ha repintado, así que el segundo toque planificaba sobre la foto de
-   *    antes: donde debía subir a dos el apunte que acababa de crear, abría
-   *    otro de uno.
+   *    antes: donde debía subir a dos la fila que acababa de crear, abría otra
+   *    de uno.
    *  - Y se ejecutaban a la vez, con lo cual ni siquiera el orden estaba claro.
    *
    * Así que el plan se calcula **al ejecutar**, releyendo la cola de Dexie, y
-   * las operaciones van una detrás de otra. El `catch` del encadenado es para
-   * que una que falle no rompa la fila: el error ya se enseña dentro.
+   * los cambios van uno detrás de otro. El `catch` del encadenado es para que
+   * uno que falle no rompa la fila: el error ya se enseña dentro.
    */
   const enFila = useRef<Promise<unknown>>(Promise.resolve())
 
-  function pedir(
-    plan: (a: ApunteDeMaterial[], stockItemId: string) => Operacion[],
-    stockItemId: string,
-  ): void {
+  function pedir(plan: (p: LineaDelParte[], stockItemId: string) => Cambio[], stockItemId: string): void {
     enFila.current = enFila.current.then(
       async () => {
-        const frescos = mezclarApuntes(await colaDeAhora(), delServidor, apuntadosAqui.current)
-        await ejecutar(plan(frescos, stockItemId), stockItemId, frescos)
+        const fresco = mezclarParte(await colaDeAhora(), delServidor, apuntadasAqui.current)
+        await ejecutar(plan(fresco, stockItemId))
       },
       () => undefined,
     )
   }
 
+  /** Sumar lleva su generador de ids: la fila nueva nace con el suyo. */
+  const sumar = (p: LineaDelParte[], stockItemId: string): Cambio[] => planSumar(p, stockItemId, uuidv7)
+
   /** La cola tal y como está AHORA, sin pasar por el render. */
-  async function colaDeAhora(): Promise<ApunteDeMaterial[]> {
-    const filas = await db.outbox.where('entity').equals('stock_movement').toArray()
-    return filas
-      .filter((e) => e.payload['incident_id'] === incidentId)
-      .map((e) => ({
-        id: e.id,
-        qty: Number(e.payload['qty'] ?? 0),
-        stockItemId: String(e.payload['stock_item_id'] ?? ''),
-        kind: (e.payload['kind'] === 'devolucion' ? 'devolucion' : 'consumo') as
-          | 'consumo'
-          | 'devolucion',
-        donde: (e.status === 'enviando' ? 'saliendo' : 'en_cola') as 'saliendo' | 'en_cola',
-      }))
+  async function colaDeAhora(): Promise<LineaDelParte[]> {
+    const filas = await db.outbox.where('entity').equals('incident_material').toArray()
+    return filas.filter((e) => e.payload['incident_id'] === incidentId).map(filaDeLaCola)
   }
 
   return (
@@ -370,15 +297,16 @@ export function MaterialUsado({
                   </span>
                   <button
                     type="button"
-                    onClick={() => pedir(planSumar, l.stockItemId)}
+                    onClick={() => pedir(sumar, l.stockItemId)}
                     className="key key-quiet h-11 w-11"
                     aria-label={`Una unidad más de ${nombreDe(l.stockItemId)}`}
                   >
                     +
                   </button>
-                  {/* Quitar la línea entera. No borra un asiento que ya subió
-                      —eso no se puede— sino que devuelve al almacén lo que se
-                      apuntó de más, que es la corrección de verdad. */}
+                  {/* Quitar la línea entera: sus filas a cero. El almacén no
+                      ha descontado nada todavía, así que no hay nada que
+                      devolver; y si la avería ya estaba cerrada, el cero es lo
+                      que le dice al servidor que devuelva lo descontado. */}
                   <button
                     type="button"
                     onClick={() => pedir(planQuitar, l.stockItemId)}
@@ -401,8 +329,9 @@ export function MaterialUsado({
         foto que puede estar vieja, y negarle a alguien apuntar el cable que
         acaba de poner porque su iPad cree que no quedaba sería fiarse más de la
         copia que de la persona. Lo que no puede pasar es que se entere el
-        servidor y no quien lo apunta: el saldo no puede quedar en negativo, así
-        que ese apunte volverá rechazado y hay que decirlo aquí.
+        servidor y no quien lo apunta: el saldo no puede quedar en negativo y el
+        almacén se descuenta al cerrar la avería, así que es el cierre lo que
+        volverá rechazado — y hay que decirlo aquí, antes.
       */}
       {lineas.map((l) => {
         const art = articuloDe(l.stockItemId)
@@ -412,8 +341,8 @@ export function MaterialUsado({
             {art.quedan <= 0
               ? `Según la última sincronización no queda ningún ${art.name.toLowerCase()} en el almacén.`
               : `Según la última sincronización solo quedan ${art.quedan} de ${art.name.toLowerCase()}.`}{' '}
-            Si de verdad has usado {l.unidades}, déjalo — pero el almacén lo rechazará hasta que se
-            registre la compra que falta.
+            Si de verdad has usado {l.unidades}, déjalo — pero el almacén rechazará el cierre de la
+            avería hasta que se registre la compra que falta.
           </p>
         )
       })}
@@ -470,7 +399,7 @@ export function MaterialUsado({
                 */}
                 <button
                   type="button"
-                  onClick={() => pedir(planSumar, a.id)}
+                  onClick={() => pedir(sumar, a.id)}
                   className="flex min-h-11 w-full items-center gap-3 py-2 text-left text-sm"
                 >
                   <span className="min-w-0 flex-1">
