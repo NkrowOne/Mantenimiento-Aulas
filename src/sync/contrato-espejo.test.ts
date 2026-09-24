@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 
 const RAIZ = path.resolve(__dirname, '../..')
 const sql = readFileSync(
-  path.join(RAIZ, 'supabase/migrations/20260923000300_el_espejo_pregunta_antes_de_bajarse.sql'),
+  path.join(RAIZ, 'supabase/migrations/20260924000200_el_espejo_pregunta_antes_de_bajarse.sql'),
   'utf8',
 )
 const pull = readFileSync(path.join(RAIZ, 'src/sync/pull.ts'), 'utf8')
