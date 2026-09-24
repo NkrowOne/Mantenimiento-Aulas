@@ -2,9 +2,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { StatTile } from '@/components/StatTile'
+import { subirArriba } from '@/components/Marco'
 import { fechaCorta } from '@/domain/fechas'
 import { Actividad } from './Actividad'
 import { AssetTypeTray } from './AssetTypeTray'
+import { CatalogoDeTipos } from './CatalogoDeTipos'
 import { AuditoriaInventario } from './AuditoriaInventario'
 import { EquipoPorDefecto } from './EquipoPorDefecto'
 import { IncidenciasSinSala } from './IncidenciasSinSala'
@@ -58,7 +60,7 @@ type Seccion = 'pendientes' | 'maestro' | 'excel' | 'importacion' | 'actividad' 
 
 const SECCIONES: Array<{ id: Seccion; titulo: string; texto: string }> = [
   { id: 'pendientes', titulo: 'Por decidir', texto: 'Retiradas, equipos y tipos sin validar, y los duplicados del inventario' },
-  { id: 'maestro', titulo: 'Maestro', texto: 'Salas, edificios, edificios sin identificar y equipamiento por defecto' },
+  { id: 'maestro', titulo: 'Maestro', texto: 'Salas, edificios, tipos de equipo y sus nombres, edificios sin identificar y equipamiento por defecto' },
   { id: 'excel', titulo: 'Excel', texto: 'Sincronizar el libro de SharePoint en los dos sentidos' },
   { id: 'importacion', titulo: 'Importación', texto: 'Incidencias sin sala, cuarentena y recuperar una copia' },
   { id: 'actividad', titulo: 'Actividad', texto: 'Quién cambió qué y cuándo' },
@@ -99,8 +101,9 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
     setSeccion(s)
     recordarSeccion(s)
     // Que el usuario ya esté abajo del todo no importa: cambiar de sección es
-    // cambiar de pantalla, y una pantalla nueva empieza por arriba.
-    window.scrollTo({ top: 0 })
+    // cambiar de pantalla, y una pantalla nueva empieza por arriba. Lo que
+    // desplaza es el contenido del marco, no la ventana.
+    subirArriba()
   }
 
   const actual = SECCIONES.find((s) => s.id === seccion)!
@@ -223,6 +226,7 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
         {seccion === 'maestro' && (
           <>
             <MaestroSalas />
+            <CatalogoDeTipos />
             <EdificiosSinIdentificar />
             <EquipoPorDefecto />
           </>

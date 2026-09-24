@@ -941,7 +941,11 @@ Desde el 23 de septiembre no hace falta la terminal para esto. En la pestaña
   motivo se vacía en la fila, pero sigue en el registro de actividad.
 - **Renombrar.** Cambia el nombre y **deja el anterior como alias**, así el
   Excel y los partes que lo escriban como siempre lo siguen encontrando. Si ya
-  hay otro artículo con ese nombre, lo dice y no cambia nada.
+  hay otro artículo con ese nombre, lo dice y no cambia nada. Tampoco deja poner
+  un nombre que ya es **alias de otro artículo** —las filas del Excel que hoy
+  caen en ese otro empezarían a caer en este— y dice de cuál es. Y si otro
+  artículo tenía de alias el nombre de antes, se lo quita: desde ese momento
+  empataría con este.
 
 En SQL son `stock_item_retirar(id, motivo)`, `stock_item_restaurar(id)` y
 `stock_item_renombrar(id, nombre)`; las tres comprueban el rol y las dos

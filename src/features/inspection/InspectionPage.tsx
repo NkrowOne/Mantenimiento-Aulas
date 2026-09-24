@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { HojaDeAcciones } from '@/components/HojaDeAcciones'
+import { AlPie } from '@/components/Marco'
 import { RoomPlate } from '@/components/RoomPlate'
 import { TriState } from '@/components/TriState'
 import { RoomInventory } from '@/features/inventory/RoomInventory'
@@ -158,7 +159,7 @@ export function InspectionPage({
   }
 
   return (
-    <div className="pb-44">
+    <div className="pb-6">
       <RoomPlate
         building={buildingName}
         zone={zoneName}
@@ -499,108 +500,115 @@ export function InspectionPage({
         </div>
       </div>
 
-      {/* Barra fija: el pulgar la encuentra sin mirar, y respeta la zona de
-          gestos del iPhone. */}
-      <div
-        className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface px-4 py-3"
-        style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
-      >
-        <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-          {/*
-            El acelerador vive aquí, no arriba del todo.
-            «Marcar OK las N restantes» estaba en la cabecera y el aviso de que
-            faltaban, abajo: el técnico leía el problema en un extremo de la
-            pantalla y tenía que estirarse al otro para resolverlo. Ahora la
-            misma franja que dice qué falta ofrece cómo resolverlo.
-          */}
-          {missing.length === 0 ? (
-            <span className="text-muted">Todo comprobado</span>
-          ) : draft.checks.size === 0 ? (
-            // Nada marcado todavía: la vía rápida es el botón grande de arriba,
-            // y repetirla aquí solo añadiría una segunda forma de hacer lo mismo.
-            <span className="text-muted">
-              Faltan {missing.length} comprobacion{missing.length === 1 ? '' : 'es'}
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={markRestOk}
-              className="key key-quiet min-h-11 px-3 text-xs"
-            >
-              Faltan {missing.length} · marcar OK
-            </button>
-          )}
-          {/* `role="status"` porque es LA respuesta a «¿se ha guardado?»: un
-              lector de pantalla debe anunciarlo sin que nadie lo busque. */}
-          <span role="status" className="shrink-0 text-muted">
-            {saving ? 'Guardando…' : 'Guardado'}
-          </span>
-        </div>
-
-        {/*
-          Qué va a pasar al pulsar Guardar, dicho antes de pulsar.
-
-          Cerrar la revisión manda los equipos en falla a Incidencias, y eso es un
-          parte de trabajo que alguien tendrá que cerrar: no puede ser una sorpresa.
-          Va aquí y no repetido en cada fila —con cuatro equipos en falla serían
-          cuatro veces la misma frase— y solo cuando hay algo que anunciar.
-
-          Se dice «pasan a Incidencias» y no «se abren N incidencias» porque las
-          dos cosas no son lo mismo: si ese proyector ya tenía una abierta de la
-          ronda anterior, no se abre otra. La frase es cierta en los dos casos, y
-          prometer un número que luego no cuadra es peor que no darlo.
-        */}
-        <div className="collapse-y" data-open={incidents.length > 0}>
-          <div>
-            {incidents.length > 0 && (
-              <p className="pb-2 text-xs leading-relaxed text-crit">
-                {incidents.length === 1 ? '1 equipo en falla' : `${incidents.length} equipos en falla`}
-                : al guardar pasa{incidents.length === 1 ? '' : 'n'} a Incidencias y sigue
-                {incidents.length === 1 ? '' : 'n'} ahí hasta que alguien lo
-                {incidents.length === 1 ? '' : 's'} resuelva.
-              </p>
+      {/*
+        La barra de acción: el pulgar la encuentra sin mirar, y respeta la zona
+        de gestos del iPhone. Va al pie del marco y no es `fixed`, igual que la
+        de pestañas y por lo mismo: aquí se escriben observaciones, y el teclado
+        de iOS, al bajar, dejaba varado todo lo `fixed` a media pantalla. Lo
+        cuenta `components/Marco.tsx`.
+      */}
+      <AlPie>
+        <div
+          className="border-t border-line bg-surface px-4 py-3"
+          style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+        >
+          <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+            {/*
+              El acelerador vive aquí, no arriba del todo.
+              «Marcar OK las N restantes» estaba en la cabecera y el aviso de que
+              faltaban, abajo: el técnico leía el problema en un extremo de la
+              pantalla y tenía que estirarse al otro para resolverlo. Ahora la
+              misma franja que dice qué falta ofrece cómo resolverlo.
+            */}
+            {missing.length === 0 ? (
+              <span className="text-muted">Todo comprobado</span>
+            ) : draft.checks.size === 0 ? (
+              // Nada marcado todavía: la vía rápida es el botón grande de arriba,
+              // y repetirla aquí solo añadiría una segunda forma de hacer lo mismo.
+              <span className="text-muted">
+                Faltan {missing.length} comprobacion{missing.length === 1 ? '' : 'es'}
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={markRestOk}
+                className="key key-quiet min-h-11 px-3 text-xs"
+              >
+                Faltan {missing.length} · marcar OK
+              </button>
             )}
+            {/* `role="status"` porque es LA respuesta a «¿se ha guardado?»: un
+                lector de pantalla debe anunciarlo sin que nadie lo busque. */}
+            <span role="status" className="shrink-0 text-muted">
+              {saving ? 'Guardando…' : 'Guardado'}
+            </span>
           </div>
-        </div>
 
-        {/*
-          Corrigiendo hay un solo botón, y no es un detalle de maquetación.
+          {/*
+            Qué va a pasar al pulsar Guardar, dicho antes de pulsar.
 
-          «Guardar y siguiente sala» encadena la ronda: existe porque después de
-          revisar un aula viene la siguiente. Una corrección no es un paso de la
-          ronda —se hace sentado, minutos u horas después— y ofrecer el encadenado
-          aquí llevaría al técnico a un aula en la que no está.
-        */}
-        {corrigiendo ? (
-          <button
-            type="button"
-            disabled={missing.length > 0}
-            onClick={() => void complete().then(() => onDone(false))}
-            className="key key-accent h-touch w-full"
-          >
-            Guardar la corrección
-          </button>
-        ) : (
-          <div className="flex gap-2">
+            Cerrar la revisión manda los equipos en falla a Incidencias, y eso es un
+            parte de trabajo que alguien tendrá que cerrar: no puede ser una sorpresa.
+            Va aquí y no repetido en cada fila —con cuatro equipos en falla serían
+            cuatro veces la misma frase— y solo cuando hay algo que anunciar.
+
+            Se dice «pasan a Incidencias» y no «se abren N incidencias» porque las
+            dos cosas no son lo mismo: si ese proyector ya tenía una abierta de la
+            ronda anterior, no se abre otra. La frase es cierta en los dos casos, y
+            prometer un número que luego no cuadra es peor que no darlo.
+          */}
+          <div className="collapse-y" data-open={incidents.length > 0}>
+            <div>
+              {incidents.length > 0 && (
+                <p className="pb-2 text-xs leading-relaxed text-crit">
+                  {incidents.length === 1 ? '1 equipo en falla' : `${incidents.length} equipos en falla`}
+                  : al guardar pasa{incidents.length === 1 ? '' : 'n'} a Incidencias y sigue
+                  {incidents.length === 1 ? '' : 'n'} ahí hasta que alguien lo
+                  {incidents.length === 1 ? '' : 's'} resuelva.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/*
+            Corrigiendo hay un solo botón, y no es un detalle de maquetación.
+
+            «Guardar y siguiente sala» encadena la ronda: existe porque después de
+            revisar un aula viene la siguiente. Una corrección no es un paso de la
+            ronda —se hace sentado, minutos u horas después— y ofrecer el encadenado
+            aquí llevaría al técnico a un aula en la que no está.
+          */}
+          {corrigiendo ? (
             <button
               type="button"
               disabled={missing.length > 0}
               onClick={() => void complete().then(() => onDone(false))}
-              className="key key-quiet h-touch flex-1"
+              className="key key-accent h-touch w-full"
             >
-              Guardar
+              Guardar la corrección
             </button>
-            <button
-              type="button"
-              disabled={missing.length > 0}
-              onClick={() => void complete().then(() => onDone(true))}
-              className="key key-accent h-touch flex-[2]"
-            >
-              Guardar y siguiente sala
-            </button>
-          </div>
-        )}
-      </div>
+          ) : (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={missing.length > 0}
+                onClick={() => void complete().then(() => onDone(false))}
+                className="key key-quiet h-touch flex-1"
+              >
+                Guardar
+              </button>
+              <button
+                type="button"
+                disabled={missing.length > 0}
+                onClick={() => void complete().then(() => onDone(true))}
+                className="key key-accent h-touch flex-[2]"
+              >
+                Guardar y siguiente sala
+              </button>
+            </div>
+          )}
+        </div>
+      </AlPie>
     </div>
   )
 }

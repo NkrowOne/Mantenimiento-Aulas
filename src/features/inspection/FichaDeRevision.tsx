@@ -28,6 +28,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { congelarFondo } from '@/lib/viewport'
 import { fechaCorta } from '@/domain/fechas'
 import { fechaLegible } from '@/domain/historial'
 import {
@@ -104,15 +105,12 @@ export function FichaDeRevision({
      * propio que consumir y iOS pasaba el gesto a la sala de debajo.
      */
     const origen = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    volver.current?.focus()
+    // Sin desplazar, aquí y al volver: la capa es `fixed` y está a la vista, y
+    // un `focus()` a secas le pide a iOS que mueva la página para enseñarla.
+    // Es media causa de la barra de pestañas flotando — ver `lib/viewport.ts`.
+    volver.current?.focus({ preventScroll: true })
 
-    const previo = document.documentElement.style.overflow
-    document.documentElement.style.overflow = 'hidden'
-
-    return () => {
-      document.documentElement.style.overflow = previo
-      origen?.focus()
-    }
+    return congelarFondo(origen)
   }, [])
 
   useEffect(() => {

@@ -20,7 +20,17 @@ import { aplicarActualizacion, onVersionNueva, posponerActualizacion } from '@/s
  * dispositivo que no consigue entrar no podía recibir nunca el arreglo que le
  * dejaría entrar.
  */
-export function UpdatePrompt(): React.ReactElement | null {
+interface Props {
+  /**
+   * Dentro del marco va en la columna, justo encima de la barra de pestañas, y
+   * no `fixed`: lo `fixed` es lo que el teclado de iOS deja varado a media
+   * pantalla (ver `components/Marco.tsx`), y así además no tapa las pestañas
+   * mientras está puesta. Detrás del candado no hay columna y sigue fija.
+   */
+  enFlujo?: boolean
+}
+
+export function UpdatePrompt({ enFlujo = false }: Props): React.ReactElement | null {
   const [needRefresh, setNeedRefresh] = useState(false)
   /*
    * El único final del botón que no se ve solo.
@@ -52,8 +62,12 @@ export function UpdatePrompt(): React.ReactElement | null {
          Y el escenario es el corriente: la versión aparece a media jornada, la
          barra sale porque no era momento seguro, y quien imprime no la cierra
          porque no le impide nada. */
-      className="update-bar solo-pantalla fixed inset-x-0 bottom-0 z-30 border-t border-accent/30 bg-accent-tint backdrop-blur"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      className={`update-bar solo-pantalla border-t border-accent/30 bg-accent-tint ${
+        enFlujo ? 'flex-none' : 'fixed inset-x-0 bottom-0 z-30 backdrop-blur'
+      }`}
+      // En la columna la zona de gestos del iPhone ya la guarda la barra de
+      // pestañas, que va debajo.
+      style={enFlujo ? undefined : { paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
         <p aria-live="polite" className="flex-1 text-sm">

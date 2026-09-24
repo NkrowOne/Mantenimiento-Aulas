@@ -424,8 +424,11 @@ export function VisorDeFotos({
     // visor no se desmonta al pasar de foto, así que esto solo corre al abrir
     // y al cerrar.
     const origen = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    cerrar.current?.focus()
-    return () => origen?.focus()
+    // Sin desplazar: el visor es `fixed` y la miniatura estaba a la vista al
+    // tocarla. Un `focus()` a secas mueve la página por debajo en iOS — ver
+    // `lib/viewport.ts`.
+    cerrar.current?.focus({ preventScroll: true })
+    return () => origen?.focus({ preventScroll: true })
   }, [])
 
   useEffect(() => {

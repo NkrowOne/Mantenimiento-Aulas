@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { MOTIVO_MIN } from './motivo'
@@ -75,5 +75,46 @@ describe('contrato del almacén: quién retira y con qué motivo', () => {
       expect(sql).toContain(`revoke all on function public.${firma} from public, anon;`)
       expect(sql).toContain(`grant execute on function public.${firma} to authenticated;`)
     }
+  })
+})
+
+/**
+ * La definición que manda es la ÚLTIMA.
+ *
+ * `20260923000300` sustituye a `stock_item_renombrar` para cerrarle dos huecos,
+ * y el bloque de arriba sigue leyendo la migración que la trajo: vigilaría una
+ * versión que ya no corre. Esto lee la última que la define, que es la que se
+ * queda en la base.
+ */
+describe('contrato del almacén: la versión de renombrar que manda', () => {
+  const dir = path.join(RAIZ, 'supabase/migrations')
+  const firma = 'create or replace function public.stock_item_renombrar('
+  const ultima = readdirSync(dir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort()
+    .filter((f) => readFileSync(path.join(dir, f), 'utf8').includes(firma))
+    .at(-1)!
+  const texto = readFileSync(path.join(dir, ultima), 'utf8')
+  const cuerpo = texto.slice(texto.indexOf(firma), texto.indexOf('end $$;', texto.indexOf(firma)))
+
+  it('sigue siendo de administrador y sigue dejando el nombre de antes como alias', () => {
+    expect(cuerpo).toContain('if not public.is_admin() then')
+    expect(cuerpo).not.toContain('is_supervisor()')
+    expect(cuerpo).toContain('array_append(v_alias, v_actual)')
+  })
+
+  it('no deja poner de nombre un alias de otro artículo, y lo dice con sus palabras', () => {
+    expect(cuerpo).toContain('unnest(o.aliases)')
+    const aviso = /raise exception '([^']*ya es otro nombre de[^']*)'[^;]*;/.exec(cuerpo)
+    expect(aviso, 'rechaza el alias ajeno con un mensaje propio').not.toBeNull()
+    // Ni código ni texto de duplicado: la pantalla los traduce a «búscalo en la
+    // lista», que aquí mandaría a buscar algo que no está con ese nombre.
+    expect(aviso![0]).not.toMatch(/unique_violation|23505/)
+    expect(aviso![1]).not.toMatch(/ya hay otro artículo/i)
+  })
+
+  it('se expone solo a usuarios con sesión', () => {
+    expect(texto).toContain('revoke all on function public.stock_item_renombrar(uuid, text) from public, anon;')
+    expect(texto).toContain('grant execute on function public.stock_item_renombrar(uuid, text) to authenticated;')
   })
 })

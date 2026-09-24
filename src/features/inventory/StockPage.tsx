@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { v7 as uuidv7 } from 'uuid'
 import { supabase } from '@/lib/supabase'
+import { pullMaster } from '@/sync/pull'
 import { fechaCorta } from '@/domain/fechas'
 import type { Role } from '@/domain/types'
 import { UnidadesDeAlmacen } from './UnidadesDeAlmacen'
@@ -257,6 +258,10 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
       setEdicion(null)
       setFalloAdmin(null)
       void qc.invalidateQueries({ queryKey: ['stock-levels'] })
+      // El buscador de material de los partes no lee esta lista sino el espejo
+      // del dispositivo, que sin esto seguiría ofreciendo el nombre viejo hasta
+      // la siguiente bajada.
+      void pullMaster()
     },
     onError: (e: unknown) => setFalloAdmin(falloDeAdministracion(e)),
   })
