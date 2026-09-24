@@ -171,13 +171,17 @@ export function porSeccion(p: PendientesDeDatos): {
 } {
   return {
     pendientes: p.retiradas + p.equiposSinValidar + p.tiposSinValidar + p.duplicados,
-    maestro: p.edificiosSinIdentificar,
+    // Los edificios sin identificar se resuelven fusionando o confirmando
+    // datos que trajo el importador —igual que la cuarentena—, así que ahora
+    // cuentan en Importación (ver más abajo) y no aquí: el maestro no tiene
+    // hoy ningún recuento propio.
+    maestro: 0,
     /*
      * Sin sumar dos veces lo mismo. Una incidencia sin sala deja además su fila
      * en la cuarentena con el motivo «No se pudo identificar la sala», y las
      * dos cosas se contaban: la insignia decía 68 donde había 34 decisiones. Y
      * ese número es lo que decide si alguien entra en la sección.
      */
-    importacion: p.incidenciasSinSala + Math.max(0, p.cuarentena - p.cuarentenaSinSala),
+    importacion: p.edificiosSinIdentificar + p.incidenciasSinSala + Math.max(0, p.cuarentena - p.cuarentenaSinSala),
   }
 }

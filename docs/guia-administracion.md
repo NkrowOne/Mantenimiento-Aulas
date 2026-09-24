@@ -8,7 +8,8 @@ aplicación; nada requiere tocar código.
 
 ## 0. La pestaña Datos, por secciones
 
-Todo lo de administración vive en la pestaña **Datos** (solo la ven los
+Todo lo de administración vive en la pestaña **Datos** —en la barra de abajo
+está detrás de **Más**, junto a Panel e Informes— (solo la ven los
 administradores), y va en seis secciones, arriba del todo. Se abre una cada
 vez, y la aplicación recuerda en cada navegador cuál fue la última. Se entra
 en **Por decidir**, que es la del día a día:
@@ -16,9 +17,9 @@ en **Por decidir**, que es la del día a día:
 | Sección | Qué hay |
 |---|---|
 | **Por decidir** | Lo que crece solo con cada ronda: retiradas por autorizar, equipos y tipos sin validar, y los duplicados del inventario |
-| **Maestro** | Salas y edificios, edificios sin identificar y equipamiento por defecto (apartados 1 y 3) |
+| **Maestro** | Salas y edificios, y equipamiento por defecto (apartado 3) |
 | **Excel** | Sincronizar el libro de SharePoint (apartado 4b) |
-| **Importación** | Incidencias sin sala, la cuarentena y recuperar una copia (apartado 1) |
+| **Importación** | Edificios sin identificar, incidencias sin sala, la cuarentena y recuperar una copia (apartado 1) |
 | **Actividad** | Quién cambió qué y cuándo: la auditoría, leída con palabras (apartado 3 bis) |
 | **Usuarios** | Roles y bajas, y cómo se da de alta a alguien (apartado 2) |
 
@@ -42,8 +43,8 @@ cuarentena) pide confirmación antes.
 
 Es lo primero que conviene hacer tras desplegar. El importador **no adivina**:
 lo que no pudo interpretar con confianza quedó marcado, y sale en la pestaña
-**Datos**: los edificios en la sección **Maestro**, las incidencias sin sala y
-la cuarentena en **Importación**.
+**Datos → Importación**: los edificios sin identificar, las incidencias sin
+sala y la cuarentena.
 
 ### Edificios sin identificar
 

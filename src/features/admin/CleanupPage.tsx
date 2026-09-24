@@ -34,12 +34,12 @@ import { porSeccion, usePendientesDeDatos, useRefrescarPendientes } from './pend
  *     retiradas, equipos y tipos por validar, y la auditoría de duplicados. Es
  *     la sección por defecto porque es la del día a día.
  *  2. **Maestro** — salas, edificios y equipamiento por defecto: se toca
- *     cuando cambia el campus. Los edificios sin identificar van aquí porque
- *     resolverlos es editar el maestro.
+ *     cuando cambia el campus.
  *  3. **Excel** — la sincronización con el libro de SharePoint, sola, que es
  *     una pantalla larga y con sus propias decisiones.
- *  4. **Importación** — las copias, las incidencias sin sala y la cuarentena:
- *     importante, y se hace una vez.
+ *  4. **Importación** — las copias, los edificios sin identificar, las
+ *     incidencias sin sala y la cuarentena: resolver datos que trajo el
+ *     importador, y se hace una vez.
  *  5. **Actividad** — quién cambió qué y cuándo. Se abre cuando algo ha
  *     desaparecido o no cuadra; es la auditoría, leída con palabras.
  *  6. **Usuarios** — roles y bajas. Lo que se viene a buscar cuando algo va
@@ -60,9 +60,9 @@ type Seccion = 'pendientes' | 'maestro' | 'excel' | 'importacion' | 'actividad' 
 
 const SECCIONES: Array<{ id: Seccion; titulo: string; texto: string }> = [
   { id: 'pendientes', titulo: 'Por decidir', texto: 'Retiradas, equipos y tipos sin validar, y los duplicados del inventario' },
-  { id: 'maestro', titulo: 'Maestro', texto: 'Salas, edificios, tipos de equipo y sus nombres, edificios sin identificar y equipamiento por defecto' },
+  { id: 'maestro', titulo: 'Maestro', texto: 'Salas, edificios, tipos de equipo y sus nombres, y equipamiento por defecto' },
   { id: 'excel', titulo: 'Excel', texto: 'Sincronizar el libro de SharePoint en los dos sentidos' },
-  { id: 'importacion', titulo: 'Importación', texto: 'Incidencias sin sala, cuarentena y recuperar una copia' },
+  { id: 'importacion', titulo: 'Importación', texto: 'Edificios sin identificar, incidencias sin sala, cuarentena y recuperar una copia' },
   { id: 'actividad', titulo: 'Actividad', texto: 'Quién cambió qué y cuándo' },
   { id: 'usuarios', titulo: 'Usuarios', texto: 'Roles, bajas y cómo se da de alta a alguien' },
 ]
@@ -111,21 +111,27 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
   return (
     <div className="mx-auto max-w-4xl px-4 pb-4">
       {/* Arriba, y no en la barra de abajo: la barra es de la aplicación
-          entera, y estas cinco son las partes de una sola pestaña. Con la
-          palabra, el recuento y la línea de debajo, no solo con el color. */}
-      <nav aria-label="Secciones de Datos" className="scroll-x -mx-4 border-b border-line px-4">
-        <ul className="flex gap-1">
+          entera, y estas seis son las partes de una sola pestaña. En
+          cuadrícula y no en una fila que se desplaza: a 390 px la fila solo
+          dejaba ver tres de las seis y nada avisaba de que hubiera más
+          deslizando el dedo. En dos columnas (tres desde `sm:`) las seis se
+          ven de una vez. Cada chip mantiene su línea inferior para marcar la
+          activa —ya no hace falta el `-mb-px` que la solapaba con la regla
+          de una fila única: en la cuadrícula cada chip lleva la suya suelta—,
+          y con la palabra, el recuento y el color, no solo con la línea. */}
+      <nav aria-label="Secciones de Datos" className="border-b border-line pb-3">
+        <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {SECCIONES.map((s) => {
             const activa = s.id === seccion
             const n = contadorDe[s.id] ?? 0
             return (
-              <li key={s.id} className="shrink-0">
+              <li key={s.id}>
                 <button
                   type="button"
                   aria-current={activa ? 'page' : undefined}
                   onClick={() => abrir(s.id)}
                   title={s.texto}
-                  className={`-mb-px flex min-h-12 items-center gap-1.5 border-b-2 px-3 text-sm ${
+                  className={`flex min-h-11 w-full items-center justify-center gap-1.5 border-b-2 px-3 text-sm ${
                     activa ? 'border-accent font-semibold text-accent' : 'border-transparent text-muted'
                   }`}
                 >
@@ -169,7 +175,11 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
           <StatTile
             label="Maestro"
             value={cuentas.maestro}
-            detail={cuentas.maestro === 0 ? 'Ningún edificio sin identificar' : 'edificios sin identificar'}
+            // Los edificios sin identificar se cuentan en Importación (se
+            // resuelven fusionando datos del importador, no editando el
+            // maestro): aquí ya no queda nada que decidir, y por eso siempre
+            // está en verde.
+            detail="Sin decisiones pendientes aquí"
             tone={cuentas.maestro > 0 ? 'aviso' : 'ok'}
             onClick={() => abrir('maestro')}
             accion="Abrir"
@@ -181,6 +191,7 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
               cuentas.importacion === 0
                 ? 'Nada en cuarentena'
                 : [
+                    pendientes.edificiosSinIdentificar > 0 && `${pendientes.edificiosSinIdentificar} edificios`,
                     pendientes.incidenciasSinSala > 0 && `${pendientes.incidenciasSinSala} sin sala`,
                     pendientes.cuarentena > 0 && `${pendientes.cuarentena} en cuarentena`,
                   ]
@@ -227,7 +238,6 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
           <>
             <MaestroSalas />
             <CatalogoDeTipos />
-            <EdificiosSinIdentificar />
             <EquipoPorDefecto />
           </>
         )}
@@ -240,8 +250,10 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
 
         {seccion === 'importacion' && (
           <>
-            {/* Antes que la cuarentena cruda: es su mitad accionable. Cada
-                asignación cierra además su fila de ahí abajo. */}
+            {/* Antes que la cuarentena cruda: son sus dos mitades accionables
+                —fusionar o confirmar un edificio, asignar una sala—. Cada una
+                cierra además su fila de ahí abajo. */}
+            <EdificiosSinIdentificar />
             <IncidenciasSinSala />
             <Cuarentena />
             <RecuperarCopia />

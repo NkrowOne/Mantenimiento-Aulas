@@ -24,7 +24,22 @@ Abres la aplicación, tecleas el PIN y ya estás dentro. **Funciona sin cobertur
 el PIN se comprueba en el propio dispositivo.
 
 **No hace falta instalar nada.** Es una página web: guárdala en favoritos y
-listo.
+listo. Si prefieres tenerla como una aplicación más —icono en la pantalla de
+inicio y sin la barra del navegador—, en Android abre **Más → Instalar en este
+móvil**; en el iPhone y el iPad es **Compartir → Añadir a pantalla de inicio**.
+Es la misma aplicación, con lo mismo dentro.
+
+### Las pestañas y el botón atrás
+
+Abajo hay cuatro pestañas —**Revisar**, **Incidencias**, **Almacén** e
+**Historial**— y **Más**, que guarda el panel, instalar la aplicación y cerrar
+sesión (administración ve ahí también Informes y Datos).
+
+El botón atrás del móvil —o el gesto desde el borde— hace lo que esperas:
+cierra lo que tengas abierto encima (un menú, la ficha de una revisión, una
+foto, la cámara) o vuelve a la pantalla anterior, igual que el botón «Volver».
+Desde otra pestaña vuelve a Revisar. Solo en la lista de edificios, sin nada
+abierto, sale de la aplicación.
 
 ### Que el navegador recuerde el PIN
 
@@ -44,7 +59,7 @@ dirección de la aplicación y tu email.
 **No, nunca.** Tecleas el PIN una vez y la sesión se queda. Puedes cerrar la
 pestaña, apagar el iPad, volver al día siguiente: sigues dentro.
 
-La única forma de salir es pulsar **Cerrar sesión**, arriba a la derecha. Te
+La única forma de salir es **Más → Cerrar sesión**, abajo a la derecha. Te
 pedirá confirmación, porque después hay que volver a teclear el PIN.
 
 **Ciérrala cuando dejes de usar el dispositivo** —al acabar el turno, o si se

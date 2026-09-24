@@ -1,8 +1,9 @@
-import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { FilaConAcciones } from '@/components/FilaConAcciones'
 import { Marco } from '@/components/Marco'
 import { InsigniaAveria, detalleDeAverias } from '@/components/InsigniaAveria'
+import { HojaDeAcciones, type AccionDeHoja } from '@/components/HojaDeAcciones'
 import { SyncChip } from '@/components/SyncChip'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { LockScreen } from '@/features/auth/LockScreen'
@@ -39,6 +40,8 @@ import { pullMaster, startPull, type ResultadoPull } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
 import { configError, supabase } from '@/lib/supabase'
 import { PARAM_SALA, salaDeLaUrl, salaDeTextoQR } from '@/lib/enlace-sala'
+import { nivelar } from '@/lib/historial'
+import { pedirInstalar, useSePuedeInstalar } from '@/lib/instalar'
 import type { SealedSession } from '@/auth/pin'
 import { OVERDUE_INSPECTION_DAYS, type Building, type Role, type Room } from '@/domain/types'
 
@@ -230,6 +233,104 @@ function puedeVer(tab: Tab, role: Role): boolean {
   return t !== undefined && RANK[role] >= RANK[t.minRole]
 }
 
+function etiquetaDe(tab: Tab): string {
+  return TABS.find((x) => x.id === tab)?.label ?? tab
+}
+
+/*
+ * La barra de abajo: cuatro pestañas y «Más», para los tres roles.
+ *
+ * Con las siete pestañas la barra medía 468 px en un móvil de 390: «Informes»
+ * salía cortada, «Datos» ni salía y nada decía que se pudiera deslizar. Y las
+ * cinco del técnico cabían en 390 px JUSTOS, a una letra de desbordar. Las
+ * cuatro de aquí son las del trabajo de pie —la ronda, las averías, el
+ * material y lo hecho—; el panel y las pantallas de administración van detrás
+ * de «Más», con instalar la aplicación y cerrar sesión, que hasta ahora ocupaba
+ * la cabecera de todas las pantallas para alguien que no cierra sesión casi
+ * nunca. Así la barra tiene la misma forma en todos los aparatos y nunca se
+ * desborda.
+ */
+const EN_LA_BARRA: Tab[] = ['revisar', 'incidencias', 'almacen', 'historial']
+const EN_MAS: Tab[] = ['panel', 'informes', 'datos']
+/** La segunda línea de cada entrada de «Más»: qué hay detrás, en una frase. */
+const QUE_HAY_EN: Partial<Record<Tab, string>> = {
+  panel: 'Cómo va la ronda: retrasos, averías abiertas y lo que va a dar guerra.',
+  informes: 'Se arman con los datos del periodo que elijas y quedan archivados.',
+  datos: 'Por decidir, maestro, Excel, importación, actividad y usuarios.',
+}
+
+/**
+ * A dónde lleva «Volver» desde esta vista. `null` en la raíz.
+ *
+ * Es UNA regla para los dos botones que vuelven: el de la pantalla y el atrás
+ * del móvil. Antes cada pantalla llevaba la suya en línea, y el atrás del móvil
+ * no existía; con dos copias volverían a discrepar.
+ *
+ * Al sitio del que se salió, no a uno que no se ha visto: la revisión que se
+ * abrió desde la ficha vuelve a la ficha; la ficha que se abrió a media
+ * revisión vuelve a ESA revisión, con su `desdeFicha` y, si era una
+ * corrección, con la corrección —sin eso, volver de consultar la ficha abría
+ * una revisión nueva y vacía de la misma sala—; la ficha a la que se llegó
+ * desde el buscador, el QR o el enlace vuelve a la pantalla de edificios, que
+ * es donde viven; y la que se abrió desde una incidencia devuelve a esa
+ * pestaña, con la vista de «Revisar» en la raíz, que es lo que hay detrás.
+ * Las hojas de placas e inventario vuelven a la ficha si se abrieron desde
+ * una, y si no a la lista: la ficha vuelve con «Volver» hacia la lista, así
+ * que la hoja no arrastra de dónde venía la ficha a su vez.
+ *
+ * En la ficha, la revisión se pregunta primero y en positivo: es la rama que
+ * necesita `view.revision`, y TypeScript solo estrecha la unión por `volverA`
+ * con una igualdad, no descartando los otros valores.
+ */
+function atras(view: RoomView): { view: RoomView; tab?: Tab } | null {
+  switch (view.name) {
+    case 'edificios':
+      return null
+    case 'salas':
+      return { view: { name: 'edificios' } }
+    case 'revision':
+      return {
+        view: view.desdeFicha
+          ? { name: 'ficha', building: view.building, room: view.room, volverA: 'salas' }
+          : { name: 'salas', building: view.building },
+      }
+    case 'ficha':
+      if (view.volverA === 'revision') {
+        return {
+          view: { name: 'revision', building: view.building, room: view.room, ...view.revision },
+        }
+      }
+      if (view.volverA === 'incidencias') return { view: { name: 'edificios' }, tab: 'incidencias' }
+      if (view.volverA === 'edificios') return { view: { name: 'edificios' } }
+      return { view: { name: 'salas', building: view.building } }
+    case 'placas':
+      return {
+        view:
+          view.volverA === 'ficha'
+            ? { name: 'ficha', building: view.building, room: view.room, volverA: 'salas' }
+            : { name: 'salas', building: view.building },
+      }
+    case 'inventario':
+      return {
+        view:
+          view.volverA === 'ficha' && view.room
+            ? { name: 'ficha', building: view.building, room: view.room, volverA: 'salas' }
+            : { name: 'salas', building: view.building },
+      }
+  }
+}
+
+/**
+ * Cuántas pantallas hacia dentro hay abiertas: las veces que se puede pulsar
+ * «Volver» antes de llegar a la lista de edificios. Es lo que el botón atrás
+ * del móvil tiene que poder deshacer una a una.
+ */
+function nivelDe(view: RoomView): number {
+  let n = 0
+  for (let v: RoomView | null = view; v && v.name !== 'edificios'; v = atras(v)?.view ?? null) n++
+  return n
+}
+
 /**
  * ¿Es esto uno de los órdenes de la lista de salas?
  *
@@ -328,6 +429,9 @@ export function App(): React.ReactElement {
      antigüedad sigue a un toque, para el día que se persigue el retraso. */
   const [roomOrder, setRoomOrder] = useState<RoomOrder>(ROOM_ORDER_POR_DEFECTO)
   const [escaneando, setEscaneando] = useState(false)
+  /** La hoja de «Más»: el panel, la administración, instalar, cerrar sesión. */
+  const [masAbierto, setMasAbierto] = useState(false)
+  const instalable = useSePuedeInstalar()
   const [avisoQR, setAvisoQR] = useState<string | null>(null)
   /*
    * El edificio cuyas acciones están abiertas.
@@ -520,6 +624,44 @@ export function App(): React.ReactElement {
    * aplicación se considere desbloqueada. Engancharla después es perderse justo
    * el token que había que guardar.
    */
+  /*
+   * El botón atrás del móvil.
+   *
+   * Cuántas pantallas hay hacia dentro se deduce de la vista —la cadena de
+   * «Volver» hasta la lista de edificios— más una si la pestaña no es Revisar,
+   * que es la de casa: desde cualquier otra, atrás vuelve a ella. `nivelar` deja
+   * en el historial del navegador tantas entradas como pantallas, y atrás llama
+   * a `volver`, que recorre el mismo camino que el botón de la pantalla. Las
+   * capas que se montan encima —hojas, fichas, fotos, la cámara— entran solas.
+   * Lo cuenta entero `lib/historial.ts`.
+   *
+   * `volver` lee dónde está de un ref y lo deja actualizado en el acto: dos
+   * pulsaciones seguidas de atrás llegan antes de que React vuelva a pintar, y
+   * la segunda tiene que partir de donde dejó la primera.
+   */
+  const donde = useRef({ tab, view })
+  donde.current = { tab, view }
+  const volver = useCallback((): void => {
+    const actual = donde.current
+    if (actual.tab !== 'revisar') {
+      donde.current = { tab: 'revisar', view: actual.view }
+      setTab('revisar')
+      return
+    }
+    const destino = atras(actual.view)
+    if (!destino) return
+    donde.current = { tab: destino.tab ?? 'revisar', view: destino.view }
+    if (destino.tab) setTab(destino.tab)
+    setView(destino.view)
+  }, [])
+  const profundidad = unlocked ? nivelDe(view) + (tab === 'revisar' ? 0 : 1) : 0
+  useEffect(() => {
+    // En cada cambio, no solo cuando cambia la cuenta: atrás quita una entrada
+    // y `volver` puede dejar la misma profundidad —de una pestaña a una ficha
+    // abierta desde ella—, y entonces hay que reponerla.
+    nivelar(profundidad, volver)
+  }, [profundidad, tab, view, volver])
+
   useEffect(() => watchSession(), [])
 
   /*
@@ -630,7 +772,10 @@ export function App(): React.ReactElement {
           // de salir de ella salvo editando la barra de direcciones.
           const limpia = new URL(window.location.href)
           limpia.searchParams.delete(PARAM_SALA)
-          window.history.replaceState({}, '', limpia.pathname + limpia.search)
+          // Con el estado que tenga la entrada: es la profundidad que apunta
+          // `lib/historial.ts`, y borrarla dejaría al botón atrás sin saber
+          // cuántas pantallas hay que cerrar.
+          window.history.replaceState(window.history.state, '', limpia.pathname + limpia.search)
 
           // Por `abrirSala`, como el lector de la cámara: el enlace de la
           // pegatina es otra puerta a la misma sala, no a otra pantalla, y las
@@ -841,8 +986,65 @@ export function App(): React.ReactElement {
 
   // Por `puedeVer` y no por `RANK` a mano: la barra, la reconducción y el render
   // deciden con la misma línea, que es lo que impide que vuelvan a discrepar.
-  const visibleTabs = TABS.filter((t) => puedeVer(t.id, role))
+  const enLaBarra = EN_LA_BARRA.filter((t) => puedeVer(t, role))
+  const enMas = EN_MAS.filter((t) => puedeVer(t, role))
+  /** La pestaña abierta cuando es una de las de «Más»: la barra la señala ahí. */
+  const abiertaEnMas = EN_MAS.find((t) => t === tab)
   const inspecting = tab === 'revisar' && view.name === 'revision'
+
+  const cerrarSesion = (): void => {
+    const aviso =
+      sinSubir > 0
+        ? `Quedan ${sinSubir} cambios sin subir. No se pierden —siguen en este ` +
+          'dispositivo y subirán cuando vuelvas a entrar—, pero mientras la sesión ' +
+          'esté cerrada no se sube nada. ¿Cerrar sesión igualmente?'
+        : '¿Cerrar sesión?'
+    if (confirm(aviso)) {
+      void lock().then(() => setUnlocked(false))
+    }
+  }
+
+  const accionesDeMas: AccionDeHoja[] = [
+    ...enMas.map(
+      (t): AccionDeHoja => ({
+        id: t,
+        etiqueta: etiquetaDe(t),
+        descripcion: t === tab ? 'Es la pantalla abierta.' : QUE_HAY_EN[t],
+        alElegir: () => {
+          setMasAbierto(false)
+          setTab(t)
+        },
+      }),
+    ),
+    /* Solo mientras Chrome lo ofrezca: en iOS no existe y aquí no sale nada;
+       la guía cuenta el camino de Safari. */
+    ...(instalable
+      ? [
+          {
+            id: 'instalar',
+            etiqueta: 'Instalar en este móvil',
+            descripcion:
+              'Un icono en la pantalla de inicio y sin la barra del navegador. Es la misma ' +
+              'aplicación, con lo mismo dentro.',
+            alElegir: () => {
+              setMasAbierto(false)
+              // Desde el toque, sin esperar a nada: el navegador solo enseña
+              // el aviso de instalar en respuesta a un gesto.
+              void pedirInstalar()
+            },
+          } satisfies AccionDeHoja,
+        ]
+      : []),
+    {
+      id: 'salir',
+      etiqueta: 'Cerrar sesión',
+      descripcion: 'Pide confirmación. Después hay que volver a teclear el PIN.',
+      alElegir: () => {
+        setMasAbierto(false)
+        cerrarSesion()
+      },
+    },
+  ]
 
   return (
     <Marco
@@ -861,39 +1063,18 @@ export function App(): React.ReactElement {
             <div className="flex items-center justify-between gap-2 px-4 py-2">
               {/* El rol, a la vista. Es lo que decide qué pestañas hay, así que
                   esconderlo convierte «no tengo el botón» en un misterio: quien es
-                  admin y se ve como técnico lo detecta aquí, de un vistazo. */}
-              <span className="eyebrow truncate">Aulas · {role}</span>
+                  admin y se ve como técnico lo detecta aquí, de un vistazo.
+                  «Cerrar sesión» ya no está aquí: vive en «Más», abajo. Ocupaba
+                  la cabecera de todas las pantallas para algo que se hace al
+                  acabar el turno. */}
+              <span className="eyebrow truncate">
+                Aulas · {role}
+                {/* Y la pantalla, cuando es una de las de «Más»: la barra solo
+                    enciende «Más», y el Panel no tiene título propio. */}
+                {abiertaEnMas && ` · ${etiquetaDe(abiertaEnMas)}`}
+              </span>
               <div className="flex shrink-0 items-center gap-2">
                 <SyncChip />
-                <button
-                  type="button"
-                  onClick={() => {
-                    /*
-                     * Es la única forma de que la sesión termine: no caduca sola.
-                     * Por eso se confirma — cerrarla sin querer obliga a teclear el
-                     * PIN otra vez en mitad de una ronda.
-                     *
-                     * Y con la cola llena se avisa de qué se está haciendo. Cerrar
-                     * sesión no borra nada —el trabajo sigue aquí y sube al volver a
-                     * entrar—, pero sí para la subida en seco: sin sesión, `flush()`
-                     * no puede mandar nada. Quien cierra creyendo que «así se
-                     * guarda» está haciendo lo contrario de lo que quiere.
-                     */
-                    const aviso =
-                      sinSubir > 0
-                        ? `Quedan ${sinSubir} cambios sin subir. No se pierden —siguen en este ` +
-                          'dispositivo y subirán cuando vuelvas a entrar—, pero mientras la sesión ' +
-                          'esté cerrada no se sube nada. ¿Cerrar sesión igualmente?'
-                        : '¿Cerrar sesión?'
-                    if (confirm(aviso)) {
-                      void lock().then(() => setUnlocked(false))
-                    }
-                  }}
-                  className="key key-quiet px-3 py-1.5 text-xs font-medium text-muted"
-                  title="La sesión no caduca sola: solo termina aquí."
-                >
-                  Cerrar sesión
-                </button>
               </div>
             </div>
           </header>
@@ -927,51 +1108,98 @@ export function App(): React.ReactElement {
               className="solo-pantalla flex-none border-t border-line bg-surface"
               style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
             >
+              {/* Cinco de a 78 px en un móvil de 390, medidas en Chromium: caben con
+                  «Incidencias» y con «Más» llevando la flecha y el contador. `scroll-x`
+                  se queda de red por si el sistema agranda la letra: antes que
+                  pisarse, las pestañas se deslizan. */}
               <ul className="scroll-x flex">
-                {visibleTabs.map((t) => (
-                  <li key={t.id} className="flex-1">
+                {enLaBarra.map((t) => (
+                  <li key={t} className="flex-1">
                     <button
                       type="button"
-                      onClick={() => setTab(t.id)}
-                      aria-current={tab === t.id ? 'page' : undefined}
-                      className={`flex h-touch w-full items-center justify-center whitespace-nowrap px-3 text-xs font-medium ${
-                        tab === t.id
-                          ? 'border-t-2 border-accent -mt-px text-accent'
-                          : 'text-muted'
+                      onClick={() => setTab(t)}
+                      aria-current={tab === t ? 'page' : undefined}
+                      className={`flex h-touch w-full items-center justify-center whitespace-nowrap px-1.5 text-xs font-medium ${
+                        tab === t ? 'border-t-2 border-accent -mt-px text-accent' : 'text-muted'
                       }`}
                     >
-                      {t.label}
-                      {/* Solo aquí y no en cada pestaña: es la única cuyo trabajo
-                          crece solo sin que nadie lo vea, y la barra ya ha filtrado
-                          por rol, así que el contador no se le pide a un técnico. */}
-                      {t.id === 'datos' && <PendientesEnLaBarra />}
+                      {etiquetaDe(t)}
                     </button>
                   </li>
                 ))}
+                <li className="flex-1">
+                  {/* Encendida como las demás cuando la pantalla abierta es una de
+                      las suyas; cuál, lo dice la cabecera. La flecha dice que es un
+                      menú. Siempre «Más» y no el nombre de la sección: «Informes»
+                      con la flecha y el contador ya no cabe en los 78 px. */}
+                  <button
+                    type="button"
+                    onClick={() => setMasAbierto(true)}
+                    aria-haspopup="dialog"
+                    aria-expanded={masAbierto}
+                    aria-current={abiertaEnMas ? 'page' : undefined}
+                    className={`flex h-touch w-full items-center justify-center whitespace-nowrap px-1.5 text-xs font-medium ${
+                      abiertaEnMas ? 'border-t-2 border-accent -mt-px text-accent' : 'text-muted'
+                    }`}
+                  >
+                    Más
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 12 12"
+                      fill="none"
+                      aria-hidden="true"
+                      className="ml-0.5 shrink-0"
+                    >
+                      <path
+                        d="M3 4.5 6 7.5 9 4.5"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    {/* El contador de Datos, en la pestaña por la que se llega a
+                        Datos. Solo a quien puede abrirla: las siete cuentas no
+                        se le piden a un técnico. */}
+                    {puedeVer('datos', role) && <PendientesEnLaBarra />}
+                  </button>
+                </li>
               </ul>
             </nav>
           </>
         )
       }
       capas={
-        escaneando && (
-          <Suspense fallback={<div className="fixed inset-0 z-50 bg-black" />}>
-            <EscanerQR
-              onCerrar={() => setEscaneando(false)}
-              onLeido={(texto) => {
-                setEscaneando(false)
-                const sala = salaDeTextoQR(texto)
-                if (!sala) {
-                  setAvisoQR('Ese código no es de una sala.')
-                  return
-                }
-                void abrirSala(sala).then((ok) => {
-                  if (!ok) setAvisoQR('Ese QR no corresponde a ninguna sala de las que puedes ver.')
-                })
-              }}
+        <>
+          {masAbierto && (
+            <HojaDeAcciones
+              titulo="Más"
+              subtitulo={`Aulas · ${role}`}
+              acciones={accionesDeMas}
+              etiquetaDeCierre="Cerrar"
+              onCerrar={() => setMasAbierto(false)}
             />
-          </Suspense>
-        )
+          )}
+          {escaneando && (
+            <Suspense fallback={<div className="fixed inset-0 z-50 bg-black" />}>
+              <EscanerQR
+                onCerrar={() => setEscaneando(false)}
+                onLeido={(texto) => {
+                  setEscaneando(false)
+                  const sala = salaDeTextoQR(texto)
+                  if (!sala) {
+                    setAvisoQR('Ese código no es de una sala.')
+                    return
+                  }
+                  void abrirSala(sala).then((ok) => {
+                    if (!ok) setAvisoQR('Ese QR no corresponde a ninguna sala de las que puedes ver.')
+                  })
+                }}
+              />
+            </Suspense>
+          )}
+        </>
       }
     >
       {escaneoFallido && (
@@ -1167,7 +1395,7 @@ export function App(): React.ReactElement {
           role={role}
           order={roomOrder}
           onOrderChange={setRoomOrder}
-          onBack={() => setView({ name: 'edificios' })}
+          onBack={volver}
           onPlacas={() => setView({ name: 'placas', building: view.building, volverA: 'salas' })}
           /* Sin sala: la hoja del edificio entero, que es lo que se pide desde
              aquí —estando en la lista se está mirando el edificio, no un aula—. */
@@ -1187,13 +1415,7 @@ export function App(): React.ReactElement {
           buildingName={view.building.name}
           zoneName={zoneName}
           correccion={view.correccion ?? null}
-          onBack={() =>
-            setView(
-              view.name === 'revision' && view.desdeFicha
-                ? ({ name: 'ficha', building: view.building, room: view.room, volverA: 'salas' } as const)
-                : { name: 'salas', building: view.building },
-            )
-          }
+          onBack={volver}
           /*
             «Guardar y siguiente sala» salta de verdad a la siguiente.
             Antes este manejador ignoraba el parámetro, así que los dos botones
@@ -1254,26 +1476,9 @@ export function App(): React.ReactElement {
           buildingName={view.building.name}
           zoneName={zoneName}
           userId={userId}
-          /* Al sitio del que se salió: la lista, la pantalla de edificios —de
-             donde vienen el buscador, el lector y el enlace— o la revisión, tal
-             cual se dejó: con su `desdeFicha` y, si era una corrección, con la
-             corrección. Sin eso, volver de consultar la ficha a media corrección
-             abría una revisión nueva y vacía de la misma sala. */
-          onBack={() => {
-            // Si se vino de la lista de incidencias, se vuelve a ella: la vista
-            // de «Revisar» se deja en la raíz, que es lo que hay detrás.
-            if (view.volverA === 'incidencias') setTab('incidencias')
-            setView(
-              // La revisión se pregunta primero y en positivo: es la rama que
-              // necesita `view.revision`, y TypeScript solo estrecha la unión por
-              // `volverA` con una igualdad, no descartando los otros dos valores.
-              view.volverA === 'revision'
-                ? { name: 'revision', building: view.building, room: view.room, ...view.revision }
-                : view.volverA === 'edificios' || view.volverA === 'incidencias'
-                  ? { name: 'edificios' }
-                  : { name: 'salas', building: view.building },
-            )
-          }}
+          /* Al sitio del que se salió: lo decide `atras`, arriba, que es la
+             misma regla que sigue el botón atrás del móvil. */
+          onBack={volver}
           onRevisar={() =>
             setView({
               name: 'revision',
@@ -1313,17 +1518,8 @@ export function App(): React.ReactElement {
         <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
           <PlateSheet
             building={view.building}
-            /* A la ficha si se abrió desde una, y si no a la lista. La ficha
-               vuelve con «Volver» hacia la lista: la hoja no arrastra de dónde
-               venía la ficha a su vez, y tras imprimir la lista es un sitio
-               razonable. Igual que la hoja de inventario, de abajo. */
-            onBack={() =>
-              setView(
-                view.volverA === 'ficha'
-                  ? { name: 'ficha', building: view.building, room: view.room, volverA: 'salas' }
-                  : { name: 'salas', building: view.building },
-              )
-            }
+            /* A la ficha si se abrió desde una, y si no a la lista: `atras`. */
+            onBack={volver}
           />
         </Suspense>
       )}
@@ -1348,19 +1544,8 @@ export function App(): React.ReactElement {
             /* De la hoja de una sala se vuelve a su ficha, y de la del edificio a
                la lista. Si por el camino había una revisión a medias no se pierde
                —el borrador está en Dexie y la lista lo marca «A medias»—, igual
-               que ya ocurre al salir por la hoja de placas. */
-            onBack={() =>
-              setView(
-                view.name === 'inventario' && view.volverA === 'ficha' && view.room
-                  ? {
-                      name: 'ficha',
-                      building: view.building,
-                      room: view.room,
-                      volverA: 'salas',
-                    }
-                  : { name: 'salas', building: view.building },
-              )
-            }
+               que ya ocurre al salir por la hoja de placas. Lo decide `atras`. */
+            onBack={volver}
           />
         </Suspense>
       )}

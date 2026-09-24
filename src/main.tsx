@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from './App'
 import { registrarServiceWorker } from './sw'
+import { vigilarElHistorial } from './lib/historial'
+import { vigilarLaInstalacion } from './lib/instalar'
 import { vigilarElTeclado } from './lib/viewport'
 import './index.css'
 
@@ -13,7 +15,14 @@ const queryClient = new QueryClient({
       // Sin cobertura no tiene sentido reintentar tres veces y hacer esperar:
       // las pantallas de supervisión son online y así lo dicen enseguida.
       retry: navigator.onLine ? 1 : 0,
-      refetchOnWindowFocus: true,
+      /*
+       * Volver a la aplicación no vuelve a pedir nada. En Android cambiar de
+       * aplicación cuenta como perder y recuperar el foco, y con esto a `true`
+       * cada vuelta tras un minuto relanzaba todas las consultas de la pantalla
+       * abierta por la cobertura del pasillo. Lo que tiene que estar fresco al
+       * volver lo pide cada pantalla: el panel lo activa para sí.
+       */
+      refetchOnWindowFocus: false,
     },
   },
 })
@@ -44,6 +53,16 @@ for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
  * vuelven a juntar. Lo cuenta entero `lib/viewport.ts`.
  */
 vigilarElTeclado()
+
+/*
+ * El botón atrás del móvil cierra lo de arriba —una hoja, una ficha, una
+ * pantalla— en vez de cerrar la aplicación. Lo cuenta `lib/historial.ts`.
+ */
+vigilarElHistorial()
+
+/* Y si Chrome ofrece instalar la aplicación, se guarda el ofrecimiento para
+   enseñarlo en «Más». Lo cuenta `lib/instalar.ts`. */
+vigilarLaInstalacion()
 
 /*
  * Antes de pintar nada, y en particular antes del candado: si lo que impide
