@@ -116,7 +116,6 @@ function falloDeAdministracion(error: unknown): string {
 export function StockPage({ role }: { role: Role }): React.ReactElement {
   const qc = useQueryClient()
   const [filter, setFilter] = useState('')
-  const [onlyLow, setOnlyLow] = useState(false)
   const [alta, setAlta] = useState(false)
   const [edicion, setEdicion] = useState<Edicion | null>(null)
   const [verRetirados, setVerRetirados] = useState(false)
@@ -191,11 +190,13 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
    * para que el servidor le dijera que no.
    */
   const crear = useMutation({
-    mutationFn: async (input: { name: string; unit: string; min_threshold: number }) => {
+    // Sin mínimo: la pantalla ya no lo enseña ni lo filtra, así que pedirlo al
+    // dar de alta sería guardar un número que nadie vuelve a ver. Se queda el
+    // de la base, que es 0: «sin umbral».
+    mutationFn: async (input: { name: string; unit: string }) => {
       const { error } = await supabase.from('stock_items').insert({
         name: input.name,
         unit: input.unit || 'ud',
-        min_threshold: input.min_threshold,
         active: true,
       })
       if (error) throw error
@@ -284,9 +285,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
 
   const ocupadoAdmin = retirar.isPending || restaurar.isPending || renombrar.isPending
 
-  const rows = (levels ?? [])
-    .filter((l) => l.name.toLowerCase().includes(filter.toLowerCase()))
-    .filter((l) => !onlyLow || l.below_threshold)
+  const rows = (levels ?? []).filter((l) => l.name.toLowerCase().includes(filter.toLowerCase()))
 
   return (
     <div className="mx-auto max-w-4xl p-4">
@@ -314,7 +313,6 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
             crear.mutate({
               name,
               unit: String(f.get('unit') ?? '').trim(),
-              min_threshold: Number(f.get('min_threshold') ?? 0) || 0,
             })
           }}
         >
@@ -333,16 +331,6 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
               <input
                 name="unit"
                 defaultValue="ud"
-                className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-base"
-              />
-            </label>
-            <label className="w-24 text-sm">
-              <span className="text-muted">Mínimo</span>
-              <input
-                name="min_threshold"
-                type="number"
-                min={0}
-                defaultValue={0}
                 className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-3 text-base"
               />
             </label>
@@ -380,10 +368,6 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
           placeholder="Buscar artículo"
           className="h-11 min-w-48 flex-1 rounded-ctl border border-line bg-surface px-3 text-base"
         />
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={onlyLow} onChange={(e) => setOnlyLow(e.target.checked)} />
-          Solo bajo mínimo
-        </label>
       </div>
 
       <div className="scroll-x mt-4">
@@ -392,7 +376,6 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
             <tr className="border-b border-line text-left">
               <th className="py-2 font-medium text-muted">Artículo</th>
               <th className="py-2 text-right font-medium text-muted">Existencias</th>
-              <th className="py-2 text-right font-medium text-muted">Mínimo</th>
               <th className="py-2 text-right font-medium text-muted">Movimiento</th>
             </tr>
           </thead>
@@ -658,7 +641,6 @@ function FilaDeArticulo({
         <td className={`py-2 text-right font-mono tabular ${l.below_threshold ? 'text-crit' : ''}`}>
           {l.on_hand}
         </td>
-        <td className="py-2 text-right font-mono text-muted tabular">{l.min_threshold || '—'}</td>
         <td className="py-2 text-right">
           <span className="inline-flex gap-2">
             {/* Deshabilitados mientras vuela el anterior: la cifra no se
@@ -691,7 +673,7 @@ function FilaDeArticulo({
 
       {edicion === 'renombrar' && (
         <tr>
-          <td colSpan={4} className="pb-3">
+          <td colSpan={3} className="pb-3">
             <form
               className="flex flex-wrap items-center gap-2"
               onSubmit={(e) => {
@@ -724,7 +706,7 @@ function FilaDeArticulo({
 
       {edicion === 'retirar' && (
         <tr>
-          <td colSpan={4} className="pb-3">
+          <td colSpan={3} className="pb-3">
             <form
               className="flex flex-wrap items-center gap-2"
               onSubmit={(e) => {

@@ -1,6 +1,10 @@
+/* Solo «latin»: el español no usa cirílico, vietnamita ni latin-ext, pero esos
+   subconjuntos se precachean enteros igual aunque nunca se pinten en pantalla. */
+/* IBM Plex Mono publica un CSS solo-latin y aquí se usa; Instrument Sans
+   Variable no lo publica para su eje wght, así que se queda con los dos. */
 @import '@fontsource-variable/instrument-sans';
-@import '@fontsource/ibm-plex-mono/400.css';
-@import '@fontsource/ibm-plex-mono/600.css';
+@import '@fontsource/ibm-plex-mono/latin-400.css';
+@import '@fontsource/ibm-plex-mono/latin-600.css';
 @import './design/tokens.css';
 
 @tailwind base;

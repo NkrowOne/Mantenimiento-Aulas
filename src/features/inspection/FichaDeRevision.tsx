@@ -28,6 +28,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { entrar } from '@/lib/historial'
 import { congelarFondo } from '@/lib/viewport'
 import { fechaCorta } from '@/domain/fechas'
 import { fechaLegible } from '@/domain/historial'
@@ -112,6 +113,9 @@ export function FichaDeRevision({
 
     return congelarFondo(origen)
   }, [])
+
+  // Y en el historial: atrás en el móvil cierra la ficha igual que «Volver».
+  useEffect(() => entrar(() => cerrar.current()), [])
 
   useEffect(() => {
     const alPulsar = (e: KeyboardEvent): void => {

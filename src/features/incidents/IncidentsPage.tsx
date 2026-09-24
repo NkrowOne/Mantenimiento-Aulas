@@ -453,10 +453,12 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
                         // El código es el enlace a la ficha: es lo que se busca
                         // con la vista al leer la fila, y un botón aparte sería
                         // un cuarto control en una fila que ya tiene tres.
+                        // El margen negativo agranda el objetivo táctil a 44 px
+                        // sin mover ni una línea: la fila mide lo mismo que antes.
                         <button
                           type="button"
                           onClick={() => onAbrirSala(i.room_id!)}
-                          className="-mx-1 inline-flex min-h-6 items-center px-1 font-mono font-semibold text-accent underline-offset-2 hover:underline"
+                          className="-mx-2 -my-2.5 inline-flex min-h-11 items-center px-2 font-mono font-semibold text-accent underline-offset-2 hover:underline"
                           title="Abrir la ficha de la sala"
                         >
                           {sala}

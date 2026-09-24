@@ -38,6 +38,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, leerBytesDeFoto, type QueuedPhoto } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
+import { entrar } from '@/lib/historial'
 import { fechaCorta } from '@/domain/fechas'
 
 /** Una hora: sobra para mirar, y el enlace no se guarda en ningún sitio. */
@@ -415,6 +416,12 @@ export function VisorDeFotos({
   const cerrar = useRef<HTMLButtonElement>(null)
   const foto = fotos[indice]!
   const informe = useRetirarDelInforme(entityType)
+
+  // Atrás en el móvil cierra el visor, no la aplicación. Por ref, para entrar
+  // en el historial una sola vez aunque el padre pase una flecha nueva.
+  const alCerrar = useRef(onCerrar)
+  alCerrar.current = onCerrar
+  useEffect(() => entrar(() => alCerrar.current()), [])
 
   useEffect(() => {
     // El foco entra en la capa: sin esto el tabulador sigue recorriendo la ficha

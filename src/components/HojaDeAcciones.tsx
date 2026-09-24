@@ -19,6 +19,7 @@
 
 import { useEffect, useId, useRef } from 'react'
 
+import { entrar } from '@/lib/historial'
 import { congelarFondo } from '@/lib/viewport'
 
 export interface AccionDeHoja {
@@ -117,6 +118,10 @@ export function HojaDeAcciones({
     return congelarFondo(origen)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- solo al montar, a propósito
   }, [])
+
+  // Y entra en el historial: el botón atrás del móvil la cierra igual que
+  // «Cancelar». Al desmontarse sale, la haya cerrado quien la haya cerrado.
+  useEffect(() => entrar(() => cerrar.current()), [])
 
   useEffect(() => {
     const alPulsar = (e: KeyboardEvent): void => {

@@ -25,6 +25,12 @@ export interface Summary {
 export function useSummary() {
   return useQuery({
     queryKey: ['summary'],
+    // El valor global es `false` (ver `main.tsx`): en un móvil, cada vez que
+    // se volvía de segundo plano se relanzaban TODAS las consultas montadas a
+    // la vez por el mismo 4G, compitiendo con la que se estaba mirando. El
+    // Panel es la pantalla de oficina que sí quiere el número fresco al
+    // volver a mirarla, así que aquí se pide explícitamente.
+    refetchOnWindowFocus: true,
     queryFn: async (): Promise<Summary> => {
       // El mes empieza a medianoche de Madrid, no del huso del aparato que
       // pregunta: este número aparece también en el PDF, calculado en el
@@ -147,6 +153,7 @@ export interface LampRow {
 export function useLampAlerts() {
   return useQuery({
     queryKey: ['alerts', 'lamp'],
+    refetchOnWindowFocus: true,
     queryFn: async (): Promise<LampRow[]> => {
       const { data } = await supabase.from('alerts_lamp_low').select('*').limit(25)
       return (data ?? []) as LampRow[]
@@ -168,6 +175,7 @@ export interface StaleRow {
 export function useStaleIncidents() {
   return useQuery({
     queryKey: ['alerts', 'stale'],
+    refetchOnWindowFocus: true,
     queryFn: async (): Promise<StaleRow[]> => {
       const { data } = await supabase.from('alerts_stale_incidents').select('*').limit(50)
       return (data ?? []) as StaleRow[]
@@ -179,6 +187,7 @@ export function useStaleIncidents() {
 export function useIncidentsByBuilding() {
   return useQuery({
     queryKey: ['charts', 'by-building'],
+    refetchOnWindowFocus: true,
     queryFn: async (): Promise<Array<{ code: string; total: number }>> => {
       const { data } = await supabase.from('incidents_by_building').select('*').limit(12)
       return (data ?? []) as Array<{ code: string; total: number }>
@@ -190,6 +199,7 @@ export function useIncidentsByBuilding() {
 export function useIncidentsByMonth() {
   return useQuery({
     queryKey: ['charts', 'by-month'],
+    refetchOnWindowFocus: true,
     queryFn: async (): Promise<Array<{ month: string; total: number }>> => {
       const { data } = await supabase.from('incidents_by_month').select('*')
       return (data ?? []) as Array<{ month: string; total: number }>

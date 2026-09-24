@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { entrar } from '@/lib/historial'
+
 /**
  * El lector de QR.
  *
@@ -59,6 +61,18 @@ export function EscanerQR({
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
   }, [])
+
+  // Atrás en el móvil apaga la cámara y cierra, igual que «Cancelar».
+  const alCerrar = useRef(onCerrar)
+  alCerrar.current = onCerrar
+  useEffect(
+    () =>
+      entrar(() => {
+        apagar()
+        alCerrar.current()
+      }),
+    [apagar],
+  )
 
   useEffect(() => {
     vivoRef.current = true
