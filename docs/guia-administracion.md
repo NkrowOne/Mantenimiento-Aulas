@@ -210,17 +210,34 @@ Lo que queda escrito:
 - La incidencia, cerrada con esa misma explicación en `incidents.resolution`, y
   saliendo en la línea de tiempo de la sala el día que se resolvió.
 - La foto, si la hubo, en `attachments` con `entity_type = 'incident'`.
-- **El material gastado**, como movimientos de consumo con su incidencia y su
-  sala. El formulario de cierre lo pide ahí mismo, que es donde alguien se
-  acuerda del cable que acaba de poner; antes vivía detrás de otro botón y no se
-  apuntaba casi nunca. Cada apunte resta del almacén en cuanto se pulsa, sin
-  esperar al cierre: la pieza se gastó aunque la avería siga abierta.
+- **El material gastado**, primero como parte y después como movimientos. El
+  formulario de cierre lo pide ahí mismo, que es donde alguien se acuerda del
+  cable que acaba de poner; antes vivía detrás de otro botón y no se apuntaba
+  casi nunca. Mientras la incidencia está abierta, lo apuntado es su **parte
+  de material** (`incident_materials`, con `origen = 'app'`): una fila por
+  artículo que se sube, se baja o se quita sin que el almacén se mueva. Al
+  pasar a resuelta —venga el cierre del aula, del supervisor o del Excel— un
+  disparador apunta la diferencia neta como **un movimiento de consumo por
+  artículo**, con la fecha del cierre, a nombre de quien cerró y con la sala de
+  la incidencia. Es la misma cuenta que hace la sincronización del Excel: lo
+  que el parte dice menos lo que la incidencia ya tenía descontado, así que el
+  libro y la aplicación pueden tocar el mismo parte sin descontar dos veces. Si
+  el parte llega detrás del cierre —la cola los sube en pasadas distintas— se
+  descuenta al llegar.
+
+  Antes cada toque era un asiento, y como un asiento no se reescribe, el
+  Historial de una sala enseñaba «+1 +1 −1 −1 −1» para un hub con la solicitud
+  todavía abierta. Lo que las incidencias abiertas tenían descontado al
+  desplegar este cambio se copió a su parte con las unidades netas: se ve, se
+  puede corregir y al cerrar no sale otra vez.
 
 El apunte enseña las existencias que el dispositivo tiene espejadas y avisa
 —sin bloquear— cuando se pasa de ellas. La copia puede estar vieja y quien tiene
 el cable en la mano es la persona; lo que no puede es enterarse solo el
-servidor, porque el saldo no puede quedar en negativo y ese apunte volvería
-rechazado a la cola.
+servidor, porque el saldo no puede quedar en negativo y es **el cierre** lo que
+volvería rechazado a la cola, con el motivo («No hay tantas unidades de …»).
+Se resuelve registrando la compra que falta o bajando la cantidad del parte, y
+reintentando el cierre desde la lámpara.
 
 El `UPDATE` directo sobre `incidents` **sigue siendo solo de supervisor**: es lo
 que hace falta para reabrir una que se cerró por error o corregir un cierre.

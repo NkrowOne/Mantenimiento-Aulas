@@ -4501,6 +4501,151 @@ begin;
 rollback;
 
 \echo ''
+\echo '=== 81. El material de una avería sale del almacén al cerrarla, no al apuntarlo ==='
+begin;
+  -- Lo que se veía en el Historial de un aula con la solicitud abierta:
+  -- «Hub USB +1 +1 −1 −1 −1». Cada toque era un asiento. Ahora el técnico
+  -- escribe el parte de material y el almacén se descuenta al cerrar, una vez.
+  select id as sala from rooms where active order by created_at limit 1 \gset
+
+  insert into stock_items (id, name, unit)
+  values ('88888888-8888-4888-8888-888888888801', 'Hub USB de prueba', 'ud');
+  insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, source)
+  values (gen_random_uuid(), '88888888-8888-4888-8888-888888888801', 5, 'compra', now() - interval '10 days', 'import');
+
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  insert into incidents (id, room_id, title, severity, state, kind, opened_at, opened_by)
+  values ('88888888-8888-4888-8888-888888888811', :'sala', 'Instalación HUB USB', 'baja',
+          'abierta', 'solicitud', now() - interval '1 day', '11111111-1111-4111-8111-111111111111');
+
+  -- 1 — Apuntar, subir, bajar: el parte cambia y el almacén no se mueve.
+  insert into incident_materials (id, incident_id, stock_item_id, qty, origen)
+  values ('88888888-8888-4888-8888-888888888821', '88888888-8888-4888-8888-888888888811',
+          '88888888-8888-4888-8888-888888888801', 1, 'app');
+  update incident_materials set qty = 2 where id = '88888888-8888-4888-8888-888888888821';
+  update incident_materials set qty = 3 where id = '88888888-8888-4888-8888-888888888821';
+  update incident_materials set qty = 2 where id = '88888888-8888-4888-8888-888888888821';
+
+  select case
+    when (select count(*) from stock_movements
+           where incident_id = '88888888-8888-4888-8888-888888888811') = 0
+     and (select on_hand from stock_levels
+           where stock_item_id = '88888888-8888-4888-8888-888888888801') = 5
+    then 'OK: cuatro toques en el parte y ni un asiento en el almacén'
+    else 'FALLO: apuntar material en una avería abierta ha movido el almacén'
+  end as resultado;
+
+  -- 2 — Un técnico no puede hacer pasar su apunte por una línea del Excel.
+  savepoint s1;
+  do $$
+  begin
+    insert into incident_materials (id, incident_id, stock_item_id, qty, origen)
+    values (gen_random_uuid(), '88888888-8888-4888-8888-888888888811',
+            '88888888-8888-4888-8888-888888888801', 1, 'excel');
+    raise exception 'FALLO: un técnico ha escrito una línea de origen excel';
+  exception when insufficient_privilege then
+    raise notice 'OK: el técnico solo apunta líneas de la aplicación';
+  end $$;
+  rollback to savepoint s1;
+
+  -- 3 — Al cerrar, un asiento por artículo con lo que diga el parte, con la
+  -- fecha del cierre y a nombre de quien cerró.
+  insert into incident_resolutions (id, incident_id, resolution, resolved_at, resolved_by)
+  values (gen_random_uuid(), '88888888-8888-4888-8888-888888888811',
+          'Instalado el hub en la mesa del profesor.', now() - interval '1 hour',
+          '11111111-1111-4111-8111-111111111111');
+
+  select case
+    when (select count(*) from stock_movements
+           where incident_id = '88888888-8888-4888-8888-888888888811') = 1
+     and (select qty from stock_movements
+           where incident_id = '88888888-8888-4888-8888-888888888811') = -2
+     and (select kind from stock_movements
+           where incident_id = '88888888-8888-4888-8888-888888888811') = 'consumo'
+     and (select room_id from stock_movements
+           where incident_id = '88888888-8888-4888-8888-888888888811') = :'sala'
+     and (select by_user from stock_movements
+           where incident_id = '88888888-8888-4888-8888-888888888811')
+         = '11111111-1111-4111-8111-111111111111'
+     and (select occurred_at from stock_movements
+           where incident_id = '88888888-8888-4888-8888-888888888811')
+         = (select resolved_at from incidents where id = '88888888-8888-4888-8888-888888888811')
+     and (select on_hand from stock_levels
+           where stock_item_id = '88888888-8888-4888-8888-888888888801') = 3
+    then 'OK: al cerrar sale un solo asiento de 2, con la fecha del cierre y firmado'
+    else 'FALLO: el cierre no ha descontado el parte como un asiento por artículo'
+  end as resultado;
+
+  -- 4 — El parte que llega detrás del cierre —o se corrige después— se
+  -- reconcilia al llegar: bajar a 1 devuelve una.
+  update incident_materials set qty = 1 where id = '88888888-8888-4888-8888-888888888821';
+
+  select case
+    when (select coalesce(-sum(qty), 0) from stock_movements
+           where incident_id = '88888888-8888-4888-8888-888888888811'
+             and kind in ('consumo', 'devolucion')) = 1
+     and (select count(*) from stock_movements
+           where incident_id = '88888888-8888-4888-8888-888888888811' and kind = 'devolucion') = 1
+     and (select on_hand from stock_levels
+           where stock_item_id = '88888888-8888-4888-8888-888888888801') = 4
+    then 'OK: corregir el parte de una avería cerrada devuelve la unidad de más'
+    else 'FALLO: corregir el parte después del cierre no ha cuadrado el almacén'
+  end as resultado;
+
+  -- 5 — Y sin existencias el cierre no entra: vuelve con el motivo, y la
+  -- avería sigue abierta para poder bajar la cantidad o registrar la compra.
+  insert into incidents (id, room_id, title, severity, state, kind, opened_at, opened_by)
+  values ('88888888-8888-4888-8888-888888888812', :'sala', 'Otro hub', 'baja',
+          'abierta', 'solicitud', now(), '11111111-1111-4111-8111-111111111111');
+  insert into incident_materials (id, incident_id, stock_item_id, qty, origen)
+  values (gen_random_uuid(), '88888888-8888-4888-8888-888888888812',
+          '88888888-8888-4888-8888-888888888801', 9, 'app');
+
+  savepoint s2;
+  do $$
+  begin
+    insert into incident_resolutions (id, incident_id, resolution, resolved_at, resolved_by)
+    values (gen_random_uuid(), '88888888-8888-4888-8888-888888888812',
+            'Puestos nueve hubs que no había.', now(), '11111111-1111-4111-8111-111111111111');
+    raise exception 'FALLO: se cerró una avería con más material del que hay';
+  exception when check_violation then
+    if sqlerrm not like 'No hay tantas unidades de%' then
+      raise exception 'FALLO: el cierre se rechazó por otro motivo: %', sqlerrm;
+    end if;
+    raise notice 'OK: sin existencias el cierre vuelve rechazado con su motivo';
+  end $$;
+  rollback to savepoint s2;
+
+  select case
+    when (select state from incidents where id = '88888888-8888-4888-8888-888888888812') = 'abierta'
+     and (select on_hand from stock_levels
+           where stock_item_id = '88888888-8888-4888-8888-888888888801') = 4
+    then 'OK: la avería sigue abierta y el almacén como estaba'
+    else 'FALLO: un cierre rechazado ha dejado rastro'
+  end as resultado;
+
+  -- 6 — Un parte que solo tiene lo que trajo el Excel no es asunto de la
+  -- aplicación: lo descuenta el Excel, que sabe si es anterior al arranque.
+  reset role;
+  insert into incidents (id, room_id, title, severity, state, kind, opened_at, source)
+  values ('88888888-8888-4888-8888-888888888813', :'sala', 'Del libro', 'baja',
+          'abierta', 'incidencia', now() - interval '2 days', 'import');
+  insert into incident_materials (id, incident_id, stock_item_id, qty, raw_text)
+  values (gen_random_uuid(), '88888888-8888-4888-8888-888888888813',
+          '88888888-8888-4888-8888-888888888801', 1, '1 Hub USB');
+  update incidents set state = 'resuelta', resolved_at = now()
+   where id = '88888888-8888-4888-8888-888888888813';
+
+  select case
+    when (select count(*) from stock_movements
+           where incident_id = '88888888-8888-4888-8888-888888888813') = 0
+    then 'OK: el material que solo trajo el Excel lo descuenta el Excel, no el cierre'
+    else 'FALLO: el cierre ha descontado material del Excel por su cuenta'
+  end as resultado;
+rollback;
+
+\echo ''
 \echo '=== 80. Ninguna política se llama a sí misma una vez por fila ==='
 -- Es una prueba de forma, no de permisos, y está aquí porque el precio de
 -- romperla no se ve: la política sigue dejando pasar exactamente lo mismo y la

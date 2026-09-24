@@ -1017,7 +1017,6 @@ export function RoomSheet({
                     <ResolverIncidencia
                       incidencia={i}
                       equipo={equipo}
-                      roomId={room.id}
                       /* Solo en la express: en una avería de hace tres días, lo
                          que se escribió al abrirla es el problema, no el
                          arreglo, y rellenarlo aquí sería poner en el cierre

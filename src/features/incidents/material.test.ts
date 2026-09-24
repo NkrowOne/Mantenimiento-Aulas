@@ -1,198 +1,163 @@
 /**
- * Quitar material tiene que cuadrar el almacén, y solo cuadra si se distingue
- * lo que salió del dispositivo de lo que no.
+ * El parte de material de una avería: lo que dice y cómo cambia con cada toque.
  *
- * Los dos errores que estas pruebas existen para impedir son opuestos y los dos
- * silenciosos: devolver algo que el servidor nunca vio —le suma una unidad de
- * la nada— y borrar de la cola algo que ya salió —se queda descontado para
- * siempre—. Ninguno de los dos da error en pantalla; los ve, meses después,
- * quien cuenta cajas.
+ * Lo que estas pruebas impiden es lo que se veía en el Historial de un aula:
+ * cinco líneas para un hub —«+1 +1 −1 −1 −1»— porque cada toque era un asiento
+ * del almacén. Ahora los toques cambian una fila del parte, siempre la misma,
+ * y del almacén se ocupa el servidor al cerrar. Aquí se comprueba que el
+ * parte se lee bien —una línea por artículo, en su orden— y que cada toque va
+ * a la fila que toca, incluidas las que trajo el Excel y las que aún no han
+ * salido del dispositivo.
  */
 import { describe, expect, it } from 'vitest'
 
 import {
   lineasDeMaterial,
-  mezclarApuntes,
+  mezclarParte,
   planQuitar,
   planRestar,
   planSumar,
-  unidadesUsadas,
-  type ApunteDeMaterial,
+  unidadesApuntadas,
+  type LineaDelParte,
 } from './material'
 
 const CABLE = 'art-cable'
 const REGLETA = 'art-regleta'
 
-const consumo = (
+const fila = (
   id: string,
-  unidades: number,
-  donde: ApunteDeMaterial['donde'],
+  qty: number,
+  donde: LineaDelParte['donde'] = 'arriba',
   stockItemId = CABLE,
-): ApunteDeMaterial => ({ id, stockItemId, qty: -unidades, kind: 'consumo', donde })
+): LineaDelParte => ({ id, stockItemId, qty, donde })
 
-const devolucion = (
-  id: string,
-  unidades: number,
-  donde: ApunteDeMaterial['donde'],
-  stockItemId = CABLE,
-): ApunteDeMaterial => ({ id, stockItemId, qty: unidades, kind: 'devolucion', donde })
+const nuevoId = (): string => 'nuevo'
 
-describe('lo que lleva gastado una avería', () => {
-  it('son los consumos menos las devoluciones', () => {
-    const a = [consumo('m1', 3, 'arriba'), devolucion('m2', 1, 'arriba')]
-    expect(unidadesUsadas(a, CABLE)).toBe(2)
+describe('lo que dice el parte', () => {
+  it('es la suma de sus filas por artículo', () => {
+    // Dos filas del mismo cable pasan cuando el Excel lo nombra dos veces.
+    expect(unidadesApuntadas([fila('m1', 2), fila('m2', 1)], CABLE)).toBe(3)
   })
 
   it('la lista va por artículo y en el orden en que se apuntaron', () => {
-    const a = [consumo('m1', 2, 'arriba'), consumo('m2', 1, 'en_cola', REGLETA), consumo('m3', 1, 'arriba')]
-    expect(lineasDeMaterial(a)).toEqual([
-      { stockItemId: CABLE, unidades: 3, sinSubir: false },
-      { stockItemId: REGLETA, unidades: 1, sinSubir: true },
+    const p = [fila('m3', 1), fila('m1', 2, 'en_cola', REGLETA), fila('m2', 1)]
+    expect(lineasDeMaterial(p)).toEqual([
+      { stockItemId: REGLETA, unidades: 2, sinSubir: true },
+      { stockItemId: CABLE, unidades: 2, sinSubir: false },
     ])
   })
 
-  it('un artículo apuntado y devuelto entero desaparece de la lista', () => {
-    // Dos asientos que se anulan son el error, no el trabajo.
-    const a = [consumo('m1', 1, 'arriba'), devolucion('m2', 1, 'en_cola')]
-    expect(lineasDeMaterial(a)).toEqual([])
+  it('el orden no depende de por dónde llegó la fila', () => {
+    /*
+     * La cola va delante al mezclar, y si el orden de la lista fuera el de la
+     * mezcla, la línea que se acaba de tocar saltaría al principio a cada
+     * toque. Manda el id, que es el momento en que se apuntó.
+     */
+    const p = mezclarParte([fila('m2', 3, 'en_cola', REGLETA)], [fila('m1', 1)], [])
+    expect(lineasDeMaterial(p).map((l) => l.stockItemId)).toEqual([CABLE, REGLETA])
+  })
+
+  it('un artículo quitado desaparece de la lista', () => {
+    expect(lineasDeMaterial([fila('m1', 0)])).toEqual([])
   })
 })
 
 describe('sumar una unidad', () => {
-  it('sin nada apuntado, es un apunte nuevo', () => {
-    expect(planSumar([], CABLE)).toEqual([{ tipo: 'consumo', unidades: 1 }])
+  it('sin nada apuntado, abre una fila nueva con el id que se le da', () => {
+    expect(planSumar([], CABLE, nuevoId)).toEqual([{ id: 'nuevo', stockItemId: CABLE, qty: 1 }])
   })
 
-  it('con un apunte todavía en la cola, se le sube la cantidad al mismo', () => {
-    // Cinco cables tienen que llegar como un asiento de cinco, no como cinco
-    // asientos de uno: es lo que se lee después en el histórico de la sala.
-    const a = [consumo('m1', 2, 'en_cola')]
-    expect(planSumar(a, CABLE)).toEqual([{ tipo: 'editar', id: 'm1', qty: -3 }])
-  })
-
-  it('si el apunte ya subió, no se toca: se abre otro', () => {
-    expect(planSumar([consumo('m1', 2, 'arriba')], CABLE)).toEqual([
-      { tipo: 'consumo', unidades: 1 },
+  it('con una fila del artículo, le sube la cantidad a esa misma', () => {
+    // Siempre la misma fila: en el servidor es un UPDATE y en el Historial,
+    // al cerrar, un solo asiento.
+    expect(planSumar([fila('m1', 2, 'en_cola')], CABLE, nuevoId)).toEqual([
+      { id: 'm1', stockItemId: CABLE, qty: 3 },
     ])
   })
 
-  it('y si está saliendo, tampoco se toca', () => {
-    // Cambiarlo a mitad de vuelo es una carrera que se puede perder.
-    expect(planSumar([consumo('m1', 2, 'saliendo')], CABLE)).toEqual([
-      { tipo: 'consumo', unidades: 1 },
-    ])
+  it('también si la fila ya está arriba: se corrige, no se abre otra', () => {
+    expect(planSumar([fila('m1', 2)], CABLE, nuevoId)).toEqual([{ id: 'm1', stockItemId: CABLE, qty: 3 }])
+  })
+
+  it('una fila quitada vuelve a contar desde uno', () => {
+    expect(planSumar([fila('m1', 0)], CABLE, nuevoId)).toEqual([{ id: 'm1', stockItemId: CABLE, qty: 1 }])
   })
 })
 
 describe('restar una unidad', () => {
-  it('baja la cantidad del apunte que sigue en la cola', () => {
-    expect(planRestar([consumo('m1', 3, 'en_cola')], CABLE)).toEqual([
-      { tipo: 'editar', id: 'm1', qty: -2 },
+  it('baja la cantidad de la fila', () => {
+    expect(planRestar([fila('m1', 3)], CABLE)).toEqual([{ id: 'm1', stockItemId: CABLE, qty: 2 }])
+  })
+
+  it('la última unidad deja la fila a cero, no la borra', () => {
+    // El servidor tiene que ver el cero: si la avería ya estaba cerrada, es lo
+    // que le dice que devuelva la unidad al almacén.
+    expect(planRestar([fila('m1', 1)], CABLE)).toEqual([{ id: 'm1', stockItemId: CABLE, qty: 0 }])
+  })
+
+  it('con dos filas del artículo, baja de la primera que tenga unidades', () => {
+    expect(planRestar([fila('m1', 0), fila('m2', 2)], CABLE)).toEqual([
+      { id: 'm2', stockItemId: CABLE, qty: 1 },
     ])
   })
 
-  it('si era la última unidad, el apunte se borra de la cola', () => {
-    // No llegó a salir: no es devolver nada, es que no ocurrió.
-    expect(planRestar([consumo('m1', 1, 'en_cola')], CABLE)).toEqual([
-      { tipo: 'borrar', id: 'm1' },
-    ])
-  })
-
-  it('si ya subió, se devuelve una al almacén', () => {
-    expect(planRestar([consumo('m1', 3, 'arriba')], CABLE)).toEqual([
-      { tipo: 'devolucion', unidades: 1 },
-    ])
-  })
-
-  it('y no se resta de lo que ya está a cero', () => {
-    const a = [consumo('m1', 1, 'arriba'), devolucion('m2', 1, 'arriba')]
-    expect(planRestar(a, CABLE)).toEqual([])
+  it('y no resta de lo que ya está a cero', () => {
+    expect(planRestar([fila('m1', 0)], CABLE)).toEqual([])
+    expect(planRestar([], CABLE)).toEqual([])
   })
 })
 
 describe('quitar el artículo entero', () => {
-  it('lo que no ha salido se borra', () => {
-    expect(planQuitar([consumo('m1', 4, 'en_cola')], CABLE)).toEqual([
-      { tipo: 'borrar', id: 'm1' },
+  it('pone a cero todas sus filas', () => {
+    expect(planQuitar([fila('m1', 2), fila('m2', 1, 'en_cola')], CABLE)).toEqual([
+      { id: 'm1', stockItemId: CABLE, qty: 0 },
+      { id: 'm2', stockItemId: CABLE, qty: 0 },
     ])
   })
 
-  it('lo que ya subió se devuelve', () => {
-    expect(planQuitar([consumo('m1', 4, 'arriba')], CABLE)).toEqual([
-      { tipo: 'devolucion', unidades: 4 },
+  it('las que ya estaban a cero no se reenvían', () => {
+    expect(planQuitar([fila('m1', 0), fila('m2', 1)], CABLE)).toEqual([
+      { id: 'm2', stockItemId: CABLE, qty: 0 },
     ])
-  })
-
-  it('y una línea a medias hace las dos cosas, cada una por lo suyo', () => {
-    /*
-     * El caso real: dos cables que subieron esta mañana y un tercero apuntado
-     * hace un minuto en un aula sin cobertura. Borrar los tres de la cola
-     * dejaría dos descontados para siempre; devolver tres le regalaría uno al
-     * almacén.
-     */
-    const a = [consumo('m1', 2, 'arriba'), consumo('m2', 1, 'en_cola')]
-    expect(planQuitar(a, CABLE)).toEqual([
-      { tipo: 'borrar', id: 'm2' },
-      { tipo: 'devolucion', unidades: 2 },
-    ])
-  })
-
-  it('lo que está saliendo cuenta como subido', () => {
-    const a = [consumo('m1', 2, 'saliendo')]
-    expect(planQuitar(a, CABLE)).toEqual([{ tipo: 'devolucion', unidades: 2 }])
-  })
-
-  it('y lo ya devuelto no se devuelve dos veces', () => {
-    const a = [consumo('m1', 3, 'arriba'), devolucion('m2', 1, 'arriba')]
-    expect(planQuitar(a, CABLE)).toEqual([{ tipo: 'devolucion', unidades: 2 }])
   })
 
   it('un artículo que no está en la avería no hace nada', () => {
-    expect(planQuitar([consumo('m1', 1, 'arriba')], REGLETA)).toEqual([])
+    expect(planQuitar([fila('m1', 1)], REGLETA)).toEqual([])
   })
 })
 
 describe('juntar la cola, lo recordado y el servidor', () => {
-  it('un apunte que ya subió pero que el servidor todavía no cuenta no desaparece', () => {
-    /*
-     * El fallo entero, en una prueba. La cola BORRA la fila al subirla y la
-     * lista del servidor se pedía una vez al abrir el panel: entre las dos
-     * cosas, el apunte no estaba en ningún sitio y la línea se iba de la
-     * pantalla con el cable ya descontado. Quien no ve lo que acaba de
-     * apuntar, lo apunta otra vez — y eso lo paga el almacén.
-     */
-    const r = mezclarApuntes([], [], [consumo('m1', 2, 'en_cola')])
-    expect(r).toEqual([{ ...consumo('m1', 2, 'en_cola'), donde: 'arriba' }])
-    expect(unidadesUsadas(r, CABLE)).toBe(2)
+  it('una fila que ya subió pero que el servidor todavía no devuelve no desaparece', () => {
+    const r = mezclarParte([], [], [fila('m1', 2, 'en_cola')])
+    expect(r).toEqual([fila('m1', 2, 'arriba')])
+    expect(unidadesApuntadas(r, CABLE)).toBe(2)
   })
 
-  it('y cuando el servidor lo cuenta, no se cuenta dos veces', () => {
-    const r = mezclarApuntes([], [consumo('m1', 2, 'arriba')], [consumo('m1', 2, 'en_cola')])
+  it('y cuando el servidor la devuelve, no se cuenta dos veces', () => {
+    const r = mezclarParte([], [fila('m1', 2)], [fila('m1', 2, 'en_cola')])
     expect(r).toHaveLength(1)
-    expect(unidadesUsadas(r, CABLE)).toBe(2)
+    expect(unidadesApuntadas(r, CABLE)).toBe(2)
   })
 
-  it('manda la cola, que es la única que sabe si todavía se puede tocar', () => {
-    const r = mezclarApuntes(
-      [consumo('m1', 2, 'en_cola')],
-      [consumo('m1', 2, 'arriba')],
-      [consumo('m1', 2, 'en_cola')],
+  it('manda la cola, que tiene la cantidad más reciente', () => {
+    const r = mezclarParte([fila('m1', 3, 'en_cola')], [fila('m1', 2)], [fila('m1', 2, 'en_cola')])
+    expect(r).toEqual([fila('m1', 3, 'en_cola')])
+  })
+
+  it('y lo recordado gana a la copia del servidor, que puede ir por detrás', () => {
+    // Entre que la cola sube la fila y la lista del servidor se vuelve a pedir,
+    // el servidor devuelve la cantidad de antes del último toque.
+    const r = mezclarParte([], [fila('m1', 2)], [fila('m1', 3, 'en_cola')])
+    expect(r).toEqual([fila('m1', 3, 'arriba')])
+  })
+
+  it('las tres fuentes a la vez dan cada fila una sola vez', () => {
+    const r = mezclarParte(
+      [fila('m3', 1, 'en_cola', REGLETA)],
+      [fila('m1', 2), fila('m2', 1)],
+      [fila('m1', 2, 'en_cola'), fila('m3', 1, 'en_cola', REGLETA)],
     )
-    expect(r).toEqual([consumo('m1', 2, 'en_cola')])
-  })
-
-  it('lo que está saliendo tampoco se duplica con lo recordado', () => {
-    const r = mezclarApuntes([consumo('m1', 1, 'saliendo')], [], [consumo('m1', 1, 'en_cola')])
-    expect(r).toEqual([consumo('m1', 1, 'saliendo')])
-  })
-
-  it('y las tres fuentes a la vez dan cada apunte una sola vez', () => {
-    const r = mezclarApuntes(
-      [consumo('m3', 1, 'en_cola')],
-      [consumo('m1', 2, 'arriba'), devolucion('m2', 1, 'arriba')],
-      [consumo('m1', 2, 'en_cola'), consumo('m3', 1, 'en_cola')],
-    )
-    expect(r.map((a) => a.id)).toEqual(['m3', 'm1', 'm2'])
-    expect(unidadesUsadas(r, CABLE)).toBe(2)
+    expect(r.map((l) => l.id)).toEqual(['m3', 'm1', 'm2'])
+    expect(unidadesApuntadas(r, CABLE)).toBe(3)
   })
 })

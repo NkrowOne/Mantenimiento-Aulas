@@ -534,6 +534,42 @@ describe('flush', () => {
     expect(vistos).toEqual(['averia', 'cierre'])
   })
 
+  it('el parte de material sube detrás de su incidencia y delante del cierre', async () => {
+    /*
+     * Es al cerrar cuando el servidor descuenta lo que el parte dice. Si el
+     * cierre se adelantara, el material se descontaría al llegar, con la fecha
+     * de la llegada en vez de la del cierre.
+     */
+    const vistos: string[] = []
+    upsert.mockImplementation((payload: { id: string }) => {
+      vistos.push(payload.id)
+      return Promise.resolve({ error: null, status: 201 })
+    })
+
+    await db.outbox.bulkAdd([
+      entrada({
+        entity: 'incident_resolution',
+        payload: { id: 'cierre', incident_id: 'averia' },
+        createdAt: 1,
+      }),
+      entrada({
+        entity: 'incident_material',
+        payload: { id: 'parte', incident_id: 'averia', stock_item_id: 'cable', qty: 2, origen: 'app' },
+        createdAt: 2,
+      }),
+      entrada({ entity: 'incident', payload: { id: 'averia' }, createdAt: 3 }),
+    ])
+
+    await flush()
+
+    expect(vistos).toEqual(['averia', 'parte', 'cierre'])
+    // Y el parte PISA: cada toque reenvía la misma fila con la cantidad nueva.
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ id: 'parte' }), {
+      onConflict: 'id',
+      ignoreDuplicates: false,
+    })
+  })
+
   it('un cierre reenviado no pisa el que ya está arriba', async () => {
     await db.outbox.add(
       entrada({ entity: 'incident_resolution', payload: { id: 'cierre', incident_id: 'averia' } }),

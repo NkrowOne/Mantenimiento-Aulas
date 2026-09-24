@@ -45,6 +45,14 @@ export interface OutboxEntry {
      * reenviarse igual de tranquila.
      */
     | 'incident_resolution'
+    /*
+     * Una línea del parte de material de una incidencia: un artículo y cuántas
+     * unidades dice el parte. Se reenvía con la cantidad que toque cada vez
+     * —el mismo id, pisando— y el almacén no se entera hasta que la incidencia
+     * se cierra: ahí un disparador descuenta la diferencia neta. Por eso no es
+     * un `stock_movement`: aquello es un asiento y esto es un borrador.
+     */
+    | 'incident_material'
     | 'stock_movement'
     | 'attachment'
     | 'asset_event'

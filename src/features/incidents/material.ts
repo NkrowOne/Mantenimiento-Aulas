@@ -1,103 +1,90 @@
 /**
  * Qué hacer cuando alguien apunta material, sube la cantidad, la baja o la quita.
  *
- * Vive aparte de la pantalla por una razón concreta: **quitar un apunte no es
- * una sola cosa**, y de cuál sea depende que el almacén cuadre o no.
+ * Vive aparte de la pantalla para poder probarlo con filas en la mano, y porque
+ * la regla cambió de sitio: **el almacén ya no se toca al apuntar**.
  *
- *  - Si el apunte **sigue en la cola**, no ha salido del dispositivo. Borrarlo
- *    de la cola es que nunca ocurrió, y es lo que hay que hacer: meter una
- *    devolución de algo que el servidor no ha visto le sumaría una unidad de la
- *    nada.
- *  - Si **ya subió**, `stock_movements` es un libro de asientos y no se
- *    reescribe: la corrección es una `devolucion`, que es el tipo que existe
- *    justo para esto y el único al que el signo no le pone condiciones. Lo dejó
- *    escrito `20260830001100`, que arregló lo mismo por el lado del Excel.
- *  - Y si está **saliendo** —la cola lo tiene marcado «enviando»— se trata como
- *    si ya hubiera subido. Borrarlo entonces es una carrera que se puede
- *    perder: la petición ya va por el aire y la fila llegaría igual, pero sin
- *    nada que la compense.
+ * Antes cada toque era un asiento en `stock_movements` —un consumo, o la
+ * devolución que corregía el toque de más— y el libro mayor no se reescribe,
+ * así que el Historial de la sala acababa con «+1 +1 −1 −1 −1» para un hub, y
+ * el almacén se movía con la solicitud todavía abierta. Ahora lo apuntado es un
+ * **parte**: una fila por artículo en `incident_materials` con las unidades que
+ * dice el parte. Se reenvía con el mismo id cuantas veces cambie —la cola pisa—
+ * y el servidor descuenta la diferencia neta cuando la incidencia se cierra. Un
+ * asiento por artículo, con la fecha del cierre.
  *
- * Esa decisión es la que se prueba aquí. La pantalla solo ejecuta lo que salga.
- *
- * El signo es el de la base, no el de la cabeza de quien lo lee: un `consumo`
- * lleva `qty` negativo y una `devolucion` positivo, así que lo que queda usado
- * de un artículo es **menos la suma** de sus movimientos.
+ * Así que aquí ya no hay que distinguir lo que subió de lo que no: una fila del
+ * parte se corrige igual esté donde esté. Lo que sí hay que decidir es a qué
+ * fila va cada toque —el parte puede traer dos filas del mismo artículo, si
+ * vinieron del Excel— y qué es «quitar»: una fila **a cero**, no borrada, para
+ * que el servidor sepa que el artículo ya no cuenta y, si la incidencia ya
+ * estaba cerrada, devuelva lo que tuviera descontado.
  */
 
-/** Un movimiento de material de una incidencia, esté donde esté. */
-export interface ApunteDeMaterial {
+/** Una fila del parte de material de una incidencia, esté donde esté. */
+export interface LineaDelParte {
   id: string
   stockItemId: string
-  /** Como en la base: negativo si se gastó, positivo si volvió. */
+  /** Unidades que dice el parte. Cero es «quitada». */
   qty: number
-  kind: 'consumo' | 'devolucion'
   /**
-   * `en_cola` — escrito en el dispositivo y sin salir. Se puede cambiar o borrar.
-   * `saliendo` — la cola lo está subiendo ahora mismo. Ya no se toca.
-   * `arriba` — el servidor lo tiene. Solo se corrige con otro asiento.
+   * `en_cola` — escrita en el dispositivo y sin salir.
+   * `arriba` — el servidor la tiene, o esta pantalla la mandó y aún no la ha visto volver.
    */
-  donde: 'en_cola' | 'saliendo' | 'arriba'
+  donde: 'en_cola' | 'arriba'
 }
 
-/** Lo que la pantalla tiene que hacer. Una lista, porque quitar puede ser dos. */
-export type Operacion =
-  /** Reencolar esa misma fila con otra cantidad. Mismo id: no duplica. */
-  | { tipo: 'editar'; id: string; qty: number }
-  /** Sacarla de la cola. No llegó a salir, así que no ocurrió. */
-  | { tipo: 'borrar'; id: string }
-  /** Un apunte nuevo de consumo, en unidades (positivas). */
-  | { tipo: 'consumo'; unidades: number }
-  /** Devolver al almacén lo que ya subió, en unidades (positivas). */
-  | { tipo: 'devolucion'; unidades: number }
+/** Una fila del parte con otra cantidad: lo que la pantalla tiene que encolar. */
+export interface Cambio {
+  id: string
+  stockItemId: string
+  qty: number
+}
 
-/** Una línea de la lista: un artículo y lo que lleva gastado en esta avería. */
+/** Una línea de la lista: un artículo y lo que el parte dice de él. */
 export interface LineaDeMaterial {
   stockItemId: string
-  /** Unidades que la avería tiene gastadas ahora mismo. Siempre positivo. */
+  /** Unidades apuntadas. Siempre positivo: las líneas a cero no se enseñan. */
   unidades: number
   /** `true` si algo de esta línea todavía no ha llegado al servidor. */
   sinSubir: boolean
 }
 
-/** Solo los de ese artículo. */
-function suyos(apuntes: ApunteDeMaterial[], stockItemId: string): ApunteDeMaterial[] {
-  return apuntes.filter((a) => a.stockItemId === stockItemId)
+/** Solo las de ese artículo, en el orden del parte. */
+function suyas(parte: LineaDelParte[], stockItemId: string): LineaDelParte[] {
+  return parte.filter((l) => l.stockItemId === stockItemId)
 }
 
-/** Lo que queda gastado de un artículo: consumos menos devoluciones. */
-export function unidadesUsadas(apuntes: ApunteDeMaterial[], stockItemId: string): number {
-  return -suyos(apuntes, stockItemId).reduce((n, a) => n + a.qty, 0)
-}
-
-/**
- * El consumo de ese artículo que todavía se puede tocar, si lo hay.
- *
- * Solo uno y el primero: la pantalla mantiene un apunte por artículo mientras
- * no salga, así que en la práctica no hay dos. Y si los hubiera —dos técnicos,
- * o una cola que se atascó— tocar uno cualquiera es correcto: la cuenta que
- * importa es la suma.
- */
-function editable(apuntes: ApunteDeMaterial[], stockItemId: string): ApunteDeMaterial | null {
-  return suyos(apuntes, stockItemId).find((a) => a.kind === 'consumo' && a.donde === 'en_cola') ?? null
+/** Lo que el parte dice de un artículo: la suma de sus filas. */
+export function unidadesApuntadas(parte: LineaDelParte[], stockItemId: string): number {
+  return suyas(parte, stockItemId).reduce((n, l) => n + Math.max(0, l.qty), 0)
 }
 
 /**
- * Las líneas, agrupadas por artículo y en el orden en que se apuntaron.
+ * Las líneas, una por artículo y en el orden en que se apuntaron.
  *
- * Agrupadas y no una fila por movimiento porque quien lo lee quiere saber
- * cuántos cables ha puesto, no cuántas veces tocó el `+`. Las que quedan a cero
- * —apuntado y devuelto— desaparecen: son dos asientos que se anulan, y
- * enseñarlos sería contar el error en vez del trabajo.
+ * Una por artículo porque quien lo lee quiere saber cuántos cables ha puesto,
+ * no cuántas filas tiene el parte. El orden lo da el id más bajo de cada
+ * artículo, que en las filas de la aplicación es el momento en que se apuntó
+ * —son uuid v7— y no la fuente de la que llegó la fila: si dependiera de eso,
+ * la línea que se acaba de tocar saltaría al principio a cada toque.
+ *
+ * Las que quedan a cero desaparecen: es un artículo quitado, y enseñarlo sería
+ * contar el error en vez del trabajo.
  */
-export function lineasDeMaterial(apuntes: ApunteDeMaterial[]): LineaDeMaterial[] {
-  const orden: string[] = []
-  for (const a of apuntes) if (!orden.includes(a.stockItemId)) orden.push(a.stockItemId)
+export function lineasDeMaterial(parte: LineaDelParte[]): LineaDeMaterial[] {
+  const primerId = new Map<string, string>()
+  for (const l of parte) {
+    const visto = primerId.get(l.stockItemId)
+    if (visto === undefined || l.id < visto) primerId.set(l.stockItemId, l.id)
+  }
 
-  return orden
-    .map((stockItemId) => ({
+  return [...primerId.entries()]
+    .sort(([, a], [, b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([stockItemId]) => ({
       stockItemId,
-      unidades: unidadesUsadas(apuntes, stockItemId),
-      sinSubir: suyos(apuntes, stockItemId).some((a) => a.donde !== 'arriba'),
+      unidades: unidadesApuntadas(parte, stockItemId),
+      sinSubir: suyas(parte, stockItemId).some((l) => l.donde === 'en_cola'),
     }))
     .filter((l) => l.unidades > 0)
 }
@@ -105,98 +92,69 @@ export function lineasDeMaterial(apuntes: ApunteDeMaterial[]): LineaDeMaterial[]
 /**
  * Una unidad más de ese artículo.
  *
- * Si hay un apunte suyo todavía en la cola, se le sube la cantidad en vez de
- * abrir otro: así una avería con cinco cables llega al servidor como un asiento
- * de cinco y no como cinco de uno, que es lo que se lee después en el histórico.
+ * Si el parte ya tiene una fila suya se le sube la cantidad a esa —la primera,
+ * que es la que se apuntó antes—; si no, se abre una con el id que dé
+ * `nuevoId`. El id lo pone quien llama porque nace con la fila y viaja con
+ * ella: reenviarla no duplica, y probar esto no necesita un generador.
  */
-export function planSumar(apuntes: ApunteDeMaterial[], stockItemId: string): Operacion[] {
-  const edit = editable(apuntes, stockItemId)
-  if (edit) return [{ tipo: 'editar', id: edit.id, qty: edit.qty - 1 }]
-  return [{ tipo: 'consumo', unidades: 1 }]
-}
-
-/** Una unidad menos. Si era la última del apunte en cola, se borra entero. */
-export function planRestar(apuntes: ApunteDeMaterial[], stockItemId: string): Operacion[] {
-  if (unidadesUsadas(apuntes, stockItemId) <= 0) return []
-
-  const edit = editable(apuntes, stockItemId)
-  if (edit && edit.qty < 0) {
-    return edit.qty === -1
-      ? [{ tipo: 'borrar', id: edit.id }]
-      : [{ tipo: 'editar', id: edit.id, qty: edit.qty + 1 }]
-  }
-  return [{ tipo: 'devolucion', unidades: 1 }]
+export function planSumar(parte: LineaDelParte[], stockItemId: string, nuevoId: () => string): Cambio[] {
+  const [primera] = suyas(parte, stockItemId)
+  if (primera) return [{ id: primera.id, stockItemId, qty: Math.max(0, primera.qty) + 1 }]
+  return [{ id: nuevoId(), stockItemId, qty: 1 }]
 }
 
 /**
- * Quitar el artículo entero de la avería.
- *
- * Lo que no ha salido se borra —no ocurrió— y de lo que sí salió se devuelve
- * exactamente lo que quede gastado. Los dos a la vez, porque una línea puede
- * tener las dos mitades: dos cables que subieron esta mañana y un tercero
- * apuntado hace un minuto en un aula sin cobertura.
+ * Una unidad menos. De la primera fila que tenga unidades, y no de la primera a
+ * secas: una que ya está a cero no puede bajar más.
  */
-export function planQuitar(apuntes: ApunteDeMaterial[], stockItemId: string): Operacion[] {
-  const usadas = unidadesUsadas(apuntes, stockItemId)
-  if (usadas <= 0) return []
-
-  const enCola = suyos(apuntes, stockItemId).filter(
-    (a) => a.kind === 'consumo' && a.donde === 'en_cola',
-  )
-  const ops: Operacion[] = enCola.map((a) => ({ tipo: 'borrar', id: a.id }))
-
-  const seVanConLaCola = -enCola.reduce((n, a) => n + a.qty, 0)
-  const quedan = usadas - seVanConLaCola
-  if (quedan > 0) ops.push({ tipo: 'devolucion', unidades: quedan })
-
-  return ops
+export function planRestar(parte: LineaDelParte[], stockItemId: string): Cambio[] {
+  const conUnidades = suyas(parte, stockItemId).find((l) => l.qty > 0)
+  if (!conUnidades) return []
+  return [{ id: conUnidades.id, stockItemId, qty: conUnidades.qty - 1 }]
 }
 
 /**
- * Juntar de dónde puede venir un apunte sin perder ninguno y sin contar dos.
+ * Quitar el artículo entero de la avería: todas sus filas a cero.
  *
- * Son tres sitios y hasta ahora se miraban dos, que es de donde salía el
- * material apuntado por duplicado:
+ * A cero y no borradas. La cola solo sabe reenviar filas, y el servidor
+ * necesita ver el cero: si la incidencia ya estaba cerrada cuando llega, es lo
+ * que le dice que devuelva al almacén lo que tuviera descontado.
+ */
+export function planQuitar(parte: LineaDelParte[], stockItemId: string): Cambio[] {
+  return suyas(parte, stockItemId)
+    .filter((l) => l.qty > 0)
+    .map((l) => ({ id: l.id, stockItemId, qty: 0 }))
+}
+
+/**
+ * Juntar de dónde puede venir una fila del parte sin perder ninguna y sin
+ * contar dos.
+ *
+ * Son tres sitios:
  *
  *  1. **La cola del dispositivo.** Lo que se acaba de apuntar y no ha salido.
  *  2. **El servidor.** Lo que ya está guardado.
  *  3. **Lo que esta pantalla ha encolado y ya no está en la cola**, que es el
- *     hueco: la cola BORRA la fila al subirla, y la lista del servidor se pedía
- *     una vez al abrir el panel y no se volvía a pedir nunca. Entre que la fila
- *     sale de la cola y el servidor la cuenta, el apunte **no estaba en ningún
- *     sitio**: la línea desaparecía de la pantalla con el cable ya descontado.
- *     Y quien no ve lo que acaba de apuntar, lo apunta otra vez.
+ *     hueco: la cola BORRA la fila al subirla, y hasta que la lista del servidor
+ *     se vuelve a pedir la fila no está en ningún sitio. Quien no ve lo que
+ *     acaba de apuntar, lo apunta otra vez.
  *
- * Contra eso, la pantalla se acuerda de lo que ella misma ha encolado y esos
- * apuntes cuentan como subidos hasta que el servidor los confirme. Lo peor que
- * puede pasar entonces es enseñar un momento de más algo que sí ocurrió; lo que
- * pasaba antes era enseñar de menos algo que ya estaba descontado, y eso lo
- * paga el almacén.
- *
- * El id manda: es el mismo en la cola, en lo recordado y en la fila del
- * servidor —se genera en el dispositivo y viaja con el movimiento— así que la
- * misma cosa vista desde dos sitios no se cuenta dos veces. Gana la cola, que
- * es la única que sabe si el apunte todavía se puede tocar.
+ * El id manda: es el mismo en los tres sitios, así que la misma fila vista
+ * desde dos no se cuenta dos veces. Gana la cola, que tiene la cantidad más
+ * reciente; después lo recordado, que es más nuevo que la copia del servidor.
  */
-export function mezclarApuntes(
-  enCola: ApunteDeMaterial[],
-  enElServidor: ApunteDeMaterial[],
-  apuntadosAqui: ApunteDeMaterial[],
-): ApunteDeMaterial[] {
-  const vistos = new Set(enCola.map((a) => a.id))
+export function mezclarParte(
+  enCola: LineaDelParte[],
+  enElServidor: LineaDelParte[],
+  apuntadasAqui: LineaDelParte[],
+): LineaDelParte[] {
+  const vistas = new Set(enCola.map((l) => l.id))
   const out = [...enCola]
 
-  // Lo recordado va antes que lo del servidor: es lo más reciente, y así una
-  // línea no salta de sitio en la lista cuando su apunte acaba de subir.
-  for (const a of apuntadosAqui) {
-    if (vistos.has(a.id)) continue
-    vistos.add(a.id)
-    out.push({ ...a, donde: 'arriba' })
-  }
-  for (const a of enElServidor) {
-    if (vistos.has(a.id)) continue
-    vistos.add(a.id)
-    out.push({ ...a, donde: 'arriba' })
+  for (const l of [...apuntadasAqui, ...enElServidor]) {
+    if (vistas.has(l.id)) continue
+    vistas.add(l.id)
+    out.push({ ...l, donde: 'arriba' })
   }
   return out
 }
