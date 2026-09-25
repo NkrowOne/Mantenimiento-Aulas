@@ -30,6 +30,7 @@
  * `********` en la columna de horas no dice nada de las horas.
  */
 
+import { mismoTipo } from './equipos'
 import { ZONA } from './fechas'
 import { EQUIPOS_EN_COLUMNAS, capacidadDe, equipoDe, mesDe } from './mapa'
 import type { Columna, Hoja } from './mapa'
@@ -144,9 +145,15 @@ export interface UnidadVolcada {
  * El más recientemente instalado, y a igualdad de fecha el que tenga número de
  * serie: entre una fila que dice «hay un proyector» y otra que dice «hay un
  * proyector y es el 0340985RL», la segunda es la que sirve para algo.
+ *
+ * «De un tipo» se decide con `mismoTipo`, no con `===`: el Tiny que la base
+ * tiene como «Ordenador Tiny» es el ordenador de la columna `S/N Ordenador`, y
+ * con la igualdad estricta la hoja decía que la sala no tenía ninguno, la
+ * fusión pedía darlo de alta y el servidor lo rechazaba porque el número ya
+ * estaba puesto. 52 veces por pasada.
  */
 export function equipoQueSeVe(equipos: EquipoVolcado[], tipo: string): EquipoVolcado | null {
-  const suyos = equipos.filter((e) => e.tipo === tipo)
+  const suyos = equipos.filter((e) => mismoTipo(e.tipo, tipo))
   if (suyos.length === 0) return null
   return [...suyos].sort((a, b) => {
     const f = (b.desde ?? '').localeCompare(a.desde ?? '')
@@ -155,11 +162,16 @@ export function equipoQueSeVe(equipos: EquipoVolcado[], tipo: string): EquipoVol
   })[0]!
 }
 
-/** Los tipos de los que la sala tiene más de uno: el Excel no puede enseñarlos. */
+/**
+ * Los tipos de los que la sala tiene más de uno: el Excel no puede enseñarlos.
+ *
+ * Se cuenta por aparato, no por nombre: una «Pantalla» y una «TV» en la misma
+ * sala son dos teles, y la columna solo puede enseñar una de las dos.
+ */
 export function equiposDeMas(sala: SalaVolcada): Array<{ tipo: string; cuantos: number }> {
   const out: Array<{ tipo: string; cuantos: number }> = []
   for (const tipo of EQUIPOS_EN_COLUMNAS) {
-    const cuantos = sala.equipos.filter((e) => e.tipo === tipo).length
+    const cuantos = sala.equipos.filter((e) => mismoTipo(e.tipo, tipo)).length
     if (cuantos > 1) out.push({ tipo, cuantos })
   }
   return out
@@ -172,6 +184,12 @@ export function equiposDeMas(sala: SalaVolcada): Array<{ tipo: string; cuantos: 
  * llama «Microfono Jabra» y la importación creó los dos tipos. Buscar solo
  * «Micrófono» es lo que dejaba 254 aulas diciendo que no tienen micrófono
  * cuando lo tienen: el suyo se llama «Micrófono Jabra».
+ *
+ * Desde que la comparación pasa por `mismoTipo`, los dos nombres responden a
+ * la misma columna aunque aquí figurase uno solo. Se dejan los dos escritos
+ * porque es la lista que alguien va a leer para saber qué cuenta como
+ * micrófono, y una lista que se apoya en un sinónimo declarado en otro fichero
+ * se lee peor que una que lo dice.
  */
 const TIPOS_DE_CAPACIDAD: Record<string, string[]> = {
   altavoces: ['Altavoces'],

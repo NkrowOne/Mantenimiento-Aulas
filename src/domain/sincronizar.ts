@@ -49,6 +49,7 @@ import { formasDeEscribir, resolverSala } from './cruce'
 import type { Indice, SalaConocida } from './cruce'
 import { idDeDuda } from './dudas'
 import type { Duda, Respuestas, SalaCandidata } from './dudas'
+import { mismoTipo } from './equipos'
 import { cuantos } from '../lib/plural'
 import { diaEnMadrid } from './fechas'
 import { conFormulasAlDia } from './formulas'
@@ -1150,7 +1151,7 @@ function cambioDeSala(sala: SalaVolcada, c: Columna): string | null {
   const equipo = equipoDe(c.campo)
   if (equipo) {
     const dias = sala.equipos
-      .filter((eq) => norm(eq.tipo) === norm(equipo.tipo) && eq.desde)
+      .filter((eq) => mismoTipo(eq.tipo, equipo.tipo) && eq.desde)
       .map((eq) => diaEnMadrid(new Date(eq.desde!)))
       .sort()
     return dias.at(-1) ?? null
@@ -1790,6 +1791,17 @@ function resumenDeFila(f: FilaLeida, hoja: Hoja, edificio: string, zona: string)
  *
  * Las que se retienen no dejan antepasado: con él, la pasada siguiente vería
  * «nada cambió» y no volvería a preguntar.
+ *
+ * «La sala no tiene ninguno de ese tipo» se decide con `mismoTipo`, que es lo
+ * que sabe que «Ordenador Tiny» es el ordenador de `S/N Ordenador` y que
+ * «Pantalla» es la tele de `S/N TV`. Con la igualdad de nombres a secas, el
+ * Tiny del aula no contaba como ordenador, la celda entraba aquí como si fuera
+ * un alta, y como su número ya estaba puesto en la misma aula acababa en el
+ * aviso de reclasificación: 52 avisos por pasada de aparatos que estaban en
+ * su sitio. «Monitor» y «TV» siguen siendo distintos a propósito —son dos
+ * aparatos—, así que un número de `S/N Monitor` puesto en una TV de la misma
+ * aula sí llega abajo, que es el caso que la reclasificación existe para
+ * resolver.
  */
 function retenerEquiposNuevos(
   plan: Plan,
@@ -1832,7 +1844,7 @@ function retenerEquiposNuevos(
     if (!eq || eq.campo !== 'serial') continue
     const par = porFila.get(h.fila)
     if (!par) continue
-    if (par.dato.equipos.some((x) => norm(x.tipo) === norm(eq.tipo))) continue
+    if (par.dato.equipos.some((x) => mismoTipo(x.tipo, eq.tipo))) continue
     const donde = dondeEsta.get(norm(String(h.valor ?? '')))
     if (donde) yaPuesto.set(idDeDuda(hoja.nombre, h.fila, eq.tipo), donde)
   }
@@ -1842,7 +1854,7 @@ function retenerEquiposNuevos(
     if (!eq) continue
     const par = porFila.get(h.fila)
     if (!par) continue
-    if (par.dato.equipos.some((x) => norm(x.tipo) === norm(eq.tipo))) continue
+    if (par.dato.equipos.some((x) => mismoTipo(x.tipo, eq.tipo))) continue
 
     const id = idDeDuda(hoja.nombre, h.fila, eq.tipo)
 

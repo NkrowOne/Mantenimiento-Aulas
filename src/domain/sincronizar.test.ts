@@ -2075,3 +2075,105 @@ describe('los equipos que el libro trae y la sala no tiene', () => {
     expect(p.avisos.filter((a) => a.includes('sin preguntar'))).toEqual([])
   })
 })
+
+describe('un aparato con dos nombres no es un choque', () => {
+  /*
+   * Los dos avisos del libro del 22/09, uno detrás de otro:
+   *
+   *   «Ordenador» del libro está en la aplicación puesto en equipos de tipo
+   *   «Ordenador Tiny»: 52 números de serie, en su misma aula.
+   *   «Monitor» del libro está en la aplicación puesto en equipos de tipo
+   *   «TV»: 67 números de serie, en su misma aula.
+   *
+   * Parecen el mismo caso y no lo son. El Tiny ES el ordenador de la columna
+   * —dos nombres, un aparato— y no hay nada que reclasificar: la celda y la
+   * base ya coinciden. El monitor del PC puesto en una TV sí es un aparato en
+   * el tipo equivocado, y ahí la reclasificación es lo que toca. Quién decide
+   * cuál es cuál vive en `equipos.ts`; aquí se comprueba que la fusión le
+   * hace caso.
+   */
+  function conElAparato(
+    equipos: SalaVolcada['equipos'],
+    celdas: Record<string, string>,
+    instantanea: Instantanea = SIN_INSTANTANEA,
+  ) {
+    return sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, { Y: 'SALA-000001', C: '0.1P', ...celdas })],
+      salas: [sala({ equipos })],
+      indice,
+      columnaRef: 'Y',
+      instantanea,
+    })
+  }
+
+  const tiny = { id: 'e1', tipo: 'Ordenador Tiny', serial: 'MJ0C7V8N', model: 'ThinkCentre M70Q', desde: null }
+  const nada = (p: ReturnType<typeof sincronizarEstado>, letra: string) => {
+    expect(p.celdas.filter((c) => c.celda.startsWith(letra))).toEqual([])
+    expect(p.haciaLaBase.filter((h) => h.letra === letra)).toEqual([])
+    expect(p.conflictos.filter((c) => c.letra === letra)).toEqual([])
+    expect(p.dudas.filter((d) => d.tipo === 'alta' && d.que === 'equipo')).toEqual([])
+    expect(p.avisos.filter((a) => a.includes('devuelve el tipo') || a.includes('OTRA aula'))).toEqual([])
+  }
+
+  it('el Tiny de la sala es el ordenador de la columna: la celda ya coincide', () => {
+    nada(conElAparato([tiny], { S: 'MJ0C7V8N' }), 'S')
+  })
+
+  it('y con otro número en la hoja es un cambio normal de la columna, no un alta', () => {
+    // Alguien cambió el Tiny y apuntó el nuevo en la hoja. El antepasado es el
+    // número viejo, así que se movió el Excel y la base no: va a la base con el
+    // tipo de la columna, que es como el servidor lo busca.
+    const p = conElAparato([tiny], { S: 'MJ0NUEVO' }, (clave, letra) =>
+      clave === 'SALA-000001' && letra === 'S' ? 'MJ0C7V8N' : undefined,
+    )
+    expect(p.haciaLaBase.find((h) => h.letra === 'S')).toMatchObject({
+      campo: 'equipo:Ordenador:serial',
+      valor: 'MJ0NUEVO',
+    })
+    expect(p.dudas.filter((d) => d.tipo === 'alta' && d.que === 'equipo')).toEqual([])
+    expect(p.avisos.filter((a) => a.includes('devuelve el tipo') || a.includes('OTRA aula'))).toEqual([])
+  })
+
+  it('la «Pantalla» de la sala es la TV de la columna', () => {
+    const pantalla = { id: 'e2', tipo: 'Pantalla', serial: '04204664NB', model: 'NEC E657Q', desde: null }
+    nada(conElAparato([pantalla], { Q: '04204664NB', P: 'NEC E657Q' }), 'Q')
+  })
+
+  it('pero el monitor del PC puesto en una TV de la misma aula sí se reclasifica', () => {
+    // «Monitor» nunca es «TV»: uno es la pantalla del PC y el otro la tele del
+    // aula. El número está en esta aula sobre el tipo equivocado, y la celda
+    // viaja para que el servidor le devuelva el suyo.
+    const p = conElAparato([{ id: 'e3', tipo: 'Pantalla', serial: 'V3080D6Y', model: null, desde: null }], {
+      R: 'V3080D6Y',
+    })
+    expect(p.haciaLaBase.find((h) => h.letra === 'R')?.valor).toBe('V3080D6Y')
+    expect(p.dudas.filter((d) => d.tipo === 'alta' && d.que === 'equipo')).toEqual([])
+    const aviso = p.avisos.find((a) => a.includes('devuelve el tipo'))
+    expect(aviso).toContain('«Monitor» del libro')
+    expect(aviso).toContain('«Pantalla»')
+  })
+
+  it('y el monitor cuyo número está en OTRA aula se retiene', () => {
+    const p = sincronizarEstado({
+      hoja: ESTADO,
+      filas: [CABECERA, fila(2, { Y: 'SALA-000001', C: '0.1P', R: 'V3080D6Y' })],
+      salas: [
+        sala({ equipos: [tiny] }),
+        sala({
+          id: 'r2',
+          shortRef: 'SALA-000002',
+          code: '1.5',
+          edificio: 'ED. O',
+          equipos: [{ id: 'e9', tipo: 'Monitor PC', serial: 'V3080D6Y', model: null, desde: null }],
+        }),
+      ],
+      indice,
+      columnaRef: 'Y',
+      instantanea: SIN_INSTANTANEA,
+    })
+    expect(p.haciaLaBase.filter((h) => h.letra === 'R')).toEqual([])
+    expect(p.dudas.filter((d) => d.tipo === 'alta' && d.que === 'equipo')).toEqual([])
+    expect(p.avisos.find((a) => a.includes('OTRA aula'))).toContain('«1.5» (ED. O)')
+  })
+})

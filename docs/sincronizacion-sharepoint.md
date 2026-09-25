@@ -1058,6 +1058,49 @@ ya salen en `Inventario por Sala`, uno por fila y con su `Ref`. Darles columna
 sería volver a tener el mismo dato en dos sitios, que es justo lo que este
 apartado deshace.
 
+## 11 octies. Un tipo con dos nombres no es un choque
+
+La pasada del 22/09 dejó dos avisos seguidos, y la siguiente los repitió con
+los mismos números:
+
+> «Ordenador» del libro está en la aplicación puesto en equipos de tipo
+> «Ordenador Tiny»: 52 números de serie, en su misma aula.
+> «Monitor» del libro está en la aplicación puesto en equipos de tipo «TV»:
+> 67 números de serie, en su misma aula.
+
+Parecen el mismo caso y no lo son. El Tiny **es** el ordenador de `S/N
+Ordenador`: dos nombres, un aparato, y nada que reclasificar. La fusión
+comparaba los nombres con `===`, así que decía que el aula no tenía ordenador,
+proponía el alta, el servidor la rechazaba porque el número ya estaba puesto, y
+como una celda rechazada no deja antepasado, la pasada siguiente volvía a
+proponerla. El monitor del PC puesto en una TV sí es un aparato en el tipo
+equivocado, y ahí la reclasificación del apartado 11 quinquies es lo que toca.
+
+**La regla**, en un solo sitio (`src/domain/equipos.ts`, `mismoTipo` y
+`tipoCanonico`): dos nombres hablan del mismo aparato si son el mismo nombre,
+si uno es alias del otro en el catálogo, si uno está fundido en el otro
+(`merged_into`), o si los dos responden a la misma columna del libro por los
+sinónimos declarados ahí («Ordenador Tiny», «Tiny», «PC» → Ordenador;
+«Pantalla», «Televisor» → TV; «Monitor PC» → Monitor…). **Monitor nunca es
+TV**, ni al revés: uno es la pantalla del PC y el otro la tele del aula, y que
+compartan la palabra «pantalla» en el habla es justo la trampa. «Monitor
+Atril», «Ordenador Lenovo Ideacentre» y «Pantalla de proyección» tampoco son
+sinónimos de nada. El volcado y la fusión comparan tipos con esa regla, así
+que un aparato con dos nombres ya coincide antes de salir del navegador: ni
+alta, ni aviso, ni viaje a la base.
+
+**El servidor acepta la reclasificación por alias.** Para las celdas que sí
+viajan —un número de `S/N Monitor` sobre una TV de la misma aula—,
+`sync_aplicar_equipo` (`20260925000100`) adopta y reclasifica también cuando el
+tipo del equipo y el pedido son equivalentes por `merged_into` (en cualquier
+sentido, hasta ocho saltos), por alias cruzado (`norm_text` del nombre de uno
+entre los alias del otro) o por `separado_de`, que era lo único que miraba.
+El `asset_event` se apunta igual y el rechazo del caso que no es equivalente
+sigue diciendo lo mismo. La misma migración pone a los tipos vivos los alias
+con los que el libro los llama —sin «Monitor» en TV—, para que una base donde
+la fusión no se hizo cruce igual. Una vez aceptada, la celda deja antepasado y
+no vuelve: ese es el «una vez aceptados los cambios no debe conflictar».
+
 ## 12. Lo que puede salir mal
 
 - **Que la API de libro no acepte un token sin usuario.** La documentación de
