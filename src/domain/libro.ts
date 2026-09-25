@@ -1,5 +1,6 @@
 /**
- * El libro entero: escribir celdas, mover filas y añadir hojas en una pasada.
+ * El libro entero: escribir celdas, mover filas, añadir o rehacer hojas y
+ * darle el acabado en una pasada.
  *
  * `xlsx.ts` sabe de celdas y `estructura.ts` sabe de filas, pero las dos miran
  * un solo fichero de hoja. Hay tres cosas que solo se ven desde arriba y que son
@@ -22,12 +23,20 @@
  * contenido y la relación del libro—, y dejarse uno da el error que se quería
  * evitar.
  *
- * Sobre añadir hojas: **no se toca `styles.xml`**. Las hojas nuevas se pintan
- * reutilizando los índices de estilo que el libro ya tiene —la banda de la
- * cabecera es la que ya usa la hoja de estado— porque meter formatos nuevos
- * obliga a renumerar una tabla que todas las celdas del libro están usando. Sale
- * más barato parecerse a lo que hay que inventar un estilo propio, y además el
- * resultado se parece al libro de siempre, que es lo que se pidió.
+ * Sobre el formato: las hojas de la gente se parchean celda a celda y conservan
+ * el estilo que tenían; las hojas que escribe la aplicación se pintan con
+ * estilos **con nombre** (`ClaveDeEstilo`) que `estilos.ts` convierte en
+ * índices de `styles.xml`, añadiendo al final lo que falte y reutilizando lo que
+ * ya esté. La regla que hace esto seguro es que `styles.xml` **solo crece por el
+ * final**: nunca se renumera lo que hay, porque todas las celdas del libro lo
+ * usan por su número. Y crece una sola vez: la segunda pasada encuentra sus
+ * estilos y no añade ninguno.
+ *
+ * El **acabado** (`Acabado`) es lo que se hace después de escribir: rehacer las
+ * hojas de la app enteras, pintar las cabeceras de las hojas de la gente según
+ * quién escribe cada columna, las bandas alternas, los colores de pestaña y el
+ * orden de las pestañas. Todo idempotente: el mismo libro con el mismo acabado
+ * dos veces da el mismo `styles.xml`, las mismas tablas, las mismas reglas.
  */
 
 import {
@@ -40,14 +49,31 @@ import {
   planificar,
 } from './estructura'
 import type { EdicionDeFilas, MapaDeFilas } from './estructura'
-import { escapar, marcarRecalculo, parchearHojaXml, xmlDeCelda } from './xlsx'
-import type { Cambio, Libro, ResolverEstilo, ValorCelda } from './xlsx'
-import { estiloQuePinta, estilosDeLaColumna, leerEstilos } from './estilos'
+import { columnaANumero, escapar, marcarRecalculo, numeroAColumna, parchearHojaXml, xmlDeCelda } from './xlsx'
+import type { Cambio, Hoja, Libro, ResolverClave, ResolverEstilo, ValorCelda } from './xlsx'
+import {
+  COLOR_DE_BANDA,
+  asegurarDxfDeFondo,
+  asegurarRecetas,
+  conTinte,
+  estiloQuePinta,
+  estilosDeLaColumna,
+  leerEstilos,
+  recetaDe,
+} from './estilos'
+import type { ClaveDeEstilo, Receta, Tinte } from './estilos'
+import { asegurarTabla, columnasDeTabla, nombreDeTabla, quitarFiltroDeHoja, refDeTabla, xmlDeTableParts } from './tablas'
 import { crearEntrada, descomprimir, escribirZip, reemplazar } from '../lib/zip'
 import type { EntradaZip } from '../lib/zip'
 
+export type { ClaveDeEstilo, Tinte } from './estilos'
+
 const TIPO_HOJA =
   'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml'
+
+/** Los colores de pestaña: azul claro para las hojas de la app, gris para las discretas. */
+const PESTANA_APP = '9DC3E6'
+const PESTANA_DISCRETA = '7F7F7F'
 
 // -----------------------------------------------------------------------------
 // Lo que se le pide al libro
@@ -65,35 +91,71 @@ export interface EdicionDeHoja {
 }
 
 /**
- * El formato de una columna de una hoja nueva.
- *
- * No son estilos propios: son los estilos **que el libro ya usa**, buscados en
- * las hojas de siempre. Una fecha escrita sin el estilo de una columna de fecha
- * se ve como `45831`, y a nadie le sirve una hoja de revisiones que enseña cinco
- * cifras donde debería poner el día.
+ * El formato de una columna de una hoja nueva. Una fecha escrita sin formato de
+ * fecha se ve como `45831`, y a nadie le sirve una hoja de revisiones que enseña
+ * cinco cifras donde debería poner el día.
  */
-export type Formato = 'texto' | 'fecha' | 'porcentaje'
+export type Formato = 'texto' | 'textoAjustado' | 'fecha' | 'porcentaje' | 'entero'
 
 export interface HojaNueva {
   nombre: string
-  /** La primera fila es la cabecera y se pinta como tal. */
+  /** La primera fila es la cabecera. */
   filas: ValorCelda[][]
   /** Anchos de columna, en caracteres. Uno por columna. */
   anchos?: number[]
   /** Inmoviliza la fila de cabecera. Por defecto sí. */
   inmovilizar?: boolean
-  /** Pone autofiltro sobre la cabecera. Por defecto sí. */
+  /** Autofiltro sobre la cabecera. Por defecto sí; se ignora si la hoja es tabla (la tabla lleva el suyo). */
   autofiltro?: boolean
-  /** El formato de cada columna, para que las fechas se vean como fechas. */
+  /** El formato de cada columna. */
   formatos?: Array<Formato | undefined>
+  /** Un tinte por FILA DE DATOS (índice 0 = primera fila de datos, es decir `filas[1]`). */
+  tintes?: Array<Tinte | undefined>
+  /** Estilos sueltos por celda, `'A1'` → clave. Gana a formatos y tintes. Para el Léeme y casos raros. */
+  estilos?: Record<string, ClaveDeEstilo>
+  /**
+   * `'app'` (por defecto): cabecera 5B7F9E, pestaña azul claro, tabla con bandas.
+   * `'editable'`: cabecera 1F4E78, pestaña sin color, autofiltro.
+   * `'discreta'`: cabecera gris, pestaña gris, sin tabla, sin autofiltro salvo que se pida.
+   */
+  caracter?: 'app' | 'editable' | 'discreta'
+  /** Tabla de Excel con estilo (TableStyleMedium2, bandas). Por defecto sí si `caracter` es `'app'`. */
+  tabla?: boolean
+  /** Alto de fila (puntos) para filas concretas, por número de fila de hoja (1 = cabecera). */
+  altos?: Record<number, number>
 }
 
-/** Los índices de estilo que las hojas nuevas toman prestados del libro. */
-interface Paleta {
-  cabecera: string
-  cuerpo: string
-  fecha: string
-  porcentaje: string
+export interface Acabado {
+  /**
+   * Hojas de la app que se regeneran ENTERAS: mismo fichero de hoja (misma ruta,
+   * mismo `rId`, mismas relaciones, comentarios y `legacyDrawing`), XML nuevo
+   * generado como una hoja nueva. Si no existen, se añaden.
+   */
+  rehacer?: HojaNueva[]
+  /**
+   * Cabeceras de las hojas de la gente: estilo por letra de columna. Solo se
+   * cambia el `s` de las celdas de la fila de cabecera que tengan valor; el
+   * texto no se toca.
+   */
+  cabeceras?: Array<{ hoja: string; fila?: number; columnas: Record<string, 'cabecera' | 'cabeceraApp'> }>
+  /**
+   * Hojas de la gente que llevan bandas alternas por formato condicional
+   * (`MOD(ROW(),2)=0` con un `dxf` de fondo F2F6FA) sobre `A2:<últimaCol><últimaFila>`.
+   * Idempotente: si ya hay una regla con esa fórmula se le ajusta el `sqref`;
+   * si no, se añade con la prioridad más baja (el número mayor).
+   */
+  bandas?: string[]
+  /**
+   * Orden final de pestañas: los nombres listados van primero en ese orden; las
+   * no listadas conservan su orden relativo detrás; las `discretas` van las últimas.
+   */
+  orden?: string[]
+  /** Nombres exactos (o prefijos si terminan en `*`, p. ej. `Cambios*`) que van al final con pestaña gris. */
+  discretas?: string[]
+  /** Pestaña activa al abrir (nombre de hoja). Solo esa lleva `tabSelected=1`. */
+  activa?: string
+  /** Color de pestaña por hoja, por si se quiere forzar (`RRGGBB` sin alfa). */
+  pestanas?: Record<string, string>
 }
 
 // -----------------------------------------------------------------------------
@@ -106,15 +168,26 @@ interface Paleta {
  * El orden importa y no es intercambiable: primero se mueven las filas —que es
  * lo que cambia las direcciones— y solo después se escriben las celdas, ya
  * traducidas. Al revés se escribiría el número de serie en la fila de al lado.
+ * Después vienen las hojas nuevas y las rehechas, luego el acabado de cada hoja
+ * (cabeceras, bandas, color de pestaña) y al final el orden de las pestañas,
+ * que es lo único que cambia los índices con los que el libro habla de sus hojas.
  */
 export async function escribirLibro(
   libro: Libro,
   ediciones: EdicionDeHoja[],
   hojasNuevas: HojaNueva[] = [],
+  acabado: Acabado = {},
 ): Promise<Uint8Array> {
   let entradas = [...libro.entradas]
   let hojas = [...libro.hojas]
   let estructuraTocada = false
+
+  // Los estilos se resuelven UNA vez por escritura. Si no hace falta ninguno
+  // —una pasada que solo parchea celdas— `styles.xml` ni se lee ni se toca.
+  const todasLasHojas = [...hojasNuevas, ...(acabado.rehacer ?? [])]
+  const paleta = await paletaDe(entradas, estilosNecesarios(ediciones, todasLasHojas, acabado))
+  entradas = paleta.entradas
+  const resolverClave: ResolverClave = (clave) => paleta.indice(clave) ?? null
 
   for (const ed of ediciones) {
     const hoja = hojas.find((h) => h.nombre === ed.hoja)
@@ -138,7 +211,7 @@ export async function escribirLibro(
     }
     if (celdas.length > 0) {
       const traducidas = celdas.map((c) => traducir(c, mapa)).filter((c) => c !== null)
-      xml = parchearHojaXml(xml, traducidas, resolver)
+      xml = parchearHojaXml(xml, traducidas, resolver, resolverClave)
       // Si se escribe en una columna escondida, se enseña: un dato que suma en
       // una fórmula y no se ve es un descuadre invisible.
       xml = mostrarColumnas(xml, columnasEscritas(traducidas))
@@ -151,10 +224,41 @@ export async function escribirLibro(
   }
 
   for (const nueva of hojasNuevas) {
-    const r = await anadirHoja(entradas, hojas, nueva)
+    const r = await anadirHoja(entradas, hojas, nueva, paleta)
     entradas = r.entradas
     hojas = r.hojas
     estructuraTocada = true
+  }
+
+  for (const hoja of acabado.rehacer ?? []) {
+    const r = hojas.some((h) => h.nombre === hoja.nombre)
+      ? await rehacerHoja(entradas, hojas, hoja, paleta)
+      : await anadirHoja(entradas, hojas, hoja, paleta)
+    entradas = r.entradas
+    hojas = r.hojas
+    estructuraTocada = true
+  }
+
+  for (const c of acabado.cabeceras ?? []) {
+    entradas = await tocarHoja(entradas, hojas, c.hoja, (xml) => pintarCabecera(xml, c.fila ?? 1, c.columnas, paleta))
+  }
+
+  if ((acabado.bandas ?? []).length > 0) {
+    const dxf = await asegurarDxf(entradas, COLOR_DE_BANDA)
+    entradas = dxf.entradas
+    for (const nombre of acabado.bandas!) {
+      entradas = await tocarHoja(entradas, hojas, nombre, (xml) => ponerBandas(xml, dxf.indice))
+    }
+  }
+
+  for (const [nombre, rgb] of coloresDePestana(todasLasHojas, acabado, hojas)) {
+    entradas = await tocarHoja(entradas, hojas, nombre, (xml) => colorearPestana(xml, rgb))
+  }
+
+  if (acabado.orden || acabado.discretas || acabado.activa) {
+    const r = await ordenarPestanas(entradas, hojas, acabado)
+    entradas = r.entradas
+    estructuraTocada = estructuraTocada || r.reordenado
   }
 
   if (estructuraTocada) entradas = await quitarCalcChain(entradas)
@@ -216,7 +320,7 @@ async function moverLoDeFuera(
   ruta: string,
   nombre: string,
   mapa: MapaDeFilas,
-  hojas: Array<{ nombre: string; ruta: string }>,
+  hojas: Hoja[],
 ): Promise<EntradaZip[]> {
   const out = [...entradas]
 
@@ -309,7 +413,108 @@ async function quitarCalcChain(entradas: EntradaZip[]): Promise<EntradaZip[]> {
 }
 
 // -----------------------------------------------------------------------------
-// Hojas nuevas
+// Los estilos con nombre, resueltos una vez
+// -----------------------------------------------------------------------------
+
+/** Una clave y, si la fila lleva tinte, el tinte: `fecha` y `fecha` en fila crítica son dos estilos. */
+type Pedido = { clave: ClaveDeEstilo; tinte?: Tinte }
+
+interface Paleta {
+  entradas: EntradaZip[]
+  /** El índice de `cellXfs`, como texto para ponerlo en `s="…"`. */
+  indice(clave: ClaveDeEstilo, tinte?: Tinte): string | undefined
+}
+
+function claveDePedido(p: Pedido): string {
+  return p.tinte ? `${p.clave}+${p.tinte}` : p.clave
+}
+
+/** Todo lo que esta escritura va a pintar, para pedirlo de una vez. */
+function estilosNecesarios(ediciones: EdicionDeHoja[], hojas: HojaNueva[], acabado: Acabado): Pedido[] {
+  const out = new Map<string, Pedido>()
+  const pedir = (p: Pedido) => out.set(claveDePedido(p), p)
+
+  for (const ed of ediciones) {
+    for (const c of ed.celdas ?? []) if (c.estilo) pedir({ clave: c.estilo })
+  }
+  for (const c of acabado.cabeceras ?? []) {
+    for (const clave of Object.values(c.columnas)) pedir({ clave })
+  }
+  for (const hoja of hojas) {
+    for (const p of pedidosDeLaHoja(hoja)) pedir(p)
+  }
+  return [...out.values()]
+}
+
+function pedidosDeLaHoja(hoja: HojaNueva): Pedido[] {
+  const out: Pedido[] = []
+  const columnas = columnasDe(hoja)
+  for (let i = 0; i < Math.max(1, hoja.filas.length); i++) {
+    for (let c = 0; c < columnas; c++) out.push(pedidoDeCelda(hoja, i, c))
+  }
+  return out
+}
+
+/** Qué estilo le toca a la celda `(fila i, columna c)` de una hoja nueva, ambos en base 0. */
+function pedidoDeCelda(hoja: HojaNueva, i: number, c: number): Pedido {
+  const suelto = hoja.estilos?.[`${numeroAColumna(c + 1)}${i + 1}`]
+  if (suelto) return { clave: suelto }
+  if (i === 0) return { clave: claveDeCabecera(hoja) }
+  const clave: ClaveDeEstilo = hoja.formatos?.[c] ?? 'texto'
+  const tinte = hoja.tintes?.[i - 1]
+  return tinte ? { clave, tinte } : { clave }
+}
+
+function claveDeCabecera(hoja: HojaNueva): ClaveDeEstilo {
+  const caracter = hoja.caracter ?? 'app'
+  return caracter === 'app' ? 'cabeceraApp' : caracter === 'editable' ? 'cabecera' : 'cabeceraDiscreta'
+}
+
+function recetaDePedido(p: Pedido): Receta {
+  const base = recetaDe(p.clave)
+  return p.tinte ? conTinte(base, p.tinte) : base
+}
+
+/**
+ * Resuelve los estilos contra `styles.xml` y lo escribe solo si ha crecido:
+ * cuando todo lo pedido ya existe, la entrada vuelve con sus bytes de siempre.
+ */
+async function paletaDe(entradas: EntradaZip[], pedidos: Pedido[]): Promise<Paleta> {
+  const indices = new Map<string, number>()
+  const paleta: Paleta = {
+    entradas,
+    indice: (clave, tinte) => {
+      const n = indices.get(claveDePedido({ clave, tinte }))
+      return n === undefined ? undefined : String(n)
+    },
+  }
+  if (pedidos.length === 0) return paleta
+
+  const i = entradas.findIndex((e) => e.nombre === 'xl/styles.xml')
+  if (i < 0) throw new Error('El libro no tiene xl/styles.xml')
+  const antes = await texto(entradas[i]!)
+  const r = asegurarRecetas(antes, pedidos.map(recetaDePedido))
+  pedidos.forEach((p, k) => indices.set(claveDePedido(p), r.indices[k]!))
+  if (r.xml !== antes) {
+    const out = [...entradas]
+    out[i] = await reemplazar(out[i]!, bytes(r.xml))
+    paleta.entradas = out
+  }
+  return paleta
+}
+
+async function asegurarDxf(entradas: EntradaZip[], rgb: string): Promise<{ entradas: EntradaZip[]; indice: number }> {
+  const i = indice(entradas, 'xl/styles.xml')
+  const antes = await texto(entradas[i]!)
+  const r = asegurarDxfDeFondo(antes, rgb)
+  if (r.xml === antes) return { entradas, indice: r.indice }
+  const out = [...entradas]
+  out[i] = await reemplazar(out[i]!, bytes(r.xml))
+  return { entradas: out, indice: r.indice }
+}
+
+// -----------------------------------------------------------------------------
+// Hojas nuevas y rehechas
 // -----------------------------------------------------------------------------
 
 /**
@@ -321,9 +526,10 @@ async function quitarCalcChain(entradas: EntradaZip[]): Promise<EntradaZip[]> {
  */
 async function anadirHoja(
   entradas: EntradaZip[],
-  hojas: Array<{ nombre: string; ruta: string }>,
+  hojas: Hoja[],
   nueva: HojaNueva,
-): Promise<{ entradas: EntradaZip[]; hojas: Array<{ nombre: string; ruta: string }> }> {
+  paleta: Paleta,
+): Promise<{ entradas: EntradaZip[]; hojas: Hoja[] }> {
   if (hojas.some((h) => h.nombre === nueva.nombre)) {
     throw new Error(`El libro ya tiene una hoja «${nueva.nombre}»`)
   }
@@ -343,8 +549,13 @@ async function anadirHoja(
   const ruta = `xl/worksheets/sheet${n}.xml`
 
   const modelo = out.find((e) => e.nombre === 'xl/workbook.xml')!
-  const paleta = await paletaDelLibro(out, hojas)
-  out.push(await crearEntrada(ruta, bytes(xmlDeHoja(nueva, paleta)), modelo))
+  let ridTabla: string | null = null
+  if (esTabla(nueva)) {
+    const t = await asegurarTabla(out, ruta, datosDeTabla(nueva))
+    out = t.entradas
+    ridTabla = t.rid
+  }
+  out.push(await crearEntrada(ruta, bytes(xmlDeHoja(nueva, paleta, '', ridTabla)), modelo))
 
   // 1 — la relación del libro
   const ir = indice(out, 'xl/_rels/workbook.xml.rels')
@@ -386,6 +597,79 @@ async function anadirHoja(
   return { entradas: out, hojas: [...hojas, { nombre: nueva.nombre, ruta }] }
 }
 
+/**
+ * Vuelve a escribir entera una hoja que ya existe, en su mismo fichero.
+ *
+ * Se conserva del XML viejo lo que va después de `</sheetData>` y no depende de
+ * las filas —`pageMargins`, `legacyDrawing`, `dataValidations`…—, así que los
+ * comentarios y su dibujo siguen relacionados. Lo que sí depende de las filas
+ * (`autoFilter`, `tableParts`, `conditionalFormatting`) se regenera. Al cambiar
+ * el número de filas no hace falta remapear nada fuera de la hoja: nadie edita a
+ * mano estas hojas, y nadie les apunta desde una fórmula.
+ */
+async function rehacerHoja(
+  entradas: EntradaZip[],
+  hojas: Hoja[],
+  hoja: HojaNueva,
+  paleta: Paleta,
+): Promise<{ entradas: EntradaZip[]; hojas: Hoja[] }> {
+  const ruta = hojas.find((h) => h.nombre === hoja.nombre)!.ruta
+  let out = [...entradas]
+  const i = indice(out, ruta)
+  const viejo = await texto(out[i]!)
+
+  let ridTabla: string | null = null
+  if (esTabla(hoja)) {
+    const t = await asegurarTabla(out, ruta, datosDeTabla(hoja))
+    out = t.entradas
+    ridTabla = t.rid
+    // La tabla lleva su filtro: el de la hoja sobra y Excel se queja del doble.
+    const iw = indice(out, 'xl/workbook.xml')
+    const wb = await texto(out[iw]!)
+    const sin = quitarFiltroDeHoja(wb, await posicionDeLaHoja(out, hoja.nombre))
+    if (sin !== wb) out[iw] = await reemplazar(out[iw]!, bytes(sin))
+  }
+
+  out[i] = await reemplazar(out[i]!, bytes(xmlDeHoja(hoja, paleta, colaDe(viejo), ridTabla)))
+  return { entradas: out, hojas }
+}
+
+/** Lo que hay tras `</sheetData>` y no depende de las filas. */
+function colaDe(xml: string): string {
+  const m = /<\/sheetData>|<sheetData\b[^>]*\/>/.exec(xml)
+  if (!m) return ''
+  const fin = xml.lastIndexOf('</worksheet>')
+  let cola = xml.slice(m.index + m[0].length, fin < 0 ? xml.length : fin)
+  for (const etiqueta of ['autoFilter', 'tableParts', 'conditionalFormatting']) {
+    cola = cola.replace(elemento(etiqueta), '')
+  }
+  return cola
+}
+
+/** El patrón de un elemento entero, autocerrado o con pareja. El autocerrado va primero a propósito. */
+function elemento(etiqueta: string): RegExp {
+  return new RegExp(`<${etiqueta}\\b[^>]*?/>|<${etiqueta}\\b[^>]*>[\\s\\S]*?</${etiqueta}>`, 'g')
+}
+
+function esTabla(hoja: HojaNueva): boolean {
+  return hoja.tabla ?? (hoja.caracter ?? 'app') === 'app'
+}
+
+function columnasDe(hoja: HojaNueva): number {
+  return Math.max(1, ...hoja.filas.map((f) => f.length))
+}
+
+function datosDeTabla(hoja: HojaNueva) {
+  const columnas = columnasDe(hoja)
+  const cabecera = [...(hoja.filas[0] ?? [])]
+  while (cabecera.length < columnas) cabecera.push(null)
+  return {
+    nombre: nombreDeTabla(hoja.nombre),
+    ref: refDeTabla(columnas, hoja.filas.length),
+    columnas: columnasDeTabla(cabecera),
+  }
+}
+
 function idLibre(rels: string): string {
   const usados = new Set([...rels.matchAll(/Id="rId(\d+)"/g)].map((m) => Number(m[1])))
   let n = 1
@@ -394,50 +678,16 @@ function idLibre(rels: string): string {
 }
 
 /**
- * Los índices de estilo que las hojas nuevas toman prestados.
- *
- * Se leen de la primera hoja, que en este libro es la de estado: su fila 1 es la
- * banda de cabecera que la gente reconoce, su fila 2 el cuerpo normal, su
- * columna `D` una fecha y su columna `G` un porcentaje. Tomarlos prestados en
- * vez de inventarlos es lo que evita tocar `styles.xml`, que es una tabla que
- * todas las celdas del libro están usando por su número.
- *
- * Si algo no se encuentra, esa columna sale sin formato: feo, no roto.
+ * El XML de una hoja de la aplicación. `cola` es lo que se conserva de la hoja
+ * vieja al rehacerla (vacío para una nueva); `ridTabla`, la relación de su tabla.
  */
-async function paletaDelLibro(
-  entradas: EntradaZip[],
-  hojas: Array<{ nombre: string; ruta: string }>,
-): Promise<Paleta> {
-  const vacia: Paleta = { cabecera: '', cuerpo: '', fecha: '', porcentaje: '' }
-  const hoja = hojas[0]
-  if (!hoja) return vacia
-  const i = entradas.findIndex((e) => e.nombre === hoja.ruta)
-  if (i < 0) return vacia
-  const xml = await texto(entradas[i]!)
-  return {
-    cabecera: estiloDeLaFila(xml, 1),
-    cuerpo: estiloDeLaFila(xml, 2),
-    fecha: estiloDeCelda(xml, 'E', 2) || estiloDeCelda(xml, 'D', 3),
-    porcentaje: estiloDeCelda(xml, 'G', 2),
-  }
-}
-
-function estiloDeLaFila(xml: string, fila: number): string {
-  const m = new RegExp(`<row\\b[^>]*\\br="${fila}"[^>]*>([\\s\\S]*?)</row>`).exec(xml)
-  if (!m) return ''
-  return /<c\b[^>]*\bs="(\d+)"/.exec(m[1]!)?.[1] ?? ''
-}
-
-function estiloDeCelda(xml: string, columna: string, fila: number): string {
-  const m = new RegExp(`<row\\b[^>]*\\br="${fila}"[^>]*>([\\s\\S]*?)</row>`).exec(xml)
-  if (!m) return ''
-  return new RegExp(`<c\\b[^>]*\\br="${columna}${fila}"[^>]*\\bs="(\\d+)"`).exec(m[1]!)?.[1] ?? ''
-}
-
-function xmlDeHoja(hoja: HojaNueva, paleta: Paleta): string {
-  const columnas = Math.max(1, ...hoja.filas.map((f) => f.length))
+function xmlDeHoja(hoja: HojaNueva, paleta: Paleta, cola: string, ridTabla: string | null): string {
+  const columnas = columnasDe(hoja)
   const inmovilizar = hoja.inmovilizar ?? true
-  const autofiltro = hoja.autofiltro ?? true
+  const caracter = hoja.caracter ?? 'app'
+  const autofiltro = ridTabla === null && (hoja.autofiltro ?? caracter !== 'discreta')
+  // La cabecera de una tabla es la de la tabla: texto, sin vacíos ni repetidos.
+  const cabecera: ValorCelda[] = ridTabla === null ? (hoja.filas[0] ?? []) : datosDeTabla(hoja).columnas
 
   const vista = inmovilizar
     ? `<sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/></sheetView>`
@@ -449,49 +699,289 @@ function xmlDeHoja(hoja: HojaNueva, paleta: Paleta): string {
         .join('')}</cols>`
     : ''
 
+  // La cabecera va a 30 puntos si no se dice otra cosa: lleva ajuste de texto y
+  // los títulos largos («Fecha Revisión Anterior») no caben en una línea.
+  const altos: Record<number, number> = { 1: 30, ...(hoja.altos ?? {}) }
+
   const filas = hoja.filas
     .map((valores, i) => {
       const numero = i + 1
-      const celdas = valores
-        .map((v, c) => {
-          if (v === null) return ''
-          const s = i === 0 ? paleta.cabecera : estiloDe(paleta, hoja.formatos?.[c])
-          return xmlDeCelda(letra(c + 1) + numero, s, v)
-        })
-        .join('')
-      return `<row r="${numero}">${celdas}</row>`
+      const celdas: string[] = []
+      for (let c = 0; c < columnas; c++) {
+        const v = i === 0 ? (cabecera[c] ?? null) : (valores[c] ?? null)
+        const p = pedidoDeCelda(hoja, i, c)
+        const s = paleta.indice(p.clave, p.tinte) ?? ''
+        // Las celdas vacías se escriben con su estilo: son el borde de la
+        // cuadrícula y el fondo del tinte, y sin ellas la fila tiene huecos.
+        celdas.push(xmlDeCelda(numeroAColumna(c + 1) + numero, s, v ?? ''))
+      }
+      const alto = altos[numero]
+      const ht = alto === undefined ? '' : ` ht="${alto}" customHeight="1"`
+      return `<row r="${numero}"${ht}>${celdas.join('')}</row>`
     })
     .join('')
 
-  const ultima = Math.max(1, hoja.filas.length)
-  const dim = `A1:${letra(columnas)}${ultima}`
+  const ultima = ridTabla === null ? Math.max(1, hoja.filas.length) : Math.max(2, hoja.filas.length)
+  const dim = `A1:${numeroAColumna(columnas)}${ultima}`
   const filtro = autofiltro && hoja.filas.length > 0 ? `<autoFilter ref="${dim}"/>` : ''
 
-  return (
+  let xml =
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ` +
     `xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
     `<dimension ref="${dim}"/><sheetViews>${vista}</sheetViews>` +
     `<sheetFormatPr defaultRowHeight="15"/>${cols}` +
-    `<sheetData>${filas}</sheetData>${filtro}</worksheet>`
+    `<sheetData>${filas}</sheetData>${filtro}${cola}</worksheet>`
+
+  if (ridTabla !== null) xml = insertarEnHoja(xml, 'tableParts', xmlDeTableParts(ridTabla))
+  return xml
+}
+
+// -----------------------------------------------------------------------------
+// El acabado de cada hoja
+// -----------------------------------------------------------------------------
+
+/** Lee, transforma y escribe una hoja por su nombre; si no cambia, no se toca. */
+async function tocarHoja(
+  entradas: EntradaZip[],
+  hojas: Hoja[],
+  nombre: string,
+  f: (xml: string) => string,
+): Promise<EntradaZip[]> {
+  const hoja = hojas.find((h) => h.nombre === nombre)
+  if (!hoja) throw new Error(`El libro no tiene la hoja «${nombre}»`)
+  const i = indice(entradas, hoja.ruta)
+  const xml = await texto(entradas[i]!)
+  const nuevo = f(xml)
+  if (nuevo === xml) return entradas
+  const out = [...entradas]
+  out[i] = await reemplazar(out[i]!, bytes(nuevo))
+  return out
+}
+
+/**
+ * Los hijos de `<worksheet>` que van después de `sheetData`, en el orden que
+ * exige el esquema. Insertar uno donde no toca es de los pocos errores de
+ * orden que Excel sí denuncia.
+ */
+const TRAS_SHEETDATA = [
+  'sheetCalcPr', 'sheetProtection', 'protectedRanges', 'scenarios', 'autoFilter', 'sortState',
+  'dataConsolidate', 'customSheetViews', 'mergeCells', 'phoneticPr', 'conditionalFormatting',
+  'dataValidations', 'hyperlinks', 'printOptions', 'pageMargins', 'pageSetup', 'headerFooter',
+  'rowBreaks', 'colBreaks', 'customProperties', 'cellWatches', 'ignoredErrors', 'smartTags',
+  'drawing', 'legacyDrawing', 'legacyDrawingHF', 'picture', 'oleObjects', 'controls',
+  'webPublishItems', 'tableParts', 'extLst',
+]
+
+/** Inserta un fragmento como hijo de `<worksheet>` en el sitio que le toca a su etiqueta. */
+function insertarEnHoja(xml: string, etiqueta: string, fragmento: string): string {
+  const m = /<\/sheetData>|<sheetData\b[^>]*\/>/.exec(xml)
+  if (!m) throw new Error('La hoja no tiene <sheetData>: no es una hoja de cálculo normal')
+  const desde = m.index + m[0].length
+  let corte = xml.lastIndexOf('</worksheet>')
+  if (corte < 0) corte = xml.length
+  for (const s of TRAS_SHEETDATA.slice(TRAS_SHEETDATA.indexOf(etiqueta) + 1)) {
+    const k = xml.slice(desde, corte).search(new RegExp(`<${s}\\b`))
+    if (k >= 0) corte = desde + k
+  }
+  return xml.slice(0, corte) + fragmento + xml.slice(corte)
+}
+
+/** Hasta dónde llegan los datos de una hoja, contando las celdas y no la `dimension`, que puede mentir. */
+function extensionDe(xml: string): { filas: number; columnas: number } {
+  let filas = 0
+  let columnas = 0
+  for (const m of xml.matchAll(/<row\b[^>]*\br="(\d+)"/g)) filas = Math.max(filas, Number(m[1]))
+  for (const m of xml.matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"/g)) columnas = Math.max(columnas, columnaANumero(m[1]!))
+  return { filas, columnas }
+}
+
+/**
+ * Cambia el estilo de las celdas con valor de la fila de cabecera. El texto no
+ * se toca: la cabecera es el contrato con la aplicación, y esto es solo color.
+ */
+function pintarCabecera(
+  xml: string,
+  fila: number,
+  columnas: Record<string, ClaveDeEstilo>,
+  paleta: Paleta,
+): string {
+  const patron = new RegExp(`<row\\b[^>]*\\br="${fila}"[^>]*>([\\s\\S]*?)</row>`)
+  return xml.replace(patron, (todo, cuerpo: string) => {
+    const nuevo = cuerpo.replace(/<c\b([^>]*)>([\s\S]*?)<\/c>/g, (celda, attrs: string, interior: string) => {
+      const col = /\br="([A-Z]+)\d+"/.exec(attrs)?.[1]
+      const clave = col ? columnas[col] : undefined
+      if (!clave || !/<v>|<is>|<f>/.test(interior)) return celda
+      const s = paleta.indice(clave)
+      if (s === undefined) return celda
+      const nuevos = /\bs="\d+"/.test(attrs) ? attrs.replace(/\bs="\d+"/, `s="${s}"`) : `${attrs} s="${s}"`
+      return `<c${nuevos}>${interior}</c>`
+    })
+    return todo.replace(cuerpo, () => nuevo)
+  })
+}
+
+/**
+ * Bandas alternas por formato condicional sobre los datos de la hoja.
+ *
+ * Si la hoja ya tiene una regla con esa fórmula —el libro real la trae— se le
+ * ajusta el rango y no se añade otra: dos reglas iguales pintan lo mismo dos
+ * veces y el libro engorda en cada pasada.
+ */
+function ponerBandas(xml: string, dxf: number): string {
+  const { filas, columnas } = extensionDe(xml)
+  const sqref = `A2:${numeroAColumna(Math.max(1, columnas))}${Math.max(2, filas)}`
+  const formula = /<cfRule\b[^>]*\btype="expression"[^>]*>[\s\S]*?<formula>\s*MOD\(ROW\(\),\s*2\)\s*=\s*0\s*<\/formula>/
+
+  let encontrada = false
+  const out = xml.replace(/<conditionalFormatting\b[^>]*>[\s\S]*?<\/conditionalFormatting>/g, (bloque) => {
+    if (encontrada || !formula.test(bloque)) return bloque
+    encontrada = true
+    return bloque.replace(/\bsqref="[^"]*"/, `sqref="${sqref}"`)
+  })
+  if (encontrada) return out
+
+  const prioridades = [...xml.matchAll(/<cfRule\b[^>]*\bpriority="(\d+)"/g)].map((m) => Number(m[1]))
+  const prioridad = Math.max(0, ...prioridades) + 1
+  return insertarEnHoja(
+    out,
+    'conditionalFormatting',
+    `<conditionalFormatting sqref="${sqref}"><cfRule type="expression" dxfId="${dxf}" priority="${prioridad}"><formula>MOD(ROW(),2)=0</formula></cfRule></conditionalFormatting>`,
   )
 }
 
-function estiloDe(paleta: Paleta, formato: Formato | undefined): string {
-  if (formato === 'fecha') return paleta.fecha || paleta.cuerpo
-  if (formato === 'porcentaje') return paleta.porcentaje || paleta.cuerpo
-  return paleta.cuerpo
+/** `tabColor` como PRIMER hijo de `sheetPr`, creando `sheetPr` si la hoja no lo tiene. */
+function colorearPestana(xml: string, rgb: string): string {
+  const tab = `<tabColor rgb="FF${rgb}"/>`
+  if (/<tabColor\b/.test(xml)) return xml.replace(elemento('tabColor'), tab)
+  if (/<sheetPr\b[^>]*\/>/.test(xml)) return xml.replace(/<sheetPr\b([^>]*)\/>/, `<sheetPr$1>${tab}</sheetPr>`)
+  if (/<sheetPr\b/.test(xml)) return xml.replace(/<sheetPr\b[^>]*>/, (m) => `${m}${tab}`)
+  return xml.replace(/<worksheet\b[^>]*>/, (m) => `${m}<sheetPr>${tab}</sheetPr>`)
 }
 
-function letra(n: number): string {
-  let s = ''
-  let x = n
-  while (x > 0) {
-    const r = (x - 1) % 26
-    s = String.fromCharCode(65 + r) + s
-    x = Math.floor((x - 1) / 26)
+/** Qué color lleva cada pestaña que hay que colorear: por carácter de hoja, por discreta, o forzado. */
+function coloresDePestana(nuevas: HojaNueva[], acabado: Acabado, hojas: Hoja[]): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const h of nuevas) {
+    const caracter = h.caracter ?? 'app'
+    if (caracter === 'app') out.set(h.nombre, PESTANA_APP)
+    else if (caracter === 'discreta') out.set(h.nombre, PESTANA_DISCRETA)
   }
+  for (const h of hojas) {
+    if (esDiscreta(h.nombre, acabado.discretas ?? [])) out.set(h.nombre, PESTANA_DISCRETA)
+  }
+  for (const [nombre, rgb] of Object.entries(acabado.pestanas ?? {})) out.set(nombre, rgb.replace(/^FF/i, '').slice(-6).toUpperCase())
+  return out
+}
+
+function esDiscreta(nombre: string, patrones: string[]): boolean {
+  return patrones.some((p) => (p.endsWith('*') ? nombre.startsWith(p.slice(0, -1)) : nombre === p))
+}
+
+// -----------------------------------------------------------------------------
+// El orden de las pestañas
+// -----------------------------------------------------------------------------
+
+/** La posición 0-based de una hoja en `<sheets>`, que es lo que `localSheetId` y `activeTab` indexan. */
+async function posicionDeLaHoja(entradas: EntradaZip[], nombre: string): Promise<number> {
+  const wb = await texto(entradas[indice(entradas, 'xl/workbook.xml')]!)
+  return nombresDeSheets(wb).indexOf(nombre)
+}
+
+function nombresDeSheets(workbookXml: string): string[] {
+  return [...workbookXml.matchAll(/<sheet\b[^>]*\bname="([^"]*)"/g)].map((m) => desescaparNombre(m[1] ?? ''))
+}
+
+function desescaparNombre(s: string): string {
   return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
+    .replace(/&amp;/g, '&')
+}
+
+/**
+ * Reordena `<sheets>` y **remapea `localSheetId` de cada `definedName`**, que es
+ * el índice de posición y no el `sheetId`: sin esto, el autofiltro de la hoja
+ * de estado se queda apuntando a la hoja que ahora ocupa su antiguo sitio.
+ * `activeTab` va a la activa, y solo ella lleva `tabSelected="1"`: dos hojas
+ * seleccionadas se abren agrupadas, y quien escriba en una escribe en las dos.
+ */
+async function ordenarPestanas(
+  entradas: EntradaZip[],
+  hojas: Hoja[],
+  acabado: Acabado,
+): Promise<{ entradas: EntradaZip[]; reordenado: boolean }> {
+  let out = [...entradas]
+  const iw = indice(out, 'xl/workbook.xml')
+  const wb = await texto(out[iw]!)
+  const bloque = /<sheets\b[^>]*>([\s\S]*?)<\/sheets>/.exec(wb)
+  if (!bloque) return { entradas: out, reordenado: false }
+  const elementos = [...bloque[1]!.matchAll(/<sheet\b[^>]*\/>|<sheet\b[^>]*>[\s\S]*?<\/sheet>/g)].map((m) => m[0])
+  const nombres = elementos.map((e) => desescaparNombre(/\bname="([^"]*)"/.exec(e)?.[1] ?? ''))
+
+  // Primero las listadas en su orden, luego el resto en el suyo, y las
+  // discretas al final en el orden en que se nombraron sus patrones.
+  const discretas = acabado.discretas ?? []
+  const listadas = (acabado.orden ?? []).map((n) => nombres.indexOf(n)).filter((i) => i >= 0)
+  const grises = nombres
+    .map((n, i) => ({ i, patron: discretas.findIndex((p) => esDiscreta(n, [p])) }))
+    .filter((x) => x.patron >= 0 && !listadas.includes(x.i))
+    .sort((a, b) => a.patron - b.patron || a.i - b.i)
+    .map((x) => x.i)
+  const resto = nombres.map((_, i) => i).filter((i) => !listadas.includes(i) && !grises.includes(i))
+  const nuevoOrden = [...listadas, ...resto, ...grises]
+  const nuevaPosicion = new Map(nuevoOrden.map((viejo, nuevo) => [viejo, nuevo]))
+  const reordenado = nuevoOrden.some((viejo, nuevo) => viejo !== nuevo)
+
+  let xml = wb
+  if (reordenado) {
+    xml = xml.replace(bloque[0], bloque[0].replace(bloque[1]!, nuevoOrden.map((i) => elementos[i]!).join('')))
+    xml = xml.replace(/(<definedName\b[^>]*\blocalSheetId=")(\d+)(")/g, (todo, a: string, id: string, b: string) => {
+      const n = nuevaPosicion.get(Number(id))
+      return n === undefined ? todo : `${a}${n}${b}`
+    })
+  }
+
+  const activa = acabado.activa === undefined ? -1 : nombres.indexOf(acabado.activa)
+  if (activa >= 0) {
+    xml = ponerActiveTab(xml, nuevaPosicion.get(activa)!)
+  } else if (reordenado) {
+    const vieja = Number(/<workbookView\b[^>]*\bactiveTab="(\d+)"/.exec(xml)?.[1] ?? 0)
+    xml = ponerActiveTab(xml, nuevaPosicion.get(vieja) ?? 0)
+  }
+  if (xml !== wb) out[iw] = await reemplazar(out[iw]!, bytes(xml))
+
+  if (acabado.activa !== undefined && activa >= 0) {
+    for (const h of hojas) {
+      out = await tocarHoja(out, hojas, h.nombre, (s) => seleccionar(s, h.nombre === acabado.activa))
+    }
+  }
+  return { entradas: out, reordenado }
+}
+
+function ponerActiveTab(workbookXml: string, indice: number): string {
+  if (/<workbookView\b[^>]*\bactiveTab="\d+"/.test(workbookXml)) {
+    return workbookXml.replace(/(<workbookView\b[^>]*\bactiveTab=")\d+(")/, `$1${indice}$2`)
+  }
+  if (/<workbookView\b/.test(workbookXml)) {
+    return workbookXml.replace(/<workbookView\b/, `<workbookView activeTab="${indice}"`)
+  }
+  return workbookXml.replace(/<sheets\b/, `<bookViews><workbookView activeTab="${indice}"/></bookViews><sheets`)
+}
+
+/** `tabSelected="1"` en la primera vista de la hoja activa; en las demás, fuera. */
+function seleccionar(xml: string, activa: boolean): string {
+  if (!activa) return xml.replace(/<sheetView\b[^>]*/g, (m) => m.replace(/\s+tabSelected="[^"]*"/, ''))
+  let hecho = false
+  return xml.replace(/<sheetView\b[^>]*/, (m) => {
+    if (hecho) return m
+    hecho = true
+    const sin = m.replace(/\s+tabSelected="[^"]*"/, '')
+    return sin.replace(/<sheetView\b/, '<sheetView tabSelected="1"')
+  })
 }
 
 // -----------------------------------------------------------------------------

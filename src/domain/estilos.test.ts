@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { estiloQuePinta, estilosDeLaColumna, leerEstilos } from './estilos'
+import {
+  asegurarDxfDeFondo,
+  asegurarEstilos,
+  asegurarRecetas,
+  conTinte,
+  estiloQuePinta,
+  estilosDeLaColumna,
+  leerEstilos,
+  recetaDe,
+} from './estilos'
 import { escribirLibro } from './libro'
 import { abrirLibro, leerHoja } from './xlsx'
 import { descomprimir } from '../lib/zip'
@@ -153,5 +162,147 @@ describe.skipIf(!bytes)('sobre el libro real', () => {
       await descomprimir(otra.entradas.find((e) => e.nombre === 'xl/styles.xml')!),
     )
     expect(despues).toBe(antes)
+  })
+})
+
+// -----------------------------------------------------------------------------
+// Los estilos con nombre de las hojas de la aplicación
+// -----------------------------------------------------------------------------
+
+/** Un `styles.xml` recién nacido: lo mínimo que Excel escribe en un libro vacío. */
+const MINIMO =
+  '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+  '<fonts count="1"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font></fonts>' +
+  '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>' +
+  '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+  '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+  '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>' +
+  '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+  '<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>' +
+  '</styleSheet>'
+
+/**
+ * Lo que trae el libro real, escrito por otra herramienta: colores con alfa
+ * `00`, atributos de más (`pivotButton`, `quotePrefix`) y la fuente con sus
+ * hijos en otro orden. Pinta exactamente lo mismo que `cabecera` y `texto`.
+ */
+const COMO_EL_LIBRO_REAL =
+  '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+  '<numFmts count="2"><numFmt numFmtId="164" formatCode="yyyy-mm-dd h:mm:ss" /><numFmt numFmtId="165" formatCode="dd/mm/yyyy" /></numFmts>' +
+  '<fonts count="3"><font><name val="Calibri" /><family val="2" /><color theme="1" /><sz val="11" /><scheme val="minor" /></font>' +
+  '<font><name val="Arial" /><b val="1" /><color rgb="00FFFFFF" /><sz val="10" /></font>' +
+  '<font><name val="Arial" /><sz val="10" /></font></fonts>' +
+  '<fills count="3"><fill><patternFill /></fill><fill><patternFill patternType="gray125" /></fill>' +
+  '<fill><patternFill patternType="solid"><fgColor rgb="001F4E78" /></patternFill></fill></fills>' +
+  '<borders count="2"><border><left /><right /><top /><bottom /><diagonal /></border>' +
+  '<border><left style="thin"><color rgb="00D9D9D9" /></left><right style="thin"><color rgb="00D9D9D9" /></right><top style="thin"><color rgb="00D9D9D9" /></top><bottom style="thin"><color rgb="00D9D9D9" /></bottom></border></borders>' +
+  '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" /></cellStyleXfs>' +
+  '<cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" pivotButton="0" quotePrefix="0" xfId="0" />' +
+  '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" applyAlignment="1" pivotButton="0" quotePrefix="0" xfId="0"><alignment horizontal="center" vertical="center" wrapText="1" /></xf>' +
+  '<xf numFmtId="0" fontId="2" fillId="0" borderId="1" applyAlignment="1" pivotButton="0" quotePrefix="0" xfId="0"><alignment vertical="top" /></xf>' +
+  '<xf numFmtId="165" fontId="2" fillId="0" borderId="1" applyAlignment="1" pivotButton="0" quotePrefix="0" xfId="0"><alignment vertical="top" /></xf></cellXfs>' +
+  '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0" hidden="0" /></cellStyles>' +
+  '<dxfs count="1"><dxf><fill><patternFill patternType="solid"><fgColor rgb="00F2F6FA" /></patternFill></fill></dxf></dxfs>' +
+  '<tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16" />' +
+  '</styleSheet>'
+
+const cuenta = (xml: string, etiqueta: string) => (xml.match(new RegExp(`<${etiqueta}\\b`, 'g')) ?? []).length
+const count = (xml: string, seccion: string) => Number(new RegExp(`<${seccion} count="(\\d+)"`).exec(xml)?.[1])
+
+describe('asegurar los estilos con nombre', () => {
+  it('añade al final lo que falta y actualiza los count', () => {
+    const r = asegurarEstilos(MINIMO, ['cabecera', 'texto', 'fecha'])
+    // El 0 ya estaba; los tres nuevos van detrás, en el orden pedido.
+    expect([...r.indices.entries()]).toEqual([['cabecera', 1], ['texto', 2], ['fecha', 3]])
+    expect(count(r.xml, 'cellXfs')).toBe(4)
+    expect(cuenta(/<cellXfs[\s\S]*?<\/cellXfs>/.exec(r.xml)![0], 'xf')).toBe(4)
+    expect(count(r.xml, 'fonts')).toBe(cuenta(/<fonts[\s\S]*?<\/fonts>/.exec(r.xml)![0], 'font'))
+    expect(count(r.xml, 'fills')).toBe(cuenta(/<fills[\s\S]*?<\/fills>/.exec(r.xml)![0], 'fill'))
+    // Y lo que había no se ha movido: el xf 0 sigue siendo el primero.
+    expect(r.xml).toContain('<cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>')
+  })
+
+  it('la segunda vez no cambia ni un byte y da los mismos índices', () => {
+    const uno = asegurarEstilos(MINIMO, ['cabecera', 'cabeceraApp', 'texto', 'fecha', 'porcentaje', 'entero', 'ok', 'titulo'])
+    const dos = asegurarEstilos(uno.xml, ['cabecera', 'cabeceraApp', 'texto', 'fecha', 'porcentaje', 'entero', 'ok', 'titulo'])
+    expect(dos.xml).toBe(uno.xml)
+    expect(dos.indices).toEqual(uno.indices)
+    // Pedidos en otro orden, los mismos índices: el índice es del estilo, no del pedido.
+    const tres = asegurarEstilos(uno.xml, ['titulo', 'ok', 'cabecera'])
+    expect(tres.xml).toBe(uno.xml)
+    expect(tres.indices.get('titulo')).toBe(uno.indices.get('titulo'))
+  })
+
+  it('reconoce un estilo idéntico aunque esté escrito con otros bytes', () => {
+    // El libro real escribe `00FFFFFF` y `pivotButton="0"`: sigue siendo la cabecera.
+    const r = asegurarEstilos(COMO_EL_LIBRO_REAL, ['cabecera', 'texto', 'fecha'])
+    expect(r.xml).toBe(COMO_EL_LIBRO_REAL)
+    expect(r.indices.get('cabecera')).toBe(1)
+    expect(r.indices.get('texto')).toBe(2)
+    expect(r.indices.get('fecha')).toBe(3)
+  })
+
+  it('la fecha usa el numFmt que el libro ya tiene con ese código, y si no lo declara', () => {
+    const conEl = asegurarEstilos(COMO_EL_LIBRO_REAL, ['fecha'])
+    expect(conEl.xml).not.toContain('numFmtId="166"')
+
+    const sinEl = asegurarEstilos(MINIMO, ['fecha'])
+    // No había `<numFmts>`: se crea delante de `<fonts>`, que es su sitio.
+    expect(sinEl.xml).toMatch(/<numFmts count="1"><numFmt numFmtId="164" formatCode="dd\/mm\/yyyy"\/><\/numFmts><fonts/)
+    expect(sinEl.xml).toContain('numFmtId="164" fontId=')
+  })
+
+  it('lo que devuelve pinta lo que dice, según leerEstilos', () => {
+    const r = asegurarEstilos(MINIMO, ['fecha', 'porcentaje', 'texto'])
+    const e = leerEstilos(r.xml)
+    expect(e.formatoDe(r.indices.get('fecha')!)).toBe('fecha')
+    expect(e.formatoDe(r.indices.get('porcentaje')!)).toBe('porcentaje')
+    expect(e.formatoDe(r.indices.get('texto')!)).toBe('otro')
+  })
+
+  it('un tinte se suma al formato: una fecha en fila crítica sigue siendo fecha', () => {
+    const receta = conTinte(recetaDe('fecha'), 'critico')
+    expect(receta.numFmt).toBe('fecha')
+    expect(receta.relleno).toBe('FAE8E6')
+    const r = asegurarRecetas(MINIMO, [receta, recetaDe('fecha'), recetaDe('critico')])
+    // Tres estilos distintos: la fecha tintada no es ni la fecha ni el tinte.
+    expect(new Set(r.indices).size).toBe(3)
+    expect(leerEstilos(r.xml).formatoDe(r.indices[0]!)).toBe('fecha')
+  })
+
+  it('los estilos que se distinguen solo por el borde o la alineación no se confunden', () => {
+    const r = asegurarEstilos(MINIMO, ['texto', 'textoAjustado', 'textoSinBorde', 'etiqueta'])
+    expect(new Set(r.indices.values()).size).toBe(4)
+  })
+
+  it('el dxf de las bandas se reutiliza si el libro ya lo trae', () => {
+    const r = asegurarDxfDeFondo(COMO_EL_LIBRO_REAL, 'F2F6FA')
+    expect(r.xml).toBe(COMO_EL_LIBRO_REAL)
+    expect(r.indice).toBe(0)
+  })
+
+  it('y si no lo trae se crea la sección en su sitio', () => {
+    const r = asegurarDxfDeFondo(MINIMO, 'F2F6FA')
+    expect(r.indice).toBe(0)
+    expect(r.xml).toMatch(/<\/cellStyles><dxfs count="1"><dxf>.*<\/dxfs><tableStyles/)
+    const otra = asegurarDxfDeFondo(r.xml, 'F2F6FA')
+    expect(otra.xml).toBe(r.xml)
+    expect(asegurarDxfDeFondo(r.xml, 'FFFFFF').indice).toBe(1)
+  })
+})
+
+describe.skipIf(!bytes)('los estilos con nombre sobre el libro real', () => {
+  it('lo que el libro ya tiene se reutiliza sin añadir nada', async () => {
+    const libro = await abrirLibro(new Uint8Array(bytes!))
+    const xml = new TextDecoder().decode(
+      await descomprimir(libro.entradas.find((e) => e.nombre === 'xl/styles.xml')!),
+    )
+    const r = asegurarEstilos(xml, ['cabecera', 'cabeceraApp', 'texto', 'fecha', 'porcentaje', 'textoAjustado', 'titulo', 'etiqueta', 'textoSinBorde'])
+    // Son, uno por uno, los estilos con los que se reformateó el libro.
+    expect(r.xml).toBe(xml)
+    expect(r.indices.get('cabecera')).toBe(1)
+    expect(r.indices.get('cabeceraApp')).toBe(2)
+    expect(r.indices.get('fecha')).toBe(4)
+    expect(asegurarDxfDeFondo(xml, 'F2F6FA')).toEqual({ xml, indice: 0 })
   })
 })
