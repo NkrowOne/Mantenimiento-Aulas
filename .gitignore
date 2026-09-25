@@ -17,3 +17,6 @@ reports-worker/__pycache__/
 
 # Capturas de previsualización: se regeneran con `npm run preview`.
 dist/preview-*.png
+
+# Caché de la CLI de Supabase
+supabase/.temp/
