@@ -898,6 +898,9 @@ export function acabadoDe(
     rehacer,
     cabeceras,
     bandas: delMapa.map((h) => h.nombre),
+    // Las filas de totales de la bolsa cerrada quedan fuera del filtro y de
+    // las bandas: ordenar por una columna no puede mover la suma del IVA.
+    totales: Object.fromEntries(delMapa.filter((h) => h.filasDeTotales).map((h) => [h.nombre, h.filasDeTotales!])),
     orden,
     discretas: DISCRETAS,
     activa: ESTADO.nombre,

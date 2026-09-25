@@ -40,6 +40,7 @@
  */
 
 import {
+  citarHoja,
   columnasEscritas,
   corregirComentarios,
   corregirReferenciasExternas,
@@ -146,6 +147,13 @@ export interface Acabado {
    */
   bandas?: string[]
   /**
+   * Filas de totales al pie de una hoja de la gente (`Bolsa 2025`: la suma, el
+   * IVA y el total). Ni el autofiltro ni las bandas llegan a ellas: un filtro
+   * que las incluye las ordena con los artículos, y una suma en medio de la
+   * lista es un libro roto sin ningún error.
+   */
+  totales?: Record<string, number>
+  /**
    * Orden final de pestañas: los nombres listados van primero en ese orden; las
    * no listadas conservan su orden relativo detrás; las `discretas` van las últimas.
    */
@@ -247,7 +255,10 @@ export async function escribirLibro(
     const dxf = await asegurarDxf(entradas, COLOR_DE_BANDA)
     entradas = dxf.entradas
     for (const nombre of acabado.bandas!) {
-      entradas = await tocarHoja(entradas, hojas, nombre, (xml) => ponerBandas(xml, dxf.indice))
+      const sinUltimas = acabado.totales?.[nombre] ?? 0
+      entradas = await tocarHoja(entradas, hojas, nombre, (xml) =>
+        ponerBandas(ajustarRangos(xml, sinUltimas), dxf.indice, sinUltimas),
+      )
     }
   }
 
@@ -260,6 +271,12 @@ export async function escribirLibro(
     entradas = r.entradas
     estructuraTocada = estructuraTocada || r.reordenado
   }
+
+  // Con las pestañas ya en su sitio —el `localSheetId` es una posición—, el
+  // nombre definido del filtro de cada hoja con bandas dice el mismo rango que
+  // su autofiltro.
+  const conFiltro = [...(acabado.bandas ?? []), ...(acabado.rehacer ?? []).map((h) => h.nombre)]
+  if (conFiltro.length > 0) entradas = await refrescarFiltros(entradas, hojas, conFiltro)
 
   if (estructuraTocada) entradas = await quitarCalcChain(entradas)
 
@@ -828,9 +845,9 @@ function pintarCabecera(
  * ajusta el rango y no se añade otra: dos reglas iguales pintan lo mismo dos
  * veces y el libro engorda en cada pasada.
  */
-function ponerBandas(xml: string, dxf: number): string {
+function ponerBandas(xml: string, dxf: number, sinUltimas = 0): string {
   const { filas, columnas } = extensionDe(xml)
-  const sqref = `A2:${numeroAColumna(Math.max(1, columnas))}${Math.max(2, filas)}`
+  const sqref = `A2:${numeroAColumna(Math.max(1, columnas))}${Math.max(2, filas - sinUltimas)}`
   const formula = /<cfRule\b[^>]*\btype="expression"[^>]*>[\s\S]*?<formula>\s*MOD\(ROW\(\),\s*2\)\s*=\s*0\s*<\/formula>/
 
   let encontrada = false
@@ -848,6 +865,69 @@ function ponerBandas(xml: string, dxf: number): string {
     'conditionalFormatting',
     `<conditionalFormatting sqref="${sqref}"><cfRule type="expression" dxfId="${dxf}" priority="${prioridad}"><formula>MOD(ROW(),2)=0</formula></cfRule></conditionalFormatting>`,
   )
+}
+
+/**
+ * `dimension` y `autoFilter` al tamaño de lo que hay.
+ *
+ * Las filas que la pasada añade al final —partes nuevos, artículos nuevos—
+ * caían fuera del rango del autofiltro, que seguía diciendo `A1:R46` con la
+ * hoja en la 70: el desplegable de la cabecera no las filtraba ni las
+ * ordenaba, y nadie lo veía hasta que buscaba un parte de septiembre con el
+ * filtro puesto y no salía. `dimension` es lo mismo con menos consecuencia:
+ * Excel lo recalcula, pero quien lea el fichero con otra cosa no.
+ *
+ * Se conserva la celda donde empieza el autofiltro, que es la cabecera.
+ */
+function ajustarRangos(xml: string, sinUltimas = 0): string {
+  const { filas, columnas } = extensionDe(xml)
+  if (filas === 0 || columnas === 0) return xml
+  const col = numeroAColumna(columnas)
+  let out = xml.replace(/<dimension\b([^>]*)\bref="[^"]*"/, `<dimension$1ref="A1:${col}${filas}"`)
+  const hastaFiltro = Math.max(1, filas - sinUltimas)
+  out = out.replace(
+    /<autoFilter\b([^>]*)\bref="([A-Z]+\d+)(?::[A-Z]+\d+)?"/,
+    (_todo, attrs: string, desde: string) => `<autoFilter${attrs}ref="${desde}:${col}${hastaFiltro}"`,
+  )
+  return out
+}
+
+/**
+ * El `_xlnm._FilterDatabase` de cada hoja, con el rango de su autofiltro.
+ *
+ * Es el nombre oculto con el que Excel recuerda dónde está el filtro, y lo
+ * mantiene igual que el `autoFilter` de la hoja. Uno viejo no rompe el libro,
+ * pero al abrirlo Excel lo cree y el filtro «recuerda» un rango que ya no es.
+ * Solo se toca el que exista: Excel lo crea solo cuando falta.
+ */
+async function refrescarFiltros(entradas: EntradaZip[], hojas: Hoja[], nombres: string[]): Promise<EntradaZip[]> {
+  const out = [...entradas]
+  const iw = indice(out, 'xl/workbook.xml')
+  let wb = await texto(out[iw]!)
+  const posiciones = nombresDeSheets(wb)
+  for (const nombre of nombres) {
+    const hoja = hojas.find((h) => h.nombre === nombre)
+    const posicion = posiciones.indexOf(nombre)
+    if (!hoja || posicion < 0) continue
+    const i = out.findIndex((e) => e.nombre === hoja.ruta)
+    if (i < 0) continue
+    const ref = /<autoFilter\b[^>]*\bref="([A-Z]+\d+:[A-Z]+\d+)"/.exec(await texto(out[i]!))?.[1]
+    if (!ref) {
+      // Sin autofiltro —una hoja rehecha que ya no lo lleva, o que es tabla—
+      // el nombre viejo sobra: apuntaría a un filtro que no existe.
+      wb = quitarFiltroDeHoja(wb, posicion)
+      continue
+    }
+    const absoluto = ref.replace(/([A-Z]+)(\d+)/g, '$$$1$$$2')
+    const patron = new RegExp(
+      `(<definedName\\b[^>]*\\bname="_xlnm\\._FilterDatabase"[^>]*\\blocalSheetId="${posicion}"[^>]*>)[^<]*(</definedName>)`,
+    )
+    // Con función y no con cadena: `$A$1` dentro de una cadena de reemplazo
+    // se lee como grupos de captura y deja el nombre hecho trizas.
+    wb = wb.replace(patron, (_todo, abre: string, cierra: string) => `${abre}${escapar(citarHoja(nombre))}!${absoluto}${cierra}`)
+  }
+  if (wb !== (await texto(out[iw]!))) out[iw] = await reemplazar(out[iw]!, bytes(wb))
+  return out
 }
 
 /** `tabColor` como PRIMER hijo de `sheetPr`, creando `sheetPr` si la hoja no lo tiene. */

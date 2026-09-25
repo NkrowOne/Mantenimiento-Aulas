@@ -347,6 +347,24 @@ describe('el acabado sobre un libro mínimo', () => {
     expect(cuenta(xml2, 'cfRule')).toBe(1)
     expect(xml2).toContain('sqref="A2:C4"')
     expect(cuenta(await xmlDe(dos, 'xl/styles.xml'), 'dxf')).toBe(1)
+    // Y el autofiltro, la dimensión y el nombre oculto del filtro siguen a los
+    // datos: una fila añadida al final no puede quedar fuera del desplegable.
+    expect(xml2).toContain('<autoFilter ref="A1:C4"/>')
+    expect(xml2).toContain('<dimension ref="A1:C4"/>')
+    expect(await xmlDe(dos, 'xl/workbook.xml')).toContain(
+      '<definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">Estado!$A$1:$C$4</definedName>',
+    )
+  })
+
+  it('las filas de totales quedan fuera del filtro y de las bandas', async () => {
+    const libro = await libroMinimo()
+    const otra = await abrirLibro(await escribirLibro(libro, [], [], { bandas: ['Estado'], totales: { Estado: 1 } }))
+    const xml = await xmlDeHoja(otra, 'Estado')
+    // Tres filas: la última es un total. La dimensión las cubre; el filtro y las bandas, no.
+    expect(xml).toContain('<dimension ref="A1:C3"/>')
+    expect(xml).toContain('<autoFilter ref="A1:C2"/>')
+    expect(xml).toContain('sqref="A2:C2"')
+    expect(await xmlDe(otra, 'xl/workbook.xml')).toContain('>Estado!$A$1:$C$2</definedName>')
   })
 
   it('el orden de pestañas remapea los localSheetId y deja una sola activa', async () => {
