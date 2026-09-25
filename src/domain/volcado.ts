@@ -111,6 +111,16 @@ export interface ArticuloVolcado {
    * porque las pruebas y el espejo del libro no siempre lo saben.
    */
   saldo?: number
+  /**
+   * `false` si el administrador lo retiró del almacén. Un artículo retirado
+   * **sale de la bolsa**: su fila se borra del libro en la pasada siguiente y
+   * no vuelve a entrar como fila nueva. Sin este dato —el espejo de las
+   * pruebas, un análisis de antes— se trata como vivo: un espejo viejo no
+   * puede borrar filas.
+   */
+  activo?: boolean
+  /** Cuándo (día ISO) y por qué se retiró, para decirlo en el libro al sacarlo. */
+  retirado?: { cuando: string | null; motivo: string | null }
 }
 
 /**

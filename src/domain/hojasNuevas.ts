@@ -51,62 +51,11 @@ import type { UnidadVolcada } from './volcado'
 import type { ValorCelda } from './xlsx'
 import { fechaAExcel } from './valores'
 
-// -----------------------------------------------------------------------------
-// El contrato con libro.ts
-// -----------------------------------------------------------------------------
+// Las claves de estilo, los formatos, los tintes y la forma de una hoja nueva
+// los declara `libro.ts`, que es quien los convierte en estilos de verdad.
+import type { ClaveDeEstilo, Formato, HojaNueva, Tinte } from './libro'
 
-// TODO-COORDINADOR: estos tipos son copia literal del contrato de `libro.ts`
-// (ClaveDeEstilo, Formato, Tinte, Caracter, HojaNueva). Cuando `libro.ts` los
-// exporte, sustituir este bloque por `import type { … } from './libro'`.
-
-/** Claves semánticas de estilo. `libro.ts` las convierte en índices de `cellXfs`, creándolos si faltan. */
-export type ClaveDeEstilo =
-  | 'cabecera'
-  | 'cabeceraApp'
-  | 'cabeceraDiscreta'
-  | 'titulo'
-  | 'etiqueta'
-  | 'texto'
-  | 'textoAjustado'
-  | 'textoSinBorde'
-  | 'fecha'
-  | 'porcentaje'
-  | 'entero'
-  | 'ok'
-  | 'aviso'
-  | 'critico'
-  | 'apagado'
-
-export type Formato = 'texto' | 'textoAjustado' | 'fecha' | 'porcentaje' | 'entero'
-export type Tinte = 'ok' | 'aviso' | 'critico' | 'apagado'
-export type Caracter = 'app' | 'editable' | 'discreta'
-
-export interface HojaNueva {
-  nombre: string
-  /** La primera fila es la cabecera. */
-  filas: ValorCelda[][]
-  anchos?: number[]
-  /** Por defecto `true`. */
-  inmovilizar?: boolean
-  /** Por defecto `true`; se ignora si la hoja es tabla (la tabla lleva el suyo). */
-  autofiltro?: boolean
-  /** Por columna. */
-  formatos?: Array<Formato | undefined>
-  /** Un tinte por FILA DE DATOS (índice 0 = primera fila de datos, es decir `filas[1]`). */
-  tintes?: Array<Tinte | undefined>
-  /** Estilos sueltos por celda, `'A1'` → clave. Gana a formatos/tintes. Para el Léeme y casos raros. */
-  estilos?: Record<string, ClaveDeEstilo>
-  /**
-   * 'app' (por defecto): cabecera 5B7F9E, pestaña azul claro 9DC3E6, tabla con bandas.
-   * 'editable': cabecera 1F4E78, pestaña sin color, autofiltro.
-   * 'discreta': cabecera gris, pestaña gris 7F7F7F, sin tabla, sin autofiltro salvo que se pida.
-   */
-  caracter?: Caracter
-  /** Tabla de Excel con estilo (TableStyleMedium2, bandas). Por defecto `true` si `caracter='app'`. */
-  tabla?: boolean
-  /** Alto de fila (puntos) para filas concretas, por número de fila de hoja (1 = cabecera). */
-  altos?: Record<number, number>
-}
+export type { ClaveDeEstilo, Formato, HojaNueva, Tinte }
 
 // -----------------------------------------------------------------------------
 // Revisiones
@@ -588,7 +537,7 @@ export function hojaDeLeeme(opciones: { cuando: string; anyo: number }): HojaNue
   entradas.push(
     [
       deEsteAnyo.bolsa,
-      `Un artículo por fila. «Total Comprado» se escribe a mano: lo que había al arrancar más lo comprado después. Los meses los escribe la aplicación sumando los partes. «Total Instalado» y «Stock Disponible» son fórmulas. La última columna es el otro nombre (alias) del artículo: de ahí salen los alias, no la reescribas. Si al sincronizar se elige «Manda el Excel», la aplicación ajusta su almacén al «Stock Disponible» de esta hoja.`,
+      `Un artículo por fila. «Total Comprado» se escribe a mano: lo que había al arrancar más lo comprado después. Los meses los escribe la aplicación sumando los partes. «Total Instalado» y «Stock Disponible» son fórmulas. La última columna es el otro nombre (alias) del artículo: de ahí salen los alias, no la reescribas. Si al sincronizar se elige «Manda el Excel», la aplicación ajusta su almacén al «Stock Disponible» de esta hoja. Un artículo retirado del almacén en la aplicación sale de esta hoja en la siguiente sincronización (el parte dice qué llevaba su fila); para volver a llevarlo, se restaura en Datos → Almacén.`,
     ],
     [
       deEsteAnyo.pcs,
@@ -616,7 +565,7 @@ export function hojaDeLeeme(opciones: { cuando: string; anyo: number }): HojaNue
     ],
     [
       'Hacer el libro de hoy',
-      'En la aplicación, Datos → Excel, la tarjeta «El libro para SharePoint» dice cuánto ha cambiado la aplicación desde el último libro. «Hacer el libro de hoy» lo pone al día con la base y lo deja listo para descargar; si algo queda por decidir, lo enseña antes en vez de decidirlo sola.',
+      'En la aplicación, Datos → Excel, la tarjeta «El libro para SharePoint» dice cuánto ha cambiado la aplicación desde el último libro. «Hacer el libro de hoy» lo pone al día con la base y lo deja listo para descargar, siempre con «Manda la aplicación»: la copia salió de la aplicación y no trae nada del Excel que pueda mandar. Para que mande el Excel hay que subir el libro de SharePoint de nuevo. Lo que la pasada preguntaría se deja como está y se dice cuántas cosas fueron.',
     ],
     [
       'Cambios…',

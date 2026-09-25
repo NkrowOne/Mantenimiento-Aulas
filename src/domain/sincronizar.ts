@@ -2069,6 +2069,14 @@ export function sincronizarBolsa(entrada: EntradaDeBolsa): Plan {
       altaDeArticulo(plan, f, nombre, e)
       continue
     }
+    // Retirado del almacén en la aplicación: su fila sale del libro. Antes
+    // caía en la rama de arriba —no estaba entre los vivos— y la pasada
+    // preguntaba si darlo de alta, pasada tras pasada, justo lo contrario de
+    // lo que el administrador acababa de decidir.
+    if (porId.get(id)!.activo === false) {
+      if (!e.hoja.congelada) sacarArticuloRetirado(plan, f, nombre, porId.get(id)!, e.hoja)
+      continue
+    }
     if (vistas.has(id)) {
       plan.sinCruzar.push({ fila: f.fila, motivo: `«${nombre}» ya salió en una fila anterior` })
       continue
@@ -2156,8 +2164,10 @@ export function sincronizarBolsa(entrada: EntradaDeBolsa): Plan {
   }
 
   const enLaHoja = new Set(emparejadas.map((p) => p.dato.id))
+  // Y solo los vivos: un artículo retirado no vuelve a entrar por la puerta de
+  // las filas nuevas después de haber salido por la de arriba.
   const nuevos = e.articulos
-    .filter((a) => !enLaHoja.has(a.id))
+    .filter((a) => a.activo !== false && !enLaHoja.has(a.id))
     .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
 
   plan.insertar = nuevos.map((art) => {
@@ -2193,6 +2203,43 @@ export function sincronizarBolsa(entrada: EntradaDeBolsa): Plan {
   }
 
   return plan
+}
+
+/**
+ * Un artículo que el administrador retiró del almacén: su fila sale de la bolsa.
+ *
+ * Se borra la fila entera, fórmulas incluidas, y se dice en el parte qué
+ * llevaba —lo comprado y los meses con dato—, porque un dato que desaparece
+ * del libro sin decirlo es un dato perdido aunque alguien lo decidiera. Para
+ * volver a llevarlo hay que restaurarlo en la aplicación: la fila vuelve sola
+ * en la pasada siguiente, con lo que la base sepa de él.
+ */
+function sacarArticuloRetirado(plan: Plan, f: FilaLeida, nombre: string, art: ArticuloVolcado, hoja: Hoja): void {
+  const cuando = art.retirado?.cuando ? ` el ${diaLegible(art.retirado.cuando)}` : ''
+  const motivo = art.retirado?.motivo ? ` (${art.retirado.motivo})` : ''
+  const llevaba = hoja.columnas
+    .filter((c) => c.dueno !== 'formula' && !/^articulo\.nombre/.test(c.campo))
+    .map((c) => ({ c, v: f.celdas[c.letra] }))
+    .filter(({ v }) => !esVacio((v ?? null) as Valor))
+    .map(({ c, v }) => `${c.cabecera.trim()} ${String(v)}`)
+    .join(', ')
+  plan.borrar.push(f.fila)
+  plan.filasQueSalen.push({
+    fila: f.fila,
+    destino: nombre,
+    motivo: `retirado del almacén en la aplicación${cuando}${motivo}`,
+  })
+  plan.avisos.push(
+    `Fila ${f.fila}: «${nombre}» se retiró del almacén en la aplicación${cuando}${motivo}; su fila sale del libro.${
+      llevaba ? ` Llevaba: ${llevaba}.` : ''
+    } Para volver a llevarlo, restáuralo en Datos → Almacén y la fila vuelve en la pasada siguiente.`,
+  )
+}
+
+/** `2026-09-23` → `23/09/2026`, que es como se lee una fecha en el parte. */
+function diaLegible(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso)
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso
 }
 
 /**

@@ -4,19 +4,11 @@ import { anyoDelParte, corteDeAnyo, partesFueraDeSuAnyo } from './anyo'
 import { BOLSA_2026, MATERIAL_2026 } from './mapa'
 import { escribirLibro } from './libro'
 import { abrirLibro, leerHoja } from './xlsx'
-import type { Libro } from './xlsx'
-import type { HojaNueva } from './hojasNuevas'
 
 const LIBRO = process.env.LIBRO_XLSX
 const bytes = LIBRO ? readFileSync(LIBRO) : null
 
-// TODO-COORDINADOR: puente de tipos mientras `libro.ts` no exporte el `HojaNueva`
-// del contrato; cuando lo haga, llamar a `escribirLibro` directamente.
-const escribir = escribirLibro as unknown as (
-  libro: Libro,
-  ediciones: never[],
-  hojasNuevas: HojaNueva[],
-) => Promise<Uint8Array>
+const escribir = escribirLibro
 
 const EXISTENTES = [
   'Estado Aulas y Salas de reunion',

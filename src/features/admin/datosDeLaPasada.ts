@@ -143,6 +143,9 @@ interface FilaArticulo {
   name: string
   aliases: string[] | null
   active: boolean
+  /** Cuándo y por qué lo retiró el administrador. Nulos mientras esté vivo. */
+  retired_at?: string | null
+  retired_reason?: string | null
 }
 interface FilaMovimiento {
   stock_item_id: string
@@ -261,7 +264,19 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
         .range(d, h).abortSignal(plazo()),
     ),
     descargaEntera<FilaArticulo>((d, h) =>
-      supabase.from('stock_items').select('id, name, aliases, active').order('id').range(d, h).abortSignal(plazo()),
+      supabase
+        .from('stock_items')
+        .select('id, name, aliases, active, retired_at, retired_reason')
+        .order('id')
+        .range(d, h).abortSignal(plazo()),
+    ).then(async (r) =>
+      // Un servidor sin la migración del 23/09 no tiene las dos columnas de la
+      // retirada: se vuelve a pedir sin ellas, que es lo que había siempre.
+      r.error && /retired_/.test(r.error.message)
+        ? descargaEntera<FilaArticulo>((d, h) =>
+            supabase.from('stock_items').select('id, name, aliases, active').order('id').range(d, h).abortSignal(plazo()),
+          )
+        : r,
     ),
     descargaEntera<FilaMovimiento>((d, h) =>
       supabase
@@ -501,18 +516,28 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
   // comprado se cuentan desde ahí, que es lo que la hoja de la bolsa declara.
   // El saldo, en cambio, es de todos los tiempos: es lo que hay en el almacén.
   const arranque = arranqueDelAnyo(anyo)
-  const articulos: ArticuloVolcado[] = articulosFilas
-    .filter((a) => a.active)
-    .map((a) => {
-      const suyos = movimientosPorArticulo.get(a.id) ?? []
-      return {
-        id: a.id,
-        nombre: a.name,
-        meses: consumoPorMes(suyos, anyo, arranque),
-        comprado: compradoEn(suyos, anyo, arranque),
-        saldo: saldos.get(a.id) ?? 0,
-      }
-    })
+  // Los retirados van también, marcados: la bolsa tiene que reconocer su fila
+  // para sacarla del libro, en vez de darla por desconocida y preguntar si se
+  // da de alta lo que alguien acaba de retirar.
+  const articulos: ArticuloVolcado[] = articulosFilas.map((a) => {
+    const suyos = movimientosPorArticulo.get(a.id) ?? []
+    return {
+      id: a.id,
+      nombre: a.name,
+      meses: consumoPorMes(suyos, anyo, arranque),
+      comprado: compradoEn(suyos, anyo, arranque),
+      saldo: saldos.get(a.id) ?? 0,
+      activo: a.active,
+      ...(a.active
+        ? {}
+        : {
+            retirado: {
+              cuando: a.retired_at ? diaEnMadrid(new Date(a.retired_at)) : null,
+              motivo: a.retired_reason ?? null,
+            },
+          }),
+    }
+  })
 
   const nombreDelArticulo = new Map(articulosFilas.map((a) => [a.id, a.name]))
   const nombresAlternativos = new Map(

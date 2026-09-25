@@ -13,21 +13,12 @@ import { PCS_2026 } from './mapa'
 import { escribirLibro } from './libro'
 import { leerEstilos } from './estilos'
 import { abrirLibro, leerHoja } from './xlsx'
-import type { Libro } from './xlsx'
 import { excelAFecha } from './valores'
 
 const LIBRO = process.env.LIBRO_XLSX
 const bytes = LIBRO ? readFileSync(LIBRO) : null
 
-// TODO-COORDINADOR: puente de tipos mientras `libro.ts` no exporte el `HojaNueva`
-// y el `Acabado` del contrato. Cuando lo haga, quitar el puente y llamar a
-// `escribirLibro` directamente con las mismas cuatro cosas.
-const escribir = escribirLibro as unknown as (
-  libro: Libro,
-  ediciones: never[],
-  hojasNuevas: HojaNueva[],
-  acabado?: { rehacer?: HojaNueva[] },
-) => Promise<Uint8Array>
+const escribir = escribirLibro
 
 function revision(over: Partial<RevisionParaHoja> = {}): RevisionParaHoja {
   return {

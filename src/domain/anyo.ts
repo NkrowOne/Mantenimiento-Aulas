@@ -34,8 +34,7 @@
 
 import { BOLSA_2026, MATERIAL_2026, hojasDelAnyo } from './mapa'
 import type { Hoja } from './mapa'
-// TODO-COORDINADOR: `HojaNueva` viene de `hojasNuevas.ts` mientras `libro.ts` no exporte el del contrato.
-import type { HojaNueva } from './hojasNuevas'
+import type { HojaNueva } from './libro'
 import type { ValorCelda } from './xlsx'
 
 export interface ArticuloAlCierre {

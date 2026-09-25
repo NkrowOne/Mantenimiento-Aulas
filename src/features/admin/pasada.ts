@@ -37,6 +37,7 @@ import { pendientes } from '@/domain/dudas'
 import type { Duda, Respuestas } from '@/domain/dudas'
 import {
   hojaDeInventario,
+  hojaDeLeeme,
   hojaDeMovimientos,
   hojaDeRevisiones,
   hojaDeUnidades,
@@ -44,14 +45,16 @@ import {
 } from '@/domain/hojasNuevas'
 import type { LineaDelParte } from '@/domain/hojasNuevas'
 import { escribirLibro } from '@/domain/libro'
-import type { EdicionDeHoja, HojaNueva } from '@/domain/libro'
+import type { Acabado, EdicionDeHoja, HojaNueva } from '@/domain/libro'
 import {
   BOLSA_2025,
   BOLSA_2026,
   ESTADO,
+  HOJAS,
   MATERIAL_2025,
   MATERIAL_2026,
   PCS_2026,
+  TITULO_DE_SITUACION,
   hojaPorNombre,
   hojasDelAnyo,
 } from '@/domain/mapa'
@@ -69,7 +72,7 @@ import {
 import type { Alta, Instantanea, Plan, Referencia, Resumen } from '@/domain/sincronizar'
 import { leerMaterial } from '@/domain/valores'
 import type { Valor } from '@/domain/valores'
-import { abrirLibro, celdasCombinadas, leerHoja } from '@/domain/xlsx'
+import { abrirLibro, celdasCombinadas, leerHoja, numeroAColumna } from '@/domain/xlsx'
 import type { Cambio, FilaLeida, Libro } from '@/domain/xlsx'
 import { datosDeLaPasada } from './datosDeLaPasada'
 import type { DatosDeLaPasada } from './datosDeLaPasada'
@@ -211,8 +214,9 @@ export async function analizar(
   const cierre = corteDeAnyo({
     anyo,
     hojasExistentes: libro.hojas.map((h) => h.nombre),
+    // Solo los vivos: un artículo retirado no estrena bolsa en enero.
     articulos: [...datos.saldos.keys()].map((id) => ({
-      nombre: datos.articulos.find((a) => a.id === id)?.nombre ?? '',
+      nombre: datos.articulos.find((a) => a.id === id && a.activo !== false)?.nombre ?? '',
       nombreAlternativo: datos.nombresAlternativos.get(id) ?? null,
       saldo: datos.saldos.get(id) ?? 0,
     })).filter((a) => a.nombre !== ''),
@@ -788,34 +792,25 @@ export async function escribir(
       filas: { insertar: p.insertar, borrar: p.borrar },
     }))
 
-  const nuevas: HojaNueva[] = [
-    ...a.hojasNuevas,
-    hojaDeRevisiones(a.datos.revisiones),
-    hojaDeMovimientos(a.datos.movimientos),
-    hojaDeInventario(a.datos.equipos),
+  // Las hojas de la aplicación se rehacen enteras cada pasada, cabecera
+  // incluida. No son un historial que haya que ir completando: son la foto de
+  // lo que la base sabe hoy, y reconstruirlas cuesta menos que decidir qué fila
+  // cambió. Antes se vaciaban de la fila 2 para abajo y se volvían a llenar, y
+  // eso dejaba la cabecera vieja encima de los datos nuevos el día que a una
+  // hoja le cambiaba una columna: «Incidencia» sobre lo que ya era «Solicitud».
+  // Las pruebas del libro real traen un `datos` a medias —solo lo de las tres
+  // hojas— y por eso lo que falte se toma como vacío.
+  const datos = (a.datos ?? {}) as Partial<DatosDeLaPasada>
+  const anyo = a.anyo ?? new Date().getFullYear()
+  const rehacer: HojaNueva[] = [
+    hojaDeRevisiones(datos.revisiones ?? []),
+    hojaDeMovimientos(datos.movimientos ?? []),
+    hojaDeInventario(datos.equipos ?? []),
     hojaDelParte(lineasDelParte(a.planes), cuando),
+    hojaDeLeeme({ cuando, anyo }),
   ]
 
-  // Las de detalle se rehacen: si ya están, se quitan primero. Añadir una hoja
-  // que ya existe es un error, y con razón.
-  const existentes = new Set(a.libro.hojas.map((h) => h.nombre))
-  const aAnadir = nuevas.filter((h) => !existentes.has(h.nombre))
-  const aRehacer = nuevas.filter((h) => existentes.has(h.nombre))
-
-  let bytes = await escribirLibro(a.libro, ediciones, aAnadir)
-
-  if (aRehacer.length > 0) {
-    // Rehacer una hoja de detalle es vaciarla y volver a escribirla: no se
-    // pueden borrar hojas sin tocar los índices que otras cosas usan.
-    const otra = await abrirLibro(bytes)
-    bytes = await escribirLibro(
-      otra,
-      await Promise.all(
-        aRehacer.map(async (h) => rehacer(h, await ultimaFilaDe(otra, h.nombre))),
-      ),
-      [],
-    )
-  }
+  const bytes = await escribirLibro(a.libro, ediciones, a.hojasNuevas ?? [], acabadoDe(a, rehacer))
 
   // Se apunta qué libro salió de aquí. Es lo único que permite avisar la vez
   // siguiente de que se está subiendo otro.
@@ -837,6 +832,78 @@ export async function escribir(
   return bytes
 }
 
+/** Las hojas que van al final, con la pestaña en gris: consulta, no datos. */
+const DISCRETAS = ['Sincronización', 'Léeme', 'Cambios*']
+
+/**
+ * Cómo se ve el libro que sale, decidido aquí y no a mano.
+ *
+ * Lo hacía una persona con openpyxl —cabeceras azules, bandas, un Léeme— y se
+ * perdía en cuanto la aplicación rehacía una hoja. Ahora lo dice la pasada en
+ * cada escritura: las cabeceras de las hojas de la gente se pintan según quién
+ * escribe cada columna —lo sabe el mapa—, todas llevan bandas, las pestañas van
+ * en orden, las de consulta al final en gris, y el libro se abre en la hoja de
+ * estado. Escribirlo dos veces seguidas deja el mismo libro: `libro.ts` no
+ * añade un estilo, una tabla ni una regla que ya estén.
+ */
+export function acabadoDe(
+  a: Pick<Analisis, 'libro'> & Partial<Pick<Analisis, 'columnaRef' | 'anyo' | 'hojasNuevas' | 'entrada'>>,
+  rehacer: HojaNueva[],
+): Acabado {
+  const presentes = new Set([
+    ...a.libro.hojas.map((h) => h.nombre),
+    ...(a.hojasNuevas ?? []).map((h) => h.nombre),
+  ])
+  const delMapa = HOJAS.filter((h) => presentes.has(h.nombre))
+
+  const cabeceras: NonNullable<Acabado['cabeceras']> = delMapa.map((h) => {
+    const columnas: Record<string, 'cabecera' | 'cabeceraApp'> = {}
+    for (const c of h.columnas) {
+      // Una hoja congelada es de la gente entera: nadie la escribe ya, pero es
+      // su cierre, no un dato de la aplicación.
+      columnas[c.letra] =
+        !h.congelada && (c.dueno === 'solo_app' || c.dueno === 'formula') ? 'cabeceraApp' : 'cabecera'
+    }
+    // La matrícula la escribe la aplicación, y lo dice con el color.
+    if (h.identidad.tipo === 'sala' && a.columnaRef) columnas[a.columnaRef] = 'cabeceraApp'
+    if (h.identidad.tipo === 'unidad') {
+      // «Situación» la añade la aplicación al final de la hoja de PCs: está
+      // donde la pasada la leyó y, si es la primera vez, detrás de la última.
+      const cabecera = a.entrada?.filas.get(h.nombre)?.find((f) => f.fila === h.cabecera)
+      const letra = Object.entries(cabecera?.celdas ?? {}).find(
+        ([, v]) => String(v ?? '').trim().toLowerCase() === TITULO_DE_SITUACION.toLowerCase(),
+      )?.[0]
+      columnas[letra ?? numeroAColumna(h.columnas.length + 1)] = 'cabeceraApp'
+    }
+    return { hoja: h.nombre, fila: h.cabecera, columnas }
+  })
+
+  // Las del año en curso justo detrás de la de estado: en enero, las recién
+  // creadas van antes que las del año que se cierra.
+  const delAnyo = hojasDelAnyo(a.anyo ?? new Date().getFullYear())
+  const orden = [
+    ESTADO.nombre,
+    delAnyo.material,
+    delAnyo.bolsa,
+    delAnyo.pcs,
+    MATERIAL_2026.nombre,
+    BOLSA_2026.nombre,
+    PCS_2026.nombre,
+    MATERIAL_2025.nombre,
+    BOLSA_2025.nombre,
+    ...rehacer.map((h) => h.nombre).filter((n) => !DISCRETAS.includes(n)),
+  ].filter((n, i, l) => l.indexOf(n) === i)
+
+  return {
+    rehacer,
+    cabeceras,
+    bandas: delMapa.map((h) => h.nombre),
+    orden,
+    discretas: DISCRETAS,
+    activa: ESTADO.nombre,
+  }
+}
+
 /**
  * El número que la base puso a cada parte nuevo, en la celda de su fila.
  *
@@ -851,63 +918,6 @@ function numerosDeLasAltas(p: Plan, altas: AltaAplicada[]): Cambio[] {
   return altas
     .filter((x) => x.hoja === p.hoja && x.tipo === 'incidencia' && x.numero)
     .map((x) => ({ celda: `${columna}${x.fila}`, valor: x.numero! }))
-}
-
-/** La última fila que existe en el XML de una hoja. Cero si solo hay cabecera. */
-async function ultimaFilaDe(libro: Libro, nombre: string): Promise<number> {
-  const filas = await leerHoja(libro, nombre)
-  return filas.reduce((max, f) => Math.max(max, f.fila), 0)
-}
-
-/**
- * Vaciar una hoja de detalle y volver a escribirla.
- *
- * Se borran todas las filas menos la cabecera y se insertan las nuevas. Es más
- * bruto que comparar fila a fila, y es lo correcto: estas hojas no tienen
- * identidad de fila —un movimiento de almacén no tiene matrícula— así que
- * «cuál cambió» no es una pregunta que se pueda contestar. Y como nadie las
- * edita a mano, no hay nada que perder.
- *
- * El borrado es la mitad que faltaba, y sin él esto no vaciaba nada: insertaba.
- * «Sincronización» pasaba de 336 filas a 671 en la segunda pasada y a 1.006 en
- * la tercera, con el mismo contenido repetido, y el libro engordaba sin techo.
- *
- * `estiloDe: 2` es la otra mitad: una fila que entra detrás de la 1 hereda el
- * estilo de la 1, que es la cabecera. Sin decirlo, la hoja entera salía en
- * negrita y con el fondo del encabezado.
- */
-function rehacer(hoja: HojaNueva, ultima: number): EdicionDeHoja {
-  const borrar: number[] = []
-  for (let f = 2; f <= ultima; f++) borrar.push(f)
-
-  return {
-    hoja: hoja.nombre,
-    filas: {
-      borrar,
-      insertar: hoja.filas.slice(1).map((valores) => ({
-        tras: 1,
-        // La 2 de la hoja de antes: se lee de la copia original de estilos, que
-        // se saca antes de borrar nada, así que sigue estando aunque se borre.
-        // Si la hoja venía solo con cabecera no hay de dónde copiar y se queda
-        // con el de la 1, que es lo que hacía siempre.
-        ...(ultima >= 2 ? { estiloDe: 2 } : {}),
-        celdas: valores
-          .map((v, i) => ({ celda: `${letra(i + 1)}2`, valor: v }))
-          .filter((c) => c.valor !== null),
-      })),
-    },
-  }
-}
-
-function letra(n: number): string {
-  let s = ''
-  let x = n
-  while (x > 0) {
-    const r = (x - 1) % 26
-    s = String.fromCharCode(65 + r) + s
-    x = Math.floor((x - 1) / 26)
-  }
-  return s
 }
 
 /** Lo que la pasada no pudo decidir, para la hoja `Sincronización`. */
