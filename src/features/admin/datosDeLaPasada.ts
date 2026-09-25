@@ -31,6 +31,8 @@ import { comprobacionesLegibles } from '@/domain/revisiones'
 import type { CheckResult } from '@/domain/types'
 import { escribirMaterial } from '@/domain/valores'
 import { canonAlmacen } from '@/domain/almacen'
+import { tipoCanonico, tipoVivo } from '@/domain/equipos'
+import type { TipoConocido } from '@/domain/equipos'
 
 // -----------------------------------------------------------------------------
 // Lo que sale
@@ -88,10 +90,11 @@ interface FilaEquipo {
   label: string | null
   created_at: string
 }
-interface FilaTipo {
+interface FilaTipo extends TipoConocido {
   id: string
   name: string
   merged_into: string | null
+  aliases: string[] | null
 }
 interface FilaRevision {
   id: string
@@ -224,7 +227,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
         .range(d, h).abortSignal(plazo()),
     ),
     descargaEntera<FilaTipo>((d, h) =>
-      supabase.from('asset_types').select('id, name, merged_into').order('id').range(d, h).abortSignal(plazo()),
+      supabase.from('asset_types').select('id, name, merged_into, aliases').order('id').range(d, h).abortSignal(plazo()),
     ),
     descargaEntera<FilaRevision>((d, h) =>
       supabase
@@ -313,11 +316,18 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
 
   // El nombre del tipo, siguiendo las fusiones: un equipo guardado con el id de
   // un tipo que luego se fundió tiene que salir con el nombre del vivo.
-  const tipos = new Map((tiposD.data ?? []).map((t) => [t.id, t]))
+  const tipos = new Map<string, FilaTipo>((tiposD.data ?? []).map((t) => [t.id, t]))
   const nombreDelTipo = (id: string): string => {
-    let t = tipos.get(id)
-    for (let i = 0; t?.merged_into && i < 8; i++) t = tipos.get(t.merged_into)
-    return t?.name ?? '—'
+    const t = tipos.get(id)
+    return t ? tipoVivo(t, tipos).name : '—'
+  }
+  // Y el nombre con el que la fusión habla de él: el de la columna del libro
+  // cuando el tipo —por nombre, alias o sinónimo— responde a una. Es lo que
+  // hace que el «Ordenador Tiny» de la ficha sea el `S/N Ordenador` de la hoja
+  // y no un equipo nuevo en cada pasada.
+  const nombreCanonico = (id: string): string => {
+    const t = tipos.get(id)
+    return t ? tipoCanonico(t, tipos) : '—'
   }
 
   const donde = (zoneId: string): { edificio: string; zona: string } => {
@@ -400,7 +410,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
       notas: misRevisiones[0]?.notes ?? null,
       equipos: suyos.map((a) => ({
         id: a.id,
-        tipo: nombreDelTipo(a.asset_type_id),
+        tipo: nombreCanonico(a.asset_type_id),
         serial: a.serial,
         model: a.model,
         desde: a.created_at,
@@ -408,12 +418,17 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     })
 
     for (const a of suyos) {
+      const tipo = nombreCanonico(a.asset_type_id)
+      const enLaApp = nombreDelTipo(a.asset_type_id)
       equipos.push({
         shortRef: s.short_ref,
         edificio,
         zona,
         sala: s.code,
-        tipo: nombreDelTipo(a.asset_type_id),
+        tipo,
+        // Solo cuando la aplicación lo llama de otra forma: la columna existe
+        // para señalar la diferencia, no para repetir el tipo.
+        nombreEnLaApp: enLaApp !== tipo ? enLaApp : null,
         modelo: a.model,
         serial: a.serial,
         estado: a.status,
@@ -566,6 +581,14 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
       (i) => [i.id, i.room_id ? (salaPorId.get(i.room_id)?.code ?? '') : ''] as [string, string],
     ),
   )
+  // De qué clase es cada parte, para que su número vaya en la columna que le
+  // toca: «Incidencia» o «Solicitud». Una observación lleva número pero no es
+  // un parte, y no va en ninguna de las dos.
+  const claseDeIncidencia = new Map(
+    (incidenciasD.data ?? []).map(
+      (i) => [i.id, claseDeParte(i.kind)] as [string, MovimientoParaHoja['claseDeParte']],
+    ),
+  )
   const movimientos: MovimientoParaHoja[] = (movimientosD.data ?? []).map((m) => ({
     // `slice(0, 10)` daba el día en UTC: un consumo de las 23:30 salía en la
     // hoja con el día de antes. El resto de la aplicación cuenta en Madrid.
@@ -574,6 +597,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     cantidad: m.qty,
     tipo: m.kind,
     incidencia: m.incident_id ? (numeroDeIncidencia.get(m.incident_id) ?? null) : null,
+    claseDeParte: m.incident_id ? (claseDeIncidencia.get(m.incident_id) ?? null) : null,
     // El aula del propio movimiento primero: el material que se apunta desde
     // la ficha del aula lleva la sala y no siempre un parte, y sin esto esas
     // filas salían sin aula en la hoja.
@@ -629,6 +653,11 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     unidades,
     sinUnidades: 'sinTabla' in unidadesD && unidadesD.sinTabla === true,
   }
+}
+
+/** `incidents.kind` → la columna de la hoja de movimientos en la que va el número. */
+function claseDeParte(kind: string): MovimientoParaHoja['claseDeParte'] {
+  return kind === 'incidencia' || kind === 'solicitud' ? kind : null
 }
 
 /** La medida de una comprobación por su unidad: `h` las horas, `%` la lámpara. */

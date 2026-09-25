@@ -34,7 +34,8 @@
 
 import { BOLSA_2026, MATERIAL_2026, hojasDelAnyo } from './mapa'
 import type { Hoja } from './mapa'
-import type { HojaNueva } from './libro'
+// TODO-COORDINADOR: `HojaNueva` viene de `hojasNuevas.ts` mientras `libro.ts` no exporte el del contrato.
+import type { HojaNueva } from './hojasNuevas'
 import type { ValorCelda } from './xlsx'
 
 export interface ArticuloAlCierre {
@@ -99,6 +100,9 @@ function hojaDePartesVacia(nombre: string, modelo: Hoja): HojaNueva {
     filas: [modelo.columnas.map((c) => c.cabecera as ValorCelda)],
     anchos: [16, 11, 13, 17, 52, 52, 34],
     formatos: modelo.columnas.map((c) => (c.tipo === 'fecha' ? ('fecha' as const) : undefined)),
+    // Es una hoja de la gente desde el día que nace: cabecera azul oscuro y
+    // autofiltro, y no tabla, como sus hermanas de los años anteriores.
+    caracter: 'editable',
   }
 }
 
@@ -140,6 +144,7 @@ function hojaDeBolsaNueva(nombre: string, modelo: Hoja, articulos: ArticuloAlCie
     filas,
     anchos: [42, ...new Array(12).fill(9), 14, 15, 15, 42],
     autofiltro: true,
+    caracter: 'editable',
   }
 }
 

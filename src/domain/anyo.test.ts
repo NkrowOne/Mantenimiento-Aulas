@@ -4,9 +4,19 @@ import { anyoDelParte, corteDeAnyo, partesFueraDeSuAnyo } from './anyo'
 import { BOLSA_2026, MATERIAL_2026 } from './mapa'
 import { escribirLibro } from './libro'
 import { abrirLibro, leerHoja } from './xlsx'
+import type { Libro } from './xlsx'
+import type { HojaNueva } from './hojasNuevas'
 
 const LIBRO = process.env.LIBRO_XLSX
 const bytes = LIBRO ? readFileSync(LIBRO) : null
+
+// TODO-COORDINADOR: puente de tipos mientras `libro.ts` no exporte el `HojaNueva`
+// del contrato; cuando lo haga, llamar a `escribirLibro` directamente.
+const escribir = escribirLibro as unknown as (
+  libro: Libro,
+  ediciones: never[],
+  hojasNuevas: HojaNueva[],
+) => Promise<Uint8Array>
 
 const EXISTENTES = [
   'Estado Aulas y Salas de reunion',
@@ -93,6 +103,11 @@ describe('el corte de año', () => {
     expect(altavoces[iAlt]).toBe('Altavoces')
   })
 
+  it('las hojas nuevas son de la gente: editables, no de la app', () => {
+    const c = corteDeAnyo({ anyo: 2027, hojasExistentes: EXISTENTES, articulos: ARTICULOS })
+    for (const h of c.hojas) expect(h.caracter, h.nombre).toBe('editable')
+  })
+
   it('un saldo negativo no se arrastra: el almacén no debe unidades', () => {
     const c = corteDeAnyo({
       anyo: 2027,
@@ -135,7 +150,7 @@ describe.skipIf(!bytes)('sobre el libro real', () => {
       hojasExistentes: libro.hojas.map((h) => h.nombre),
       articulos: ARTICULOS,
     })
-    const salida = await escribirLibro(libro, [], c.hojas)
+    const salida = await escribir(libro, [], c.hojas)
     const otra = await abrirLibro(salida)
 
     expect(otra.hojas.map((h) => h.nombre)).toContain('Bolsa 2027')
@@ -150,7 +165,10 @@ describe.skipIf(!bytes)('sobre el libro real', () => {
     ])
   })
 
-  it('el libro real ya trae dos partes fuera de su año, y se detectan', async () => {
+  it('los partes de la hoja de 2026 que no son de 2026 se detectan, y solo esos', async () => {
+    // El libro original traía dos partes de 2025 en esta hoja; el reformateado
+    // puede traer cero. Lo que se comprueba no depende de cuántos haya: cada
+    // parte con fecha de otro año sale en la lista, y ninguno de 2026.
     const libro = await abrirLibro(new Uint8Array(bytes!))
     const filas = await leerHoja(libro, 'Material Instalado 2026')
     const { excelAFecha } = await import('./valores')
@@ -161,8 +179,10 @@ describe.skipIf(!bytes)('sobre el libro real', () => {
         numero: String(f.celdas.D),
         abierta: typeof f.celdas.B === 'number' ? excelAFecha(f.celdas.B) : null,
       }))
+    expect(partes.length).toBeGreaterThan(0)
     const fuera = partesFueraDeSuAnyo('Material Instalado 2026', partes)
-    expect(fuera.length).toBeGreaterThan(0)
+    const esperados = partes.filter((p) => p.abierta !== null && !p.abierta.startsWith('2026-'))
+    expect(fuera.map((f) => f.fila)).toEqual(esperados.map((p) => p.fila))
     for (const f of fuera) expect(f.anyo).not.toBe(2026)
   })
 })
