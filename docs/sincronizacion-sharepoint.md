@@ -549,6 +549,30 @@ Las demás reglas:
    el parte de la pasada. SharePoint versiona solo; saber a qué versión volver es
    lo que convierte un susto en un «restaurar».
 
+Y cuatro matices que llegaron después, cuando el formato pasó a ponerlo la
+aplicación y no una persona con openpyxl:
+
+- **`styles.xml` se toca, pero solo por el final.** La regla de no renumerar
+  sigue: los índices que ya usan las celdas no se mueven jamás. Lo que se hace
+  es **añadir** al final —fills, fonts, borders, numFmts, cellXfs, dxfs— los
+  estilos que la aplicación necesita (cabeceras por dueño, fechas, porcentajes,
+  tintes), y solo si no hay ya uno que pinte lo mismo. Escribir el libro dos
+  veces deja `styles.xml` byte a byte igual.
+- **Las hojas de la aplicación se regeneran enteras**, cabecera incluida, en su
+  mismo fichero y con sus mismas relaciones (comentarios, dibujos). Son suyas y
+  nadie las edita a mano; regenerarlas es lo que permite cambiarles una columna
+  sin dejar la cabecera vieja encima. Las de la gente siguen parcheándose celda
+  a celda. Y son **tablas de Excel** (`ListObject`, con su parte, su relación y
+  su `Override`), que es lo que el apartado 2 pedía y hasta ahora no era.
+- **Las pestañas van en orden** —las de la gente, las de la aplicación, y al
+  final en gris las de consulta— reordenando `<sheet>` en `workbook.xml` y
+  remapeando el `localSheetId` de cada nombre definido, que es un índice de
+  posición y no un identificador.
+- **Las cabeceras de las hojas de la gente se pintan según el dueño de cada
+  columna** del mapa: azul oscuro lo que se edita en la hoja, azul claro en
+  cursiva lo que escribe la aplicación. Solo cambia el atributo de estilo de
+  esas celdas; el texto, que es el contrato, no se toca.
+
 Y una hoja nueva, `Sincronización`, que escribe el worker: fecha de cada pasada,
 qué filas entraron, cuáles se rechazaron y **por qué**. Es donde mira la persona
 que acaba de editar el Excel y quiere saber si su cambio entró. Sin eso, un
