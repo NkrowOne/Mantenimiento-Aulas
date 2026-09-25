@@ -246,6 +246,13 @@ export function SincronizarExcel(): React.ReactElement {
    * El libro de hoy, de un botón: la copia guardada, leída contra la base de
    * ahora, aplicada y escrita. Ver la cabecera del fichero.
    *
+   * **Siempre manda la aplicación**, se haya elegido lo que se haya elegido
+   * arriba. La copia guardada es la que salió de aquí: del lado del Excel no
+   * trae nada que alguien haya corregido después, así que darle la razón sería
+   * darle la razón a la aplicación de hace tres días contra la de hoy. Quien
+   * quiera que mande el Excel tiene que subir el libro de SharePoint de nuevo,
+   * por el selector de abajo, y la tarjeta lo dice.
+   *
    * Lo que la pasada pregunte se deja como está —`dejarComoEsta`— y se dice
    * cuántas cosas fueron. Solo se para si una hoja no tiene la forma esperada,
    * que es lo único que no se puede dejar como está: entonces el análisis se
@@ -256,7 +263,7 @@ export function SincronizarExcel(): React.ReactElement {
       const fichero = ficheroDe(g)
       ultimoFichero.current = fichero
       const mia = ++lectura.current
-      let a = await analizar(fichero, new Date(), {}, referencia, corte)
+      let a = await analizar(fichero, new Date(), {}, 'app', null)
       if (mia !== lectura.current) throw new LecturaCancelada()
       const dejadas = dudasPendientes(a).length
       if (dejadas > 0) a = replanificar(a, dejarComoEsta(a.dudas, a.respuestas))
@@ -491,6 +498,7 @@ export function SincronizarExcel(): React.ReactElement {
           onHacerHoy={() => hacerHoy.mutate(guardado)}
           haciendoHoy={hacerHoy.isPending}
           disabled={ocupado}
+          mandaElExcel={referencia === 'excel'}
         />
       )}
 
@@ -1410,6 +1418,7 @@ function ElUltimoLibro({
   onHacerHoy,
   haciendoHoy,
   disabled,
+  mandaElExcel,
 }: {
   guardado: LibroGuardado
   /** Cuánto ha cambiado la aplicación desde la copia. `undefined` mientras se cuenta. */
@@ -1421,6 +1430,12 @@ function ElUltimoLibro({
   onHacerHoy: () => void
   haciendoHoy: boolean
   disabled: boolean
+  /**
+   * Arriba se ha elegido «Manda el Excel». Con eso, la copia guardada no sirve
+   * para hacer el libro de hoy: es la que salió de la aplicación y no trae
+   * nada del Excel que pueda mandar. Hay que subir el libro de SharePoint.
+   */
+  mandaElExcel: boolean
 }): React.ReactElement {
   const estado = comoEstaElLibro(guardado, ultimaDelServidor)
   const frase = cambios ? fraseDeCambios(cambios) : null
@@ -1448,7 +1463,17 @@ function ElUltimoLibro({
       {frase && (
         <p className={`mt-2 rounded-ctl p-2 text-sm ${frase.viejo ? 'bg-warn-tint text-warn' : 'text-ok'}`}>
           {frase.texto}
-          {frase.viejo && ' «Hacer el libro de hoy» lo lee contra la aplicación de ahora, lo aplica y lo escribe: luego se baja.'}
+          {frase.viejo &&
+            !mandaElExcel &&
+            ' «Hacer el libro de hoy» lo lee contra la aplicación de ahora, lo aplica y lo escribe: luego se baja.'}
+        </p>
+      )}
+
+      {mandaElExcel && (
+        <p className="mt-2 rounded-ctl bg-warn-tint p-2 text-sm text-warn">
+          Has elegido «Manda el Excel». Esta copia salió de la aplicación y no trae nada del Excel que
+          pueda mandar: sube el libro de SharePoint de nuevo, abajo en «2 · El libro». El libro de hoy
+          desde esta copia se hace siempre con «Manda la aplicación».
         </p>
       )}
 
@@ -1483,16 +1508,28 @@ function ElUltimoLibro({
               ? `Descargar la copia del ${fechaCorta(guardado.cuando)}`
               : 'Descargar el libro'}
         </button>
-        <button
-          type="button"
-          className={`key ${viejo ? 'key-accent h-11 px-4' : 'key-quiet min-h-11 px-3 text-sm'}`}
-          disabled={disabled}
-          onClick={onHacerHoy}
-          title="Lee esta misma copia contra la aplicación de ahora, aplica y escribe el libro"
-        >
-          {haciendoHoy ? 'Haciendo el libro de hoy…' : viejo ? 'Hacer el libro de hoy' : 'Hacerlo de nuevo con lo de hoy'}
-        </button>
+        {!mandaElExcel && (
+          <button
+            type="button"
+            className={`key ${viejo ? 'key-accent h-11 px-4' : 'key-quiet min-h-11 px-3 text-sm'}`}
+            disabled={disabled}
+            onClick={onHacerHoy}
+            title="Lee esta misma copia contra la aplicación de ahora —manda la aplicación—, aplica y escribe el libro"
+          >
+            {haciendoHoy
+              ? 'Haciendo el libro de hoy…'
+              : viejo
+                ? 'Hacer el libro de hoy'
+                : 'Hacerlo de nuevo con lo de hoy'}
+          </button>
+        )}
       </div>
+      {!mandaElExcel && !haciendoHoy && (
+        <p className="mt-1 text-xs text-muted">
+          El libro de hoy se hace con «Manda la aplicación», se haya elegido lo que se haya elegido
+          arriba: esta copia salió de la aplicación y no tiene nada del Excel que pueda mandar.
+        </p>
+      )}
       {haciendoHoy && (
         <p role="status" className="mt-2 text-xs text-muted">
           Se lee la copia contra la aplicación de ahora, se aplica y se escribe el libro. Con poca

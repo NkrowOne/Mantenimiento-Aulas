@@ -1115,7 +1115,12 @@ descarga. Lo que la pasada preguntaría —un equipo que la sala no tiene, un pa
 sin aula— se deja como está y se dice cuántas cosas fueron: son las mismas
 preguntas que ya se contestaron la vez anterior, y para decidirlas de otra forma
 se sube el libro por el camino de siempre. La copia vieja sigue pudiéndose bajar,
-en pequeño y con su fecha en el botón. Si el servidor conoce una salida posterior
+en pequeño y con su fecha en el botón. **El libro de hoy se hace siempre con
+«Manda la aplicación»**, se haya elegido lo que se haya elegido arriba: la copia
+salió de la aplicación y no trae nada del Excel que pueda mandar. Si se ha
+elegido «Manda el Excel», la tarjeta no ofrece hacerlo y pide subir el libro de
+SharePoint de nuevo por el selector, que es el único sitio de donde puede venir
+una corrección hecha en la hoja. Si el servidor conoce una salida posterior
 —alguien sincronizó después desde otro sitio— lo avisa antes de que lo subas; y
 si no puede comprobarlo, lo dice en vez de callar. El fichero que sale lleva el
 día en el nombre: `… (sincronizado 2026-09-25).xlsx`.
