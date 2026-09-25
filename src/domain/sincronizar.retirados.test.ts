@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import { BOLSA_2025, BOLSA_2026 } from './mapa'
 import { sincronizarBolsa } from './sincronizar'
+import { planificar } from './estructura'
 import type { ArticuloVolcado } from './volcado'
 import type { FilaLeida } from './xlsx'
 
@@ -75,6 +76,20 @@ describe('un artículo retirado del almacén', () => {
     })
     expect(p.insertar).toEqual([])
     expect(p.filasQueEntran).toEqual([])
+  })
+
+  it('si el retirado es la última fila y hay un artículo nuevo, la fila nueva va detrás de la que se queda', () => {
+    const nuevo: ArticuloVolcado = { id: 'a3', nombre: 'Teclado', meses: Array<number>(12).fill(0), comprado: 2, activo: true }
+    const p = sincronizarBolsa({
+      hoja: BOLSA_2026,
+      filas: [CAB, fila(2, { A: vivo.nombre, P: 28 }), fila(3, { A: retirado.nombre, P: 4 })],
+      articulos: [vivo, retirado, nuevo],
+      resolver,
+    })
+    expect(p.borrar).toEqual([3])
+    expect(p.insertar.map((i) => i.tras)).toEqual([2])
+    // Y el editor lo acepta: insertar detrás de una fila que se borra no vale.
+    expect(() => planificar({ borrar: p.borrar, insertar: p.insertar })).not.toThrow()
   })
 
   it('en la bolsa cerrada de 2025 se queda como está', () => {

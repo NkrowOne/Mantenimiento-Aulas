@@ -392,11 +392,11 @@ interface Opciones<T> {
 function fusionarFilas<T>(
   plan: Plan,
   emparejadas: Array<Emparejada<T>>,
-  valoresDeLaApp: (dato: T) => Record<string, Valor>,
+  valoresDeLaApp: (dato: T, par: Emparejada<T>) => Record<string, Valor>,
   op: Opciones<T>,
 ): void {
   for (const par of emparejadas) {
-    const base = valoresDeLaApp(par.dato)
+    const base = valoresDeLaApp(par.dato, par)
 
     for (const c of op.hoja.columnas) {
       // Una hoja congelada no escribe en la base. Ni una celda.
@@ -1051,7 +1051,9 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
     )
   }
 
-  fusionarFilas(plan, emparejadas, (s) => filaDeSala(s, e.hoja), {
+  // Con las celdas de la fila delante: cuál de dos aparatos del mismo tipo
+  // enseña cada columna lo dice la hoja en las columnas de al lado.
+  fusionarFilas(plan, emparejadas, (s, par) => filaDeSala(s, e.hoja, par.celdas), {
     hoja: e.hoja,
     filas: e.filas,
     instantanea: e.instantanea ?? SIN_INSTANTANEA,
@@ -2170,8 +2172,13 @@ export function sincronizarBolsa(entrada: EntradaDeBolsa): Plan {
     .filter((a) => a.activo !== false && !enLaHoja.has(a.id))
     .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
 
+  // Detrás de la última fila de datos QUE SE QUEDA: si el último artículo de
+  // la bolsa es uno retirado, su fila se borra en esta misma pasada, y pedir
+  // insertar detrás de una fila que se borra no significa nada (el editor lo
+  // rechaza, y con él la escritura del libro entero).
+  let destino = finDeDatos
+  while (destino > e.hoja.cabecera && plan.borrar.includes(destino)) destino--
   plan.insertar = nuevos.map((art) => {
-    const destino = finDeDatos
     const valores = filaDeArticulo(art, e.hoja)
     const celdas: Cambio[] = []
     for (const c of e.hoja.columnas) {

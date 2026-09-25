@@ -1,7 +1,7 @@
 -- reejecutable: si
 --
--- El bloque `do` solo añade alias que faltan (`array(select distinct
--- unnest(...))`: la segunda pasada deja la lista igual) y el resto son
+-- El bloque `do` solo añade alias que faltan (comparados sin tildes ni
+-- mayúsculas: la segunda pasada deja la lista igual) y el resto son
 -- `create or replace` y `revoke`, que se repiten sin más. Hace falta declararlo
 -- porque la deducción automática rechaza cualquier `do` de nivel raíz.
 -- =============================================================================
@@ -47,7 +47,11 @@
 --     sentidos y hasta ocho saltos, como `datosDeLaPasada`), por alias cruzado
 --     (`norm_text` del nombre de uno entre los alias del otro) o por
 --     `separado_de`, que es lo de siempre. El `asset_event` se apunta igual, y
---     el rechazo del caso que no es equivalente sigue diciendo lo mismo.
+--     el rechazo del caso que no es equivalente sigue diciendo lo mismo. La
+--     cuenta vive en `tipos_equivalentes()`, porque hace falta también al
+--     buscar el equipo vivo de la sala para escribirle el modelo: sin eso, en
+--     una base sin fusionar, la celda de modelo daba de alta un equipo
+--     fantasma al lado del Tiny de verdad.
 --
 -- El cliente hace la misma cuenta con la misma lista (`equipos.ts`): cuando los
 -- dos lados dicen «es el mismo aparato», la celda ni siquiera sale del
@@ -89,11 +93,18 @@ begin
 
     -- El propio nombre del tipo no se mete de alias de sí mismo, y lo que ya
     -- estaba se queda: `distinct` es lo que hace esto repetible.
+    -- Y sin repetir uno que ya estuviera escrito de otra forma: con
+    -- «televisor» en la lista no entra «Televisor», que es el mismo alias.
     update asset_types t
        set aliases = array(
-             select distinct a
-               from unnest(t.aliases || v_alias) as a
-              where public.norm_text(a) <> public.norm_text(t.name))
+             select a from unnest(t.aliases) as a
+              where public.norm_text(a) <> public.norm_text(t.name)
+             union all
+             select a from unnest(v_alias) as a
+              where public.norm_text(a) <> public.norm_text(t.name)
+                and not exists (
+                      select 1 from unnest(t.aliases) as b
+                       where public.norm_text(b) = public.norm_text(a)))
      where t.id = v_tipo
        and exists (
              select 1 from unnest(v_alias) as a
@@ -113,7 +124,67 @@ end
 $alias$;
 
 -- -----------------------------------------------------------------------------
--- 2 — Equivalente por fusión, por alias o por separación: se reclasifica
+-- 2 — Cuándo dos tipos hablan del mismo aparato
+--
+-- En una función aparte porque hace falta en dos sitios de
+-- `sync_aplicar_equipo`: al adoptar un número de serie puesto bajo otro tipo,
+-- y al buscar el equipo vivo de la sala para escribirle el modelo. Con la
+-- cuenta hecha solo en el primero, en una base sin fusionar la celda de modelo
+-- («Modelo TV», «Modelo» del ordenador) no encontraba ningún «TV» ni
+-- «Ordenador» —la tele seguía siendo «Pantalla», el Tiny «Ordenador Tiny»— y
+-- daba de alta un equipo fantasma con modelo y sin número; el número, que va
+-- detrás, reclasificaba después el de verdad. Dos aparatos por uno.
+-- -----------------------------------------------------------------------------
+
+create or replace function public.tipos_equivalentes(p_uno uuid, p_otro uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with recursive
+    del_uno as (
+      select t.id, t.merged_into, 0 as salto from asset_types t where t.id = p_uno
+      union all
+      select t.id, t.merged_into, d.salto + 1
+        from del_uno d join asset_types t on t.id = d.merged_into
+       where d.salto < 8
+    ),
+    del_otro as (
+      select t.id, t.merged_into, 0 as salto from asset_types t where t.id = p_otro
+      union all
+      select t.id, t.merged_into, d.salto + 1
+        from del_otro d join asset_types t on t.id = d.merged_into
+       where d.salto < 8
+    )
+  select p_uno is not null and p_otro is not null and (
+       p_uno = p_otro
+    -- Uno fundido en el otro, en cualquier sentido y hasta ocho saltos.
+    or exists (select 1 from del_uno where id = p_otro)
+    or exists (select 1 from del_otro where id = p_uno)
+    -- Uno se separó del otro.
+    or exists (select 1 from asset_types t where t.id = p_uno  and t.separado_de = p_otro)
+    or exists (select 1 from asset_types t where t.id = p_otro and t.separado_de = p_uno)
+    -- El nombre de uno entre los alias del otro.
+    or exists (
+         select 1
+           from asset_types a, asset_types b
+          where a.id = p_uno and b.id = p_otro
+            and (public.norm_text(a.name) in
+                   (select public.norm_text(x) from unnest(coalesce(b.aliases, '{}')) as x)
+              or public.norm_text(b.name) in
+                   (select public.norm_text(x) from unnest(coalesce(a.aliases, '{}')) as x)))
+  )
+$$;
+
+comment on function public.tipos_equivalentes(uuid, uuid) is
+  'Si dos tipos de equipo hablan del mismo aparato: el mismo, uno fundido en el otro (hasta ocho saltos), uno separado del otro, o el nombre de uno entre los alias del otro. Lo usa la sincronización del Excel.';
+
+revoke all on function public.tipos_equivalentes(uuid, uuid) from public, anon, authenticated;
+
+-- -----------------------------------------------------------------------------
+-- 3 — Equivalente por fusión, por alias o por separación: se reclasifica
 -- -----------------------------------------------------------------------------
 
 create or replace function public.sync_aplicar_equipo(
@@ -130,7 +201,6 @@ declare
   v_donde   uuid;
   v_estado  asset_status;
   v_tipo    uuid;
-  v_origen  uuid;
   v_nombre  text;
   v_mio     text;
   v_mismo   boolean;
@@ -181,42 +251,7 @@ begin
      * alguien puede ir al maestro y arreglarlo.
      */
     if v_otro is not null and v_estado = 'instalado' and v_tipo is distinct from p_type then
-      select separado_de into v_origen from asset_types where id = p_type;
-      v_mismo := (v_origen is not null and v_origen = v_tipo);
-
-      if not v_mismo then
-        v_mismo := (
-          with recursive
-            del_equipo as (
-              select t.id, t.merged_into, 0 as salto from asset_types t where t.id = v_tipo
-              union all
-              select t.id, t.merged_into, d.salto + 1
-                from del_equipo d join asset_types t on t.id = d.merged_into
-               where d.salto < 8
-            ),
-            del_pedido as (
-              select t.id, t.merged_into, 0 as salto from asset_types t where t.id = p_type
-              union all
-              select t.id, t.merged_into, d.salto + 1
-                from del_pedido d join asset_types t on t.id = d.merged_into
-               where d.salto < 8
-            )
-          select exists (select 1 from del_equipo where id = p_type)
-              or exists (select 1 from del_pedido where id = v_tipo)
-        );
-      end if;
-
-      if not v_mismo then
-        select exists (
-                 select 1
-                   from asset_types e, asset_types p
-                  where e.id = v_tipo and p.id = p_type
-                    and (public.norm_text(e.name) in
-                           (select public.norm_text(a) from unnest(coalesce(p.aliases, '{}')) as a)
-                      or public.norm_text(p.name) in
-                           (select public.norm_text(a) from unnest(coalesce(e.aliases, '{}')) as a)))
-          into v_mismo;
-      end if;
+      v_mismo := public.tipos_equivalentes(p_type, v_tipo);
 
       if v_mismo then
         update assets set asset_type_id = p_type where id = v_otro;
@@ -244,6 +279,28 @@ begin
     select id into v_asset from assets
      where room_id = p_room and asset_type_id = p_type and status = 'instalado'
      order by created_at desc limit 1;
+  end if;
+
+  -- Y si no hay ninguno con ese nombre exacto, uno con un nombre equivalente:
+  -- el Tiny de una base sin fusionar, la tele que sigue siendo «Pantalla». Es
+  -- el mismo aparato, así que se le escribe a él y se le da el tipo de la
+  -- columna, con su apunte; darle de alta otro dejaba dos equipos por uno.
+  if v_asset is null then
+    select a.id, a.asset_type_id into v_asset, v_tipo from assets a
+     where a.room_id = p_room and a.status = 'instalado'
+       and a.asset_type_id <> p_type
+       and public.tipos_equivalentes(p_type, a.asset_type_id)
+     order by a.created_at desc limit 1;
+    if v_asset is not null then
+      update assets set asset_type_id = p_type where id = v_asset;
+      insert into asset_events (id, asset_id, room_id, kind, occurred_at, by_user, meta)
+      values (gen_random_uuid(), v_asset, p_room, 'sustitucion', now(), null,
+              jsonb_build_object(
+                'source', 'sharepoint',
+                'nota', 'el libro lo reclama en su columna: se le devuelve el tipo del que estaba fundido',
+                'tipo_antes', (select name from asset_types where id = v_tipo),
+                'tipo_ahora', (select name from asset_types where id = p_type)));
+    end if;
   end if;
 
   if v_asset is null then

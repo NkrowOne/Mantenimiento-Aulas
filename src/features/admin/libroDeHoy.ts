@@ -58,8 +58,13 @@ export function nombreDelLibro(nombre: string, sufijo: string): string {
   let base = nombre.replace(/\.xlsx$/i, '')
   // `(sincronizado)`, `(sincronizado 2026-09-22)`, `(vista previa)`, repetidos o no.
   base = base.replace(/(\s*\((?:sincronizado|vista previa)[^)]*\))+$/i, '')
-  // Y la forma en que SharePoint los devuelve: `_sincronizado_2026-09-22`.
-  base = base.replace(/(?:[\s_-]+(?:sincronizado|vista[\s_]+previa)(?:[\s_-]+\d{4}-\d{2}-\d{2})?)+$/i, '')
+  // Y la forma en que SharePoint los devuelve: `_sincronizado_2026-09-22`,
+  // con o sin el `(1)` que le cuelga el navegador a la segunda descarga.
+  const restos = /(?:[\s_-]+(?:sincronizado|vista[\s_]+previa)(?:[\s_-]+\d{4}-\d{2}-\d{2})?|\s*\(\d+\)|[\s_-]+\(\d+\))+$/i
+  base = base.replace(restos, '')
+  base = base.replace(/(\s*\((?:sincronizado|vista previa)[^)]*\))+$/i, '').replace(restos, '')
+  // Sin el separador que quedara colgando: `Material_Aulas_` no es un nombre.
+  base = base.replace(/[\s_-]+$/, '')
   return `${base.trim() || 'Libro'} (${sufijo}).xlsx`
 }
 
@@ -89,11 +94,22 @@ export interface CambiosDesde {
 export async function cambiosDesde(cuando: string): Promise<CambiosDesde> {
   const [total, revisiones, abiertas, resueltas] = await Promise.all([
     db.inspections.count().then(async (n) => n + (await db.incidents.count())),
+    // Por la fecha de la visita, o por la de la corrección: una revisión de
+    // marzo corregida ayer conserva `occurred_at` a propósito, y en el libro
+    // es una fila más. Una hecha y corregida después de la copia cuenta una.
     db.inspections
-      .where('occurred_at')
-      .above(cuando)
-      .filter((i) => i.status === 'completa')
-      .count(),
+      .filter(
+        (i) =>
+          i.status === 'completa' &&
+          (i.occurred_at > cuando || (i.corrected_at !== null && i.corrected_at !== undefined && i.corrected_at > cuando)),
+      )
+      .toArray()
+      .then((nuevas) => {
+        // Una hecha y corregida después de la copia es un cambio, no dos: la
+        // corregida no cuenta si su corrección ya cuenta.
+        const corregidas = new Set(nuevas.map((i) => i.corrects).filter((c): c is string => typeof c === 'string'))
+        return nuevas.filter((i) => !corregidas.has(i.id)).length
+      }),
     db.incidents.where('opened_at').above(cuando).count(),
     db.incidents
       .filter((i) => i.resolved_at !== null && i.resolved_at > cuando && i.opened_at <= cuando)

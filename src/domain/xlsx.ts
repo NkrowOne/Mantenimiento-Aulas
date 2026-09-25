@@ -166,11 +166,18 @@ function desescapar(s: string): string {
 }
 
 export function escapar(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
+  return (
+    s
+      // Lo que XML 1.0 no admite ni escapado: un carácter de control pegado en
+      // una observación —un `\u0001` que vino de un copiar y pegar— deja la
+      // hoja mal formada y Excel la «repara» quitando lo que le parece. Fuera.
+      // El tabulador, el salto de línea y el retorno de carro sí valen.
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '')
+      .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+  )
 }
 
 /** Solo el texto: `<is>` y `<si>` pueden venir troceados en varios `<r><t>`. */

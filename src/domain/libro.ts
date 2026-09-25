@@ -42,6 +42,7 @@
 import {
   citarHoja,
   columnasEscritas,
+  remapearFormula,
   corregirComentarios,
   corregirReferenciasExternas,
   corregirVml,
@@ -328,7 +329,15 @@ function traducir(c: Cambio, mapa: MapaDeFilas): Cambio | null {
   // es lo que pasa cuando en la misma pasada un aula se archiva y se corrige.
   // Gana el borrado, que es la orden más fuerte.
   if (nueva === null) return null
-  return { ...c, celda: `${m[1]}${nueva}` }
+  // Una fórmula escrita contra la hoja de antes habla de filas de antes: si la
+  // celda baja una fila porque se borró la de encima, `=B9+…+M9` tiene que
+  // pasar a `=B8+…+M8`, igual que hace el editor con las fórmulas que ya
+  // estaban en la hoja. Sin esto, «Total Instalado» sumaba la fila de abajo.
+  const valor =
+    typeof c.valor === 'string' && c.valor.startsWith('=')
+      ? `=${remapearFormula(c.valor.slice(1), mapa)}`
+      : c.valor
+  return { ...c, celda: `${m[1]}${nueva}`, valor }
 }
 
 /** Comentarios, dibujos y las fórmulas de las demás hojas. */
@@ -823,9 +832,17 @@ function pintarCabecera(
   columnas: Record<string, ClaveDeEstilo>,
   paleta: Paleta,
 ): string {
+  // Una fila autocerrada (`<row r="1"/>`) no tiene celdas que pintar, y hay
+  // que decirlo antes de buscar su `</row>`: si no, el patrón de pareja se
+  // traga la fila siguiente entera y pinta de cabecera sus datos.
+  if (new RegExp(`<row\\b[^>]*\\br="${fila}"[^>]*/>`).test(xml)) return xml
   const patron = new RegExp(`<row\\b[^>]*\\br="${fila}"[^>]*>([\\s\\S]*?)</row>`)
   return xml.replace(patron, (todo, cuerpo: string) => {
-    const nuevo = cuerpo.replace(/<c\b([^>]*)>([\s\S]*?)<\/c>/g, (celda, attrs: string, interior: string) => {
+    // La forma autocerrada va PRIMERO, como en `leerHoja`: `<c r="B1" s="1"/>`
+    // es como Excel guarda una celda vacía con estilo, y sin esta rama el
+    // `[^>]*` se traga la barra y el «interior» de B1 es la C1 entera.
+    const nuevo = cuerpo.replace(/<c\b[^>]*\/>|<c\b([^>]*)>([\s\S]*?)<\/c>/g, (celda, attrs: string | undefined, interior: string | undefined) => {
+      if (attrs === undefined || interior === undefined) return celda
       const col = /\br="([A-Z]+)\d+"/.exec(attrs)?.[1]
       const clave = col ? columnas[col] : undefined
       if (!clave || !/<v>|<is>|<f>/.test(interior)) return celda

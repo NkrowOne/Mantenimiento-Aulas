@@ -35,6 +35,18 @@ describe('el nombre del libro que sale', () => {
     )
   })
 
+  it('quita el «(1)» del navegador y el guion bajo que quede colgando', () => {
+    expect(nombreDelLibro('Material Aulas (sincronizado 2026-09-22) (1).xlsx', 'sincronizado 2026-09-25')).toBe(
+      'Material Aulas (sincronizado 2026-09-25).xlsx',
+    )
+    expect(nombreDelLibro('Material_Aulas_sincronizado_2026-09-22_(1).xlsx', 'sincronizado 2026-09-25')).toBe(
+      'Material_Aulas (sincronizado 2026-09-25).xlsx',
+    )
+    expect(nombreDelLibro('Material_Aulas_.xlsx', 'sincronizado 2026-09-25')).toBe(
+      'Material_Aulas (sincronizado 2026-09-25).xlsx',
+    )
+  })
+
   it('un nombre que era solo sufijo no se queda en nada', () => {
     expect(nombreDelLibro('(sincronizado).xlsx', 'sincronizado 2026-09-25')).toBe(
       'Libro (sincronizado 2026-09-25).xlsx',
@@ -64,8 +76,24 @@ describe('dejar como está lo que la pasada pregunta', () => {
 describe('cuánto ha cambiado la aplicación desde la última vez', () => {
   const CUANDO = '2026-09-22T15:10:00.000Z'
 
-  const revision = (id: string, occurred_at: string, status: Inspection['status'] = 'completa'): Inspection =>
-    ({ id, room_id: 'r1', by_user: null, occurred_at, recorded_at: null, status, overall: 'ok', notes: null }) as Inspection
+  const revision = (
+    id: string,
+    occurred_at: string,
+    status: Inspection['status'] = 'completa',
+    correccion: { corrects: string; corrected_at: string } | null = null,
+  ): Inspection =>
+    ({
+      id,
+      room_id: 'r1',
+      by_user: null,
+      occurred_at,
+      recorded_at: null,
+      status,
+      overall: 'ok',
+      notes: null,
+      corrects: correccion?.corrects ?? null,
+      corrected_at: correccion?.corrected_at ?? null,
+    }) as Inspection
   const parte = (id: string, opened_at: string, resolved_at: string | null = null): Incident =>
     ({ id, room_id: 'r1', opened_at, resolved_at, state: resolved_at ? 'resuelta' : 'abierta', kind: 'incidencia' }) as Incident
 
@@ -97,6 +125,19 @@ describe('cuánto ha cambiado la aplicación desde la última vez', () => {
     const f = fraseDeCambios(c)
     expect(f.viejo).toBe(true)
     expect(f.texto).toBe('Desde entonces la aplicación tiene 1 revisión y 2 partes más: este libro se ha quedado viejo.')
+  })
+
+  it('una revisión de antes corregida después cuenta: en el libro es una fila más', async () => {
+    await db.inspections.bulkPut([
+      revision('a', '2026-09-20T10:00:00.000Z'),
+      // La corrección conserva la fecha de la visita y lleva la de la corrección.
+      revision('a2', '2026-09-20T10:00:00.000Z', 'completa', { corrects: 'a', corrected_at: '2026-09-24T10:00:00.000Z' }),
+      // Hecha y corregida después de la copia: una, no dos.
+      revision('b', '2026-09-23T10:00:00.000Z'),
+      revision('b2', '2026-09-23T10:00:00.000Z', 'completa', { corrects: 'b', corrected_at: '2026-09-24T10:00:00.000Z' }),
+    ])
+    const c = await cambiosDesde(CUANDO)
+    expect(c.revisiones).toBe(2)
   })
 
   it('si no hay nada nuevo, el libro guardado sigue valiendo', async () => {

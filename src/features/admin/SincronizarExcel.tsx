@@ -254,15 +254,22 @@ export function SincronizarExcel(): React.ReactElement {
    * por el selector de abajo, y la tarjeta lo dice.
    *
    * Lo que la pasada pregunte se deja como está —`dejarComoEsta`— y se dice
-   * cuántas cosas fueron. Solo se para si una hoja no tiene la forma esperada,
-   * que es lo único que no se puede dejar como está: entonces el análisis se
-   * queda en pantalla, como cuando se sube un libro a mano.
+   * cuántas cosas fueron. Se para en tres casos, y en los tres el análisis se
+   * queda en pantalla, como cuando se sube un libro a mano: una hoja sin la
+   * forma esperada; el servidor conoce una salida POSTERIOR a esta copia
+   * —alguien sincronizó después desde otro aparato, y aplicar la copia vieja
+   * metería en la base como «corrección del Excel» lo que aquel libro ya
+   * escribió, sin un solo error—; y el servidor no sabe decir cuál fue la
+   * última salida, que para esto es lo mismo.
    */
   const hacerHoy = useMutation({
     mutationFn: async (g: LibroGuardado) => {
       const fichero = ficheroDe(g)
       ultimoFichero.current = fichero
       const mia = ++lectura.current
+      // Y que arriba se vea lo que la pasada lleva: manda la aplicación, sin corte.
+      setReferencia('app')
+      setCorte(null)
       let a = await analizar(fichero, new Date(), {}, 'app', null)
       if (mia !== lectura.current) throw new LecturaCancelada()
       const dejadas = dudasPendientes(a).length
@@ -272,14 +279,20 @@ export function SincronizarExcel(): React.ReactElement {
       setAplicado(null)
       setLibro(null)
       setEntregado(null)
-      if (a.bloqueada) return { hecho: false as const, dejadas }
+      if (a.bloqueada) return { hecho: false as const, dejadas, porQue: 'forma' as const }
+      if (a.libroDesconocido) return { hecho: false as const, dejadas, porQue: 'posterior' as const }
+      if (a.ultimaSalidaEstado === 'no se sabe') return { hecho: false as const, dejadas, porQue: 'no se sabe' as const }
       const r = await sincronizarAnalisis(a)
       return { hecho: true as const, dejadas, r }
     },
     onSuccess: (x) => {
       if (!x.hecho) {
         setFallo(
-          'No se ha podido hacer el libro de hoy: una hoja del libro guardado no tiene la forma que la aplicación espera. Está explicado abajo.',
+          x.porQue === 'forma'
+            ? 'No se ha hecho el libro de hoy: una hoja del libro guardado no tiene la forma que la aplicación espera. Está explicado abajo.'
+            : x.porQue === 'posterior'
+              ? 'No se ha hecho el libro de hoy: después de esta copia ha habido otra sincronización, probablemente desde otro aparato. Aplicarla devolvería la base a la foto de antes. Pide el libro a quien la hizo, o sube el de SharePoint por el selector de abajo. Lo que haría está abajo, sin aplicar.'
+              : 'No se ha hecho el libro de hoy: el servidor no ha podido decir cuál fue la última sincronización, y sin saberlo no se aplica una copia guardada. Vuelve a intentarlo con cobertura, o sube el libro de SharePoint por el selector de abajo.',
         )
         return
       }

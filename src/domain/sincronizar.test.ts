@@ -2176,4 +2176,29 @@ describe('un aparato con dos nombres no es un choque', () => {
     expect(p.dudas.filter((d) => d.tipo === 'alta' && d.que === 'equipo')).toEqual([])
     expect(p.avisos.find((a) => a.includes('OTRA aula'))).toContain('«1.5» (ED. O)')
   })
+
+  it('con la tele y el monitor los dos como «TV», la hoja dice cuál es cuál y la app no los confunde', () => {
+    // Lo que dejó la importación en 62 aulas: el monitor del PC contado como
+    // TV, creado el mismo día que la tele. Según el orden en que vengan de la
+    // base, «el TV más reciente» podía ser el monitor, y entonces la app
+    // escribía su número encima del de la tele en `S/N TV` y mandaba el modelo
+    // de la tele al monitor. La fila ya dice en `S/N Monitor` cuál es el monitor.
+    const monitor = { id: 'm', tipo: 'TV', serial: 'V9-03BZN9', model: null, desde: '2026-07-29' }
+    const tele = { id: 't', tipo: 'TV', serial: '04204655NB', model: 'NEC E657Q', desde: '2026-07-29' }
+    const celdas = { P: 'NEC E657Q', Q: '04204655NB', R: 'V9-03BZN9' }
+    const igual: Instantanea = (_clave, letra) => celdas[letra as keyof typeof celdas]
+    for (const orden of [[monitor, tele], [tele, monitor]]) {
+      const p = conElAparato(orden, celdas, igual)
+      // Ni la tele ni su modelo se tocan, en ningún orden.
+      for (const letra of ['P', 'Q']) {
+        expect(p.celdas.filter((c) => c.celda.startsWith(letra))).toEqual([])
+        expect(p.haciaLaBase.filter((h) => h.letra === letra)).toEqual([])
+        expect(p.conflictos.filter((c) => c.letra === letra)).toEqual([])
+      }
+      expect(p.dudas.filter((d) => d.tipo === 'alta' && d.que === 'equipo')).toEqual([])
+      // Y el monitor sigue su camino: la celda viaja y el servidor lo reclasifica.
+      expect(p.haciaLaBase.map((h) => h.letra)).toEqual(['R'])
+      expect(p.avisos.some((a) => a.includes('«Monitor» del libro') && a.includes('«TV»'))).toBe(true)
+    }
+  })
 })

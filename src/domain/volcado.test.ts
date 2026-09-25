@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 
 import { ESTADO } from './mapa'
 import type { Columna } from './mapa'
-import { compradoEn, consumoPorMes, equipoQueSeVe, equiposDeMas, valorDeSala } from './volcado'
+import { compradoEn, consumoPorMes, equipoQueSeVe, equiposDeMas, filaDeSala, valorDeSala } from './volcado'
 import type { EquipoVolcado, MovimientoVolcado, SalaVolcada } from './volcado'
 
 const mov = (occurredAt: string, qty: number, kind: string): MovimientoVolcado =>
@@ -156,6 +156,20 @@ describe('el equipo que enseña la hoja, con dos nombres', () => {
     const sala = salaCon(equipo('Pantalla', '04204664NB'))
     expect(valorDeSala(sala, columna('Q'))).toBe('04204664NB')
     expect(valorDeSala(sala, columna('R'))).toBeNull()
+  })
+
+  it('el número que la fila reclama en otra columna no puede ser el aparato de esta', () => {
+    // Monitor del PC contado como «TV», más reciente que la tele: sin la fila
+    // delante ganaba él; con ella, la tele.
+    const tele: EquipoVolcado = { id: 't', tipo: 'TV', serial: '04204655NB', model: 'NEC', desde: '2026-01-01' }
+    const monitor: EquipoVolcado = { id: 'm', tipo: 'TV', serial: 'V9-03BZN9', model: null, desde: '2026-06-01' }
+    expect(equipoQueSeVe([tele, monitor], 'TV')?.serial).toBe('V9-03BZN9')
+    expect(equipoQueSeVe([tele, monitor], 'TV', new Set(['V9-03BZN9']))?.serial).toBe('04204655NB')
+    const fila = filaDeSala(salaCon(tele, monitor), ESTADO, { Q: '04204655NB', R: 'V9-03BZN9' })
+    expect(fila.Q).toBe('04204655NB')
+    expect(fila.P).toBe('NEC')
+    // Y sin la fila, como hasta ahora: el más reciente.
+    expect(filaDeSala(salaCon(tele, monitor), ESTADO).Q).toBe('V9-03BZN9')
   })
 
   it('dos teles con dos nombres son dos teles: la hoja solo enseña una y se dice', () => {

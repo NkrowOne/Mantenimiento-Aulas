@@ -1125,6 +1125,21 @@ con los que el libro los llama —sin «Monitor» en TV—, para que una base do
 la fusión no se hizo cruce igual. Una vez aceptada, la celda deja antepasado y
 no vuelve: ese es el «una vez aceptados los cambios no debe conflictar».
 
+La cuenta de «son el mismo aparato» vive en `tipos_equivalentes()` y se usa
+también al buscar el equipo vivo de la sala para escribirle el **modelo**: en
+una base sin fusionar, la celda «Modelo» no encontraba ningún «Ordenador» —el
+Tiny seguía siendo «Ordenador Tiny»— y daba de alta un equipo fantasma con
+modelo y sin número al lado del de verdad. Y el cliente manda el número de
+serie de cada aparato antes que su modelo, por lo mismo.
+
+**Y la tele no es el monitor aunque los dos sean «TV».** En 62 aulas la
+importación dejó el monitor del PC como un segundo equipo de tipo «TV», del
+mismo día que la tele. «El más reciente» podía ser cualquiera de los dos, y
+cuando era el monitor la aplicación escribía su número encima del de la tele
+en `S/N TV`. La fila ya dice en `S/N Monitor` cuál es el monitor: al decidir
+qué equipo enseña cada columna se descartan los números que la misma fila
+reclama en otra (`serialesReclamadosPorOtraColumna`).
+
 ## 12. Lo que puede salir mal
 
 - **Que la API de libro no acepte un token sin usuario.** La documentación de

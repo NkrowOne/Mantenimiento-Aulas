@@ -40,6 +40,17 @@ async function relacionesDe(libro: Libro, nombre: string): Promise<string[]> {
 
 const cuenta = (xml: string, etiqueta: string) => (xml.match(new RegExp(`<${etiqueta}\\b`, 'g')) ?? []).length
 
+/** El mismo libro con el XML de una hoja cambiado a mano. */
+async function conHoja(libro: Libro, nombre: string, f: (xml: string) => string): Promise<Libro> {
+  const hoja = libro.hojas.find((h) => h.nombre === nombre)!
+  const entradas = await Promise.all(
+    libro.entradas.map(async (e) =>
+      e.nombre === hoja.ruta ? reemplazar(e, new TextEncoder().encode(f(new TextDecoder().decode(await descomprimir(e))))) : e,
+    ),
+  )
+  return abrirLibro(await escribirZip(entradas))
+}
+
 // -----------------------------------------------------------------------------
 // Un libro mínimo construido aquí, para probar el acabado sin el libro real
 // -----------------------------------------------------------------------------
@@ -354,6 +365,37 @@ describe('el acabado sobre un libro mínimo', () => {
     expect(await xmlDe(dos, 'xl/workbook.xml')).toContain(
       '<definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">Estado!$A$1:$C$4</definedName>',
     )
+  })
+
+  it('una fórmula escrita contra la hoja de antes baja con su fila y habla de la nueva', async () => {
+    // Se borra la 2 y se escribe una fórmula en la 3: la celda pasa a ser la 2
+    // y la fórmula tiene que sumar la 2, no la 3 (que ahora es otra fila).
+    const libro = await libroMinimo()
+    const otra = await abrirLibro(
+      await escribirLibro(libro, [
+        { hoja: 'Estado', filas: { borrar: [2] }, celdas: [{ celda: 'C3', valor: '=A3+B3' }] },
+      ]),
+    )
+    const filas = await leerHoja(otra, 'Estado')
+    expect(filas.find((f) => f.fila === 2)!.formulas!.C).toBe('A2+B2')
+  })
+
+  it('una celda vacía autocerrada en la cabecera no roba el color a la de al lado', async () => {
+    const libro = await libroMinimo()
+    const con = await conHoja(libro, 'Estado', (xml) =>
+      xml.replace(/<row r="1">[\s\S]*?<\/row>/, '<row r="1"><c r="A1" s="1" t="inlineStr"><is><t>Uno</t></is></c><c r="B1" s="1"/><c r="C1" s="1" t="inlineStr"><is><t>Tres</t></is></c></row>'),
+    )
+    const otra = await abrirLibro(
+      await escribirLibro(con, [], [], { cabeceras: [{ hoja: 'Estado', columnas: { A: 'cabecera', B: 'cabecera', C: 'cabeceraApp' } }] }),
+    )
+    const xml = await xmlDeHoja(otra, 'Estado')
+    const s = (ref: string) => new RegExp(`<c r="${ref}"[^>]*\\bs="(\\d+)"`).exec(xml)?.[1]
+    // A y C pintadas con dos estilos distintos (cabecera y cabeceraApp); B, vacía, como estaba.
+    expect(s('A1')).not.toBe('1')
+    expect(s('C1')).not.toBe('1')
+    expect(s('A1')).not.toBe(s('C1'))
+    expect(s('B1')).toBe('1')
+    expect(xml).toContain('<c r="B1" s="1"/>')
   })
 
   it('las filas de totales quedan fuera del filtro y de las bandas', async () => {

@@ -36,6 +36,7 @@ import { EQUIPOS_EN_COLUMNAS, capacidadDe, equipoDe, mesDe } from './mapa'
 import type { Columna, Hoja } from './mapa'
 import { escribirMicrofono } from './valores'
 import type { Valor } from './valores'
+import type { ValorCelda } from './xlsx'
 
 // -----------------------------------------------------------------------------
 // Lo que hace falta saber de la base
@@ -162,8 +163,21 @@ export interface UnidadVolcada {
  * fusión pedía darlo de alta y el servidor lo rechazaba porque el número ya
  * estaba puesto. 52 veces por pasada.
  */
-export function equipoQueSeVe(equipos: EquipoVolcado[], tipo: string): EquipoVolcado | null {
-  const suyos = equipos.filter((e) => mismoTipo(e.tipo, tipo))
+export function equipoQueSeVe(
+  equipos: EquipoVolcado[],
+  tipo: string,
+  /**
+   * Números de serie que la fila reclama en OTRA columna. El monitor del PC
+   * que la importación dejó contado como «TV» no puede ser la tele que enseña
+   * `S/N TV`, aunque sea el más reciente: la hoja ya dice en `S/N Monitor`
+   * cuál de los dos es. Sin esto, en 62 aulas del libro real la primera pasada
+   * escribía el número del monitor encima del de la tele.
+   */
+  reclamados: Set<string> = new Set(),
+): EquipoVolcado | null {
+  const suyos = equipos.filter(
+    (e) => mismoTipo(e.tipo, tipo) && !(e.serial && reclamados.has(serialLlano(e.serial))),
+  )
   if (suyos.length === 0) return null
   return [...suyos].sort((a, b) => {
     const f = (b.desde ?? '').localeCompare(a.desde ?? '')
@@ -239,11 +253,42 @@ function hayCapacidad(sala: SalaVolcada, cap: string): boolean | null {
   return false
 }
 
+/** Un número de serie tal y como se compara: sin blancos de sobra ni minúsculas. */
+export function serialLlano(serial: string): string {
+  return String(serial ?? '').replace(/\s+/g, '').toUpperCase()
+}
+
+/**
+ * Los números de serie que la fila de la hoja pone en las columnas de OTROS
+ * aparatos, por tipo: lo que `S/N Monitor` reclama no puede ser la TV.
+ */
+export function serialesReclamadosPorOtraColumna(
+  hoja: Hoja,
+  celdas: Record<string, ValorCelda | undefined>,
+): Map<string, Set<string>> {
+  const porTipo = new Map<string, Set<string>>()
+  const todos: Array<{ tipo: string; serial: string }> = []
+  for (const c of hoja.columnas) {
+    const eq = equipoDe(c.campo)
+    if (!eq || eq.campo !== 'serial') continue
+    const v = celdas[c.letra]
+    if (v === undefined || v === null || String(v).trim() === '') continue
+    todos.push({ tipo: eq.tipo, serial: serialLlano(String(v)) })
+  }
+  for (const c of hoja.columnas) {
+    const eq = equipoDe(c.campo)
+    if (!eq) continue
+    const ajenos = new Set(todos.filter((t) => !mismoTipo(t.tipo, eq.tipo)).map((t) => t.serial))
+    porTipo.set(eq.tipo, ajenos)
+  }
+  return porTipo
+}
+
 /** El valor que le toca a una columna de la hoja de estado. */
-export function valorDeSala(sala: SalaVolcada, c: Columna): Valor {
+export function valorDeSala(sala: SalaVolcada, c: Columna, reclamados: Set<string> = new Set()): Valor {
   const eq = equipoDe(c.campo)
   if (eq) {
-    const equipo = equipoQueSeVe(sala.equipos, eq.tipo)
+    const equipo = equipoQueSeVe(sala.equipos, eq.tipo, reclamados)
     return equipo ? (eq.campo === 'serial' ? equipo.serial : equipo.model) : null
   }
 
@@ -282,10 +327,24 @@ export function valorDeSala(sala: SalaVolcada, c: Columna): Valor {
   }
 }
 
-/** Toda la fila de una sala, por letra de columna. */
-export function filaDeSala(sala: SalaVolcada, hoja: Hoja): Record<string, Valor> {
+/**
+ * Toda la fila de una sala, por letra de columna.
+ *
+ * Con las celdas de la fila de la hoja delante, si se tienen: son las que
+ * dicen qué número de serie va en qué columna, y eso decide cuál de dos
+ * aparatos del mismo tipo es el que enseña cada una.
+ */
+export function filaDeSala(
+  sala: SalaVolcada,
+  hoja: Hoja,
+  celdasDeLaHoja?: Record<string, ValorCelda | undefined>,
+): Record<string, Valor> {
+  const reclamados = celdasDeLaHoja ? serialesReclamadosPorOtraColumna(hoja, celdasDeLaHoja) : new Map()
   const out: Record<string, Valor> = {}
-  for (const c of hoja.columnas) out[c.letra] = valorDeSala(sala, c)
+  for (const c of hoja.columnas) {
+    const eq = equipoDe(c.campo)
+    out[c.letra] = valorDeSala(sala, c, eq ? (reclamados.get(eq.tipo) ?? new Set()) : new Set())
+  }
   return out
 }
 

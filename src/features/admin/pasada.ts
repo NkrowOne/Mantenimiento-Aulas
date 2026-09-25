@@ -142,6 +142,13 @@ export interface Analisis {
   libroDesconocido: boolean
   /** Cuándo se produjo el libro que la aplicación esperaba, si lo hubo. */
   ultimaSalida: string | null
+  /**
+   * Qué contestó el servidor sobre la última salida: `ninguna`, `conocida` o
+   * `no se sabe`. Lo mira «Hacer el libro de hoy»: sin saber si hay una salida
+   * posterior no se aplica una copia guardada, que es justo la que revertiría
+   * el trabajo de otro aparato sin dar un solo error.
+   */
+  ultimaSalidaEstado: UltimaSalida['estado']
 }
 
 // -----------------------------------------------------------------------------
@@ -252,6 +259,7 @@ export async function analizar(
     bloqueada: planes.some((p) => p.desajustes.length > 0),
     libroDesconocido: salida.estado === 'conocida' && salida.sha256 !== sha256,
     ultimaSalida: salida.estado === 'conocida' ? salida.cuando : null,
+    ultimaSalidaEstado: salida.estado,
   }
 }
 
@@ -695,13 +703,20 @@ function altaParaLaBase(hoja: string, alta: Alta, a: Analisis): Record<string, u
 function ordenarParaElAlmacen<T extends { campo: string }>(celdas: T[]): T[] {
   const peso = (campo: string): number => {
     if (campo === 'articulo.comprado') return 0
-    if (campo === 'incidencia.material') return 2
+    // El número de serie de un aparato antes que su modelo: el número es lo
+    // que reconoce el equipo en la base (y lo reclasifica si tiene otro nombre
+    // de tipo); el modelo detrás encuentra ese mismo equipo. Al revés, en una
+    // base sin fusionar, el modelo no encontraba «Ordenador» —el Tiny seguía
+    // siendo «Ordenador Tiny»— y daba de alta un equipo fantasma con modelo y
+    // sin número, y el número reclasificaba después el de verdad: dos.
+    if (/^equipo:.+:serial$/.test(campo)) return 1
+    if (campo === 'incidencia.material') return 3
     // El cuadre con «Stock Disponible» va el último de todos: es la diferencia
     // entre lo que la hoja dice que queda y lo que queda DESPUÉS de las compras
     // y los consumos de esta misma pasada. Antes de ellos ajustaría un saldo
     // que la pasada va a mover cuatro celdas más abajo.
-    if (campo === 'articulo.disponible') return 3
-    return 1
+    if (campo === 'articulo.disponible') return 4
+    return 2
   }
   return [...celdas].sort((a, b) => peso(a.campo) - peso(b.campo))
 }
