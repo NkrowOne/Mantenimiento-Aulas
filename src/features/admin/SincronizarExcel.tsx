@@ -15,7 +15,7 @@ import {
 } from './pasada'
 import type { Aplicado, UltimaSalida } from './pasada'
 import type { Analisis } from './pasada'
-import { cambiosDesde, dejarComoEsta, fraseDeCambios, nombreDelLibro } from './libroDeHoy'
+import { cambiosDesde, colaAntesDelLibro, dejarComoEsta, fraseDeCambios, nombreDelLibro } from './libroDeHoy'
 import type { CambiosDesde } from './libroDeHoy'
 import { Dudas } from './Dudas'
 import type { AltaDeSalaDesdeDuda } from './Dudas'
@@ -146,6 +146,11 @@ export function SincronizarExcel(): React.ReactElement {
     mutationFn: async ({ fichero, respuestas = {} }: { fichero: File; respuestas?: Respuestas }) => {
       ultimoFichero.current = fichero
       const mia = ++lectura.current
+      // Lo de este aparato, arriba antes de leer la base: el libro se hace con
+      // lo que el servidor sabe, y una revisión que siga en la cola no saldría.
+      const cola = await colaAntesDelLibro()
+      if (mia !== lectura.current) throw new LecturaCancelada()
+      if (cola.sinSubir > 0) throw new Error(mensajeDeCola(cola.sinSubir))
       const a = await analizar(fichero, new Date(), respuestas, referencia, corte)
       if (mia !== lectura.current) throw new LecturaCancelada()
       return a
@@ -270,6 +275,10 @@ export function SincronizarExcel(): React.ReactElement {
       // Y que arriba se vea lo que la pasada lleva: manda la aplicación, sin corte.
       setReferencia('app')
       setCorte(null)
+      // Lo de este aparato, arriba antes de leer la base: ver `colaAntesDelLibro`.
+      const cola = await colaAntesDelLibro()
+      if (mia !== lectura.current) throw new LecturaCancelada()
+      if (cola.sinSubir > 0) return { hecho: false as const, dejadas: 0, porQue: 'cola' as const, sinSubir: cola.sinSubir }
       let a = await analizar(fichero, new Date(), {}, 'app', null)
       if (mia !== lectura.current) throw new LecturaCancelada()
       const dejadas = dudasPendientes(a).length
@@ -288,7 +297,9 @@ export function SincronizarExcel(): React.ReactElement {
     onSuccess: (x) => {
       if (!x.hecho) {
         setFallo(
-          x.porQue === 'forma'
+          x.porQue === 'cola'
+            ? mensajeDeCola(x.sinSubir)
+            : x.porQue === 'forma'
             ? 'No se ha hecho el libro de hoy: una hoja del libro guardado no tiene la forma que la aplicación espera. Está explicado abajo.'
             : x.porQue === 'posterior'
               ? 'No se ha hecho el libro de hoy: después de esta copia ha habido otra sincronización, probablemente desde otro aparato. Aplicarla devolvería la base a la foto de antes. Pide el libro a quien la hizo, o sube el de SharePoint por el selector de abajo. Lo que haría está abajo, sin aplicar.'
@@ -1746,6 +1757,11 @@ function loQueEntro(r: Aplicado): string {
   ]
     .filter(Boolean)
     .join(' ')
+}
+
+/** Por qué no se lee la base con cosas de este aparato todavía en la cola. */
+function mensajeDeCola(n: number): string {
+  return `Este aparato tiene ${n} ${n === 1 ? 'cambio' : 'cambios'} sin subir al servidor y no se han podido subir ahora. El libro se hace con lo que el servidor sabe, así que saldría sin ${n === 1 ? 'él' : 'ellos'}: espera a tener cobertura, comprueba la barra de sincronización de arriba y vuelve a intentarlo.`
 }
 
 /** La copia guardada, como el fichero que se habría elegido con el selector. */

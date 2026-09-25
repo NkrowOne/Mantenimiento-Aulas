@@ -100,6 +100,7 @@ describe('cuánto ha cambiado la aplicación desde la última vez', () => {
   beforeEach(async () => {
     await db.inspections.clear()
     await db.incidents.clear()
+    await db.outbox.clear()
   })
 
   it('con el espejo vacío no se sabe, y se dice', async () => {
@@ -121,7 +122,7 @@ describe('cuánto ha cambiado la aplicación desde la última vez', () => {
       parte('p3', '2026-09-10T10:00:00.000Z', '2026-09-24T10:00:00.000Z'),
     ])
     const c = await cambiosDesde(CUANDO)
-    expect(c).toEqual({ revisiones: 1, incidencias: 2, conocido: true })
+    expect(c).toEqual({ revisiones: 1, incidencias: 2, sinSubir: 0, conocido: true })
     const f = fraseDeCambios(c)
     expect(f.viejo).toBe(true)
     expect(f.texto).toBe('Desde entonces la aplicación tiene 1 revisión y 2 partes más: este libro se ha quedado viejo.')
@@ -143,7 +144,20 @@ describe('cuánto ha cambiado la aplicación desde la última vez', () => {
   it('si no hay nada nuevo, el libro guardado sigue valiendo', async () => {
     await db.inspections.bulkPut([revision('a', '2026-09-20T10:00:00.000Z')])
     const c = await cambiosDesde(CUANDO)
-    expect(c).toEqual({ revisiones: 0, incidencias: 0, conocido: true })
+    expect(c).toEqual({ revisiones: 0, incidencias: 0, sinSubir: 0, conocido: true })
     expect(fraseDeCambios(c).viejo).toBe(false)
+  })
+
+  it('lo que este aparato tiene en la cola cuenta, sea de cuándo sea: no está en ningún libro', async () => {
+    await db.inspections.bulkPut([revision('a', '2026-09-20T10:00:00.000Z')])
+    await db.outbox.bulkPut([
+      { id: 'a', entity: 'inspection', op: 'upsert', payload: {}, createdAt: 1, attempts: 0, nextAttemptAt: 0, status: 'pendiente', lastError: null },
+      { id: 'b', entity: 'incident', op: 'upsert', payload: {}, createdAt: 2, attempts: 3, nextAttemptAt: 0, status: 'rechazado', lastError: 'x' },
+    ])
+    const c = await cambiosDesde(CUANDO)
+    expect(c.sinSubir).toBe(1)
+    const f = fraseDeCambios(c)
+    expect(f.viejo).toBe(true)
+    expect(f.texto).toMatch(/1 cambio sin subir/)
   })
 })

@@ -16,6 +16,7 @@
 import { db } from '@/db/dexie'
 import type { Duda, Respuestas } from '@/domain/dudas'
 import { pendientes } from '@/domain/dudas'
+import { flush } from '@/sync/outbox'
 
 // -----------------------------------------------------------------------------
 // Las dudas, cuando se quiere el libro y no una decisión
@@ -78,6 +79,12 @@ export interface CambiosDesde {
   /** Partes abiertos o resueltos después. */
   incidencias: number
   /**
+   * Lo que este aparato hizo y todavía no ha subido al servidor. El libro se
+   * hace con lo que el servidor sabe, así que esto no está en ningún libro,
+   * sea de cuándo sea: la tarjeta tiene que decirlo antes que nada.
+   */
+  sinSubir: number
+  /**
    * `false` si el espejo de este aparato está vacío: entonces no se puede
    * decir ni que hay cambios ni que no los hay, y la frase tiene que ser otra.
    */
@@ -92,8 +99,9 @@ export interface CambiosDesde {
  * tarjeta vea que el libro guardado se ha quedado viejo sin tener que saberlo.
  */
 export async function cambiosDesde(cuando: string): Promise<CambiosDesde> {
-  const [total, revisiones, abiertas, resueltas] = await Promise.all([
+  const [total, sinSubir, revisiones, abiertas, resueltas] = await Promise.all([
     db.inspections.count().then(async (n) => n + (await db.incidents.count())),
+    db.outbox.where('status').anyOf('pendiente', 'enviando').count(),
     // Por la fecha de la visita, o por la de la corrección: una revisión de
     // marzo corregida ayer conserva `occurred_at` a propósito, y en el libro
     // es una fila más. Una hecha y corregida después de la copia cuenta una.
@@ -115,11 +123,39 @@ export async function cambiosDesde(cuando: string): Promise<CambiosDesde> {
       .filter((i) => i.resolved_at !== null && i.resolved_at > cuando && i.opened_at <= cuando)
       .count(),
   ])
-  return { revisiones, incidencias: abiertas + resueltas, conocido: total > 0 }
+  return { revisiones, incidencias: abiertas + resueltas, sinSubir, conocido: total > 0 }
+}
+
+/**
+ * Antes de leer la base para hacer un libro: lo que este aparato tenga en la
+ * cola, arriba. Una revisión hecha sin cobertura vive en el espejo local y en
+ * la cola, y el libro se hace con lo que el servidor sabe: si no ha subido, el
+ * libro sale sin ella y la tarjeta diría después que «no ha cambiado nada».
+ * Se fuerza la subida y se dice qué queda; con algo todavía en cola no se
+ * hace el libro. Lo rechazado no se va a mover solo: se cuenta aparte y no
+ * para nada, porque el aviso de «rechazados» ya está en la barra de arriba.
+ */
+export async function colaAntesDelLibro(): Promise<{ sinSubir: number; rechazados: number }> {
+  try {
+    await flush({ forzar: true })
+  } catch {
+    // Que no se pueda subir ahora no cambia la pregunta: lo que queda, queda.
+  }
+  const [sinSubir, rechazados] = await Promise.all([
+    db.outbox.where('status').anyOf('pendiente', 'enviando').count(),
+    db.outbox.where('status').equals('rechazado').count(),
+  ])
+  return { sinSubir, rechazados }
 }
 
 /** La frase de la tarjeta, a partir de los recuentos. */
 export function fraseDeCambios(c: CambiosDesde): { texto: string; viejo: boolean } {
+  if (c.sinSubir > 0) {
+    return {
+      texto: `Este aparato tiene ${c.sinSubir} ${c.sinSubir === 1 ? 'cambio' : 'cambios'} sin subir al servidor: ningún libro los lleva todavía. Al hacer el libro de hoy se suben primero.`,
+      viejo: true,
+    }
+  }
   if (!c.conocido) {
     return {
       texto: 'Este aparato todavía no tiene el espejo de la aplicación: no se sabe si ha cambiado algo desde entonces.',

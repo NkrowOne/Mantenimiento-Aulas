@@ -9,11 +9,24 @@ import {
   parchear,
   parchearHojaXml,
   partirCelda,
+  xmlDeCelda,
 } from './xlsx'
 import { descomprimir, leerZip } from '../lib/zip'
 
 const LIBRO = process.env.LIBRO_XLSX
 const libro = LIBRO ? readFileSync(LIBRO) : null
+
+describe('un texto con un carácter de control', () => {
+  it('se escribe como lo escribe Excel, y la hoja sigue bien formada', () => {
+    const xml = xmlDeCelda('A1', '', 'linea 1\u000Blinea 2 y \u0001')
+    expect(xml).toContain('linea 1_x000B_linea 2 y _x0001_')
+    expect(xml).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/)
+    // Un `_x000B_` que ya venía escrito no se confunde con uno nuestro.
+    expect(xmlDeCelda('A1', '', 'literal _x000B_')).toContain('literal _x005F_x000B_')
+    // El salto de línea y el tabulador valen tal cual.
+    expect(xmlDeCelda('A1', '', 'a\nb\tc')).toContain('a\nb\tc')
+  })
+})
 
 describe('las direcciones de celda', () => {
   it('van y vuelven, también pasada la Z', () => {

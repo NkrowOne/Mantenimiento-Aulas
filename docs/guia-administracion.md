@@ -1115,7 +1115,13 @@ descarga. Lo que la pasada preguntaría —un equipo que la sala no tiene, un pa
 sin aula— se deja como está y se dice cuántas cosas fueron: son las mismas
 preguntas que ya se contestaron la vez anterior, y para decidirlas de otra forma
 se sube el libro por el camino de siempre. La copia vieja sigue pudiéndose bajar,
-en pequeño y con su fecha en el botón. **El libro de hoy se hace siempre con
+en pequeño y con su fecha en el botón. Antes de leer la base sube lo que este
+aparato tenga en la cola —una revisión hecha sin cobertura— y, si algo no ha
+podido subir, no hace el libro y lo dice: el libro se hace con lo que el
+servidor sabe. Tampoco lo hace si después de esa copia ha habido otra
+sincronización desde otro aparato, o si el servidor no sabe decir cuál fue la
+última: aplicar la copia vieja devolvería la base a la foto de antes.
+**El libro de hoy se hace siempre con
 «Manda la aplicación»**, se haya elegido lo que se haya elegido arriba: la copia
 salió de la aplicación y no trae nada del Excel que pueda mandar. Si se ha
 elegido «Manda el Excel», la tarjeta no ofrece hacerlo y pide subir el libro de

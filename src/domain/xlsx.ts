@@ -169,12 +169,19 @@ export function escapar(s: string): string {
   return (
     s
       // Lo que XML 1.0 no admite ni escapado: un carácter de control pegado en
-      // una observación —un `\u0001` que vino de un copiar y pegar— deja la
-      // hoja mal formada y Excel la «repara» quitando lo que le parece. Fuera.
-      // El tabulador, el salto de línea y el retorno de carro sí valen.
-      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '')
+      // una observación —el salto de línea manual de Word es un `\u000B`—
+      // dejaba la hoja mal formada y Excel la «reparaba» descartando la hoja
+      // entera. Se escribe como lo escribe el propio Excel, `_xHHHH_`, que él
+      // deshace al leer y que conserva el dato. Un `_x000B_` que ya viniera
+      // escrito así se protege primero para que no se confunda con uno nuestro.
+      // El tabulador, el salto de línea y el retorno de carro sí valen tal cual.
+      .replace(/_(x[0-9A-Fa-f]{4})_/g, '_x005F_$1_')
+      .replace(
+        /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g,
+        (c) => `_x${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}_`,
+      )
       .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
+      .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
   )
