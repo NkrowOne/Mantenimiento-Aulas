@@ -49,6 +49,7 @@ import { formasDeEscribir, resolverSala } from './cruce'
 import type { Indice, SalaConocida } from './cruce'
 import { idDeDuda } from './dudas'
 import type { Duda, Respuestas, SalaCandidata } from './dudas'
+import { mismoTipo } from './equipos'
 import { cuantos } from '../lib/plural'
 import { diaEnMadrid } from './fechas'
 import { conFormulasAlDia } from './formulas'
@@ -391,11 +392,11 @@ interface Opciones<T> {
 function fusionarFilas<T>(
   plan: Plan,
   emparejadas: Array<Emparejada<T>>,
-  valoresDeLaApp: (dato: T) => Record<string, Valor>,
+  valoresDeLaApp: (dato: T, par: Emparejada<T>) => Record<string, Valor>,
   op: Opciones<T>,
 ): void {
   for (const par of emparejadas) {
-    const base = valoresDeLaApp(par.dato)
+    const base = valoresDeLaApp(par.dato, par)
 
     for (const c of op.hoja.columnas) {
       // Una hoja congelada no escribe en la base. Ni una celda.
@@ -1050,7 +1051,9 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
     )
   }
 
-  fusionarFilas(plan, emparejadas, (s) => filaDeSala(s, e.hoja), {
+  // Con las celdas de la fila delante: cuál de dos aparatos del mismo tipo
+  // enseña cada columna lo dice la hoja en las columnas de al lado.
+  fusionarFilas(plan, emparejadas, (s, par) => filaDeSala(s, e.hoja, par.celdas), {
     hoja: e.hoja,
     filas: e.filas,
     instantanea: e.instantanea ?? SIN_INSTANTANEA,
@@ -1150,7 +1153,7 @@ function cambioDeSala(sala: SalaVolcada, c: Columna): string | null {
   const equipo = equipoDe(c.campo)
   if (equipo) {
     const dias = sala.equipos
-      .filter((eq) => norm(eq.tipo) === norm(equipo.tipo) && eq.desde)
+      .filter((eq) => mismoTipo(eq.tipo, equipo.tipo) && eq.desde)
       .map((eq) => diaEnMadrid(new Date(eq.desde!)))
       .sort()
     return dias.at(-1) ?? null
@@ -1790,6 +1793,17 @@ function resumenDeFila(f: FilaLeida, hoja: Hoja, edificio: string, zona: string)
  *
  * Las que se retienen no dejan antepasado: con él, la pasada siguiente vería
  * «nada cambió» y no volvería a preguntar.
+ *
+ * «La sala no tiene ninguno de ese tipo» se decide con `mismoTipo`, que es lo
+ * que sabe que «Ordenador Tiny» es el ordenador de `S/N Ordenador` y que
+ * «Pantalla» es la tele de `S/N TV`. Con la igualdad de nombres a secas, el
+ * Tiny del aula no contaba como ordenador, la celda entraba aquí como si fuera
+ * un alta, y como su número ya estaba puesto en la misma aula acababa en el
+ * aviso de reclasificación: 52 avisos por pasada de aparatos que estaban en
+ * su sitio. «Monitor» y «TV» siguen siendo distintos a propósito —son dos
+ * aparatos—, así que un número de `S/N Monitor` puesto en una TV de la misma
+ * aula sí llega abajo, que es el caso que la reclasificación existe para
+ * resolver.
  */
 function retenerEquiposNuevos(
   plan: Plan,
@@ -1832,7 +1846,7 @@ function retenerEquiposNuevos(
     if (!eq || eq.campo !== 'serial') continue
     const par = porFila.get(h.fila)
     if (!par) continue
-    if (par.dato.equipos.some((x) => norm(x.tipo) === norm(eq.tipo))) continue
+    if (par.dato.equipos.some((x) => mismoTipo(x.tipo, eq.tipo))) continue
     const donde = dondeEsta.get(norm(String(h.valor ?? '')))
     if (donde) yaPuesto.set(idDeDuda(hoja.nombre, h.fila, eq.tipo), donde)
   }
@@ -1842,7 +1856,7 @@ function retenerEquiposNuevos(
     if (!eq) continue
     const par = porFila.get(h.fila)
     if (!par) continue
-    if (par.dato.equipos.some((x) => norm(x.tipo) === norm(eq.tipo))) continue
+    if (par.dato.equipos.some((x) => mismoTipo(x.tipo, eq.tipo))) continue
 
     const id = idDeDuda(hoja.nombre, h.fila, eq.tipo)
 
@@ -2057,6 +2071,14 @@ export function sincronizarBolsa(entrada: EntradaDeBolsa): Plan {
       altaDeArticulo(plan, f, nombre, e)
       continue
     }
+    // Retirado del almacén en la aplicación: su fila sale del libro. Antes
+    // caía en la rama de arriba —no estaba entre los vivos— y la pasada
+    // preguntaba si darlo de alta, pasada tras pasada, justo lo contrario de
+    // lo que el administrador acababa de decidir.
+    if (porId.get(id)!.activo === false) {
+      if (!e.hoja.congelada) sacarArticuloRetirado(plan, f, nombre, porId.get(id)!, e.hoja)
+      continue
+    }
     if (vistas.has(id)) {
       plan.sinCruzar.push({ fila: f.fila, motivo: `«${nombre}» ya salió en una fila anterior` })
       continue
@@ -2144,12 +2166,19 @@ export function sincronizarBolsa(entrada: EntradaDeBolsa): Plan {
   }
 
   const enLaHoja = new Set(emparejadas.map((p) => p.dato.id))
+  // Y solo los vivos: un artículo retirado no vuelve a entrar por la puerta de
+  // las filas nuevas después de haber salido por la de arriba.
   const nuevos = e.articulos
-    .filter((a) => !enLaHoja.has(a.id))
+    .filter((a) => a.activo !== false && !enLaHoja.has(a.id))
     .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
 
+  // Detrás de la última fila de datos QUE SE QUEDA: si el último artículo de
+  // la bolsa es uno retirado, su fila se borra en esta misma pasada, y pedir
+  // insertar detrás de una fila que se borra no significa nada (el editor lo
+  // rechaza, y con él la escritura del libro entero).
+  let destino = finDeDatos
+  while (destino > e.hoja.cabecera && plan.borrar.includes(destino)) destino--
   plan.insertar = nuevos.map((art) => {
-    const destino = finDeDatos
     const valores = filaDeArticulo(art, e.hoja)
     const celdas: Cambio[] = []
     for (const c of e.hoja.columnas) {
@@ -2181,6 +2210,43 @@ export function sincronizarBolsa(entrada: EntradaDeBolsa): Plan {
   }
 
   return plan
+}
+
+/**
+ * Un artículo que el administrador retiró del almacén: su fila sale de la bolsa.
+ *
+ * Se borra la fila entera, fórmulas incluidas, y se dice en el parte qué
+ * llevaba —lo comprado y los meses con dato—, porque un dato que desaparece
+ * del libro sin decirlo es un dato perdido aunque alguien lo decidiera. Para
+ * volver a llevarlo hay que restaurarlo en la aplicación: la fila vuelve sola
+ * en la pasada siguiente, con lo que la base sepa de él.
+ */
+function sacarArticuloRetirado(plan: Plan, f: FilaLeida, nombre: string, art: ArticuloVolcado, hoja: Hoja): void {
+  const cuando = art.retirado?.cuando ? ` el ${diaLegible(art.retirado.cuando)}` : ''
+  const motivo = art.retirado?.motivo ? ` (${art.retirado.motivo})` : ''
+  const llevaba = hoja.columnas
+    .filter((c) => c.dueno !== 'formula' && !/^articulo\.nombre/.test(c.campo))
+    .map((c) => ({ c, v: f.celdas[c.letra] }))
+    .filter(({ v }) => !esVacio((v ?? null) as Valor))
+    .map(({ c, v }) => `${c.cabecera.trim()} ${String(v)}`)
+    .join(', ')
+  plan.borrar.push(f.fila)
+  plan.filasQueSalen.push({
+    fila: f.fila,
+    destino: nombre,
+    motivo: `retirado del almacén en la aplicación${cuando}${motivo}`,
+  })
+  plan.avisos.push(
+    `Fila ${f.fila}: «${nombre}» se retiró del almacén en la aplicación${cuando}${motivo}; su fila sale del libro.${
+      llevaba ? ` Llevaba: ${llevaba}.` : ''
+    } Para volver a llevarlo, restáuralo en Datos → Almacén y la fila vuelve en la pasada siguiente.`,
+  )
+}
+
+/** `2026-09-23` → `23/09/2026`, que es como se lee una fecha en el parte. */
+function diaLegible(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso)
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso
 }
 
 /**

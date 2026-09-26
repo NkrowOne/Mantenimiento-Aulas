@@ -401,11 +401,14 @@ npm run informe:ia
   aplicación sabe. Las seis hojas —estado, partes y
   bolsa del año, la de `PCs STOCK` con los ordenadores de repuesto por número
   de serie, y las dos de 2025— con las revisiones, las horas, los partes y su
-  material, y el consumo del almacén repartido mes a mes, más cuatro nuevas para
-  lo que no cabe en una celda: `Revisiones`, `Movimientos de Almacén`,
-  `Inventario por Sala` y `Sincronización`. Las salas nuevas entran en el bloque
-  de su edificio, las archivadas salen, y en enero se crean solas las hojas del
-  año.
+  material, y el consumo del almacén repartido mes a mes, más las que escribe la
+  aplicación para lo que no cabe en una celda: `Revisiones`, `Movimientos de
+  Almacén` e `Inventario por Sala` como tablas de Excel, y al final, con la
+  pestaña en gris, `Sincronización` y `Léeme`. El formato lo pone la aplicación
+  al escribir —cabeceras con el color de quien escribe la columna, bandas,
+  fechas como fechas, todo en orden cronológico— y el libro de hoy se hace de un
+  botón desde la copia guardada. Las salas nuevas entran en el bloque de su
+  edificio, las archivadas salen, y en enero se crean solas las hojas del año.
 
   Lo que el libro tiene y la aplicación no, **entra**: un parte tecleado en la
   hoja sin número se da de alta y vuelve con el número que le pone la base; un

@@ -13,15 +13,17 @@ import {
   sha256De,
   ultimaSalida,
 } from './pasada'
-import type { UltimaSalida } from './pasada'
+import type { Aplicado, UltimaSalida } from './pasada'
 import type { Analisis } from './pasada'
+import { cambiosDesde, colaAntesDelLibro, dejarComoEsta, fraseDeCambios, nombreDelLibro } from './libroDeHoy'
+import type { CambiosDesde } from './libroDeHoy'
 import { Dudas } from './Dudas'
 import type { AltaDeSalaDesdeDuda } from './Dudas'
 import type { Respuesta, Respuestas } from '@/domain/dudas'
 import { columnaDeCampo, hojaPorNombre } from '@/domain/mapa'
 import type { MovimientoPrevisto } from '@/domain/movimientos'
 import type { Alta, Plan, Referencia } from '@/domain/sincronizar'
-import { fechaCorta, horaCorta } from '@/domain/fechas'
+import { diaEnMadrid, fechaCorta, horaCorta } from '@/domain/fechas'
 import { guardarLibroSincronizado, leerLibroSincronizado } from '@/db/dexie'
 import type { LibroGuardado } from '@/db/dexie'
 import { Seccion } from './Seccion'
@@ -85,6 +87,15 @@ import { Seccion } from './Seccion'
  * un ordenador de repuesto que la hoja de PCs lista y la aplicación no conoce:
  * salen como dudas, se contestan aquí y la pasada se recalcula con la respuesta.
  * Con dudas sin contestar no se sincroniza; ver el libro sí se puede.
+ *
+ * **«Hacer el libro de hoy» es un solo botón.** La copia guardada de la última
+ * sincronización se leía tal cual, y quien la bajaba el viernes se llevaba el
+ * martes. Ponerla al día eran cuatro pasos y el segundo preguntaba lo mismo que
+ * la vez anterior. Ahora la tarjeta dice cuánto ha cambiado la aplicación desde
+ * entonces y un botón lee la copia contra la base de ahora, deja como está lo
+ * que preguntaría —del lado del Excel no hay nada nuevo que decidir: es la
+ * copia que salió de aquí—, aplica y escribe. Bajarlo sigue siendo otro botón,
+ * porque en el iPad la hoja de compartir solo se abre desde la pulsación.
  */
 /** La última salida que el servidor conoce. Se refresca al sincronizar. */
 const CLAVE_ULTIMA_SALIDA = ['excel', 'ultima-salida'] as const
@@ -135,6 +146,11 @@ export function SincronizarExcel(): React.ReactElement {
     mutationFn: async ({ fichero, respuestas = {} }: { fichero: File; respuestas?: Respuestas }) => {
       ultimoFichero.current = fichero
       const mia = ++lectura.current
+      // Lo de este aparato, arriba antes de leer la base: el libro se hace con
+      // lo que el servidor sabe, y una revisión que siga en la cola no saldría.
+      const cola = await colaAntesDelLibro()
+      if (mia !== lectura.current) throw new LecturaCancelada()
+      if (cola.sinSubir > 0) throw new Error(mensajeDeCola(cola.sinSubir))
       const a = await analizar(fichero, new Date(), respuestas, referencia, corte)
       if (mia !== lectura.current) throw new LecturaCancelada()
       return a
@@ -159,74 +175,143 @@ export function SincronizarExcel(): React.ReactElement {
     if (entrada.current) entrada.current.value = ''
   }
 
+  /**
+   * Aplicar un análisis a la base y escribir el libro.
+   *
+   * Es lo que hace «Sincronizar» y lo que hace «Hacer el libro de hoy» cuando
+   * no queda nada que decidir: un solo camino para los dos, porque la mitad de
+   * este fichero existe para que la base se escriba ANTES que el libro, y dos
+   * copias de ese orden son dos sitios donde un día se invierte.
+   */
+  const sincronizarAnalisis = async (a: Analisis): Promise<Aplicado> => {
+    const r = await aplicar(a)
+    // Con los números que la base puso a los partes nuevos: van a su fila.
+    const bytes = await escribir(a, ahora(), r.parteId, r.altas)
+    // Con el día en el nombre: dos libros sincronizados la misma semana no se
+    // distinguen por el nombre, y el que se sube a SharePoint es uno de ellos.
+    const nombre = nombreDelLibro(a.nombre, `sincronizado ${diaEnMadrid()}`)
+    setLibro({ nombre, bytes, sincronizado: true, hecho: new Date().toISOString() })
+    setEntregado(null)
+
+    /*
+     * Y guardado en el aparato, que es lo que permite bajarlo más tarde.
+     *
+     * Sincronizar y subir a SharePoint no ocurren en el mismo minuto: se
+     * sincroniza donde hay base y se sube donde hay VPN. Hasta aquí el libro
+     * vivía solo en la pantalla, así que cambiar de sección, recargar o
+     * bloquear el móvil lo perdía — y recuperarlo obligaba a volver a subir
+     * el fichero de entrada y sincronizar otra vez sobre una base que ya
+     * tenía los cambios dentro.
+     *
+     * Si esto falla, la pasada ya está hecha y el libro está en pantalla: se
+     * pierde poder bajarlo luego, no el trabajo.
+     */
+    try {
+      const t = sumar(a.planes)
+      await guardarLibroSincronizado({
+        nombre,
+        bytes,
+        cuando: new Date().toISOString(),
+        sha256: await sha256De(bytes),
+        resumen: `${t.alExcel.celdas} celdas al libro · ${t.aLaApp.celdas} a la aplicación · ${t.alExcel.filasNuevas} filas nuevas`,
+      })
+      setSinGuardar(null)
+    } catch (err) {
+      // Y se dice en pantalla, no solo en la consola. Si esto falla —un
+      // iPhone con el almacenamiento apretado— el libro solo existe mientras
+      // esta pantalla siga abierta, y quien se vaya a comer sin bajarlo lo
+      // pierde: la pasada ya está aplicada y no se puede regenerar.
+      setSinGuardar(
+        'No se ha podido guardar el libro en este aparato para luego. Bájalo ahora: si sales de aquí, habrá que volver a sincronizar.',
+      )
+      console.warn('No se ha podido guardar el libro para bajarlo luego:', err)
+    }
+    // La última salida del servidor acaba de cambiar: es esta. Sin esto, la
+    // caché de un minuto conserva el sha anterior y la tarjeta avisa de que
+    // «hay otro más nuevo» señalando a una fecha ANTERIOR a la del libro que
+    // ofrece — un aviso que se contradice solo y que empuja a no subir el bueno.
+    void qc.invalidateQueries({ queryKey: CLAVE_ULTIMA_SALIDA })
+    return r
+  }
+
   const sincronizar = useMutation({
     mutationFn: async () => {
       if (!analisis) return
-      const r = await aplicar(analisis)
-      // Con los números que la base puso a los partes nuevos: van a su fila.
-      const bytes = await escribir(analisis, ahora(), r.parteId, r.altas)
-      const nombre = conSufijo(analisis.nombre, 'sincronizado')
-      setLibro({ nombre, bytes, sincronizado: true })
-      setEntregado(null)
-
-      /*
-       * Y guardado en el aparato, que es lo que permite bajarlo más tarde.
-       *
-       * Sincronizar y subir a SharePoint no ocurren en el mismo minuto: se
-       * sincroniza donde hay base y se sube donde hay VPN. Hasta aquí el libro
-       * vivía solo en la pantalla, así que cambiar de sección, recargar o
-       * bloquear el móvil lo perdía — y recuperarlo obligaba a volver a subir
-       * el fichero de entrada y sincronizar otra vez sobre una base que ya
-       * tenía los cambios dentro.
-       *
-       * Si esto falla, la pasada ya está hecha y el libro está en pantalla: se
-       * pierde poder bajarlo luego, no el trabajo.
-       */
-      try {
-        const t = sumar(analisis.planes)
-        await guardarLibroSincronizado({
-          nombre,
-          bytes,
-          cuando: new Date().toISOString(),
-          sha256: await sha256De(bytes),
-          resumen: `${t.alExcel.celdas} celdas al libro · ${t.aLaApp.celdas} a la aplicación · ${t.alExcel.filasNuevas} filas nuevas`,
-        })
-        setSinGuardar(null)
-      } catch (err) {
-        // Y se dice en pantalla, no solo en la consola. Si esto falla —un
-        // iPhone con el almacenamiento apretado— el libro solo existe mientras
-        // esta pantalla siga abierta, y quien se vaya a comer sin bajarlo lo
-        // pierde: la pasada ya está aplicada y no se puede regenerar.
-        setSinGuardar(
-          'No se ha podido guardar el libro en este aparato para luego. Bájalo ahora: si sales de aquí, habrá que volver a sincronizar.',
-        )
-        console.warn('No se ha podido guardar el libro para bajarlo luego:', err)
-      }
-      return r
+      return sincronizarAnalisis(analisis)
     },
     onSuccess: (r) => {
       if (!r) return
-      const partes = r.altas.filter((x) => x.tipo === 'incidencia').length
-      // Las aulas aparte: crear una sala es lo único de aquí que no se deshace,
-      // y decirlo como «filas nuevas» lo esconde entre los partes y los
-      // artículos, que sí se corrigen en la pasada siguiente.
-      const aulas = r.altas.filter((x) => x.tipo === 'sala').length
-      const nuevas = r.altas.length - aulas
-      // La última salida del servidor acaba de cambiar: es esta. Sin esto, la
-      // caché de un minuto conserva el sha anterior y la tarjeta avisa de que
-      // «hay otro más nuevo» señalando a una fecha ANTERIOR a la del libro que
-      // ofrece — un aviso que se contradice solo y que empuja a no subir el bueno.
-      void qc.invalidateQueries({ queryKey: CLAVE_ULTIMA_SALIDA })
+      setAplicado(loQueEntro(r))
+      setFallo(null)
+    },
+    onError: (e: Error) => setFallo(e.message),
+  })
+
+  /**
+   * El libro de hoy, de un botón: la copia guardada, leída contra la base de
+   * ahora, aplicada y escrita. Ver la cabecera del fichero.
+   *
+   * **Siempre manda la aplicación**, se haya elegido lo que se haya elegido
+   * arriba. La copia guardada es la que salió de aquí: del lado del Excel no
+   * trae nada que alguien haya corregido después, así que darle la razón sería
+   * darle la razón a la aplicación de hace tres días contra la de hoy. Quien
+   * quiera que mande el Excel tiene que subir el libro de SharePoint de nuevo,
+   * por el selector de abajo, y la tarjeta lo dice.
+   *
+   * Lo que la pasada pregunte se deja como está —`dejarComoEsta`— y se dice
+   * cuántas cosas fueron. Se para en tres casos, y en los tres el análisis se
+   * queda en pantalla, como cuando se sube un libro a mano: una hoja sin la
+   * forma esperada; el servidor conoce una salida POSTERIOR a esta copia
+   * —alguien sincronizó después desde otro aparato, y aplicar la copia vieja
+   * metería en la base como «corrección del Excel» lo que aquel libro ya
+   * escribió, sin un solo error—; y el servidor no sabe decir cuál fue la
+   * última salida, que para esto es lo mismo.
+   */
+  const hacerHoy = useMutation({
+    mutationFn: async (g: LibroGuardado) => {
+      const fichero = ficheroDe(g)
+      ultimoFichero.current = fichero
+      const mia = ++lectura.current
+      // Y que arriba se vea lo que la pasada lleva: manda la aplicación, sin corte.
+      setReferencia('app')
+      setCorte(null)
+      // Lo de este aparato, arriba antes de leer la base: ver `colaAntesDelLibro`.
+      const cola = await colaAntesDelLibro()
+      if (mia !== lectura.current) throw new LecturaCancelada()
+      if (cola.sinSubir > 0) return { hecho: false as const, dejadas: 0, porQue: 'cola' as const, sinSubir: cola.sinSubir }
+      let a = await analizar(fichero, new Date(), {}, 'app', null)
+      if (mia !== lectura.current) throw new LecturaCancelada()
+      const dejadas = dudasPendientes(a).length
+      if (dejadas > 0) a = replanificar(a, dejarComoEsta(a.dudas, a.respuestas))
+      setAnalisis(a)
+      setFallo(null)
+      setAplicado(null)
+      setLibro(null)
+      setEntregado(null)
+      if (a.bloqueada) return { hecho: false as const, dejadas, porQue: 'forma' as const }
+      if (a.libroDesconocido) return { hecho: false as const, dejadas, porQue: 'posterior' as const }
+      if (a.ultimaSalidaEstado === 'no se sabe') return { hecho: false as const, dejadas, porQue: 'no se sabe' as const }
+      const r = await sincronizarAnalisis(a)
+      return { hecho: true as const, dejadas, r }
+    },
+    onSuccess: (x) => {
+      if (!x.hecho) {
+        setFallo(
+          x.porQue === 'cola'
+            ? mensajeDeCola(x.sinSubir)
+            : x.porQue === 'forma'
+            ? 'No se ha hecho el libro de hoy: una hoja del libro guardado no tiene la forma que la aplicación espera. Está explicado abajo.'
+            : x.porQue === 'posterior'
+              ? 'No se ha hecho el libro de hoy: después de esta copia ha habido otra sincronización, probablemente desde otro aparato. Aplicarla devolvería la base a la foto de antes. Pide el libro a quien la hizo, o sube el de SharePoint por el selector de abajo. Lo que haría está abajo, sin aplicar.'
+              : 'No se ha hecho el libro de hoy: el servidor no ha podido decir cuál fue la última sincronización, y sin saberlo no se aplica una copia guardada. Vuelve a intentarlo con cobertura, o sube el libro de SharePoint por el selector de abajo.',
+        )
+        return
+      }
       setAplicado(
         [
-          r.rechazadas === 0
-            ? `${r.aplicadas} celdas del Excel han entrado en la base.`
-            : `${r.aplicadas} celdas han entrado y ${r.rechazadas} han ido a la bandeja de choques.`,
-          nuevas > 0
-            ? `${nuevas} filas nuevas del libro han entrado en la aplicación${partes > 0 ? `; los ${partes === 1 ? 'parte lleva' : `${partes} partes llevan`} ya su número en el libro` : ''}.`
-            : '',
-          aulas > 0
-            ? `Y se ${aulas === 1 ? 'ha creado 1 aula nueva' : `han creado ${aulas} aulas nuevas`}: sus filas cruzarán solas en la pasada siguiente.`
+          loQueEntro(x.r),
+          x.dejadas > 0
+            ? `${x.dejadas} ${x.dejadas === 1 ? 'pregunta se ha dejado' : 'preguntas se han dejado'} como estaba${x.dejadas === 1 ? '' : 'n'} —equipos que la sala no tiene, partes sin aula—: para decidirlas, sube el libro por el camino de siempre.`
             : '',
         ]
           .filter(Boolean)
@@ -234,7 +319,10 @@ export function SincronizarExcel(): React.ReactElement {
       )
       setFallo(null)
     },
-    onError: (e: Error) => setFallo(e.message),
+    onError: (e: Error) => {
+      if (e instanceof LecturaCancelada) return
+      setFallo(e.message)
+    },
   })
 
   /** Todo lo que vuelve a planificar deja obsoleto el libro que hubiera. */
@@ -326,7 +414,12 @@ export function SincronizarExcel(): React.ReactElement {
     mutationFn: async () => {
       if (!analisis) return
       const bytes = await escribir(analisis, ahora())
-      setLibro({ nombre: conSufijo(analisis.nombre, 'vista previa'), bytes, sincronizado: false })
+      setLibro({
+        nombre: nombreDelLibro(analisis.nombre, 'vista previa'),
+        bytes,
+        sincronizado: false,
+        hecho: new Date().toISOString(),
+      })
       setEntregado(null)
       setFallo(null)
     },
@@ -346,32 +439,22 @@ export function SincronizarExcel(): React.ReactElement {
       .finally(() => setEntregando(false))
   }
 
-  /**
-   * Volver a leer el libro guardado contra la aplicación **de ahora**.
-   *
-   * Es lo mismo que elegirlo con el selector de ficheros, sin tener que ir a
-   * buscarlo: la copia ya está en el aparato. Sirve para lo que no tenía
-   * respuesta hasta ahora —«quiero el Excel al día con lo que la aplicación
-   * lleva desde entonces» y «he arreglado un alias del catálogo, ¿entra ya esa
-   * fila?»— sin bajar el fichero, volver a subirlo y perder el sitio.
-   *
-   * No toca la base: deja el análisis en pantalla, que es donde se ve lo que
-   * pasaría. De ahí salen «Ver cómo quedaría el libro» —que tampoco toca nada—
-   * y «Sincronizar».
-   */
-  const ponerAlDia = (g: LibroGuardado): void => {
-    setFallo(null)
-    const fichero = new File([blobDe(new Uint8Array(g.bytes))], g.nombre, {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    })
-    leer.mutate({ fichero })
-  }
-
   /*
    * El libro de la última sincronización, esté o no esta pantalla recién
    * abierta. Es lo que contesta «sincronicé esta mañana y ahora quiero subirlo».
    */
   const guardado = useLiveQuery(() => leerLibroSincronizado(), [], undefined)
+
+  /*
+   * Y cuánto ha cambiado la aplicación desde que se hizo, contado en el espejo
+   * de este aparato: es lo que dice si la copia sigue valiendo o se ha quedado
+   * vieja, antes de que nadie la baje.
+   */
+  const cambios = useLiveQuery(
+    () => (guardado ? cambiosDesde(guardado.cuando) : undefined),
+    [guardado?.cuando],
+    undefined,
+  )
 
   /*
    * Y cuál fue la última salida SEGÚN EL SERVIDOR. Si no es la que este
@@ -394,7 +477,8 @@ export function SincronizarExcel(): React.ReactElement {
     if (entrada.current) entrada.current.value = ''
   }
 
-  const ocupado = leer.isPending || sincronizar.isPending || previsualizar.isPending
+  const ocupado =
+    leer.isPending || sincronizar.isPending || previsualizar.isPending || hacerHoy.isPending
 
   const total = analisis ? sumar(analisis.planes) : null
   const pendientes = analisis ? dudasPendientes(analisis).length : 0
@@ -426,6 +510,7 @@ export function SincronizarExcel(): React.ReactElement {
       {guardado && !libro?.sincronizado && (
         <ElUltimoLibro
           guardado={guardado}
+          cambios={cambios}
           ultimaDelServidor={
             salida.isError
               ? { estado: 'no se sabe', porQue: 'no contesta' }
@@ -434,8 +519,10 @@ export function SincronizarExcel(): React.ReactElement {
           entregado={entregado}
           entregando={entregando}
           onEntregar={() => entregar(guardado.nombre, new Uint8Array(guardado.bytes))}
-          onPonerAlDia={() => ponerAlDia(guardado)}
-          poniendoAlDia={leer.isPending}
+          onHacerHoy={() => hacerHoy.mutate(guardado)}
+          haciendoHoy={hacerHoy.isPending}
+          disabled={ocupado}
+          mandaElExcel={referencia === 'excel'}
         />
       )}
 
@@ -909,8 +996,10 @@ function Resumen({ analisis, total }: { analisis: Analisis; total: Totales }): R
       )}
       <p className="mt-3 text-sm text-muted">
         Se rehacen además las hojas <strong>Revisiones</strong>,{' '}
-        <strong>Movimientos de Almacén</strong>, <strong>Inventario por Sala</strong> y{' '}
-        <strong>Sincronización</strong>, enteras, con lo que la aplicación sabe hoy.
+        <strong>Movimientos de Almacén</strong>, <strong>Inventario por Sala</strong>,{' '}
+        <strong>Sincronización</strong> y <strong>Léeme</strong>, enteras, con lo que la aplicación
+        sabe hoy; las tres primeras salen como tablas de Excel, y las dos últimas van al final con
+        la pestaña en gris.
         {analisis.hojasNuevas.some((h) => h.nombre.startsWith('PCs STOCK')) &&
           ' El libro no traía la hoja de PCs de repuesto: se estrena con lo que la aplicación sabe.'}
       </p>
@@ -1284,6 +1373,8 @@ interface LibroGenerado {
   bytes: Uint8Array
   /** Si entró en la base antes de escribirse. Si no, es una vista previa. */
   sincronizado: boolean
+  /** Cuándo se escribió, en ISO: la tarjeta lo dice con la hora. */
+  hecho: string
 }
 
 /**
@@ -1307,9 +1398,12 @@ interface LibroGenerado {
  * las dos. Es una copia, no un recado: se queda hasta que la sustituye la
  * sincronización siguiente, que es cuando deja de ser la buena.
  *
- * En su sitio hay «Ponerlo al día», que es lo que de verdad hacía falta cuando
- * uno vuelve a esta pantalla: volver a leer **este mismo libro** contra la
- * aplicación de ahora, sin ir a buscar el fichero ni subirlo otra vez.
+ * En su sitio hay «Hacer el libro de hoy», que es lo que de verdad hacía falta
+ * cuando uno vuelve a esta pantalla: volver a leer **este mismo libro** contra
+ * la aplicación de ahora, aplicar y escribirlo, sin ir a buscar el fichero ni
+ * subirlo otra vez ni contestar lo que ya se contestó. La tarjeta dice antes
+ * cuánto ha cambiado la aplicación desde la copia, para que nadie baje a
+ * ciegas un libro de hace tres días.
  */
 /**
  * ¿El libro guardado aquí sigue siendo el que hay que subir?
@@ -1340,22 +1434,38 @@ function comoEstaElLibro(
 
 function ElUltimoLibro({
   guardado,
+  cambios,
   ultimaDelServidor,
   entregado,
   entregando,
   onEntregar,
-  onPonerAlDia,
-  poniendoAlDia,
+  onHacerHoy,
+  haciendoHoy,
+  disabled,
+  mandaElExcel,
 }: {
   guardado: LibroGuardado
+  /** Cuánto ha cambiado la aplicación desde la copia. `undefined` mientras se cuenta. */
+  cambios: CambiosDesde | undefined
   ultimaDelServidor: UltimaSalida | null
   entregado: 'compartido' | 'descargado' | null
   entregando: boolean
   onEntregar: () => void
-  onPonerAlDia: () => void
-  poniendoAlDia: boolean
+  onHacerHoy: () => void
+  haciendoHoy: boolean
+  disabled: boolean
+  /**
+   * Arriba se ha elegido «Manda el Excel». Con eso, la copia guardada no sirve
+   * para hacer el libro de hoy: es la que salió de la aplicación y no trae
+   * nada del Excel que pueda mandar. Hay que subir el libro de SharePoint.
+   */
+  mandaElExcel: boolean
 }): React.ReactElement {
   const estado = comoEstaElLibro(guardado, ultimaDelServidor)
+  const frase = cambios ? fraseDeCambios(cambios) : null
+  // Mientras no se sepa, la copia se ofrece como si valiera: contar tarda
+  // milisegundos y no merece un botón que cambie de nombre al cargar.
+  const viejo = frase?.viejo ?? false
 
   return (
     <div className="card mt-4 p-4">
@@ -1374,6 +1484,23 @@ function ElUltimoLibro({
       </p>
       <p className="mt-1 text-xs text-muted">{guardado.resumen}</p>
 
+      {frase && (
+        <p className={`mt-2 rounded-ctl p-2 text-sm ${frase.viejo ? 'bg-warn-tint text-warn' : 'text-ok'}`}>
+          {frase.texto}
+          {frase.viejo &&
+            !mandaElExcel &&
+            ' «Hacer el libro de hoy» lo lee contra la aplicación de ahora, lo aplica y lo escribe: luego se baja.'}
+        </p>
+      )}
+
+      {mandaElExcel && (
+        <p className="mt-2 rounded-ctl bg-warn-tint p-2 text-sm text-warn">
+          Has elegido «Manda el Excel». Esta copia salió de la aplicación y no trae nada del Excel que
+          pueda mandar: sube el libro de SharePoint de nuevo, abajo en «2 · El libro». El libro de hoy
+          desde esta copia se hace siempre con «Manda la aplicación».
+        </p>
+      )}
+
       {estado.que === 'hay otro mas nuevo' && (
         <p className="mt-2 rounded-ctl bg-warn-tint p-2 text-sm text-warn">
           Después de éste ha habido otra sincronización
@@ -1390,25 +1517,49 @@ function ElUltimoLibro({
         </p>
       )}
 
+      {/* El botón grande es el que toca: si la copia se ha quedado vieja, hacer
+          el libro de hoy; si no, bajarla. El otro sigue estando, en pequeño. */}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
-          className="key key-accent h-11 px-4"
-          disabled={entregando}
+          className={`key ${viejo ? 'key-quiet min-h-11 px-3 text-sm' : 'key-accent h-11 px-4'}`}
+          disabled={entregando || haciendoHoy}
           onClick={onEntregar}
         >
-          {entregando ? 'Entregando…' : 'Descargar el libro'}
+          {entregando
+            ? 'Entregando…'
+            : viejo
+              ? `Descargar la copia del ${fechaCorta(guardado.cuando)}`
+              : 'Descargar el libro'}
         </button>
-        <button
-          type="button"
-          className="key key-quiet min-h-11 px-3 text-sm"
-          disabled={poniendoAlDia}
-          onClick={onPonerAlDia}
-          title="Vuelve a leer este mismo libro contra la aplicación de ahora"
-        >
-          {poniendoAlDia ? 'Leyéndolo…' : 'Ponerlo al día'}
-        </button>
+        {!mandaElExcel && (
+          <button
+            type="button"
+            className={`key ${viejo ? 'key-accent h-11 px-4' : 'key-quiet min-h-11 px-3 text-sm'}`}
+            disabled={disabled}
+            onClick={onHacerHoy}
+            title="Lee esta misma copia contra la aplicación de ahora —manda la aplicación—, aplica y escribe el libro"
+          >
+            {haciendoHoy
+              ? 'Haciendo el libro de hoy…'
+              : viejo
+                ? 'Hacer el libro de hoy'
+                : 'Hacerlo de nuevo con lo de hoy'}
+          </button>
+        )}
       </div>
+      {!mandaElExcel && !haciendoHoy && (
+        <p className="mt-1 text-xs text-muted">
+          El libro de hoy se hace con «Manda la aplicación», se haya elegido lo que se haya elegido
+          arriba: esta copia salió de la aplicación y no tiene nada del Excel que pueda mandar.
+        </p>
+      )}
+      {haciendoHoy && (
+        <p role="status" className="mt-2 text-xs text-muted">
+          Se lee la copia contra la aplicación de ahora, se aplica y se escribe el libro. Con poca
+          cobertura puede tardar un minuto. Cuando esté, aparece abajo con su botón de descarga.
+        </p>
+      )}
       <p className="mt-2 text-xs text-muted">{guardado.nombre}</p>
       {entregado && (
         <p className="mt-2 text-sm text-ok">
@@ -1444,7 +1595,7 @@ function Entrega({
       </h2>
       <p className="mt-1 text-sm text-muted">
         {libro.sincronizado
-          ? 'Lleva todo lo que la aplicación sabe. Súbelo a SharePoint sustituyendo el original.'
+          ? `Hecho hoy a las ${horaCorta(libro.hecho)} con todo lo que la aplicación sabe. Súbelo a SharePoint sustituyendo el original.`
           : 'Es cómo quedaría el libro. No ha tocado la base, y no es el que hay que subir a SharePoint: para eso, sincroniza.'}
       </p>
       <button
@@ -1583,13 +1734,41 @@ function ahora(): string {
 }
 
 /**
- * El nombre lleva sufijo a propósito: el fichero que se sube a SharePoint lo
- * elige una persona, y sobreescribir el original sin querer desde la carpeta de
- * descargas es la clase de accidente que no se deshace. Y una vista previa que
- * se llame igual que el libro bueno acaba subida en su lugar.
+ * Lo que la pasada metió en la base, dicho en una frase.
+ *
+ * Las aulas aparte: crear una sala es lo único de aquí que no se deshace, y
+ * decirlo como «filas nuevas» lo esconde entre los partes y los artículos, que
+ * sí se corrigen en la pasada siguiente.
  */
-function conSufijo(nombre: string, sufijo: string): string {
-  return `${nombre.replace(/\.xlsx$/i, '')} (${sufijo}).xlsx`
+function loQueEntro(r: Aplicado): string {
+  const partes = r.altas.filter((x) => x.tipo === 'incidencia').length
+  const aulas = r.altas.filter((x) => x.tipo === 'sala').length
+  const nuevas = r.altas.length - aulas
+  return [
+    r.rechazadas === 0
+      ? `${r.aplicadas} celdas del Excel han entrado en la base.`
+      : `${r.aplicadas} celdas han entrado y ${r.rechazadas} han ido a la bandeja de choques.`,
+    nuevas > 0
+      ? `${nuevas} filas nuevas del libro han entrado en la aplicación${partes > 0 ? `; los ${partes === 1 ? 'parte lleva' : `${partes} partes llevan`} ya su número en el libro` : ''}.`
+      : '',
+    aulas > 0
+      ? `Y se ${aulas === 1 ? 'ha creado 1 aula nueva' : `han creado ${aulas} aulas nuevas`}: sus filas cruzarán solas en la pasada siguiente.`
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
+/** Por qué no se lee la base con cosas de este aparato todavía en la cola. */
+function mensajeDeCola(n: number): string {
+  return `Este aparato tiene ${n} ${n === 1 ? 'cambio' : 'cambios'} sin subir al servidor y no se han podido subir ahora. El libro se hace con lo que el servidor sabe, así que saldría sin ${n === 1 ? 'él' : 'ellos'}: espera a tener cobertura, comprueba la barra de sincronización de arriba y vuelve a intentarlo.`
+}
+
+/** La copia guardada, como el fichero que se habría elegido con el selector. */
+function ficheroDe(g: LibroGuardado): File {
+  return new File([blobDe(new Uint8Array(g.bytes))], g.nombre, {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
 }
 
 function blobDe(bytes: Uint8Array): Blob {

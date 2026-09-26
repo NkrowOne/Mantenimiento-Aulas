@@ -549,6 +549,30 @@ Las demás reglas:
    el parte de la pasada. SharePoint versiona solo; saber a qué versión volver es
    lo que convierte un susto en un «restaurar».
 
+Y cuatro matices que llegaron después, cuando el formato pasó a ponerlo la
+aplicación y no una persona con openpyxl:
+
+- **`styles.xml` se toca, pero solo por el final.** La regla de no renumerar
+  sigue: los índices que ya usan las celdas no se mueven jamás. Lo que se hace
+  es **añadir** al final —fills, fonts, borders, numFmts, cellXfs, dxfs— los
+  estilos que la aplicación necesita (cabeceras por dueño, fechas, porcentajes,
+  tintes), y solo si no hay ya uno que pinte lo mismo. Escribir el libro dos
+  veces deja `styles.xml` byte a byte igual.
+- **Las hojas de la aplicación se regeneran enteras**, cabecera incluida, en su
+  mismo fichero y con sus mismas relaciones (comentarios, dibujos). Son suyas y
+  nadie las edita a mano; regenerarlas es lo que permite cambiarles una columna
+  sin dejar la cabecera vieja encima. Las de la gente siguen parcheándose celda
+  a celda. Y son **tablas de Excel** (`ListObject`, con su parte, su relación y
+  su `Override`), que es lo que el apartado 2 pedía y hasta ahora no era.
+- **Las pestañas van en orden** —las de la gente, las de la aplicación, y al
+  final en gris las de consulta— reordenando `<sheet>` en `workbook.xml` y
+  remapeando el `localSheetId` de cada nombre definido, que es un índice de
+  posición y no un identificador.
+- **Las cabeceras de las hojas de la gente se pintan según el dueño de cada
+  columna** del mapa: azul oscuro lo que se edita en la hoja, azul claro en
+  cursiva lo que escribe la aplicación. Solo cambia el atributo de estilo de
+  esas celdas; el texto, que es el contrato, no se toca.
+
 Y una hoja nueva, `Sincronización`, que escribe el worker: fecha de cada pasada,
 qué filas entraron, cuáles se rechazaron y **por qué**. Es donde mira la persona
 que acaba de editar el Excel y quiere saber si su cambio entró. Sin eso, un
@@ -1057,6 +1081,64 @@ parecen si se cuentan como «no» los 92 huecos.
 ya salen en `Inventario por Sala`, uno por fila y con su `Ref`. Darles columna
 sería volver a tener el mismo dato en dos sitios, que es justo lo que este
 apartado deshace.
+
+## 11 octies. Un tipo con dos nombres no es un choque
+
+La pasada del 22/09 dejó dos avisos seguidos, y la siguiente los repitió con
+los mismos números:
+
+> «Ordenador» del libro está en la aplicación puesto en equipos de tipo
+> «Ordenador Tiny»: 52 números de serie, en su misma aula.
+> «Monitor» del libro está en la aplicación puesto en equipos de tipo «TV»:
+> 67 números de serie, en su misma aula.
+
+Parecen el mismo caso y no lo son. El Tiny **es** el ordenador de `S/N
+Ordenador`: dos nombres, un aparato, y nada que reclasificar. La fusión
+comparaba los nombres con `===`, así que decía que el aula no tenía ordenador,
+proponía el alta, el servidor la rechazaba porque el número ya estaba puesto, y
+como una celda rechazada no deja antepasado, la pasada siguiente volvía a
+proponerla. El monitor del PC puesto en una TV sí es un aparato en el tipo
+equivocado, y ahí la reclasificación del apartado 11 quinquies es lo que toca.
+
+**La regla**, en un solo sitio (`src/domain/equipos.ts`, `mismoTipo` y
+`tipoCanonico`): dos nombres hablan del mismo aparato si son el mismo nombre,
+si uno es alias del otro en el catálogo, si uno está fundido en el otro
+(`merged_into`), o si los dos responden a la misma columna del libro por los
+sinónimos declarados ahí («Ordenador Tiny», «Tiny», «PC» → Ordenador;
+«Pantalla», «Televisor» → TV; «Monitor PC» → Monitor…). **Monitor nunca es
+TV**, ni al revés: uno es la pantalla del PC y el otro la tele del aula, y que
+compartan la palabra «pantalla» en el habla es justo la trampa. «Monitor
+Atril», «Ordenador Lenovo Ideacentre» y «Pantalla de proyección» tampoco son
+sinónimos de nada. El volcado y la fusión comparan tipos con esa regla, así
+que un aparato con dos nombres ya coincide antes de salir del navegador: ni
+alta, ni aviso, ni viaje a la base.
+
+**El servidor acepta la reclasificación por alias.** Para las celdas que sí
+viajan —un número de `S/N Monitor` sobre una TV de la misma aula—,
+`sync_aplicar_equipo` (`20260925000100`) adopta y reclasifica también cuando el
+tipo del equipo y el pedido son equivalentes por `merged_into` (en cualquier
+sentido, hasta ocho saltos), por alias cruzado (`norm_text` del nombre de uno
+entre los alias del otro) o por `separado_de`, que era lo único que miraba.
+El `asset_event` se apunta igual y el rechazo del caso que no es equivalente
+sigue diciendo lo mismo. La misma migración pone a los tipos vivos los alias
+con los que el libro los llama —sin «Monitor» en TV—, para que una base donde
+la fusión no se hizo cruce igual. Una vez aceptada, la celda deja antepasado y
+no vuelve: ese es el «una vez aceptados los cambios no debe conflictar».
+
+La cuenta de «son el mismo aparato» vive en `tipos_equivalentes()` y se usa
+también al buscar el equipo vivo de la sala para escribirle el **modelo**: en
+una base sin fusionar, la celda «Modelo» no encontraba ningún «Ordenador» —el
+Tiny seguía siendo «Ordenador Tiny»— y daba de alta un equipo fantasma con
+modelo y sin número al lado del de verdad. Y el cliente manda el número de
+serie de cada aparato antes que su modelo, por lo mismo.
+
+**Y la tele no es el monitor aunque los dos sean «TV».** En 62 aulas la
+importación dejó el monitor del PC como un segundo equipo de tipo «TV», del
+mismo día que la tele. «El más reciente» podía ser cualquiera de los dos, y
+cuando era el monitor la aplicación escribía su número encima del de la tele
+en `S/N TV`. La fila ya dice en `S/N Monitor` cuál es el monitor: al decidir
+qué equipo enseña cada columna se descartan los números que la misma fila
+reclama en otra (`serialesReclamadosPorOtraColumna`).
 
 ## 12. Lo que puede salir mal
 

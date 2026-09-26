@@ -1102,14 +1102,72 @@ tiene, se crea). Si fue la aplicación la que movió la sala, la fila se muda en
 el libro, como siempre. Una planta nueva en un edificio que existe también se
 crea desde la celda; un edificio nuevo, no: hay que crearlo en el maestro.
 
-**1d · El libro para SharePoint está siempre a mano.** Sincronizar y subir a
-SharePoint no pasan a la vez: se sincroniza donde hay base y se sube donde hay
-VPN, a veces horas después. El libro de la última sincronización se guarda en
-el aparato y la sección lo ofrece al entrar, con su fecha y su hora y con un
-resumen de lo que llevaba. Si el servidor conoce una salida posterior —alguien
-sincronizó después desde otro sitio— lo avisa antes de que lo subas; y si no
-puede comprobarlo, lo dice en vez de callar. «Ya lo he subido» lo quita de en
-medio.
+**1d · El libro para SharePoint está siempre a mano, y se hace el de hoy de un
+botón.** Sincronizar y subir a SharePoint no pasan a la vez: se sincroniza
+donde hay base y se sube donde hay VPN, a veces horas después. El libro de la
+última sincronización se guarda en el aparato y la sección lo ofrece al entrar,
+con su fecha y su hora y con un resumen de lo que llevaba. Debajo dice **cuánto
+ha cambiado la aplicación desde entonces** —tantas revisiones y tantos partes
+más— para que nadie baje a ciegas un libro de hace tres días. Si ha cambiado,
+el botón grande es **«Hacer el libro de hoy»**: lee esa misma copia contra la
+aplicación de ahora, aplica y escribe el libro, y lo deja abajo con su botón de
+descarga. Lo que la pasada preguntaría —un equipo que la sala no tiene, un parte
+sin aula— se deja como está y se dice cuántas cosas fueron: son las mismas
+preguntas que ya se contestaron la vez anterior, y para decidirlas de otra forma
+se sube el libro por el camino de siempre. La copia vieja sigue pudiéndose bajar,
+en pequeño y con su fecha en el botón. Antes de leer la base sube lo que este
+aparato tenga en la cola —una revisión hecha sin cobertura— y, si algo no ha
+podido subir, no hace el libro y lo dice: el libro se hace con lo que el
+servidor sabe. Tampoco lo hace si después de esa copia ha habido otra
+sincronización desde otro aparato, o si el servidor no sabe decir cuál fue la
+última: aplicar la copia vieja devolvería la base a la foto de antes.
+**El libro de hoy se hace siempre con
+«Manda la aplicación»**, se haya elegido lo que se haya elegido arriba: la copia
+salió de la aplicación y no trae nada del Excel que pueda mandar. Si se ha
+elegido «Manda el Excel», la tarjeta no ofrece hacerlo y pide subir el libro de
+SharePoint de nuevo por el selector, que es el único sitio de donde puede venir
+una corrección hecha en la hoja. Si el servidor conoce una salida posterior
+—alguien sincronizó después desde otro sitio— lo avisa antes de que lo subas; y
+si no puede comprobarlo, lo dice en vez de callar. El fichero que sale lleva el
+día en el nombre: `… (sincronizado 2026-09-25).xlsx`.
+
+**1f · Cómo se ve el libro que sale.** Lo pone la aplicación al escribirlo, en
+cada pasada, sin depender de que alguien lo formatee a mano:
+
+- **Las pestañas van en orden**: primero las hojas de la gente (estado, partes,
+  bolsa y PCs del año, y las dos de 2025), luego las que escribe la aplicación
+  (`Revisiones`, `Movimientos de Almacén`, `Inventario por Sala`) y al final,
+  con la pestaña en gris, las de consulta: `Sincronización`, `Léeme` y
+  cualquier hoja de `Cambios …`. El libro se abre en la hoja de estado.
+- **Las cabeceras dicen quién escribe cada columna**: azul oscuro las que se
+  pueden editar en la hoja; azul claro y en cursiva las que escribe la
+  aplicación (la fecha de revisión anterior, los sí/no del inventario, los
+  meses de la bolsa, las fórmulas, `Ref`, «Situación»). Las hojas de la gente
+  llevan filas en bandas; las de la aplicación son **tablas de Excel** con su
+  estilo, sus filtros y sus bandas.
+- **El orden de fechas es el mismo en todas**: de la más antigua a la más
+  reciente, que es como se llevan a mano las hojas de partes. Lo último está
+  abajo.
+- **Las fechas son fechas y los porcentajes, porcentajes**, y algunas filas
+  llevan color para leerse de un vistazo: en `Revisiones` las que salieron con
+  incidencias van en rojo claro; en `Movimientos de Almacén` las compras en
+  verde y los ajustes y devoluciones en ámbar; en `Sincronización` los choques
+  en rojo y lo que no se pudo leer en ámbar.
+- En `Movimientos de Almacén` **las incidencias y las solicitudes van en
+  columnas distintas**, cada número en la suya.
+- En `Inventario por Sala` el tipo de cada aparato se llama como en la hoja de
+  estado (TV, Monitor, Ordenador…) y, si en la aplicación tiene otro nombre, va
+  al lado en «Nombre en la app».
+
+**1g · TV, Monitor y Ordenador no chocan por el nombre.** «S/N TV» es la tele
+grande del aula, «S/N Monitor» la pantalla del PC y «S/N Ordenador» el Tiny. Si
+la aplicación tiene el aparato con otro nombre de tipo —«Pantalla», «Ordenador
+Tiny», un alias del catálogo, un tipo fusionado—, la pasada lo reconoce como el
+mismo y no propone darlo de alta ni lo manda a choque; y si el número de serie
+está en la misma aula sobre un tipo equivalente, el servidor le da el tipo de la
+columna en vez de rechazar la celda. Una vez aplicado, la pasada siguiente ya no
+vuelve a proponerlo. Lo que **no** se junta, a propósito: «Monitor» con «TV»
+(son aparatos distintos), «Monitor Atril» y «Ordenador Lenovo Ideacentre».
 
 **2 · El libro.** Se sube el `.xlsx`. No se escribe nada hasta pulsar
 «Sincronizar».

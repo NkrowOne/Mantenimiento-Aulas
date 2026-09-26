@@ -35,6 +35,7 @@
 
 import { descomprimir, escribirZip, leerZip, reemplazar } from '../lib/zip'
 import type { EntradaZip } from '../lib/zip'
+import type { ClaveDeEstilo } from './estilos'
 
 // -----------------------------------------------------------------------------
 // Direcciones de celda
@@ -165,11 +166,25 @@ function desescapar(s: string): string {
 }
 
 export function escapar(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+  return (
+    s
+      // Lo que XML 1.0 no admite ni escapado: un carácter de control pegado en
+      // una observación —el salto de línea manual de Word es un `\u000B`—
+      // dejaba la hoja mal formada y Excel la «reparaba» descartando la hoja
+      // entera. Se escribe como lo escribe el propio Excel, `_xHHHH_`, que él
+      // deshace al leer y que conserva el dato. Un `_x000B_` que ya viniera
+      // escrito así se protege primero para que no se confunda con uno nuestro.
+      // El tabulador, el salto de línea y el retorno de carro sí valen tal cual.
+      .replace(/_(x[0-9A-Fa-f]{4})_/g, '_x005F_$1_')
+      .replace(
+        /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g,
+        (c) => `_x${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}_`,
+      )
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+  )
 }
 
 /** Solo el texto: `<is>` y `<si>` pueden venir troceados en varios `<r><t>`. */
@@ -271,6 +286,13 @@ export interface Cambio {
    */
   formato?: 'fecha' | 'porcentaje'
   /**
+   * Un estilo con nombre de los de la aplicación (`cabeceraApp`…). Si viene,
+   * manda sobre `formato` y sobre el estilo que la celda tuviera: es para la
+   * cabecera `Ref` que la sincronización escribe en la hoja de estado, que
+   * tiene que verse como columna de la app y no heredar el azul de su vecina.
+   */
+  estilo?: ClaveDeEstilo
+  /**
    * `null` **no toca la celda**: la deja exactamente como está, con su fórmula y
    * su formato. Para vaciarla hay que pedir `''` a propósito, y eso sí borra su
    * contenido. La diferencia es la defensa contra escribir un hueco encima de un
@@ -311,11 +333,18 @@ export type ResolverEstilo = (
   actual: string,
 ) => string | null
 
+/**
+ * El índice de `cellXfs` de un estilo con nombre, o `null` si no se conoce.
+ * Lo resuelve `libro.ts` una vez por escritura con `asegurarEstilos`.
+ */
+export type ResolverClave = (clave: ClaveDeEstilo) => string | null
+
 /** Reescribe el XML de una hoja con los cambios pedidos. */
 export function parchearHojaXml(
   xml: string,
   cambios: Cambio[],
   resolverEstilo?: ResolverEstilo,
+  resolverClave?: ResolverClave,
 ): string {
   const porFila = new Map<number, Cambio[]>()
   for (const c of cambios) {
@@ -340,7 +369,7 @@ export function parchearHojaXml(
       pendientes.delete(numero)
       // Una fila autocerrada existe pero está vacía: al escribir en ella deja
       // de estarlo, así que hay que abrirla.
-      return `<row${attrs.replace(/\/$/, '')}>${aplicarEnFila(cuerpo ?? '', dela, resolverEstilo)}</row>`
+      return `<row${attrs.replace(/\/$/, '')}>${aplicarEnFila(cuerpo ?? '', dela, resolverEstilo, resolverClave)}</row>`
     },
   )
 
@@ -348,7 +377,7 @@ export function parchearHojaXml(
   // desordenadas la abre Excel y la reordena, pero por el camino se lleva por
   // delante los rangos que apuntaban a ellas.
   for (const fila of [...pendientes].sort((a, b) => a - b)) {
-    const nueva = `<row r="${fila}">${aplicarEnFila('', porFila.get(fila)!, resolverEstilo)}</row>`
+    const nueva = `<row r="${fila}">${aplicarEnFila('', porFila.get(fila)!, resolverEstilo, resolverClave)}</row>`
     out = insertarFila(out, fila, nueva)
   }
 
@@ -359,6 +388,7 @@ function aplicarEnFila(
   cuerpo: string,
   cambios: Cambio[],
   resolverEstilo?: ResolverEstilo,
+  resolverClave?: ResolverClave,
 ): string {
   const pendientes = new Map(cambios.map((c) => [c.celda, c]))
 
@@ -374,7 +404,7 @@ function aplicarEnFila(
       // El estilo se conserva: es lo que lleva el formato de número, el borde y
       // el color de la celda, y perderlo convierte una fecha en un número de
       // cinco cifras a la vista de todo el mundo.
-      const estilo = conFormato(ref, /\bs="(\d+)"/.exec(attrs)?.[1] ?? '', c, resolverEstilo)
+      const estilo = conFormato(ref, /\bs="(\d+)"/.exec(attrs)?.[1] ?? '', c, resolverEstilo, resolverClave)
       return xmlDeCelda(ref, estilo, c.valor as Exclude<ValorCelda, null>)
     },
   )
@@ -394,6 +424,7 @@ function aplicarEnFila(
       estiloDeLaIzquierda(out, columnaANumero(partirCelda(c.celda).columna)),
       c,
       resolverEstilo,
+      resolverClave,
     )
     out = insertarCelda(out, c.celda, xmlDeCelda(c.celda, estilo, c.valor as Exclude<ValorCelda, null>))
   }
@@ -406,7 +437,13 @@ function conFormato(
   estilo: string,
   c: Cambio,
   resolverEstilo?: ResolverEstilo,
+  resolverClave?: ResolverClave,
 ): string {
+  // El estilo con nombre manda: es una orden, no una pista.
+  if (c.estilo && resolverClave) {
+    const s = resolverClave(c.estilo)
+    if (s !== null) return s
+  }
   if (!c.formato || !resolverEstilo) return estilo
   return resolverEstilo(partirCelda(ref).columna, c.formato, estilo) ?? estilo
 }

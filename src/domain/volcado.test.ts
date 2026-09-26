@@ -12,8 +12,8 @@ import { describe, expect, it } from 'vitest'
 
 import { ESTADO } from './mapa'
 import type { Columna } from './mapa'
-import { compradoEn, consumoPorMes, valorDeSala } from './volcado'
-import type { MovimientoVolcado, SalaVolcada } from './volcado'
+import { compradoEn, consumoPorMes, equipoQueSeVe, equiposDeMas, filaDeSala, valorDeSala } from './volcado'
+import type { EquipoVolcado, MovimientoVolcado, SalaVolcada } from './volcado'
 
 const mov = (occurredAt: string, qty: number, kind: string): MovimientoVolcado =>
   ({ occurredAt, qty, kind }) as MovimientoVolcado
@@ -127,5 +127,53 @@ describe('las columnas de sí o no de la hoja de estado', () => {
     for (const letra of ['H', 'I', 'J']) expect(columna(letra).dueno).toBe('solo_app')
     // La botonera no: dice si está actualizada, y eso el inventario no lo sabe.
     expect(columna('K').dueno).toBe('ambos')
+  })
+})
+
+// -----------------------------------------------------------------------------
+// Un aparato con dos nombres
+// -----------------------------------------------------------------------------
+
+/**
+ * La columna se llama `S/N Ordenador` y el tipo de la base «Ordenador Tiny»;
+ * la columna `S/N TV` y el tipo «Pantalla». Comparar los nombres con `===` era
+ * decir que 52 aulas no tenían ordenador y 200 no tenían tele, y de ahí salían
+ * los avisos de alta que el servidor rechazaba pasada tras pasada. Quién es
+ * quién lo decide `equipos.ts`; aquí se comprueba que el volcado lo usa.
+ */
+describe('el equipo que enseña la hoja, con dos nombres', () => {
+  const equipo = (tipo: string, serial: string): EquipoVolcado => ({ id: serial, tipo, serial, model: null, desde: null })
+  const columna = (letra: string): Columna => ESTADO.columnas.find((c) => c.letra === letra)!
+  const salaCon = (...equipos: EquipoVolcado[]): SalaVolcada =>
+    ({ equipos, capacidades: {}, revisiones: [] }) as unknown as SalaVolcada
+
+  it('el Tiny responde por la columna del ordenador', () => {
+    expect(equipoQueSeVe([equipo('Ordenador Tiny', 'MJ0C7V8N')], 'Ordenador')?.serial).toBe('MJ0C7V8N')
+    expect(valorDeSala(salaCon(equipo('Ordenador Tiny', 'MJ0C7V8N')), columna('S'))).toBe('MJ0C7V8N')
+  })
+
+  it('y la «Pantalla» por la de la TV, pero no por la del monitor', () => {
+    const sala = salaCon(equipo('Pantalla', '04204664NB'))
+    expect(valorDeSala(sala, columna('Q'))).toBe('04204664NB')
+    expect(valorDeSala(sala, columna('R'))).toBeNull()
+  })
+
+  it('el número que la fila reclama en otra columna no puede ser el aparato de esta', () => {
+    // Monitor del PC contado como «TV», más reciente que la tele: sin la fila
+    // delante ganaba él; con ella, la tele.
+    const tele: EquipoVolcado = { id: 't', tipo: 'TV', serial: '04204655NB', model: 'NEC', desde: '2026-01-01' }
+    const monitor: EquipoVolcado = { id: 'm', tipo: 'TV', serial: 'V9-03BZN9', model: null, desde: '2026-06-01' }
+    expect(equipoQueSeVe([tele, monitor], 'TV')?.serial).toBe('V9-03BZN9')
+    expect(equipoQueSeVe([tele, monitor], 'TV', new Set(['V9-03BZN9']))?.serial).toBe('04204655NB')
+    const fila = filaDeSala(salaCon(tele, monitor), ESTADO, { Q: '04204655NB', R: 'V9-03BZN9' })
+    expect(fila.Q).toBe('04204655NB')
+    expect(fila.P).toBe('NEC')
+    // Y sin la fila, como hasta ahora: el más reciente.
+    expect(filaDeSala(salaCon(tele, monitor), ESTADO).Q).toBe('V9-03BZN9')
+  })
+
+  it('dos teles con dos nombres son dos teles: la hoja solo enseña una y se dice', () => {
+    const sala = salaCon(equipo('TV', 'A'), equipo('Pantalla', 'B'), equipo('Monitor', 'C'))
+    expect(equiposDeMas(sala)).toEqual([{ tipo: 'TV', cuantos: 2 }])
   })
 })

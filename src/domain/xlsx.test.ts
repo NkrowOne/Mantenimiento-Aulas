@@ -9,11 +9,24 @@ import {
   parchear,
   parchearHojaXml,
   partirCelda,
+  xmlDeCelda,
 } from './xlsx'
 import { descomprimir, leerZip } from '../lib/zip'
 
 const LIBRO = process.env.LIBRO_XLSX
 const libro = LIBRO ? readFileSync(LIBRO) : null
+
+describe('un texto con un carácter de control', () => {
+  it('se escribe como lo escribe Excel, y la hoja sigue bien formada', () => {
+    const xml = xmlDeCelda('A1', '', 'linea 1\u000Blinea 2 y \u0001')
+    expect(xml).toContain('linea 1_x000B_linea 2 y _x0001_')
+    expect(xml).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/)
+    // Un `_x000B_` que ya venía escrito no se confunde con uno nuestro.
+    expect(xmlDeCelda('A1', '', 'literal _x000B_')).toContain('literal _x005F_x000B_')
+    // El salto de línea y el tabulador valen tal cual.
+    expect(xmlDeCelda('A1', '', 'a\nb\tc')).toContain('a\nb\tc')
+  })
+})
 
 describe('las direcciones de celda', () => {
   it('van y vuelven, también pasada la Z', () => {
@@ -216,9 +229,11 @@ describe.skipIf(!libro)('sobre el libro real', () => {
     const cambiadas = antes
       .filter((e, i) => !bytesIguales(e.comprimido, despues[i]!.comprimido))
       .map((e) => e.nombre)
-    // La hoja tocada y `workbook.xml`, que lleva la marca de recalcular.
-    expect(cambiadas).toHaveLength(2)
-    expect(cambiadas).toContain('xl/workbook.xml')
+    // La hoja tocada y, si no la llevaba ya, `workbook.xml` con la marca de
+    // recalcular: nada más.
+    expect(cambiadas.filter((n) => n !== 'xl/workbook.xml')).toEqual([
+      l.hojas.find((h) => h.nombre === 'Estado Aulas y Salas de reunion')!.ruta,
+    ])
   })
 
   it('y lo escrito se vuelve a leer donde se puso', async () => {
@@ -230,14 +245,19 @@ describe.skipIf(!libro)('sobre el libro real', () => {
     expect(filas.find((f) => f.fila === 2)!.celdas.Z).toBe('SALA-000001')
   })
 
-  it('sobreviven la etiqueta de confidencialidad y los metadatos de SharePoint', async () => {
-    const l = await abrirLibro(new Uint8Array(libro!))
+  it('sobreviven todas las partes que no se tocan: metadatos, etiquetas, tema', async () => {
+    // El libro de SharePoint trae la etiqueta de confidencialidad y seis
+    // ficheros de metadatos; el reformateado, otros. Lo que importa es que
+    // ninguna parte se pierde por el camino, tenga el nombre que tenga.
+    const original = new Uint8Array(libro!)
+    const l = await abrirLibro(original)
     const parcheado = await parchear(l, [
       { hoja: 'Estado Aulas y Salas de reunion', celdas: [{ celda: 'Z2', valor: 'x' }] },
     ])
     const nombres = leerZip(parcheado).map((e) => e.nombre)
-    expect(nombres.some((n) => /customXml/i.test(n))).toBe(true)
+    expect(nombres).toEqual(leerZip(original).map((e) => e.nombre))
     expect(nombres).toContain('[Content_Types].xml')
+    expect(nombres).toContain('docProps/core.xml')
   })
 
   it('las fórmulas de las otras hojas siguen siendo fórmulas', async () => {

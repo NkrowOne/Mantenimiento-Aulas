@@ -30,11 +30,13 @@
  * `********` en la columna de horas no dice nada de las horas.
  */
 
+import { mismoTipo } from './equipos'
 import { ZONA } from './fechas'
 import { EQUIPOS_EN_COLUMNAS, capacidadDe, equipoDe, mesDe } from './mapa'
 import type { Columna, Hoja } from './mapa'
 import { escribirMicrofono } from './valores'
 import type { Valor } from './valores'
+import type { ValorCelda } from './xlsx'
 
 // -----------------------------------------------------------------------------
 // Lo que hace falta saber de la base
@@ -110,6 +112,16 @@ export interface ArticuloVolcado {
    * porque las pruebas y el espejo del libro no siempre lo saben.
    */
   saldo?: number
+  /**
+   * `false` si el administrador lo retiró del almacén. Un artículo retirado
+   * **sale de la bolsa**: su fila se borra del libro en la pasada siguiente y
+   * no vuelve a entrar como fila nueva. Sin este dato —el espejo de las
+   * pruebas, un análisis de antes— se trata como vivo: un espejo viejo no
+   * puede borrar filas.
+   */
+  activo?: boolean
+  /** Cuándo (día ISO) y por qué se retiró, para decirlo en el libro al sacarlo. */
+  retirado?: { cuando: string | null; motivo: string | null }
 }
 
 /**
@@ -144,9 +156,28 @@ export interface UnidadVolcada {
  * El más recientemente instalado, y a igualdad de fecha el que tenga número de
  * serie: entre una fila que dice «hay un proyector» y otra que dice «hay un
  * proyector y es el 0340985RL», la segunda es la que sirve para algo.
+ *
+ * «De un tipo» se decide con `mismoTipo`, no con `===`: el Tiny que la base
+ * tiene como «Ordenador Tiny» es el ordenador de la columna `S/N Ordenador`, y
+ * con la igualdad estricta la hoja decía que la sala no tenía ninguno, la
+ * fusión pedía darlo de alta y el servidor lo rechazaba porque el número ya
+ * estaba puesto. 52 veces por pasada.
  */
-export function equipoQueSeVe(equipos: EquipoVolcado[], tipo: string): EquipoVolcado | null {
-  const suyos = equipos.filter((e) => e.tipo === tipo)
+export function equipoQueSeVe(
+  equipos: EquipoVolcado[],
+  tipo: string,
+  /**
+   * Números de serie que la fila reclama en OTRA columna. El monitor del PC
+   * que la importación dejó contado como «TV» no puede ser la tele que enseña
+   * `S/N TV`, aunque sea el más reciente: la hoja ya dice en `S/N Monitor`
+   * cuál de los dos es. Sin esto, en 62 aulas del libro real la primera pasada
+   * escribía el número del monitor encima del de la tele.
+   */
+  reclamados: Set<string> = new Set(),
+): EquipoVolcado | null {
+  const suyos = equipos.filter(
+    (e) => mismoTipo(e.tipo, tipo) && !(e.serial && reclamados.has(serialLlano(e.serial))),
+  )
   if (suyos.length === 0) return null
   return [...suyos].sort((a, b) => {
     const f = (b.desde ?? '').localeCompare(a.desde ?? '')
@@ -155,11 +186,16 @@ export function equipoQueSeVe(equipos: EquipoVolcado[], tipo: string): EquipoVol
   })[0]!
 }
 
-/** Los tipos de los que la sala tiene más de uno: el Excel no puede enseñarlos. */
+/**
+ * Los tipos de los que la sala tiene más de uno: el Excel no puede enseñarlos.
+ *
+ * Se cuenta por aparato, no por nombre: una «Pantalla» y una «TV» en la misma
+ * sala son dos teles, y la columna solo puede enseñar una de las dos.
+ */
 export function equiposDeMas(sala: SalaVolcada): Array<{ tipo: string; cuantos: number }> {
   const out: Array<{ tipo: string; cuantos: number }> = []
   for (const tipo of EQUIPOS_EN_COLUMNAS) {
-    const cuantos = sala.equipos.filter((e) => e.tipo === tipo).length
+    const cuantos = sala.equipos.filter((e) => mismoTipo(e.tipo, tipo)).length
     if (cuantos > 1) out.push({ tipo, cuantos })
   }
   return out
@@ -172,6 +208,12 @@ export function equiposDeMas(sala: SalaVolcada): Array<{ tipo: string; cuantos: 
  * llama «Microfono Jabra» y la importación creó los dos tipos. Buscar solo
  * «Micrófono» es lo que dejaba 254 aulas diciendo que no tienen micrófono
  * cuando lo tienen: el suyo se llama «Micrófono Jabra».
+ *
+ * Desde que la comparación pasa por `mismoTipo`, los dos nombres responden a
+ * la misma columna aunque aquí figurase uno solo. Se dejan los dos escritos
+ * porque es la lista que alguien va a leer para saber qué cuenta como
+ * micrófono, y una lista que se apoya en un sinónimo declarado en otro fichero
+ * se lee peor que una que lo dice.
  */
 const TIPOS_DE_CAPACIDAD: Record<string, string[]> = {
   altavoces: ['Altavoces'],
@@ -211,11 +253,42 @@ function hayCapacidad(sala: SalaVolcada, cap: string): boolean | null {
   return false
 }
 
+/** Un número de serie tal y como se compara: sin blancos de sobra ni minúsculas. */
+export function serialLlano(serial: string): string {
+  return String(serial ?? '').replace(/\s+/g, '').toUpperCase()
+}
+
+/**
+ * Los números de serie que la fila de la hoja pone en las columnas de OTROS
+ * aparatos, por tipo: lo que `S/N Monitor` reclama no puede ser la TV.
+ */
+export function serialesReclamadosPorOtraColumna(
+  hoja: Hoja,
+  celdas: Record<string, ValorCelda | undefined>,
+): Map<string, Set<string>> {
+  const porTipo = new Map<string, Set<string>>()
+  const todos: Array<{ tipo: string; serial: string }> = []
+  for (const c of hoja.columnas) {
+    const eq = equipoDe(c.campo)
+    if (!eq || eq.campo !== 'serial') continue
+    const v = celdas[c.letra]
+    if (v === undefined || v === null || String(v).trim() === '') continue
+    todos.push({ tipo: eq.tipo, serial: serialLlano(String(v)) })
+  }
+  for (const c of hoja.columnas) {
+    const eq = equipoDe(c.campo)
+    if (!eq) continue
+    const ajenos = new Set(todos.filter((t) => !mismoTipo(t.tipo, eq.tipo)).map((t) => t.serial))
+    porTipo.set(eq.tipo, ajenos)
+  }
+  return porTipo
+}
+
 /** El valor que le toca a una columna de la hoja de estado. */
-export function valorDeSala(sala: SalaVolcada, c: Columna): Valor {
+export function valorDeSala(sala: SalaVolcada, c: Columna, reclamados: Set<string> = new Set()): Valor {
   const eq = equipoDe(c.campo)
   if (eq) {
-    const equipo = equipoQueSeVe(sala.equipos, eq.tipo)
+    const equipo = equipoQueSeVe(sala.equipos, eq.tipo, reclamados)
     return equipo ? (eq.campo === 'serial' ? equipo.serial : equipo.model) : null
   }
 
@@ -254,10 +327,24 @@ export function valorDeSala(sala: SalaVolcada, c: Columna): Valor {
   }
 }
 
-/** Toda la fila de una sala, por letra de columna. */
-export function filaDeSala(sala: SalaVolcada, hoja: Hoja): Record<string, Valor> {
+/**
+ * Toda la fila de una sala, por letra de columna.
+ *
+ * Con las celdas de la fila de la hoja delante, si se tienen: son las que
+ * dicen qué número de serie va en qué columna, y eso decide cuál de dos
+ * aparatos del mismo tipo es el que enseña cada una.
+ */
+export function filaDeSala(
+  sala: SalaVolcada,
+  hoja: Hoja,
+  celdasDeLaHoja?: Record<string, ValorCelda | undefined>,
+): Record<string, Valor> {
+  const reclamados = celdasDeLaHoja ? serialesReclamadosPorOtraColumna(hoja, celdasDeLaHoja) : new Map()
   const out: Record<string, Valor> = {}
-  for (const c of hoja.columnas) out[c.letra] = valorDeSala(sala, c)
+  for (const c of hoja.columnas) {
+    const eq = equipoDe(c.campo)
+    out[c.letra] = valorDeSala(sala, c, eq ? (reclamados.get(eq.tipo) ?? new Set()) : new Set())
+  }
   return out
 }
 
