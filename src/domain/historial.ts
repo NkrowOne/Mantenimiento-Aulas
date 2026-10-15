@@ -84,6 +84,8 @@ export interface EventoSala {
   detail: string | null
   qty: number | null
   by_user: string | null
+  /** Quién lo hizo, ya con nombre. Lo resuelve la vista con `nombres_del_personal()`. */
+  who: string | null
 }
 
 /**

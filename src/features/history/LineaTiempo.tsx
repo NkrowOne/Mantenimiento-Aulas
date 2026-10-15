@@ -76,6 +76,10 @@ export function LineaTiempo({
                 {sala && <> · <span className="font-mono text-ink-2">{sala}</span></>}
                 {' · '}
                 {fechaLegible(e.at)}
+                {/* Quién. La vista lo traía desde el principio y aquí no se
+                    pintaba: el histórico decía qué pasó y cuándo, pero no a
+                    quién preguntarle. */}
+                {e.who && <> · <span className="text-ink-2">{e.who}</span></>}
               </p>
 
               {e.detail && (

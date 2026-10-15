@@ -29,6 +29,7 @@
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { descargaEntera, type Descarga, type Pagina } from './paginada'
+import { pullPersonas } from './personas'
 import { claveDeVersion, hayQueBajar, type VersionGuardada } from './version'
 import type { Asset, AssetRemoval, AssetType, Building, Incident, Room, StockItem,
   StockLevel, Zone } from '@/domain/types'
@@ -427,6 +428,10 @@ export async function pullMaster(opts: { soloSiCambio?: boolean } = {}): Promise
   )
 
   const todasVacias = fallos.length === 0 && vacias.length === consultas.length
+
+  // Quién es quién, para poder firmar las incidencias del espejo. Va aparte de
+  // las tablas: no cuenta para el diagnóstico de RLS ni poda nada.
+  await pullPersonas()
 
   /*
    * Y las incidencias que alguien ya resolvió.

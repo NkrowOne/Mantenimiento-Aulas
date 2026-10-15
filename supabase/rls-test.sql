@@ -4675,3 +4675,64 @@ begin
   raise notice 'OK: las % políticas de public resuelven quién pregunta una sola vez',
     (select count(*) from pg_policies where schemaname = 'public');
 end $$;
+
+\echo ''
+\echo '=== 82. Un técnico ve quién firmó la revisión de un compañero ==='
+begin;
+  -- El caso real: Pedro revisa un aula, un compañero abre la ficha en el móvil
+  -- y la revisión sale «Sin firma». El nombre estaba en `profiles`, que a un
+  -- técnico solo le enseña el suyo, y las vistas leen con sus permisos.
+  select id as sala from rooms where active order by created_at limit 1 \gset
+
+  insert into inspections (id, room_id, by_user, occurred_at, status, overall)
+  values ('88888888-8888-4888-8888-888888888821', :'sala',
+          '22222222-2222-4222-8222-222222222222', now() - interval '1 hour', 'completa', 'ok');
+
+  select set_config('prueba.firma', full_name, true)
+    from profiles where id = '22222222-2222-4222-8222-222222222222';
+
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  do $$
+  declare
+    v_firma text := current_setting('prueba.firma');
+    v_quien text;
+  begin
+    select who into v_quien from room_inspections
+     where id = '88888888-8888-4888-8888-888888888821';
+    if v_quien is distinct from v_firma then
+      raise exception 'FALLO: la revisión del compañero sale firmada por «%», no por «%»', v_quien, v_firma;
+    end if;
+    raise notice 'OK: en la ficha del aula la revisión dice quién la hizo';
+
+    select who into v_quien from room_timeline
+     where ref_id = '88888888-8888-4888-8888-888888888821';
+    if v_quien is distinct from v_firma then
+      raise exception 'FALLO: el Historial firma la revisión con «%», no con «%»', v_quien, v_firma;
+    end if;
+    raise notice 'OK: y en el Historial también';
+
+    -- Lo que se abre es el nombre, no el perfil: el correo y el rol del
+    -- compañero siguen fuera de su alcance.
+    if exists (select 1 from profiles where id = '22222222-2222-4222-8222-222222222222') then
+      raise exception 'FALLO: el técnico lee el perfil entero de otro usuario';
+    end if;
+    raise notice 'OK: el perfil del compañero —correo y rol— sigue cerrado';
+  end $$;
+rollback;
+
+begin;
+  -- Sin rol —cuenta desactivada, perfil inexistente— la lista sale vacía, y un
+  -- anónimo ni siquiera puede pedirla.
+  select test_as('99999999-9999-4999-8999-999999999999', 'none');
+  do $$
+  begin
+    if exists (select 1 from public.nombres_del_personal()) then
+      raise exception 'FALLO: una sesión sin rol lee los nombres del personal';
+    end if;
+    if has_function_privilege('anon', 'public.nombres_del_personal()', 'execute') then
+      raise exception 'FALLO: un anónimo puede pedir los nombres del personal';
+    end if;
+    raise notice 'OK: los nombres solo los ve el personal';
+  end $$;
+rollback;
