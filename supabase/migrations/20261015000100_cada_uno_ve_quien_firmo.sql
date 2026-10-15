@@ -22,6 +22,10 @@
 -- La misma función la usa la aplicación para el directorio de nombres que baja
 -- al dispositivo: las incidencias se leen del espejo y solo traen `opened_by`,
 -- un uuid que sin esto no se puede traducir a una persona.
+--
+-- Y la Actividad —quién cambió qué y cuándo, de `audit_log`— deja de ser solo
+-- del supervisor: el técnico también la lee, menos los cambios de usuarios, que
+-- llevan el correo y el rol.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -277,5 +281,22 @@ join buildings b on b.id = z.building_id
 left join public.nombres_del_personal() p on p.id = e.by_user;
 
 alter view room_timeline set (security_invoker = on);
+
+-- -----------------------------------------------------------------------------
+-- 4 — La Actividad, también para el técnico
+--
+-- Todo lo que se audita, el técnico ya lo lee en su tabla —salas, edificios,
+-- equipos, incidencias, catálogo, almacén, retiradas—, así que leer quién lo
+-- cambió no le abre ningún dato nuevo. Salvo `profiles`: su auditoría guarda el
+-- perfil entero, correo y rol incluidos, y esa se queda para el supervisor.
+--
+-- Una política más, no un cambio de la del supervisor: las permisivas se suman,
+-- así que él sigue viéndolo todo.
+-- -----------------------------------------------------------------------------
+
+drop policy if exists "personal lee auditoría" on audit_log;
+create policy "personal lee auditoría" on audit_log
+  for select to authenticated
+  using ((select public.is_staff()) and table_name <> 'profiles');
 
 notify pgrst, 'reload schema';

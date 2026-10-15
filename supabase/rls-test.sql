@@ -4736,3 +4736,46 @@ begin;
     raise notice 'OK: los nombres solo los ve el personal';
   end $$;
 rollback;
+
+\echo ''
+\echo '=== 83. El técnico lee la Actividad, menos los cambios de usuarios ==='
+begin;
+  -- Un administrador renombra una sala y cambia el nombre de un usuario. El
+  -- técnico tiene que ver lo primero —quién tocó la sala— y no lo segundo,
+  -- cuya auditoría lleva el perfil entero: correo y rol.
+  select test_as('22222222-2222-4222-8222-222222222222', 'admin');
+  update rooms set name = name || ' (prueba 83)'
+   where id = (select id from rooms where active order by code limit 1);
+  reset role;
+  update profiles set full_name = full_name || ' (prueba 83)'
+   where id = '22222222-2222-4222-8222-222222222222';
+
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    if not exists (select 1 from audit_log
+                    where table_name = 'rooms' and op = 'UPDATE'
+                      and by_user = '22222222-2222-4222-8222-222222222222'
+                      and new_data->>'name' like '%(prueba 83)') then
+      raise exception 'FALLO: el técnico no ve quién renombró la sala';
+    end if;
+    raise notice 'OK: el técnico ve quién cambió la sala';
+
+    if exists (select 1 from audit_log where table_name = 'profiles') then
+      raise exception 'FALLO: el técnico lee la auditoría de usuarios, con correos y roles';
+    end if;
+    raise notice 'OK: los cambios de usuarios se quedan fuera';
+  end $$;
+
+  -- Y el supervisor lo sigue viendo todo.
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  begin
+    if not exists (select 1 from audit_log
+                    where table_name = 'profiles'
+                      and new_data->>'full_name' like '%(prueba 83)') then
+      raise exception 'FALLO: el supervisor ha dejado de ver los cambios de usuarios';
+    end if;
+    raise notice 'OK: el supervisor sigue viéndolo todo';
+  end $$;
+rollback;

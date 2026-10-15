@@ -66,6 +66,15 @@ export async function pullPersonas(): Promise<void> {
 
 const VACIO: Directorio = {}
 
+/** El directorio entero, `{ [id]: nombre }`, para quien necesita la lista. */
+export function useDirectorio(): Readonly<Directorio> {
+  return useLiveQuery(
+    async () => ((await db.meta.get(PERSONAS))?.value as Directorio | undefined) ?? VACIO,
+    [],
+    VACIO,
+  )
+}
+
 /**
  * El nombre de quien firmó, leído del directorio local.
  *
@@ -73,10 +82,6 @@ const VACIO: Directorio = {}
  * cómo se guarda: pasa el uuid, recibe un nombre o `null`.
  */
 export function usePersonas(): (id: string | null | undefined) => string | null {
-  const dir = useLiveQuery(
-    async () => ((await db.meta.get(PERSONAS))?.value as Directorio | undefined) ?? VACIO,
-    [],
-    VACIO,
-  )
+  const dir = useDirectorio()
   return (id) => (id ? (dir[id] ?? null) : null)
 }
