@@ -12,6 +12,7 @@ const evento = (p: Partial<EventoSala>): EventoSala => ({
   detail: null,
   qty: -2,
   by_user: null,
+  who: null,
   ...p,
 })
 

@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useState } from 'react'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
+import { pullPersonas, useDirectorio } from '@/sync/personas'
 import { displayRoomCode } from '@/domain/normalize'
 import { fechaCorta, horaCorta } from '@/domain/fechas'
 import {
@@ -29,6 +30,11 @@ import { Cargando, EstadoVacio, FalloDeCarga, Seccion } from './Seccion'
  * Solo lectura, y a propósito: la auditoría no se corrige. Lo que se descubre
  * aquí se arregla en su sección.
  *
+ * La ve todo el personal, no solo el panel de administración: la trazabilidad
+ * es para quien trabaja en las aulas. Al técnico la base no le da los cambios
+ * de usuarios —llevan el correo y el rol—, y por eso esa opción no se le
+ * ofrece (`usuarios`).
+ *
  * Los nombres de salas, edificios y tipos salen del espejo del dispositivo,
  * que ya está descargado: traducir mil uuid no cuesta ninguna consulta. Lo que
  * el espejo no tiene —una sala borrada— sale abreviado, que es lo honesto.
@@ -49,19 +55,33 @@ const TONO_OP: Record<Cambio['op'], string> = {
   baja: 'bg-crit-tint text-crit',
 }
 
-export function Actividad(): React.ReactElement {
+export function Actividad({
+  usuarios = true,
+}: {
+  /** Si quien mira puede leer los cambios de usuarios (supervisor o más). */
+  usuarios?: boolean
+} = {}): React.ReactElement {
   const [dias, setDias] = useState(7)
   const [tabla, setTabla] = useState('')
   const [persona, setPersona] = useState('')
 
-  const { data: perfiles } = useQuery({
-    queryKey: ['perfiles', 'nombres'],
-    queryFn: async () => {
-      const { data } = await supabase.from('profiles').select('id, full_name').order('full_name')
-      return (data ?? []) as Array<{ id: string; full_name: string }>
-    },
-    staleTime: 5 * 60_000,
-  })
+  /*
+   * Los nombres salen del directorio del dispositivo, no de `profiles`: a un
+   * técnico `profiles` solo le enseña el suyo, y la lista de «Quién» se le
+   * quedaba en una persona. Se refresca al abrir, que es barato —unas decenas
+   * de filas— y trae a quien se haya dado de alta desde la última descarga.
+   */
+  useEffect(() => {
+    void pullPersonas()
+  }, [])
+  const directorio = useDirectorio()
+  const perfiles = useMemo(
+    () =>
+      Object.entries(directorio)
+        .map(([id, full_name]) => ({ id, full_name }))
+        .sort((a, b) => a.full_name.localeCompare(b.full_name, 'es')),
+    [directorio],
+  )
 
   const espejo = useLiveQuery(async () => {
     const [rooms, zones, buildings, tipos, assets, articulos] = await Promise.all([
@@ -92,7 +112,7 @@ export function Actividad(): React.ReactElement {
   const nombres: Nombres = useMemo(
     () => ({
       ...(espejo ?? SIN_NOMBRES),
-      personas: new Map((perfiles ?? []).map((p) => [p.id, p.full_name])),
+      personas: new Map(perfiles.map((p) => [p.id, p.full_name])),
     }),
     [espejo, perfiles],
   )
@@ -155,11 +175,13 @@ export function Actividad(): React.ReactElement {
         className="h-11 rounded-ctl border border-line bg-surface px-2 text-base"
       >
         <option value="">Todo</option>
-        {Object.entries(TABLAS).map(([id, t]) => (
-          <option key={id} value={id}>
-            {t.nombre}
-          </option>
-        ))}
+        {Object.entries(TABLAS)
+          .filter(([id]) => usuarios || id !== 'profiles')
+          .map(([id, t]) => (
+            <option key={id} value={id}>
+              {t.nombre}
+            </option>
+          ))}
       </select>
       <select
         value={persona}
@@ -168,7 +190,7 @@ export function Actividad(): React.ReactElement {
         className="h-11 max-w-48 rounded-ctl border border-line bg-surface px-2 text-base"
       >
         <option value="">Cualquiera</option>
-        {(perfiles ?? []).map((p) => (
+        {perfiles.map((p) => (
           <option key={p.id} value={p.id}>
             {p.full_name}
           </option>
@@ -181,7 +203,7 @@ export function Actividad(): React.ReactElement {
     <Seccion
       id="sec-actividad"
       titulo="Actividad"
-      texto="Quién cambió qué y cuándo, en salas, edificios, equipos, incidencias, catálogo y usuarios. Solo se lee: lo que haya que corregir se corrige en su sección. Las revisiones, los movimientos del almacén y los eventos de equipo no están aquí porque tienen su propio histórico."
+      texto={`Quién cambió qué y cuándo, en salas, edificios, equipos, incidencias${usuarios ? ', catálogo y usuarios' : ' y catálogo'}. Solo se lee: lo que haya que corregir se corrige en su sección. Las revisiones, los movimientos del almacén y los eventos de equipo no están aquí porque tienen su propio histórico, en la pestaña Historial.`}
       acciones={filtros}
     >
       {isPending && <Cargando texto="Leyendo la actividad…" />}

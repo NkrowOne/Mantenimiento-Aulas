@@ -94,6 +94,9 @@ const HojaDeInventario = lazy(() =>
 const HistorialPage = lazy(() =>
   import('@/features/history/HistorialPage').then((m) => ({ default: m.HistorialPage })),
 )
+const Actividad = lazy(() =>
+  import('@/features/admin/Actividad').then((m) => ({ default: m.Actividad })),
+)
 const ReportsPage = lazy(() =>
   import('@/features/reports/ReportsPage').then((m) => ({ default: m.ReportsPage })),
 )
@@ -102,7 +105,15 @@ const EscanerQR = lazy(() =>
   import('@/features/rooms/EscanerQR').then((m) => ({ default: m.EscanerQR })),
 )
 
-type Tab = 'revisar' | 'panel' | 'incidencias' | 'almacen' | 'historial' | 'informes' | 'datos'
+type Tab =
+  | 'revisar'
+  | 'panel'
+  | 'incidencias'
+  | 'almacen'
+  | 'historial'
+  | 'actividad'
+  | 'informes'
+  | 'datos'
 
 /*
  * Toda sala se abre por su ficha, venga el toque de donde venga.
@@ -203,6 +214,11 @@ const TABS: Array<{ id: Tab; label: string; minRole: Role }> = [
   { id: 'incidencias', label: 'Incidencias', minRole: 'tecnico' },
   { id: 'almacen', label: 'Almacén', minRole: 'tecnico' },
   { id: 'historial', label: 'Historial', minRole: 'tecnico' },
+  /* Quién cambió qué y cuándo. Vivía solo dentro de Datos, así que la
+     trazabilidad era cosa del administrador; la necesita quien trabaja en las
+     aulas. Lo que el técnico no debe leer —los cambios de usuarios— lo
+     filtra la base, no esta lista. */
+  { id: 'actividad', label: 'Actividad', minRole: 'tecnico' },
   /* Informes es de administrador, no de supervisor. Un informe es un documento
      que se firma y se archiva, y lleva dentro el reparto del trabajo con
      nombres; además, emitirlo con IA hace pasar la clave del despliegue por el
@@ -256,10 +272,11 @@ function etiquetaDe(tab: Tab): string {
  * desborda.
  */
 const EN_LA_BARRA: Tab[] = ['revisar', 'incidencias', 'almacen', 'historial']
-const EN_MAS: Tab[] = ['panel', 'informes', 'datos']
+const EN_MAS: Tab[] = ['panel', 'actividad', 'informes', 'datos']
 /** La segunda línea de cada entrada de «Más»: qué hay detrás, en una frase. */
 const QUE_HAY_EN: Partial<Record<Tab, string>> = {
   panel: 'Cómo va la ronda: retrasos, averías abiertas y lo que va a dar guerra.',
+  actividad: 'Quién cambió qué y cuándo: salas, equipos, incidencias y catálogo.',
   informes: 'Se arman con los datos del periodo que elijas y quedan archivados.',
   datos: 'Por decidir, maestro, Excel, importación, actividad y usuarios.',
 }
@@ -1595,6 +1612,11 @@ export function App(): React.ReactElement {
           )}
           {tab === 'almacen' && <StockPage role={role} />}
           {tab === 'historial' && <HistorialPage />}
+          {tab === 'actividad' && (
+            <div className="mx-auto max-w-4xl p-4">
+              <Actividad usuarios={role !== 'tecnico'} />
+            </div>
+          )}
           {/* Sin `role`: aquí dentro todo el mundo es administrador, así que la
               pantalla no tiene que decidir nada según el rol. Lo que la protege
               es el `puedeVer` de la línea de abajo. */}

@@ -148,12 +148,13 @@ export function HistorialPage(): React.ReactElement {
       if (texto.trim()) {
         // El asterisco es el comodín de PostgREST, y la coma separa las
         // alternativas: se busca en el título, en el detalle y en el código de
-        // aula, que es como la gente nombra las cosas («lo del 1.7»).
+        // aula, que es como la gente nombra las cosas («lo del 1.7»). Y en quién
+        // lo hizo: «lo que revisó Pedro» es la otra forma de preguntar.
         // Se limpian los caracteres con los que PostgREST separa filtros y cita
         // valores. Sin esto, escribir una coma en el buscador no es un ataque
         // pero sí una consulta rota que devuelve un error incomprensible.
         const t = texto.trim().replace(/[,()*"\\]/g, ' ')
-        q = q.or(`title.ilike.*${t}*,detail.ilike.*${t}*,room_code.ilike.*${t}*`)
+        q = q.or(`title.ilike.*${t}*,detail.ilike.*${t}*,room_code.ilike.*${t}*,who.ilike.*${t}*`)
       }
 
       const { data, error } = await q
@@ -261,7 +262,7 @@ export function HistorialPage(): React.ReactElement {
                 type="search"
                 value={texto}
                 onChange={(e) => setTexto(e.target.value)}
-                placeholder="Buscar por descripción, material o aula"
+                placeholder="Buscar por descripción, material, aula o persona"
                 enterKeyHint="search"
                 className="h-touch w-full rounded-ctl border border-line bg-sunken px-3 text-base"
               />

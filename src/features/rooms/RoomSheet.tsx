@@ -64,6 +64,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { db, enqueue } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { flush } from '@/sync/outbox'
+import { usePersonas } from '@/sync/personas'
 import { DoorPlate } from '@/components/DoorPlate'
 import { Tira, useFotos } from '@/components/Fotos'
 import { PHOTO_ACCEPT, comprimirFoto, encolarFoto, type FotoComprimida } from '@/lib/photos'
@@ -350,6 +351,7 @@ export function RoomSheet({
    * veces lo mismo. No desaparecen: se cuentan debajo de la lista.
    */
   const cerradasEnCola = useCierresEnCola()
+  const nombreDe = usePersonas()
 
   const abiertas = deLaSala
     .filter((i) => sePuedeResolver(i) && !cerradasEnCola.has(i.id))
@@ -988,6 +990,9 @@ export function RoomSheet({
                         >
                           {cuantos(dias, 'día', 'días')}
                         </span>
+                        {nombreDe(i.opened_by) && (
+                          <> por <span className="text-ink-2">{nombreDe(i.opened_by)}</span></>
+                        )}
                       </p>
                       {i.description && (
                         <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-muted">

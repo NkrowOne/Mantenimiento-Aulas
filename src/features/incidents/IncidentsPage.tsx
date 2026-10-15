@@ -11,6 +11,7 @@ import { CodigoEasyVista } from './CodigoEasyVista'
 import { MaterialUsado } from './MaterialUsado'
 import { ResolverIncidencia } from './ResolverIncidencia'
 import { useCierresEnCola } from './cierresEnCola'
+import { usePersonas } from '@/sync/personas'
 import { Borradores } from './Borradores'
 import {
   INCIDENT_KIND_LABELS,
@@ -34,6 +35,8 @@ interface IncidentRow {
   room_id: string | null
   /** Salió de una revisión: un equipo marcado «Falla» en el aula. */
   opened_from_inspection_id: string | null
+  opened_by: string | null
+  resolved_by: string | null
 }
 
 /**
@@ -105,6 +108,7 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
    * resolverla otra vez para que pareciera hecha.
    */
   const cerradasEnCola = useCierresEnCola()
+  const nombreDe = usePersonas()
 
   /*
    * La sala de cada incidencia, resuelta desde el espejo local.
@@ -426,6 +430,8 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
           // Y deja de contar como estancada en el mismo momento: lo que se
           // acaba de arreglar no lleva nueve días sin atender.
           const stale = estado !== 'resuelta' && days > STALE_INCIDENT_DAYS
+          const abrio = nombreDe(i.opened_by)
+          const cerro = i.state === 'resuelta' ? nombreDe(i.resolved_by) : null
 
           return (
             <li key={i.id} className="py-3">
@@ -509,6 +515,11 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
                     <span className={stale ? 'font-semibold text-crit' : ''}>
                       {cuantos(days, 'día', 'días')}
                     </span>
+                    {/* Quién la vio y quién la cerró. Es lo primero que se
+                        pregunta cuando algo no cuadra, y la fila lo sabía —el
+                        uuid venía en la respuesta— sin poder decirlo. */}
+                    {abrio && <> por <span className="text-ink-2">{abrio}</span></>}
+                    {cerro && <> · resuelta por <span className="text-ink-2">{cerro}</span></>}
                   </p>
                   {/* Lo que el técnico escribió en el aula. Estaba guardado y no
                       se pintaba en ningún sitio: quien tiene que arreglarlo leía
