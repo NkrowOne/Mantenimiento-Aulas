@@ -26,7 +26,8 @@ import { type Eleccion, construirPeticion } from '../peticion'
 import { type Rango, nombrePeriodo } from '../periodos'
 import { cargarDatos } from './datos'
 import { lecturaCalculada, senales } from './analisis'
-import { configurarIA, redactar } from './ia'
+import { configurarIA, redactar, separarConIA } from './ia'
+import { aplicarSeparacion, cierresDelRayo, separarTodos } from './cierres'
 import { claveDeGemini } from './clave'
 import { leerOpciones, tiene } from './opciones'
 import { renderReport } from './plantilla'
@@ -166,6 +167,14 @@ export async function generarInforme(
   let conIA = false
   let avisoIA: string | null = null
 
+  /*
+   * Los cierres del rayo: la avería y su cierre con la misma frase. Se separan
+   * en «qué fallaba» y «qué se hizo» antes de imprimir —ver `cierres.ts`—, con
+   * la IA si este informe la usa y por la puntuación si no.
+   */
+  const delRayo = cierresDelRayo(datos)
+  let separacion: ReturnType<typeof separarConIA> | null = null
+
   if (opciones.ia) {
     const encontrada = await claveDeGemini()
     const cfg = encontrada
@@ -181,6 +190,8 @@ export async function generarInforme(
       avisoIA = 'no hay ninguna clave de Gemini configurada'
       avisar('analisis', 'sin clave de Gemini: sale el análisis calculado', true)
     } else {
+      // En paralelo con la redacción: es otra pregunta y no tiene por qué esperar.
+      if (delRayo.size) separacion = separarConIA(delRayo, cfg)
       avisar('analisis', `redactando con ${cfg.modelo}`)
       const { lectura: redactada, motivo } = await redactar(datos, se, cfg)
       if (redactada) {
@@ -197,6 +208,13 @@ export async function generarInforme(
     }
   }
 
+  const separados = separacion ? await separacion : null
+  if (separados?.motivo) {
+    // No es un fallo del informe: esos cierres salen separados por la puntuación.
+    avisar('analisis', `los cierres del rayo van sin IA (${separados.motivo})`, true)
+  }
+  const paraImprimir = aplicarSeparacion(datos, separarTodos(delRayo, separados?.separados))
+
   avisar('documento')
   // El pie del informe daba la hora UTC sin decirlo: un documento emitido a las
   // 09:00 de Madrid ponía «07:00», y quien lo archivara lo fecharía mal.
@@ -206,7 +224,7 @@ export async function generarInforme(
     timeStyle: 'short',
   }).format(new Date())
 
-  const html = renderReport(datos, lectura, opciones, {
+  const html = renderReport(paraImprimir, lectura, opciones, {
     emitido,
     ...(quienPide.nombre ? { solicitante: quienPide.nombre } : {}),
   })

@@ -111,6 +111,8 @@ export interface ReportData {
    */
   cierres: Array<{
     ref: string | null
+    /** De qué incidencia es. Lo usa `cierres.ts` para separar los del rayo. */
+    incidencia?: string | null
     titulo: string
     building: string
     room: string
@@ -185,6 +187,13 @@ export interface ReportData {
     hora: string
     tipo: string
     subtipo: string
+    /**
+     * De qué incidencia es la fila, en las aperturas y los cierres.
+     *
+     * La apertura y el cierre del rayo son dos filas con el mismo texto, y es
+     * lo único que las une: `cierres.ts` las reescribe juntas.
+     */
+    incidencia?: string | null
     titulo: string
     detalle: string | null
     cantidad: number | null
