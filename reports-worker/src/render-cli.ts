@@ -20,7 +20,8 @@ import { periodFor } from './periods.js'
 import { renderReport } from './template.js'
 import { htmlToPdf } from './pdf.js'
 import { lecturaCalculada, senales } from './analisis.js'
-import { configurarIA, redactar } from './ia.js'
+import { configurarIA, redactar, separarConIA } from './ia.js'
+import { aplicarSeparacion, cierresDelRayo, separarTodos } from './cierres.js'
 import { leerOpciones } from './opciones.js'
 
 const args = process.argv.slice(2)
@@ -57,6 +58,12 @@ try {
   const se = senales(data, opciones.audiencia)
 
   let lectura = lecturaCalculada(data, opciones.audiencia)
+
+  // Los cierres del rayo se separan en «qué fallaba» y «qué se hizo»: con la IA
+  // si la hay y por la puntuación si no. Ver `cierres.ts`.
+  const delRayo = cierresDelRayo(data)
+  let separacion: ReturnType<typeof separarConIA> | null = null
+
   if (opciones.ia) {
     const cfg = configurarIA({
       audiencia: opciones.audiencia,
@@ -65,12 +72,20 @@ try {
     if (!cfg) {
       console.log('· sin GEMINI_API_KEY: se usa la redacción calculada')
     } else {
+      // En paralelo con la redacción: es otra pregunta y no tiene por qué esperar.
+      if (delRayo.size) separacion = separarConIA(delRayo, cfg)
       const r = await redactar(data, se, cfg)
       if (r) lectura = r
     }
   }
 
-  const html = renderReport(data, lectura, opciones, {
+  const separados = separacion ? await separacion : null
+  if (separados?.motivo) {
+    console.warn(`· cierres del rayo sin IA (${separados.motivo}): se separan por la puntuación`)
+  }
+  const paraImprimir = aplicarSeparacion(data, separarTodos(delRayo, separados?.separados))
+
+  const html = renderReport(paraImprimir, lectura, opciones, {
     // En hora de Madrid, como el servidor: `toISOString()` es UTC, y el pie del
     // informe jura estar en hora local — dos horas de mentira en verano.
     emitido: new Intl.DateTimeFormat('es-ES', {

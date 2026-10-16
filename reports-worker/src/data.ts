@@ -133,6 +133,13 @@ export interface ReportData {
     hora: string
     tipo: string
     subtipo: string
+    /**
+     * De qué incidencia es la fila, en las aperturas y los cierres.
+     *
+     * La apertura y el cierre del rayo son dos filas con el mismo texto, y es
+     * lo único que las une: `cierres.ts` las reescribe juntas.
+     */
+    incidencia?: string | null
     titulo: string
     detalle: string | null
     cantidad: number | null
@@ -604,6 +611,7 @@ export async function loadReportData(
       hora: string
       tipo: string
       subtipo: string
+      incidencia: string | null
       titulo: string
       detalle: string | null
       cantidad: string | null
@@ -617,7 +625,8 @@ export async function loadReportData(
       select 'apertura' as tipo, i.kind::text as subtipo, i.opened_at as at,
              coalesce(i.title, '(sin describir)') as titulo,
              nullif(i.description, '') as detalle, null::int as cantidad,
-             i.external_ref as ref, i.room_id, i.opened_by as by_user
+             i.external_ref as ref, i.room_id, i.opened_by as by_user,
+             i.id::text as incidencia
       from incidents i
       where i.state <> 'borrador'
         and i.opened_at >= ${desde} and i.opened_at < ${hasta}
@@ -627,7 +636,8 @@ export async function loadReportData(
       select 'cierre', i.kind::text, i.resolved_at,
              coalesce(i.title, '(sin describir)'),
              nullif(i.resolution, ''), null::int,
-             i.external_ref, i.room_id, i.resolved_by
+             i.external_ref, i.room_id, i.resolved_by,
+             i.id::text
       from incidents i
       where i.state = 'resuelta'
         and i.resolved_at >= ${desde} and i.resolved_at < ${hasta}
@@ -636,7 +646,8 @@ export async function loadReportData(
 
       select 'material', sm.kind::text, sm.occurred_at,
              si.name, nullif(sm.note, ''), sm.qty,
-             null, sm.room_id, sm.by_user
+             null, sm.room_id, sm.by_user,
+             null::text
       from stock_movements sm
       join stock_items si on si.id = sm.stock_item_id
       where sm.occurred_at >= ${desde} and sm.occurred_at < ${hasta}
@@ -646,7 +657,8 @@ export async function loadReportData(
       select 'inventario', 'levantamiento', v.occurred_at,
              'Inventario confirmado',
              coalesce(nullif(v.note, ''), v.asset_count || ' equipos en la sala'), null::int,
-             null, v.room_id, v.by_user
+             null, v.room_id, v.by_user,
+             null::text
       from room_inventories v
       where v.occurred_at >= ${desde} and v.occurred_at < ${hasta}
 
@@ -655,7 +667,8 @@ export async function loadReportData(
       select 'equipo', ae.kind::text, ae.occurred_at,
              coalesce(a.label, t.name, 'Equipo'),
              nullif(ae.meta ->> 'nota', ''), null::int,
-             a.serial, coalesce(ae.room_id, a.room_id), ae.by_user
+             a.serial, coalesce(ae.room_id, a.room_id), ae.by_user,
+             null::text
       from asset_events ae
       join assets a on a.id = ae.asset_id
       left join asset_types t on t.id = a.asset_type_id
@@ -664,7 +677,7 @@ export async function loadReportData(
     select
       to_char(public.dia_local(e.at), 'YYYY-MM-DD')                  as dia,
       to_char(e.at at time zone 'Europe/Madrid', 'HH24:MI')          as hora,
-      e.tipo, e.subtipo, e.titulo, e.detalle, e.cantidad, e.ref,
+      e.tipo, e.subtipo, e.incidencia, e.titulo, e.detalle, e.cantidad, e.ref,
       ro.building_code as building, ro.room_code as room,
       p.full_name as quien
     from e
@@ -800,6 +813,7 @@ export async function loadReportData(
       hora: e.hora,
       tipo: e.tipo,
       subtipo: e.subtipo,
+      ...(e.incidencia ? { incidencia: e.incidencia } : {}),
       titulo: e.titulo,
       detalle: e.detalle,
       cantidad: e.cantidad === null ? null : num(e.cantidad),

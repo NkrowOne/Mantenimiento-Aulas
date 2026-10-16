@@ -630,6 +630,12 @@ function seccionEventos(d: ReportData, conRevisiones: boolean): string {
               // imprimirlo dos veces solo gasta papel.
               const detalle =
                 e.detalle && e.detalle.trim() !== e.titulo.trim() ? e.detalle.trim() : ''
+              // Una incidencia y su cierre se leen enteros: cortados a media
+              // frase, «Se le indica al usuario por teléfono cómo…» no dice
+              // qué se hizo. El resto de filas sigue con su tope.
+              const entero = e.tipo === 'apertura' || e.tipo === 'cierre'
+              const titulo = entero ? e.titulo.trim() : recorta(e.titulo, 90)
+              const det = entero ? detalle : recorta(detalle, 110)
               // Sin el separador colgando: con cantidad y sin autor salía «1 ud ·».
               const cola = [
                 e.cantidad !== null && e.cantidad !== 0 ? `${Math.abs(e.cantidad)} ud` : '',
@@ -641,9 +647,7 @@ function seccionEventos(d: ReportData, conRevisiones: boolean): string {
             <td class="mono tenue" style="width:7%">${esc(e.hora)}</td>
             <td style="width:13%"><span class="tag">${esc(etiquetaEvento(e.tipo, e.subtipo))}</span></td>
             <td class="mono" style="width:14%">${esc(`${e.building} ${e.room}`.trim())}</td>
-            <td>${esc(recorta(e.titulo, 90))}${
-              detalle ? `<span class="ev-det">${esc(recorta(detalle, 110))}</span>` : ''
-            }</td>
+            <td>${esc(titulo)}${det ? `<span class="ev-det">${esc(det)}</span>` : ''}</td>
             <td class="tenue" style="width:16%">${esc(cola)}</td>
           </tr>`
             })

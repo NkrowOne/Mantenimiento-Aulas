@@ -17,7 +17,8 @@ import { ZONA, periodFor } from './periods.js'
 import { renderReport } from './template.js'
 import { htmlToPdf } from './pdf.js'
 import { lecturaCalculada, senales } from './analisis.js'
-import { configurarIA, redactar } from './ia.js'
+import { configurarIA, redactar, separarConIA } from './ia.js'
+import { aplicarSeparacion, cierresDelRayo, separarTodos } from './cierres.js'
 import { leerOpciones } from './opciones.js'
 import { canjearAlta, leerCuerpoPequeno } from './alta.js'
 import { altaCodigo } from './alta-codigo.js'
@@ -159,6 +160,14 @@ export async function generate(
   let lectura = lecturaCalculada(data, opciones.audiencia)
   let conIA = false
 
+  /*
+   * Los cierres del rayo: la avería y su cierre con la misma frase. Se separan
+   * en «qué fallaba» y «qué se hizo» antes de imprimir —ver `cierres.ts`—, con
+   * la IA si este informe la usa y por la puntuación si no.
+   */
+  const delRayo = cierresDelRayo(data)
+  let separacion: ReturnType<typeof separarConIA> | null = null
+
   if (opciones.ia) {
     const cfg = configurarIA({
       ...(await ajustesIA()),
@@ -166,6 +175,8 @@ export async function generate(
       ...(opciones.enfoque ? { enfoque: opciones.enfoque } : {}),
     })
     if (cfg) {
+      // En paralelo con la redacción: es otra pregunta y no tiene por qué esperar.
+      if (delRayo.size) separacion = separarConIA(delRayo, cfg)
       const redactada = await redactar(data, se, cfg)
       if (redactada) {
         lectura = redactada
@@ -176,6 +187,13 @@ export async function generate(
     }
   }
 
+  const separados = separacion ? await separacion : null
+  if (separados?.motivo) {
+    // No es un fallo del informe: esos cierres salen separados por la puntuación.
+    console.warn(`Los cierres del rayo van sin IA (${separados.motivo}); se separan por la puntuación.`)
+  }
+  const paraImprimir = aplicarSeparacion(data, separarTodos(delRayo, separados?.separados))
+
   // El pie del informe daba la hora UTC sin decirlo: un PDF emitido a las 09:00
   // de Madrid ponía «07:00», y quien lo archivara lo fecharía mal.
   const emitido = new Intl.DateTimeFormat('es-ES', {
@@ -185,7 +203,7 @@ export async function generate(
   }).format(new Date())
 
   const solicitante = await nombreDe(solicitadoPor)
-  const html = renderReport(data, lectura, opciones, { emitido, solicitante })
+  const html = renderReport(paraImprimir, lectura, opciones, { emitido, solicitante })
   const pdf = await htmlToPdf(html)
 
   const hash = createHash('sha256').update(pdf).digest('hex').slice(0, 12)
