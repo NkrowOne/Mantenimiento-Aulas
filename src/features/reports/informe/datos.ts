@@ -1182,6 +1182,7 @@ export function cierresDelPeriodo(
       const sala = i.room_id ? deSala.get(i.room_id) : undefined
       return {
         ref: i.external_ref,
+        incidencia: i.id,
         titulo: i.title ?? '(sin describir)',
         building: sala?.building_code ?? '—',
         room: sala?.room_code ?? '',
@@ -1689,6 +1690,7 @@ async function diarioDelPeriodo(
     ref: string | null
     roomId: string | null
     byUser: string | null
+    incidencia?: string
     /** De qué equipo es, cuando lo es. Se resuelve DESPUÉS del recorte. */
     assetId?: string
   }
@@ -1705,6 +1707,7 @@ async function diarioDelPeriodo(
       ref: i.external_ref,
       roomId: i.room_id,
       byUser: i.opened_by,
+      incidencia: i.id,
     })
   }
 
@@ -1720,6 +1723,7 @@ async function diarioDelPeriodo(
       ref: i.external_ref,
       roomId: i.room_id,
       byUser: i.resolved_by,
+      incidencia: i.id,
     })
   }
 
@@ -1802,6 +1806,7 @@ async function diarioDelPeriodo(
       hora: horaCorta(e.at),
       tipo: e.tipo,
       subtipo: e.subtipo,
+      ...(e.incidencia ? { incidencia: e.incidencia } : {}),
       titulo: equipo?.titulo ?? e.titulo,
       detalle: e.detalle,
       cantidad: e.cantidad,

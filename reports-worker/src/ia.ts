@@ -36,6 +36,7 @@
 
 import type { ReportData } from './data.js'
 import { type Lectura, type Senal, dias, porcentaje } from './analisis.js'
+import type { Separado } from './cierres.js'
 
 /** El último Flash. `gemini-flash-latest` sigue al día solo; esto fija la versión. */
 const MODELO_POR_DEFECTO = 'gemini-3.6-flash'
@@ -609,4 +610,149 @@ export async function redactar(
 
   console.warn(`Sin análisis de IA (${ultimo}); el informe sale con la redacción calculada.`)
   return null
+}
+
+// ── Los cierres del rayo ─────────────────────────────────────────────────────
+
+/*
+ * Un encargo aparte, y pequeño: partir en dos la frase con la que se abrió y se
+ * cerró una avería del tirón. Ver `cierres.ts`.
+ *
+ * Va con razonamiento `low` y no con el del análisis: no hay nada que decidir,
+ * solo dónde termina lo que fallaba y empieza lo que se hizo. Y va en paralelo
+ * con la redacción, así que no alarga la espera del informe.
+ */
+const INSTRUCCION_CIERRES = `Preparas el diario de un servicio de mantenimiento de aulas de un campus universitario español. Escribes en español de España.
+
+Cada texto lo escribió un técnico que abrió y cerró la avería en el mismo momento: en una sola frase cuenta qué fallaba y, casi siempre, qué hizo. De cada texto sacas tres cosas:
+- problema: qué fallaba, con todos los detalles que da el texto sobre el fallo. Sin recortar y sin punto final.
+- resumen: ese mismo problema en menos de 70 caracteres, sin punto final. Es el título del cierre.
+- solucion: qué se hizo para resolverlo, con todos los detalles que da el texto: a quién, cómo, qué pieza. En impersonal, como lo escribe un técnico: «Se conecta el cable a la regleta», «Se le indica al usuario por teléfono cómo proyectar». Si el texto no dice qué se hizo, escribe solo la acción inmediata que el propio texto deja clara (un cable suelto: «Se vuelve a conectar el cable»); si no hay ninguna clara, escribe «Se resuelve en el momento».
+
+Reglas:
+- Las palabras del técnico. Corriges la puntuación, las mayúsculas y las faltas, nada más.
+- Ni una pieza, persona, cantidad, causa o sala que no esté en el texto.
+- Sin markdown, sin emojis, sin comillas alrededor.
+- Devuelves cada texto con el mismo id con el que llega.`
+
+const ESQUEMA_CIERRES = {
+  type: 'OBJECT',
+  properties: {
+    cierres: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          id: { type: 'STRING' },
+          problema: { type: 'STRING' },
+          resumen: { type: 'STRING' },
+          solucion: { type: 'STRING' },
+        },
+        required: ['id', 'problema', 'resumen', 'solucion'],
+      },
+    },
+  },
+  required: ['cierres'],
+}
+
+/**
+ * Cuántos se le mandan de una vez. El diario lleva como mucho 150 filas, y un
+ * periodo con más de ochenta cierres del rayo es un trimestre entero: lo que
+ * pase de aquí se separa por la puntuación.
+ */
+const TOPE_CIERRES = 80
+
+/** Un número en la respuesta que no está en el texto es un número inventado. */
+function cifrasNuevas(salida: string, entrada: string): boolean {
+  const dentro = new Set(entrada.match(/\d+/g) ?? [])
+  return (salida.match(/\d+/g) ?? []).some((n) => !dentro.has(n))
+}
+
+export interface Separacion {
+  /** Lo que la IA ha separado bien, por incidencia. Lo que falte va sin IA. */
+  separados: Map<string, Separado>
+  /** Por qué no ha podido, si no ha podido con ninguno. */
+  motivo: string | null
+}
+
+/**
+ * Separa los cierres del rayo con la IA, o dice por qué no ha podido.
+ *
+ * Nunca lanza, como `redactar`: si falla, el informe separa por la puntuación.
+ * Y se comprueba cada uno por su lado —un resumen vacío, una cifra que no está
+ * en el texto— para que uno mal no tire los otros cuarenta.
+ */
+export async function separarConIA(
+  textos: Map<string, string>,
+  o: OpcionesIA,
+): Promise<Separacion> {
+  const separados = new Map<string, Separado>()
+  if (!textos.size) return { separados, motivo: null }
+
+  // Ids cortos para el modelo: un uuid son 36 caracteres que no aportan nada.
+  const lote = [...textos].slice(0, TOPE_CIERRES)
+  const porId = new Map(lote.map(([incidencia, texto], n) => [String(n + 1), { incidencia, texto }]))
+
+  const cuerpo = {
+    systemInstruction: { parts: [{ text: INSTRUCCION_CIERRES }] },
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text: JSON.stringify(
+              [...porId].map(([id, { texto }]) => ({ id, texto })),
+              null,
+              1,
+            ),
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: ESQUEMA_CIERRES,
+      thinkingConfig: { thinkingLevel: 'low' },
+      maxOutputTokens: 16384,
+    },
+  }
+
+  let ultimo = 'no se ha llegado a preguntar'
+  for (const espera of [0, 1500]) {
+    if (espera) await new Promise((r) => setTimeout(r, espera))
+    try {
+      const res = await pedir(cuerpo, o)
+      const cand = res.candidates?.[0]
+      if (cand?.finishReason && cand.finishReason !== 'STOP') {
+        throw new Error(`la respuesta terminó por ${cand.finishReason}`)
+      }
+      const texto = (cand?.content?.parts ?? [])
+        .filter((p) => !p.thought && typeof p.text === 'string')
+        .map((p) => p.text)
+        .join('')
+      if (!texto.trim()) throw new Error('respuesta vacía')
+
+      const bruto = JSON.parse(texto) as {
+        cierres?: Array<{ id?: unknown; problema?: unknown; resumen?: unknown; solucion?: unknown }>
+      }
+      for (const c of bruto.cierres ?? []) {
+        const origen = porId.get(String(c.id ?? ''))
+        if (!origen || separados.has(origen.incidencia)) continue
+        const problema = limpia(c.problema, 600).replace(/[.:]$/, '')
+        const resumen = limpia(c.resumen, 90).replace(/[.:]$/, '')
+        const solucion = limpia(c.solucion, 600)
+        if (!problema || !resumen || !solucion) continue
+        if (cifrasNuevas(`${problema} ${resumen} ${solucion}`, origen.texto)) continue
+        separados.set(origen.incidencia, { problema, resumen, solucion })
+      }
+      if (!separados.size) throw new Error('la respuesta no traía ningún cierre bien separado')
+      return { separados, motivo: null }
+    } catch (err) {
+      ultimo = err instanceof Error ? err.message : String(err)
+      const estado = (err as { estado?: number }).estado
+      if (estado !== undefined && !REINTENTABLE.has(estado)) break
+    }
+  }
+
+  return { separados, motivo: ultimo }
 }

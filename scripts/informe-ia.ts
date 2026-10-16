@@ -5,7 +5,7 @@
  *
  * Levanta un servidor que habla como habla la API de Gemini —incluidas las
  * partes marcadas `thought`, que es el detalle que rompe un `JSON.parse`
- * ingenuo— y comprueba las cuatro cosas que tienen que cumplirse siempre:
+ * ingenuo— y comprueba las cinco cosas que tienen que cumplirse siempre:
  *
  *   1. Se pide razonamiento de verdad: `thinkingLevel` en el cuerpo, y salida
  *      con esquema para no tener que adivinar el formato.
@@ -15,6 +15,11 @@
  *      informe sale con la redacción calculada. Es la prueba que de verdad
  *      importa: un informe sobrio es mejor que uno elegante con un número falso,
  *      porque el número falso se cita en una reunión.
+ *   5. Los cierres del rayo —la avería y su cierre con la misma frase— se
+ *      separan en «qué fallaba» y «qué se hizo» con otra pregunta, más corta y
+ *      con razonamiento `low`. Lo que la IA devuelve mal (una cifra que no está
+ *      en el texto) no entra, y esa incidencia se separa por la puntuación. En
+ *      el diario, la apertura y el cierre salen enteros, sin el tope de 90.
  *
  * Sin base de datos: los datos del informe se construyen aquí a mano.
  */
@@ -342,6 +347,176 @@ async function main(): Promise<number> {
   comprueba('un 400 no se reintenta', (await redactar(d, se, cfg)) === null)
   comprueba('y sale rápido, sin las esperas', Date.now() - antes < 1200)
 
+  /*
+   * Los cierres del rayo.
+   *
+   * Es otra pregunta al mismo servidor, y lo que se comprueba es lo mismo que
+   * arriba más una cosa propia: que cada incidencia se valida por su lado. Una
+   * respuesta con un cierre bueno y otro con una cifra inventada no puede tirar
+   * el bueno ni colar el malo.
+   */
+  console.log('\n▸ Los cierres del rayo se separan en lo que fallaba y lo que se hizo')
+  estado = 200
+  const { separarConIA } = await import('../reports-worker/src/ia.js')
+  const { cierresDelRayo, aplicarSeparacion, separarTodos, separarSinIA } = await import(
+    '../reports-worker/src/cierres.js'
+  )
+
+  const PROYECCION =
+    'No se proyecta pantalla del ordenador del aula Se le indica al usuario por teléfono cómo proyectar'
+  const ALTAVOCES = 'No funcionan los altavoces del aula Se conecta el cable a la regleta'
+  const ID_PROYECCION = '5b0c2f1e-3f55-4d3e-9d0a-0d2f6a1b7c01'
+  const ID_ALTAVOCES = '9a7e4c20-61b8-4a52-8c3d-4e1f9b2d8a02'
+  const textos = new Map([
+    [ID_PROYECCION, PROYECCION],
+    [ID_ALTAVOCES, ALTAVOCES],
+  ])
+
+  const BUENO = {
+    id: '1',
+    problema: 'No se proyecta la pantalla del ordenador del aula.',
+    resumen: 'No se proyecta la pantalla del aula',
+    solucion: 'Se le indica al usuario por teléfono cómo proyectar',
+  }
+  // Un cable de «15 metros» que el técnico nunca escribió.
+  const INVENTADO = {
+    id: '2',
+    problema: 'No funcionan los altavoces del aula',
+    resumen: 'No suenan los altavoces',
+    solucion: 'Se cambia el cable de 15 metros por otro nuevo',
+  }
+  // Un id que no se mandó: no corresponde a ninguna incidencia.
+  const AJENO = { ...BUENO, id: '99' }
+
+  devolver = respuesta({ cierres: [BUENO, INVENTADO, AJENO] })
+  const separacion = await separarConIA(textos, cfg)
+  const genCierres = ultimoCuerpo['generationConfig'] as Record<string, unknown> | undefined
+  const thinkCierres = genCierres?.['thinkingConfig'] as Record<string, unknown> | undefined
+  const prompt = JSON.stringify(ultimoCuerpo['contents'])
+
+  comprueba(
+    'se pide thinkingLevel low, no el del análisis',
+    thinkCierres?.['thinkingLevel'] === 'low',
+    JSON.stringify(thinkCierres),
+  )
+  comprueba(
+    'se pide salida con esquema',
+    genCierres?.['responseMimeType'] === 'application/json' && !!genCierres?.['responseSchema'],
+  )
+  comprueba(
+    'al modelo le llegan ids cortos, no los de la base',
+    prompt.includes(PROYECCION) && !prompt.includes(ID_PROYECCION) && !prompt.includes(ID_ALTAVOCES),
+  )
+  comprueba(
+    'el borrador del modelo no rompe la respuesta',
+    separacion.motivo === null,
+    `${separacion.motivo}`,
+  )
+  const bueno = separacion.separados.get(ID_PROYECCION)
+  comprueba('el bueno vuelve con el id de la incidencia, no con el del modelo', !!bueno)
+  comprueba(
+    'con su problema sin el punto final, su resumen y lo que se hizo',
+    bueno?.problema === 'No se proyecta la pantalla del ordenador del aula' &&
+      bueno.resumen === BUENO.resumen &&
+      bueno.solucion === BUENO.solucion,
+    JSON.stringify(bueno),
+  )
+  comprueba(
+    'un cierre con un número que no estaba en el texto se descarta',
+    !separacion.separados.has(ID_ALTAVOCES),
+  )
+  comprueba(
+    'y un id que nadie mandó no se cuela',
+    separacion.separados.size === 1,
+    `${separacion.separados.size} separados`,
+  )
+
+  // Lo descartado no se queda sin separar: cae a la puntuación.
+  const todos = separarTodos(textos, separacion.separados)
+  comprueba(
+    'lo que la IA no devuelve bien se separa por la puntuación',
+    todos.get(ID_ALTAVOCES)?.problema === 'No funcionan los altavoces del aula' &&
+      todos.get(ID_ALTAVOCES)?.solucion === 'Se conecta el cable a la regleta',
+    JSON.stringify(todos.get(ID_ALTAVOCES)),
+  )
+  comprueba('y lo que sí devolvió se queda como lo devolvió', todos.get(ID_PROYECCION) === bueno)
+  comprueba(
+    'sin IA, la frase del tirón se corta donde empieza lo que se hizo',
+    separarSinIA(PROYECCION).solucion === 'Se le indica al usuario por teléfono cómo proyectar',
+    JSON.stringify(separarSinIA(PROYECCION)),
+  )
+
+  // El diario: la apertura y el cierre salen cada uno con lo suyo.
+  const fila = (tipo: string, incidencia: string, titulo: string, detalle: string | null) => ({
+    dia: '2026-07-27', hora: '10:05', tipo, subtipo: 'incidencia', incidencia, titulo, detalle,
+    cantidad: null, ref: null, building: 'H', room: '1.13', quien: 'Ana Pérez',
+  })
+  const conRayo: ReportData = {
+    ...d,
+    eventos: [
+      fila('apertura', ID_PROYECCION, PROYECCION, null),
+      fila('cierre', ID_PROYECCION, PROYECCION, PROYECCION),
+      // Un cierre de los de siempre: el título solo está DENTRO de la explicación.
+      fila('cierre', ID_ALTAVOCES, 'Proyector', 'Se cambia la lámpara del proyector'),
+    ],
+  }
+  const delRayo = cierresDelRayo(conRayo)
+  comprueba(
+    'solo es del rayo el cierre cuyo texto es el título',
+    delRayo.size === 1 && delRayo.get(ID_PROYECCION) === PROYECCION,
+    JSON.stringify([...delRayo]),
+  )
+  const impreso = aplicarSeparacion(conRayo, separarTodos(delRayo, separacion.separados))
+  comprueba(
+    'la apertura lleva el problema entero y el cierre su resumen y lo que se hizo',
+    impreso.eventos[0]?.titulo === 'No se proyecta la pantalla del ordenador del aula' &&
+      impreso.eventos[1]?.titulo === BUENO.resumen &&
+      impreso.eventos[1]?.detalle === BUENO.solucion,
+    JSON.stringify(impreso.eventos.slice(0, 2).map((e) => [e.titulo, e.detalle])),
+  )
+  comprueba(
+    'el cierre normal no se toca, y el expediente de origen tampoco',
+    impreso.eventos[2] === conRayo.eventos[2] && conRayo.eventos[1]?.titulo === PROYECCION,
+  )
+
+  // Y en el papel, la apertura y el cierre salen enteros; el resto del diario, con su tope.
+  const { renderReport } = await import('../reports-worker/src/template.js')
+  const { leerOpciones } = await import('../reports-worker/src/opciones.js')
+  const LARGA =
+    'Se le indica al usuario por teléfono cómo proyectar desde el ordenador del aula, ' +
+    'se comprueba que el cable está bien conectado a la regleta y se deja funcionando'
+  const LARGO_AJENO = 'Material con un nombre larguísimo '.repeat(5).trim()
+  const material = { ...fila('material', 'x', LARGO_AJENO, null), incidencia: null }
+  const largos: ReportData = aplicarSeparacion(
+    { ...conRayo, eventos: [...conRayo.eventos, material] },
+    new Map([[ID_PROYECCION, { problema: PROYECCION, resumen: BUENO.resumen, solucion: LARGA }]]),
+  )
+  const solo = leerOpciones({ ia: false, secciones: ['eventos'] })
+  const html = renderReport(largos, lecturaCalculada(largos, 'equipo'), solo, {
+    emitido: '27/07/26, 10:30',
+  })
+  comprueba('el cierre del diario lleva entero lo que se hizo', html.includes(LARGA))
+  comprueba('y la apertura su problema entero', html.includes(`>${PROYECCION}</td>`))
+  comprueba(
+    'las filas que no son de una incidencia siguen con su tope',
+    !html.includes(LARGO_AJENO) && html.includes('…'),
+  )
+
+  // Si la IA no sirve de nada, se dice por qué y el informe sigue por la puntuación.
+  devolver = respuesta({ cierres: [INVENTADO] })
+  const sinNada = await separarConIA(textos, cfg)
+  comprueba(
+    'si ninguno viene bien separado, devuelve el motivo y ningún cierre',
+    sinNada.separados.size === 0 && !!sinNada.motivo,
+    sinNada.motivo ?? '',
+  )
+  estado = 400
+  devolver = { error: { message: 'modelo inexistente' } }
+  const aprisa = Date.now()
+  const caida = await separarConIA(textos, cfg)
+  comprueba('un 400 no lanza ni se reintenta', caida.separados.size === 0 && Date.now() - aprisa < 1200)
+  comprueba('sin cierres del rayo no se pregunta a nadie', (await separarConIA(new Map(), cfg)).motivo === null)
+
   servidor.close()
   return fallos
 }
@@ -349,7 +524,7 @@ async function main(): Promise<number> {
 const codigo = await main()
 console.log(
   codigo === 0
-    ? '\n✓ El análisis con IA se pide bien, se limpia y no cuela cifras inventadas'
+    ? '\n✓ El análisis con IA se pide bien, se limpia y no cuela cifras inventadas; los cierres del rayo se separan'
     : `\n✗ ${codigo} fallos`,
 )
 process.exit(codigo === 0 ? 0 : 1)

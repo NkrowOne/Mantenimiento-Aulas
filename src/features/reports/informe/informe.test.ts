@@ -876,6 +876,27 @@ describe('las secciones que se pueden quitar y las que se pueden añadir', () =>
     expect(con(['cierres'])).toContain('no se apuntó qué se hizo')
   })
 
+  it('la incidencia y su cierre salen enteros en el diario, sin «…» a media frase', () => {
+    const largo =
+      'No se proyecta la pantalla del ordenador del aula aunque el cable HDMI está conectado y el proyector enciende'
+    const solucion =
+      'Se le indica al usuario por teléfono cómo duplicar la pantalla con Windows y P, y se comprueba que ya proyecta'
+    const html = renderReport(
+      {
+        ...d,
+        eventos: [
+          { ...d.eventos[0]!, tipo: 'cierre', titulo: largo, detalle: solucion },
+          { ...d.eventos[0]!, tipo: 'apertura', titulo: largo, detalle: null },
+        ],
+      },
+      lectura,
+      leerOpciones({ secciones: ['eventos'] }),
+      { emitido: '31/07/2026, 9:14' },
+    )
+    expect(html.split(largo).length - 1).toBe(2)
+    expect(html).toContain(solucion)
+  })
+
   it('«fotos» mete la imagen dentro del documento, no un enlace', () => {
     const html = con(['fotos'])
     expect(html).toContain('src="data:image/png;base64,')
