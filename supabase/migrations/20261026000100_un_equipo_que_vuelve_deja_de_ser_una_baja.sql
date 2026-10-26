@@ -1,3 +1,8 @@
+-- reejecutable: si
+--
+-- `create or replace view`, `alter view … set (security_invoker = on)`, `comment`
+-- y `grant` dan lo mismo la segunda vez que la primera. La deducción automática
+-- no se fía del `alter view` —y en general hace bien—, así que se dice aquí.
 -- =============================================================================
 -- Un equipo que volvió al aula deja de ser una baja
 --

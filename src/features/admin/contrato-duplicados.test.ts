@@ -99,8 +99,7 @@ describe('la bandeja de duplicados: lo que ni siquiera se propone', () => {
 })
 
 describe('el laboratorio 6 recupera sus puestos', () => {
-  const nombre = '20261026000300_el_laboratorio_6_recupera_sus_treinta_puestos.sql'
-  const texto = leer(nombre)
+  const texto = leer('20261026000400_los_puestos_vuelven_por_la_fusion_no_por_el_nombre.sql')
 
   it('se puede volver a ejecutar y lo declara', () => {
     expect(texto.startsWith('-- reejecutable: si')).toBe(true)
@@ -112,10 +111,17 @@ describe('el laboratorio 6 recupera sus puestos', () => {
     expect(texto).toContain("a.status = 'retirado'")
   })
 
+  it('los encuentra siguiendo la cadena de la fusión, no el nombre del aula', () => {
+    // La versión anterior buscaba «laboratorio informática 6» y un tipo con
+    // «ordenador» en el nombre, y en producción no encontró ninguno.
+    expect(texto).toContain('with recursive')
+    expect(texto).toContain('join fusiones f on f.id = c.destino')
+    expect(texto).not.toMatch(/LABORATORIO%INFORMATICA/)
+    // Y la cadena tiene tope: un ciclo colgaría el despliegue entero.
+    expect(texto).toMatch(/c\.salto < \d+/)
+  })
+
   it('devuelve el equipo con un alta en el histórico, no solo con el estado', () => {
-    // Sin el evento, la hoja de inventario los seguiría leyendo como bajas
-    // —`inventory_sheet` decide por el último evento— y el PDF de la sala
-    // seguiría sin traerlos, que es por donde se vio el fallo.
     expect(texto).toContain("set status     = 'instalado'")
     expect(texto).toMatch(/insert into asset_events[\s\S]*'alta'/)
   })
@@ -130,12 +136,25 @@ describe('el laboratorio 6 recupera sus puestos', () => {
     expect(texto).toContain("max(e.occurred_at) + interval '1 minute'")
   })
 
-  it('renumera en dos pasadas, que es lo que no choca contra el índice', () => {
-    expect(texto).toContain("set label = 'renumerando ' || a.id")
-    expect(texto).toContain('set label = n.etiqueta')
+  it('no renumera: sin número de serie el orden saldría al azar', () => {
+    expect(texto).not.toMatch(/set label\s*=/)
+    expect(texto).not.toContain('row_number()')
+  })
+
+  it('y no los deja otra vez a tiro de la bandeja de duplicados', () => {
+    expect(texto).toMatch(/insert into asset_label_conflicts[\s\S]*'descartado'/)
   })
 
   it('no borra la baja de la fusión: el histórico cuenta lo que pasó', () => {
     expect(texto).not.toMatch(/delete\s+from\s+asset_events/i)
+  })
+})
+
+describe('la migración que sustituye queda sin efecto', () => {
+  const texto = leer('20261026000300_el_laboratorio_6_recupera_sus_treinta_puestos.sql')
+
+  it('no toca ni equipos ni etiquetas', () => {
+    const sinComentarios = texto.replace(/--[^\n]*/g, '')
+    expect(sinComentarios).not.toMatch(/\b(update|insert|delete)\b/i)
   })
 })
