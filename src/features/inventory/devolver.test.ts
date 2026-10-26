@@ -43,14 +43,18 @@ function fila(parcial: Partial<FilaDeInventario>): FilaDeInventario {
 }
 
 describe('qué se devuelve', () => {
-  it('solo lo retirado en una fusión de duplicados y todavía retirado', () => {
+  it('lo que una fusión sacó y la hoja sigue contando como baja, aunque ya diga instalado', () => {
     const filas = [
       fila({ asset_id: 'fusion' }),
       fila({ asset_id: 'baja-de-verdad', baja_motivo: 'Se quemó la fuente' }),
-      fila({ asset_id: 'ya-vuelto', status: 'instalado' }),
+      // Instalado pero con la baja de la fusión en pie: la hoja lo sigue
+      // contando como baja y el PDF no lo trae. Es el limbo de producción.
+      fila({ asset_id: 'limbo', status: 'instalado' }),
+      // Devuelto de verdad: con su alta, la hoja ya no le pone baja.
+      fila({ asset_id: 'ya-vuelto', status: 'instalado', baja_at: null, baja_motivo: null }),
       fila({ asset_id: 'sin-motivo', baja_motivo: null }),
     ]
-    expect(retiradasPorFusion(filas).map((f) => f.asset_id)).toEqual(['fusion'])
+    expect(retiradasPorFusion(filas).map((f) => f.asset_id)).toEqual(['fusion', 'limbo'])
   })
 
   it('el motivo es exactamente el que escribe la fusión en la base', () => {
