@@ -682,11 +682,24 @@ function AssetFixer({
  * trabajo: el técnico delante de un proyector cuyo modelo no ha escrito todavía.
  * Esperar a que teclee tres letras es ayudarle cuando ya ha hecho el trabajo.
  *
- * **La sugerencia no deja escapar el foco.** `preventDefault` en `pointerdown`
- * evita el `blur`, y hace falta: sin él, tocar «Epson EB-1485Fi» disparaba primero
- * el guardado de lo que hubiera a medio teclear —`Epso`— y luego el de la
- * sugerencia. Dos escrituras, y la primera con un modelo que no existe metida en
- * el histórico del equipo.
+ * **Tocar una sugerencia no es salir del campo.** Sin esto, tocar «Epson
+ * EB-1485Fi» disparaba primero el guardado de lo que hubiera a medio teclear
+ * —`Epso`— y luego el de la sugerencia. Dos escrituras, y la primera con un
+ * modelo que no existe metida en el histórico del equipo.
+ *
+ * Se resolvía con `preventDefault` en `pointerdown`, y en Safari eso no evita el
+ * `blur`: **anula el toque entero**. WebKit lee ese `preventDefault` como «este
+ * gesto no es un toque», no emite el `click`, y la sugerencia no hace nada. En
+ * Chrome —donde se probó— sí llegaba el `click`, así que el fallo solo existía
+ * en los iPhone y los iPad, que es donde se usa la aplicación.
+ *
+ * Ahora son dos piezas que no tocan el gesto:
+ *  - `preventDefault` en `mousedown`, que en escritorio es lo que evita el
+ *    `blur` y en un toque llega justo antes del `click` sin anularlo;
+ *  - y una marca, puesta en `pointerdown` —que llega antes que el `blur` en
+ *    todos los navegadores—, con la que el `blur` sabe que se está eligiendo y
+ *    no guarda ni pliega la lista: si la plegara, la sugerencia desaparecería
+ *    bajo el dedo antes de que llegara el `click`.
  */
 function CampoSugerido({
   etiqueta,
@@ -720,10 +733,21 @@ function CampoSugerido({
     onCommit(v)
   }
 
+  /* Hay un dedo (o un ratón) sobre una sugerencia. Ver la cabecera. */
+  const eligiendo = useRef(false)
+  const campo = useRef<HTMLInputElement>(null)
+
   function elegir(s: Sugerencia): void {
+    eligiendo.current = false
     onValor(s.valor)
     confirmar(s.valor)
     setAbierto(false)
+  }
+
+  /* Lo que hace salir del campo, haya o no una sugerencia de por medio. */
+  function salir(): void {
+    setAbierto(false)
+    confirmar(valor)
   }
 
   return (
@@ -741,10 +765,15 @@ function CampoSugerido({
             onValor(e.target.value)
             setAbierto(true)
           }}
-          onFocus={() => setAbierto(true)}
+          ref={campo}
+          onFocus={() => {
+            eligiendo.current = false
+            setAbierto(true)
+          }}
           onBlur={() => {
-            setAbierto(false)
-            confirmar(valor)
+            // El `blur` de tocar una sugerencia lo resuelve su `click`.
+            if (eligiendo.current) return
+            salir()
           }}
           onKeyDown={(e) => {
             if (e.key === 'Escape' && desplegada) {
@@ -783,7 +812,17 @@ function CampoSugerido({
                   type="button"
                   role="option"
                   aria-selected={false}
-                  onPointerDown={(e) => e.preventDefault()}
+                  onPointerDown={() => {
+                    eligiendo.current = true
+                  }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  /* El dedo empezó en una sugerencia y se convirtió en un
+                     desplazamiento: no se elige nada. Si el campo ya perdió el
+                     foco por el camino, es una salida como otra cualquiera. */
+                  onPointerCancel={() => {
+                    eligiendo.current = false
+                    if (document.activeElement !== campo.current) salir()
+                  }}
                   onClick={() => elegir(s)}
                   className="key key-quiet flex min-h-11 items-center justify-between gap-2 px-3 py-2 text-left text-sm"
                 >

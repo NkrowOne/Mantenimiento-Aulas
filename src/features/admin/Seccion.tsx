@@ -145,7 +145,21 @@ export function Nota({ texto, tono = 'ok' }: { texto: string | null; tono?: 'ok'
   )
 }
 
-/** El mensaje de un error de mutación, para `Nota`. */
+/**
+ * El mensaje de un error de mutación, para `Nota`.
+ *
+ * No basta con `instanceof Error`: lo que devuelve `supabase.rpc()` es un
+ * `PostgrestError`, que en esta versión es un objeto plano con `message` y no
+ * hereda de `Error`. Con esa comprobación sola, cada «Solo se fusionan dos
+ * equipos de la misma sala» o «No son el mismo aparato» que el servidor
+ * escribe con cuidado llegaba a la pantalla como «No se ha podido aplicar.», y
+ * quien lo leía no tenía forma de saber qué hacer distinto.
+ */
 export function mensajeDe(error: unknown, siNo = 'No se ha podido aplicar.'): string {
-  return error instanceof Error && error.message ? error.message : siNo
+  if (error instanceof Error && error.message) return error.message
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const { message } = error as { message: unknown }
+    if (typeof message === 'string' && message.trim() !== '') return message
+  }
+  return siNo
 }

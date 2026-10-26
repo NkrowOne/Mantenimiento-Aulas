@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { pullMaster } from '@/sync/pull'
@@ -89,10 +89,45 @@ function Lado({
   )
 }
 
+/** El aviso de un par resuelto, en el hueco que deja en la lista. */
+function AvisoEnLaLista({ texto }: { texto: string }): React.ReactElement {
+  return (
+    <li className="rounded-ctl bg-ok-tint px-4 py-2">
+      <p aria-live="polite" className="text-sm text-ok">
+        {texto}
+      </p>
+    </li>
+  )
+}
+
+/** De qué par se habla y en qué puesto de la lista estaba al tocarlo. */
+interface Donde {
+  clave: string
+  indice: number
+}
+
 export function AuditoriaInventario(): React.ReactElement {
   const qc = useQueryClient()
   const refrescar = useRefrescarPendientes()
-  const [nota, setNota] = useState<string | null>(null)
+  /*
+   * Lo que pasó con el último par que se tocó, y DÓNDE contarlo.
+   *
+   * La nota vivía debajo de la lista entera. Con treinta pares en la bandeja
+   * —los puestos de un aula de informática, por ejemplo— quedaba a varias
+   * pantallas del botón: se pulsaba, no se veía nada, y se volvía a pulsar. Un
+   * error del servidor era exactamente igual de invisible, así que «no hace
+   * nada» era la descripción correcta de lo que se veía.
+   *
+   * Ahora el resultado sale donde está el dedo. Un error, dentro de la tarjeta
+   * del par, que sigue ahí. Un acierto, en el hueco que deja el par al irse de
+   * la lista: es justo donde se está mirando.
+   */
+  const [resultado, setResultado] = useState<{
+    clave: string
+    indice: number
+    texto: string
+    tono: 'ok' | 'crit'
+  } | null>(null)
 
   const { data: resumen } = useQuery({
     queryKey: ['auditoria-inventario'],
@@ -112,8 +147,8 @@ export function AuditoriaInventario(): React.ReactElement {
     },
   })
 
-  const alTerminar = (mensaje: string): void => {
-    setNota(mensaje)
+  const alTerminar = (donde: Donde, mensaje: string): void => {
+    setResultado({ ...donde, texto: mensaje, tono: 'ok' })
     void qc.invalidateQueries({ queryKey: ['auditoria-duplicados'] })
     void qc.invalidateQueries({ queryKey: ['auditoria-inventario'] })
     refrescar()
@@ -122,8 +157,11 @@ export function AuditoriaInventario(): React.ReactElement {
     void pullMaster()
   }
 
+  const alFallar = (donde: Donde, error: unknown): void =>
+    setResultado({ ...donde, texto: mensajeDe(error), tono: 'crit' })
+
   const fusionar = useMutation({
-    mutationFn: async (input: { duplicado: string; bueno: string }): Promise<string> => {
+    mutationFn: async (input: { duplicado: string; bueno: string } & Donde): Promise<string> => {
       const { data, error } = await supabase.rpc('fusionar_equipo_duplicado', {
         p_duplicado: input.duplicado,
         p_bueno: input.bueno,
@@ -131,24 +169,37 @@ export function AuditoriaInventario(): React.ReactElement {
       if (error) throw error
       return (data as string) ?? ''
     },
-    onSuccess: (etiqueta) =>
+    onMutate: () => setResultado(null),
+    onError: (error, donde) => alFallar(donde, error),
+    onSuccess: (etiqueta, donde) =>
       alTerminar(
+        donde,
         `Fusionados. Se queda «${etiqueta}» con la serie, el modelo y las incidencias del otro; el duplicado queda retirado y su histórico se sigue leyendo.`,
       ),
   })
 
   const descartar = useMutation({
-    mutationFn: async (input: { duplicado: string; bueno: string }) => {
+    mutationFn: async (input: { duplicado: string; bueno: string } & Donde) => {
       const { error } = await supabase.rpc('descartar_duplicado', {
         p_duplicado: input.duplicado,
         p_bueno: input.bueno,
       })
       if (error) throw error
     },
-    onSuccess: () => alTerminar('Anotado: no es un duplicado. El par no volverá a proponerse.'),
+    onMutate: () => setResultado(null),
+    onError: (error, donde) => alFallar(donde, error),
+    onSuccess: (_, donde) =>
+      alTerminar(donde, 'Anotado: son dos aparatos. El par no volverá a proponerse.'),
   })
 
   const ocupado = fusionar.isPending || descartar.isPending
+
+  /* Un acierto se cuenta en el hueco del par, y solo cuando el par ya se ha ido:
+     mientras la lista no se ha recargado, la tarjeta sigue en su sitio. */
+  const acierto =
+    resultado?.tono === 'ok' && !(pares ?? []).some((p) => `${p.dup_id}-${p.bueno_id}` === resultado.clave)
+      ? resultado
+      : null
 
   /* Las cifras del servidor, en el orden en que se comparan con un dispositivo:
      primero los equipos, luego lo demás. `—` cuando el servidor no las ha dado. */
@@ -179,76 +230,86 @@ export function AuditoriaInventario(): React.ReactElement {
       {pares && pares.length === 0 && <EstadoVacio titulo="Ningún duplicado por decidir" />}
 
       <ul className="space-y-3">
-          {(pares ?? []).map((p) => (
-            <li key={`${p.dup_id}-${p.bueno_id}`} className="card p-4">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <p className="min-w-0 text-sm font-medium">
-                  <span className="font-mono font-semibold">
-                    {p.building_code} {displayRoomCode(p.room_code)}
-                  </span>
-                  <span className="text-muted"> · {p.tipo}</span>
-                </p>
-                {p.choque_registrado && (
-                  <span className="shrink-0 rounded-tag bg-warn-tint px-1.5 py-0.5 text-[0.6875rem] font-medium text-warn">
-                    choque registrado por el servidor
-                  </span>
-                )}
-              </div>
+          {(pares ?? []).map((p, indice) => {
+            const clave = `${p.dup_id}-${p.bueno_id}`
+            const donde = { clave, indice }
+            return (
+              <Fragment key={clave}>
+                {acierto && acierto.indice === indice && <AvisoEnLaLista texto={acierto.texto} />}
+                <li className="card p-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="min-w-0 text-sm font-medium">
+                      <span className="font-mono font-semibold">
+                        {p.building_code} {displayRoomCode(p.room_code)}
+                      </span>
+                      <span className="text-muted"> · {p.tipo}</span>
+                    </p>
+                    {p.choque_registrado && (
+                      <span className="shrink-0 rounded-tag bg-warn-tint px-1.5 py-0.5 text-[0.6875rem] font-medium text-warn">
+                        choque registrado por el servidor
+                      </span>
+                    )}
+                  </div>
 
-              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                <Lado
-                  titulo="Más antiguo"
-                  label={p.bueno_label}
-                  serial={p.bueno_serial}
-                  model={p.bueno_model}
-                  registros={p.bueno_registros}
-                />
-                <Lado
-                  titulo={`Más nuevo${p.dup_creado_por ? ` · lo apuntó ${p.dup_creado_por}` : ''}`}
-                  label={p.dup_label}
-                  serial={p.dup_serial}
-                  model={p.dup_model}
-                  registros={p.dup_registros}
-                />
-              </div>
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                    <Lado
+                      titulo="Más antiguo"
+                      label={p.bueno_label}
+                      serial={p.bueno_serial}
+                      model={p.bueno_model}
+                      registros={p.bueno_registros}
+                    />
+                    <Lado
+                      titulo={`Más nuevo${p.dup_creado_por ? ` · lo apuntó ${p.dup_creado_por}` : ''}`}
+                      label={p.dup_label}
+                      serial={p.dup_serial}
+                      model={p.dup_model}
+                      registros={p.dup_registros}
+                    />
+                  </div>
 
-              {/* Tres salidas y las tres explícitas. La fusión dice quién se
-                  queda; equivocarse tampoco pierde nada, pero decidir mirando
-                  los registros es lo que evita retirar el lado con historia. */}
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  disabled={ocupado}
-                  onClick={() => fusionar.mutate({ duplicado: p.dup_id, bueno: p.bueno_id })}
-                  className="key key-accent min-h-11 flex-1 px-3 text-xs"
-                >
-                  Es el mismo: quedarse con «{p.bueno_label ?? p.base}»
-                </button>
-                <button
-                  type="button"
-                  disabled={ocupado}
-                  onClick={() => fusionar.mutate({ duplicado: p.bueno_id, bueno: p.dup_id })}
-                  className="key key-quiet min-h-11 flex-1 px-3 text-xs"
-                >
-                  Quedarse con «{p.dup_label ?? p.base}»
-                </button>
-                <button
-                  type="button"
-                  disabled={ocupado}
-                  onClick={() => descartar.mutate({ duplicado: p.dup_id, bueno: p.bueno_id })}
-                  className="key key-quiet min-h-11 px-3 text-xs text-muted"
-                >
-                  Son dos aparatos
-                </button>
-              </div>
-            </li>
-          ))}
+                  {/* Tres salidas y las tres explícitas. La fusión dice quién se
+                      queda; equivocarse tampoco pierde nada, pero decidir mirando
+                      los registros es lo que evita retirar el lado con historia. */}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={ocupado}
+                      onClick={() => fusionar.mutate({ duplicado: p.dup_id, bueno: p.bueno_id, ...donde })}
+                      className="key key-accent min-h-11 flex-1 px-3 text-xs"
+                    >
+                      Es el mismo: quedarse con «{p.bueno_label ?? p.base}»
+                    </button>
+                    <button
+                      type="button"
+                      disabled={ocupado}
+                      onClick={() => fusionar.mutate({ duplicado: p.bueno_id, bueno: p.dup_id, ...donde })}
+                      className="key key-quiet min-h-11 flex-1 px-3 text-xs"
+                    >
+                      Quedarse con «{p.dup_label ?? p.base}»
+                    </button>
+                    <button
+                      type="button"
+                      disabled={ocupado}
+                      onClick={() => descartar.mutate({ duplicado: p.dup_id, bueno: p.bueno_id, ...donde })}
+                      className="key key-quiet min-h-11 px-3 text-xs text-muted"
+                    >
+                      Son dos aparatos
+                    </button>
+                  </div>
+
+                  {/* El error, en la tarjeta del par que lo provocó: el par sigue
+                      aquí y es lo que hay que mirar para entender el motivo. */}
+                  {resultado?.tono === 'crit' && resultado.clave === clave && (
+                    <Nota texto={resultado.texto} tono="crit" />
+                  )}
+                </li>
+              </Fragment>
+            )
+          })}
+          {/* El par era el último de la lista: el aviso va donde estaba. */}
+          {acierto && acierto.indice >= (pares?.length ?? 0) && <AvisoEnLaLista texto={acierto.texto} />}
         </ul>
-
-      <Nota
-        texto={fusionar.isError || descartar.isError ? mensajeDe(fusionar.error ?? descartar.error) : nota}
-        tono={fusionar.isError || descartar.isError ? 'crit' : 'ok'}
-      />
 
       {/* Los números del servidor, que son los de verdad. Contra ellos se
           compara lo que enseñe cualquier dispositivo. Plegados: se consultan
