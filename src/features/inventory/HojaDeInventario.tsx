@@ -51,7 +51,7 @@ import {
   type FilaDeInventario,
 } from './hoja'
 import { esAppInstalada, nombreDelPdf, prepararPdfDeLaHoja } from './pdf'
-import { companerosVivos, devolverAlInventario, retiradasPorFusion } from './devolver'
+import { cambiarFechaDeAlta, companerosVivos, devolverAlInventario, retiradasPorFusion, tiposVivos } from './devolver'
 import { ofrecerFichero } from '@/lib/ficheros'
 import { pullMaster } from '@/sync/pull'
 
@@ -220,7 +220,15 @@ export function HojaDeInventario({
     | null
   >(null)
   /* La devolución al inventario de lo que una fusión retiró por error. */
-  const [diaDeAlta, setDiaDeAlta] = useState(() => new Date().toLocaleDateString('sv-SE'))
+  /* Sin fecha por defecto, a propósito: con la de hoy puesta, devolver los
+     equipos sin tocarla les dejaba el alta de hoy y no la de la instalación. */
+  const [diaDeAlta, setDiaDeAlta] = useState('')
+  /* Corregir la fecha de alta de un tipo de equipo de la sala. */
+  const [tipoACorregir, setTipoACorregir] = useState<string | null>(null)
+  const [diaCorregido, setDiaCorregido] = useState('')
+  const [correccion, setCorreccion] = useState<
+    { fase: 'guardando' } | { fase: 'hecho' | 'fallo'; texto: string } | null
+  >(null)
   const [devolucion, setDevolucion] = useState<
     { fase: 'devolviendo' } | { fase: 'hecho' | 'fallo'; texto: string } | null
   >(null)
@@ -408,6 +416,26 @@ export function HojaDeInventario({
       .catch((e: Error) => setPdf({ fase: 'aviso', mal: true, texto: `No se ha podido guardar el PDF: ${e.message}` }))
   }
 
+  const vivosPorTipo = useMemo(() => (delServidor ? tiposVivos(delServidor) : []), [delServidor])
+  const grupoACorregir =
+    vivosPorTipo.find((g) => g.tipo === tipoACorregir) ?? vivosPorTipo[0] ?? null
+
+  async function corregirFecha(): Promise<void> {
+    if (!grupoACorregir || !diaCorregido) return
+    setCorreccion({ fase: 'guardando' })
+    const r = await cambiarFechaDeAlta(grupoACorregir.ids, diaCorregido)
+    if (!r.ok) {
+      setCorreccion({ fase: 'fallo', texto: `No se ha podido cambiar la fecha: ${r.motivo}.` })
+      return
+    }
+    setCorreccion({
+      fase: 'hecho',
+      texto: `Alta del ${fechaDeLaHoja(`${diaCorregido}T12:00:00`) ?? diaCorregido} para ${cuantos(grupoACorregir.ids.length, 'equipo', 'equipos')} «${grupoACorregir.tipo}».`,
+    })
+    void servidor.refetch()
+    void pullMaster()
+  }
+
   async function devolverFusionadas(): Promise<void> {
     if (!delServidor) return
     setDevolucion({ fase: 'devolviendo' })
@@ -552,6 +580,63 @@ export function HojaDeInventario({
           >
             {devolucion.texto}
           </p>
+        )}
+
+        {/*
+          La fecha de alta de un tipo de equipo de la sala, de una vez. Es la
+          salida cuando la fecha no es la de la instalación —la del día en que
+          se importó, o la de hoy si se devolvieron sin cambiarla— y la hoja
+          impresa la enseña en su columna. Solo en la hoja de una sala: en la
+          del edificio, «todos los proyectores» son de cuarenta aulas distintas.
+        */}
+        {puedeCorregir && alcance.tipo === 'sala' && grupoACorregir && (
+          <details className="card mt-4 p-4">
+            <summary className="cursor-pointer text-sm font-medium">Corregir la fecha de alta</summary>
+            <p className="mt-2 text-sm text-muted">
+              Pon la fecha en que se instalaron a todos los equipos de un tipo de esta sala.
+            </p>
+            <label className="mt-3 block text-sm">
+              Equipos
+              <select
+                value={grupoACorregir.tipo}
+                onChange={(e) => setTipoACorregir(e.target.value)}
+                className="mt-1 block h-11 w-full max-w-sm rounded-ctl border border-line bg-surface px-2 text-base text-ink"
+              >
+                {vivosPorTipo.map((g) => (
+                  <option key={g.tipo} value={g.tipo}>
+                    {g.tipo} ({g.ids.length})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="mt-3 block text-sm">
+              Fecha de alta
+              <input
+                type="date"
+                value={diaCorregido}
+                onChange={(e) => setDiaCorregido(e.target.value)}
+                className="mt-1 block h-11 w-full max-w-xs rounded-ctl border border-line bg-surface px-2 text-base text-ink"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={!diaCorregido || correccion?.fase === 'guardando'}
+              onClick={() => void corregirFecha()}
+              className="key key-accent mt-3 min-h-11 px-4 text-sm"
+            >
+              {correccion?.fase === 'guardando'
+                ? 'Guardando…'
+                : `Poner esta fecha a ${cuantos(grupoACorregir.ids.length, 'equipo', 'equipos')}`}
+            </button>
+            {correccion && correccion.fase !== 'guardando' && (
+              <p
+                role={correccion.fase === 'fallo' ? 'alert' : undefined}
+                className={`mt-2 text-sm ${correccion.fase === 'fallo' ? 'text-crit' : 'text-ok'}`}
+              >
+                {correccion.texto}
+              </p>
+            )}
+          </details>
         )}
 
         <label className="mt-3 inline-flex min-h-11 items-center gap-2 text-sm">

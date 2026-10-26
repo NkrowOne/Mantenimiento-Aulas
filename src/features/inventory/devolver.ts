@@ -161,3 +161,40 @@ export function companerosVivos(devolver: FilaDeInventario[], todas: FilaDeInven
     (f) => !ids.has(f.asset_id) && f.status !== 'retirado' && salas.has(f.room_id) && tipos.has(f.type_name),
   )
 }
+
+/**
+ * Los tipos de equipo que hay vivos en la hoja, con cuántos, el más numeroso
+ * primero. Es la lista de la que se elige a quién corregir la fecha de alta.
+ */
+export function tiposVivos(filas: FilaDeInventario[]): Array<{ tipo: string; ids: string[] }> {
+  const porTipo = new Map<string, string[]>()
+  for (const f of filas) {
+    if (esBaja(f)) continue
+    const tipo = f.type_name ?? 'Sin tipo'
+    porTipo.set(tipo, [...(porTipo.get(tipo) ?? []), f.asset_id])
+  }
+  return [...porTipo.entries()]
+    .map(([tipo, ids]) => ({ tipo, ids }))
+    .sort((a, b) => b.ids.length - a.ids.length || a.tipo.localeCompare(b.tipo, 'es'))
+}
+
+/**
+ * Pone la fecha de alta de verdad a un grupo de equipos.
+ *
+ * Existe porque la fecha de alta de una fila no siempre es la de la
+ * instalación: la del día en que se importó el libro, la del día en que alguien
+ * los apuntó, o la que quedó al devolverlos al inventario si no se cambió la
+ * del recuadro. La hoja impresa enseña esa columna, y una vez devueltos los
+ * equipos no había desde dónde corregirla. Es la misma escritura con la que se
+ * corrige un equipo cada día; el cambio queda en el registro de actividad.
+ */
+export async function cambiarFechaDeAlta(
+  ids: string[],
+  dia: string,
+): Promise<{ ok: true } | { ok: false; motivo: string }> {
+  if (ids.length === 0) return { ok: true }
+  const alta = instanteDeAlta(dia)
+  if (Number.isNaN(alta.getTime())) return { ok: false, motivo: 'la fecha no es válida' }
+  const { error } = await supabase.from('assets').update({ created_at: alta.toISOString() }).in('id', ids)
+  return error ? { ok: false, motivo: error.message } : { ok: true }
+}

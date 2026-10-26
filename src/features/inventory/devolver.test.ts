@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { companerosVivos, cuandoVuelve, instanteDeAlta, MOTIVO_FUSION, retiradasPorFusion } from './devolver'
+import { companerosVivos, cuandoVuelve, instanteDeAlta, MOTIVO_FUSION, retiradasPorFusion, tiposVivos } from './devolver'
 import type { FilaDeInventario } from './hoja'
 
 /**
@@ -90,5 +90,21 @@ describe('los compañeros que ya estaban', () => {
       fila({ asset_id: 'baja', baja_motivo: 'Se quemó' }),
     ]
     expect(companerosVivos(devolver, todas).map((f) => f.asset_id)).toEqual(['p30'])
+  })
+})
+
+describe('corregir la fecha de alta', () => {
+  it('ofrece los tipos que hay vivos en la sala, el más numeroso primero, y sin las bajas', () => {
+    const vivo = { status: 'instalado' as const, baja_at: null, baja_motivo: null }
+    const filas = [
+      fila({ asset_id: 'p1', ...vivo }),
+      fila({ asset_id: 'p2', ...vivo }),
+      fila({ asset_id: 'mic', type_name: 'Micrófono', ...vivo }),
+      fila({ asset_id: 'retirado' }),
+    ]
+    expect(tiposVivos(filas)).toEqual([
+      { tipo: 'Ordenador Lenovo Ideacentre', ids: ['p1', 'p2'] },
+      { tipo: 'Micrófono', ids: ['mic'] },
+    ])
   })
 })
