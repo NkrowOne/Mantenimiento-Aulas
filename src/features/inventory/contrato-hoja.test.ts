@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -22,11 +22,28 @@ import { describe, expect, it } from 'vitest'
  */
 
 const RAIZ = path.resolve(__dirname, '../../..')
+const MIGRACIONES = path.join(RAIZ, 'supabase/migrations')
 
-const fuenteSql = readFileSync(
-  path.join(RAIZ, 'supabase/migrations/20260806000200_hoja_de_inventario.sql'),
-  'utf8',
-)
+/**
+ * La definición que manda es la ÚLTIMA.
+ *
+ * La vista nació en `20260806000200` y ya se ha vuelto a escribir una vez
+ * —`20261026000100`, para que una baja deshecha deje de contar—. Leer el
+ * fichero que la trajo sería vigilar una versión que no corre en ninguna base:
+ * el contrato se comprueba contra la que se queda.
+ */
+function ultimaQueContiene(aguja: string): string {
+  const fichero = readdirSync(MIGRACIONES)
+    .filter((f) => f.endsWith('.sql'))
+    .sort()
+    .filter((f) => readFileSync(path.join(MIGRACIONES, f), 'utf8').includes(aguja))
+    .at(-1)
+  if (fichero === undefined) throw new Error(`Ninguna migración contiene «${aguja}»`)
+  return readFileSync(path.join(MIGRACIONES, fichero), 'utf8')
+}
+
+const fuenteSql = ultimaQueContiene('create or replace view public.inventory_sheet as')
+const fuenteDisparador = ultimaQueContiene('create trigger assets_updated_at')
 const fuenteTs = readFileSync(path.join(RAIZ, 'src/features/inventory/hoja.ts'), 'utf8')
 
 /** Corta la lista de columnas por las comas de primer nivel: las de dentro de
@@ -142,8 +159,43 @@ describe('el contrato de la hoja: la fecha de cambio la produce el servidor', ()
     // PostgREST manda al INSERT lo que traiga el cuerpo. Sin el `insert` en el
     // disparador, un alta hecha a mano con el token de un técnico dejaba una
     // fecha de cambio inventada, y el hueco de arriba dejaba de significar nada.
-    expect(fuenteSql).toMatch(
+    expect(fuenteDisparador).toMatch(
       /create trigger assets_updated_at\s+before insert or update on assets\b/i,
+    )
+  })
+})
+
+/**
+ * La baja que alguien deshizo no puede seguir mandando en el papel.
+ *
+ * `esBaja()` saca de la hoja viva todo lo que tenga `baja_at`, así que un
+ * equipo reactivado —el proyector que la hoja de SharePoint vuelve a contar en
+ * su aula, los treinta puestos del laboratorio 6 que volvieron de una fusión
+ * equivocada— se veía en la pantalla del aula y no salía en el PDF de la sala.
+ * Son dos documentos del mismo sitio diciendo cosas distintas, y el que se
+ * archiva es el que se equivoca.
+ *
+ * Quien tiene que decidirlo es la vista, porque el dispositivo no tiene
+ * `asset_events` y no puede saber que hubo un alta después. Se comprueba sobre
+ * el texto del lateral porque es justo lo que ninguna prueba de datos ve: las
+ * filas de `hoja.test.ts` se fabrican con el `baja_at` ya resuelto.
+ */
+describe('el contrato de la hoja: una baja deshecha deja de contar', () => {
+  const lateral = /left join lateral \(([\s\S]*?)\) bj on true/i.exec(fuenteSql)?.[1]
+
+  it('el lateral de la baja descarta la que tiene un alta posterior', () => {
+    expect(lateral, 'la vista publica la baja con un lateral llamado bj').toBeDefined()
+    const unaLinea = lateral!.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ')
+    expect(unaLinea).toContain('not exists')
+    expect(unaLinea).toContain("vu.kind = 'alta'")
+    // Con el par completo: dos eventos del mismo instante los desempata el
+    // orden en que se apuntaron, no el azar.
+    expect(unaLinea).toContain('(vu.occurred_at, vu.recorded_at) > (e.occurred_at, e.recorded_at)')
+  })
+
+  it('y sigue habiendo fecha para la retirada que no dejó evento', () => {
+    expect(expresionDe('baja_at')).toMatch(
+      /coalesce\( bj\.occurred_at, case when a\.status = 'retirado' then a\.updated_at end \)/i,
     )
   })
 })
