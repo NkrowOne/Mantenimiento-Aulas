@@ -1572,6 +1572,7 @@ export function App(): React.ReactElement {
                —el borrador está en Dexie y la lista lo marca «A medias»—, igual
                que ya ocurre al salir por la hoja de placas. Lo decide `atras`. */
             onBack={volver}
+            puedeCorregir={RANK[role] >= RANK.supervisor}
           />
         </Suspense>
       )}

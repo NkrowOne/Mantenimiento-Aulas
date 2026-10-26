@@ -28,7 +28,7 @@
  * inventario que dice que un equipo sigue en la sala.
  */
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
@@ -50,7 +50,10 @@ import {
   type AlcanceDeHoja,
   type FilaDeInventario,
 } from './hoja'
-import { descargarPdf, esAppInstalada, type ComoSalio } from './pdf'
+import { esAppInstalada, nombreDelPdf, prepararPdfDeLaHoja } from './pdf'
+import { companerosVivos, devolverAlInventario, retiradasPorFusion } from './devolver'
+import { ofrecerFichero } from '@/lib/ficheros'
+import { pullMaster } from '@/sync/pull'
 
 /**
  * El hueco: lo que se imprime donde no hay dato.
@@ -175,9 +178,13 @@ async function desdeElEspejo(ambito: AlcanceDeHoja): Promise<FilaDeInventario[]>
 export function HojaDeInventario({
   alcance,
   onBack,
+  puedeCorregir = false,
 }: {
   alcance: Alcance
   onBack: () => void
+  /** Coordinador o administrador: puede devolver al inventario lo que una
+      fusión de duplicados retiró por error. */
+  puedeCorregir?: boolean
 }): React.ReactElement {
   /*
    * Una sola opción, y apagada.
@@ -198,9 +205,25 @@ export function HojaDeInventario({
    * quiere el inventario, no configurarlo.
    */
   const [incluirBajas, setIncluirBajas] = useState(false)
-  /* La hoja entera, para sacarla a su propia ventana en la app instalada. */
+  /* La hoja entera: de aquí sale el documento que el servidor convierte en PDF. */
   const hojaRef = useRef<HTMLDivElement>(null)
-  const [comoSalio, setComoSalio] = useState<ComoSalio | null>(null)
+  /*
+   * El PDF, en dos toques, como el del informe: «Descargar PDF» lo pide al
+   * servidor y «Guardar PDF» lo entrega. En iOS la hoja de compartir solo se
+   * abre mientras dura la pulsación que la pidió, y la vuelta al servidor la
+   * caduca: con un solo botón el fichero no llegaba a ninguna parte.
+   */
+  const [pdf, setPdf] = useState<
+    | { fase: 'preparando' }
+    | { fase: 'listo'; nombre: string; blob: Blob }
+    | { fase: 'aviso'; texto: string; mal: boolean }
+    | null
+  >(null)
+  /* La devolución al inventario de lo que una fusión retiró por error. */
+  const [diaDeAlta, setDiaDeAlta] = useState(() => new Date().toLocaleDateString('sv-SE'))
+  const [devolucion, setDevolucion] = useState<
+    { fase: 'devolviendo' } | { fase: 'hecho' | 'fallo'; texto: string } | null
+  >(null)
 
   const ambito = useMemo(() => comoAlcanceDeHoja(alcance), [alcance])
 
@@ -282,6 +305,9 @@ export function HojaDeInventario({
   const grupos = useMemo(() => agruparPorSala(filas), [filas])
   const cuenta = useMemo(() => resumen(filas), [filas])
 
+  /* Un PDF preparado con otras filas ya no es esta hoja: se vuelve a pedir. */
+  useEffect(() => setPdf(null), [filas])
+
   /*
    * Lo que se está enseñando sale del espejo, venga de donde venga la espera.
    *
@@ -340,6 +366,67 @@ export function HojaDeInventario({
       ? (grupos[0]?.room_last_inventory_at ?? alcance.room.last_inventory_at)
       : null
 
+  /* Lo que una fusión de duplicados retiró, según la hoja del servidor. */
+  const fusionadas = useMemo(() => (delServidor ? retiradasPorFusion(delServidor) : []), [delServidor])
+  const companeros = useMemo(
+    () => (delServidor ? companerosVivos(fusionadas, delServidor) : []),
+    [fusionadas, delServidor],
+  )
+
+  async function prepararElPdf(): Promise<void> {
+    const contenedor = hojaRef.current
+    if (!contenedor) return
+    setPdf({ fase: 'preparando' })
+    const r = await prepararPdfDeLaHoja(contenedor, `Inventario de ${titulo}`, nombreDelPdf(titulo, emitidaEl))
+    if (r.ok) {
+      setPdf({ fase: 'listo', nombre: r.nombre, blob: r.blob })
+      return
+    }
+    // Sin servicio, en un navegador con diálogo de imprimir, sale por ahí igual.
+    // En la app instalada no hay diálogo: solo queda decir qué ha pasado.
+    if (r.sinServicio && !esAppInstalada()) {
+      setPdf({
+        fase: 'aviso',
+        mal: true,
+        texto: `El servidor no ha podido preparar el PDF (${r.motivo}): se abre el diálogo de imprimir, que también lo guarda como PDF.`,
+      })
+      window.print()
+      return
+    }
+    setPdf({ fase: 'aviso', mal: true, texto: `No se ha podido preparar el PDF: ${r.motivo}.` })
+  }
+
+  function guardarElPdf(listo: { nombre: string; blob: Blob }): void {
+    void ofrecerFichero(listo.nombre, listo.blob)
+      .then((via) =>
+        setPdf({
+          fase: 'aviso',
+          mal: false,
+          texto: via === 'compartido' ? 'PDF compartido. Ya lo tienes donde lo hayas mandado.' : 'PDF descargado.',
+        }),
+      )
+      .catch((e: Error) => setPdf({ fase: 'aviso', mal: true, texto: `No se ha podido guardar el PDF: ${e.message}` }))
+  }
+
+  async function devolverFusionadas(): Promise<void> {
+    if (!delServidor) return
+    setDevolucion({ fase: 'devolviendo' })
+    const r = await devolverAlInventario(fusionadas, delServidor, diaDeAlta)
+    if (!r.ok) {
+      setDevolucion({ fase: 'fallo', texto: `No se han podido devolver: ${r.motivo}.` })
+      return
+    }
+    setDevolucion({
+      fase: 'hecho',
+      texto:
+        `${cuantos(r.devueltos, 'equipo devuelto', 'equipos devueltos')} al inventario, con alta del ${fechaDeLaHoja(`${diaDeAlta}T12:00:00`) ?? diaDeAlta}.` +
+        (r.fueraDeLaBandeja ? '' : ' No se han podido sacar de la bandeja de duplicados: si vuelven a salir allí, pulsa «Son dos aparatos».'),
+    })
+    void servidor.refetch()
+    // El espejo del dispositivo también: la ficha de la sala lee de ahí.
+    void pullMaster()
+  }
+
   return (
     <div ref={hojaRef} className="mx-auto max-w-5xl p-4">
       <div className="solo-pantalla">
@@ -365,14 +452,25 @@ export function HojaDeInventario({
               </p>
             )}
           </div>
-          <button
-            type="button"
-            onClick={() => setComoSalio(descargarPdf(hojaRef.current, `Inventario de ${titulo}`))}
-            disabled={filas.length === 0}
-            className="key key-accent min-h-11 px-4 text-sm"
-          >
-            Descargar PDF
-          </button>
+          {pdf?.fase === 'listo' ? (
+            <button
+              type="button"
+              onClick={() => guardarElPdf(pdf)}
+              className="key key-accent min-h-11 px-4 text-sm"
+              title="El PDF ya está hecho: pulsa para guardarlo"
+            >
+              Guardar PDF
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void prepararElPdf()}
+              disabled={filas.length === 0 || pdf?.fase === 'preparando'}
+              className="key key-accent min-h-11 px-4 text-sm"
+            >
+              {pdf?.fase === 'preparando' ? 'Preparando…' : 'Descargar PDF'}
+            </button>
+          )}
         </div>
 
         {/*
@@ -381,25 +479,78 @@ export function HojaDeInventario({
           impresora, decide que se ha equivocado de botón y cierra. El PDF sale
           de ahí, pero solo si alguien dice dónde está.
         */}
-        {esAppInstalada() ? (
-          <p className="mt-3 text-xs text-muted">
-            Se abre la hoja en una ventana de Safari con el diálogo de imprimir: toca
-            «Imprimir» y después «Compartir → Guardar en Archivos». Si no aparece el diálogo,
-            usa el botón de compartir de esa ventana.
-          </p>
-        ) : (
-          <p className="mt-3 text-xs text-muted">
-            Se abre el diálogo de imprimir del navegador, que es de donde sale el PDF: en el iPad,
-            toca «Imprimir» y después «Compartir → Guardar en Archivos»; en el ordenador, elige
-            «Guardar como PDF» en el destino, en lugar de una impresora.
+        <p className="mt-3 text-xs text-muted">
+          El PDF lo prepara el servidor en unos segundos y el botón pasa a «Guardar PDF». Al
+          pulsarlo, en el iPhone y el iPad se abre Compartir: elige «Guardar en Archivos» o
+          mándalo por correo. En el ordenador se descarga.
+        </p>
+        {/* El aviso, pegado al botón y no al pie de la hoja: con treinta filas
+            por medio, un mensaje abajo es un mensaje que nadie ve. */}
+        {pdf?.fase === 'preparando' && (
+          <p className="mt-2 text-sm text-muted">Preparando el PDF en el servidor…</p>
+        )}
+        {pdf?.fase === 'listo' && (
+          <p className="mt-2 text-sm text-ok">El PDF está listo: pulsa «Guardar PDF».</p>
+        )}
+        {pdf?.fase === 'aviso' && (
+          <p role={pdf.mal ? 'alert' : undefined} className={`mt-2 text-sm ${pdf.mal ? 'text-crit' : 'text-ok'}`}>
+            {pdf.texto}
           </p>
         )}
-        {/* La app instalada no tiene diálogo de imprimir propio: si además se
-            bloquea la ventana, el botón no puede hacer nada y hay que decirlo. */}
-        {comoSalio === 'bloqueado' && (
-          <p role="alert" className="mt-2 text-sm text-crit">
-            No se ha podido abrir la ventana del PDF. Abre la aplicación en Safari (no desde el
-            icono de la pantalla de inicio) y vuelve a pulsar «Descargar PDF».
+
+        {/*
+          Lo que una fusión de duplicados retiró y sigue retirado. Lo ve solo un
+          coordinador, y solo en la hoja del servidor, que es la que sabe por qué
+          se dio de baja cada equipo. Es la salida cuando la bandeja se equivocó:
+          treinta puestos de un aula de informática se llaman casi igual, y la
+          bandeja los propuso como copias del mismo.
+        */}
+        {puedeCorregir && fusionadas.length > 0 && (
+          <div className="card mt-4 p-4">
+            <p className="text-sm font-medium">
+              {cuantos(fusionadas.length, 'equipo retirado', 'equipos retirados')} en una fusión de
+              duplicados
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              {fusionadas
+                .map((f) => f.label ?? f.type_name ?? 'Equipo')
+                .sort((x, y) => x.localeCompare(y, 'es', { numeric: true }))
+                .join(' · ')}
+            </p>
+            <p className="mt-2 text-sm text-muted">
+              Si son aparatos distintos que siguen en la sala, devuélvelos al inventario. Vuelven con
+              su nombre y con la fecha de alta que elijas; la baja de la fusión queda en el
+              histórico.
+              {companeros.length > 0 &&
+                ` La misma fecha se pone a ${cuantos(companeros.length, 'equipo', 'equipos')} del mismo tipo que ya ${companeros.length === 1 ? 'estaba' : 'estaban'} en la sala, porque llegaron con ellos.`}
+            </p>
+            <label className="mt-3 block text-sm">
+              Fecha de alta (cuándo se instalaron)
+              <input
+                type="date"
+                value={diaDeAlta}
+                onChange={(e) => setDiaDeAlta(e.target.value)}
+                className="mt-1 block h-11 w-full max-w-xs rounded-ctl border border-line bg-surface px-2 text-base text-ink"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={devolucion?.fase === 'devolviendo' || !diaDeAlta}
+              onClick={() => void devolverFusionadas()}
+              className="key key-accent mt-3 min-h-11 px-4 text-sm"
+            >
+              {devolucion?.fase === 'devolviendo'
+                ? 'Devolviendo…'
+                : `Devolver ${cuantos(fusionadas.length, 'equipo', 'equipos')} al inventario`}
+            </button>
+          </div>
+        )}
+        {devolucion && devolucion.fase !== 'devolviendo' && (
+          <p
+            role={devolucion.fase === 'fallo' ? 'alert' : undefined}
+            className={`mt-2 text-sm ${devolucion.fase === 'fallo' ? 'text-crit' : 'text-ok'}`}
+          >
+            {devolucion.texto}
           </p>
         )}
 
