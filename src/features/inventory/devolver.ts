@@ -25,14 +25,24 @@
 
 import { v7 as uuidv7 } from 'uuid'
 import { supabase } from '@/lib/supabase'
-import type { FilaDeInventario } from './hoja'
+import { esBaja, type FilaDeInventario } from './hoja'
 
 /** El motivo exacto que deja `fusionar_equipo_duplicado` en la baja. */
 export const MOTIVO_FUSION = 'Retirado en una fusión de duplicados'
 
-/** Las filas de la hoja que una fusión retiró y siguen retiradas. */
+/**
+ * Las filas de la hoja que una fusión sacó del inventario y siguen fuera.
+ *
+ * «Fuera» es lo que decide la hoja —`esBaja`—, no el estado a secas, y la
+ * diferencia es justo el caso que se vio en producción: equipos que ya figuraban
+ * como `instalado` (la bandeja de duplicados los proponía, y esa solo enseña
+ * vivos) pero con la baja de la fusión todavía en pie, porque volvieron sin un
+ * `alta` en el histórico. La hoja los sigue contando como baja y el PDF no los
+ * trae. Mirando solo `status === 'retirado'`, el recuadro para devolverlos no
+ * salía, y quedaban en un limbo sin salida desde la aplicación.
+ */
 export function retiradasPorFusion(filas: FilaDeInventario[]): FilaDeInventario[] {
-  return filas.filter((f) => f.status === 'retirado' && f.baja_motivo === MOTIVO_FUSION)
+  return filas.filter((f) => esBaja(f) && f.baja_motivo === MOTIVO_FUSION)
 }
 
 /**
