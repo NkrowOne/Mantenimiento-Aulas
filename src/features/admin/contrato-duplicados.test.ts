@@ -158,3 +158,21 @@ describe('la migración que sustituye queda sin efecto', () => {
     expect(sinComentarios).not.toMatch(/\b(update|insert|delete)\b/i)
   })
 })
+
+describe('la fecha de instalación es el 22 de septiembre', () => {
+  const texto = leer('20261026000500_los_puestos_se_instalaron_el_22_de_septiembre.sql')
+
+  it('se puede volver a ejecutar y lo declara', () => {
+    expect(texto.startsWith('-- reejecutable: si')).toBe(true)
+  })
+
+  it('pasa del 22/10 al 22/09, y solo lo que llevaba el instante exacto de la migración', () => {
+    expect(texto).toContain("v_mal  constant timestamptz := timestamptz '2026-10-22 09:00+02'")
+    expect(texto).toContain("v_bien constant timestamptz := timestamptz '2026-09-22 09:00+02'")
+    expect(texto).toContain('where a.created_at = v_mal')
+  })
+
+  it('y el alta sigue por delante de la baja que deshace', () => {
+    expect(texto).toContain("max(b.occurred_at) + interval '1 minute'")
+  })
+})
