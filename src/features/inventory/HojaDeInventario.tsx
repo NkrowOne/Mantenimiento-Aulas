@@ -28,7 +28,7 @@
  * inventario que dice que un equipo sigue en la sala.
  */
 
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
@@ -50,6 +50,7 @@ import {
   type AlcanceDeHoja,
   type FilaDeInventario,
 } from './hoja'
+import { descargarPdf, esAppInstalada, type ComoSalio } from './pdf'
 
 /**
  * El hueco: lo que se imprime donde no hay dato.
@@ -197,6 +198,9 @@ export function HojaDeInventario({
    * quiere el inventario, no configurarlo.
    */
   const [incluirBajas, setIncluirBajas] = useState(false)
+  /* La hoja entera, para sacarla a su propia ventana en la app instalada. */
+  const hojaRef = useRef<HTMLDivElement>(null)
+  const [comoSalio, setComoSalio] = useState<ComoSalio | null>(null)
 
   const ambito = useMemo(() => comoAlcanceDeHoja(alcance), [alcance])
 
@@ -337,7 +341,7 @@ export function HojaDeInventario({
       : null
 
   return (
-    <div className="mx-auto max-w-5xl p-4">
+    <div ref={hojaRef} className="mx-auto max-w-5xl p-4">
       <div className="solo-pantalla">
         <button
           type="button"
@@ -363,7 +367,7 @@ export function HojaDeInventario({
           </div>
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={() => setComoSalio(descargarPdf(hojaRef.current, `Inventario de ${titulo}`))}
             disabled={filas.length === 0}
             className="key key-accent min-h-11 px-4 text-sm"
           >
@@ -377,11 +381,27 @@ export function HojaDeInventario({
           impresora, decide que se ha equivocado de botón y cierra. El PDF sale
           de ahí, pero solo si alguien dice dónde está.
         */}
-        <p className="mt-3 text-xs text-muted">
-          Se abre el diálogo de imprimir del navegador, que es de donde sale el PDF: en el iPad,
-          toca «Imprimir» y después «Compartir → Guardar en Archivos»; en el ordenador, elige
-          «Guardar como PDF» en el destino, en lugar de una impresora.
-        </p>
+        {esAppInstalada() ? (
+          <p className="mt-3 text-xs text-muted">
+            Se abre la hoja en una ventana de Safari con el diálogo de imprimir: toca
+            «Imprimir» y después «Compartir → Guardar en Archivos». Si no aparece el diálogo,
+            usa el botón de compartir de esa ventana.
+          </p>
+        ) : (
+          <p className="mt-3 text-xs text-muted">
+            Se abre el diálogo de imprimir del navegador, que es de donde sale el PDF: en el iPad,
+            toca «Imprimir» y después «Compartir → Guardar en Archivos»; en el ordenador, elige
+            «Guardar como PDF» en el destino, en lugar de una impresora.
+          </p>
+        )}
+        {/* La app instalada no tiene diálogo de imprimir propio: si además se
+            bloquea la ventana, el botón no puede hacer nada y hay que decirlo. */}
+        {comoSalio === 'bloqueado' && (
+          <p role="alert" className="mt-2 text-sm text-crit">
+            No se ha podido abrir la ventana del PDF. Abre la aplicación en Safari (no desde el
+            icono de la pantalla de inicio) y vuelve a pulsar «Descargar PDF».
+          </p>
+        )}
 
         <label className="mt-3 inline-flex min-h-11 items-center gap-2 text-sm">
           <input
