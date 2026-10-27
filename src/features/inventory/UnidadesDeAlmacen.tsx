@@ -308,7 +308,7 @@ function FilaDeUnidad({
         <span className="font-mono text-sm font-semibold">{unidad.serial}</span>
         <span className="text-sm">{[unidad.articulo, unidad.brand, unidad.model].filter(Boolean).join(' ')}</span>
         <span
-          className={`text-xs ${unidad.status === 'disponible' ? 'text-ok-ink' : unidad.status === 'baja' ? 'text-crit' : 'text-muted'}`}
+          className={`text-xs ${unidad.status === 'disponible' ? 'text-ok' : unidad.status === 'baja' ? 'text-crit' : 'text-muted'}`}
         >
           {situacion}
         </span>

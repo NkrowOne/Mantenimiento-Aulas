@@ -38,12 +38,12 @@ import type { Descarga } from '@/sync/paginada'
 import { esSilencio, señalConTope } from '@/features/reports/informe/espera'
 import { tipoVivo } from '@/domain/equipos'
 import type { TipoConocido } from '@/domain/equipos'
-import { libroNuevo, nombreConFecha } from '@/domain/exportar'
 import { hojaDeMovimientos } from '@/domain/hojasNuevas'
 import type { MovimientoParaHoja } from '@/domain/hojasNuevas'
 import type { Formato, HojaNueva, Tinte } from '@/domain/libro'
 import { fechaAExcel } from '@/domain/valores'
 import type { ValorCelda } from '@/domain/xlsx'
+import type { Exportacion } from '@/domain/vistaPrevia'
 
 // -----------------------------------------------------------------------------
 // Las filas, tal como las devuelve la base
@@ -412,11 +412,7 @@ export function unidadesParaHoja(d: Pick<DatosDelAlmacen, 'unidades' | 'salas' |
 
 /** Las tres hojas, en el orden en que se abren. */
 export function hojasDelAlmacen(d: DatosDelAlmacen): HojaNueva[] {
-  return [
-    hojaDeExistencias(articulosParaHoja(d)),
-    hojaDeMovimientos(movimientosParaHoja(d)),
-    hojaDePcsDeRepuesto(unidadesParaHoja(d)),
-  ]
+  return exportacionDelAlmacen(d).hojas.map((h) => h.hoja)
 }
 
 // -----------------------------------------------------------------------------
@@ -554,18 +550,47 @@ export async function cargarDatosDelAlmacen(): Promise<DatosDelAlmacen> {
 }
 
 /**
- * Lee el almacén y devuelve el Excel y el nombre con el que ofrecerlo.
+ * Lee el almacén y devuelve lo que se exporta: las tres hojas, el título y las
+ * cifras de la cabecera. Es lo que se le da a `<ExportarConVistaPrevia>`, que
+ * enseña las hojas antes de descargar y saca de ellas el Excel y el PDF.
  *
- * Es lo que se le da a `<ExportarExcel preparar={…}>`: tarda segundos, así que
- * generarlo y entregarlo son dos pulsaciones distintas.
+ * El PDF es **el inventario del almacén**: lo que hay hoy —existencias y PCs de
+ * repuesto—. Los movimientos van en el Excel siempre y en el PDF solo si se
+ * marcan, porque el historial de un año son decenas de páginas que no se
+ * piden cuando se pide un inventario.
  */
-export async function prepararExcelDelAlmacen(): Promise<{ nombre: string; bytes: Uint8Array }> {
+export async function prepararExportacionDelAlmacen(): Promise<Exportacion> {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-    throw new Error('Sin conexión: el Excel se hace con los datos del servidor. Busca cobertura y vuelve a intentarlo.')
+    throw new Error('Sin conexión: el inventario se hace con los datos del servidor. Busca cobertura y vuelve a intentarlo.')
   }
   const datos = await cargarDatosDelAlmacen()
-  const bytes = await libroNuevo(hojasDelAlmacen(datos))
-  return { nombre: nombreConFecha('Almacén'), bytes }
+  return exportacionDelAlmacen(datos)
+}
+
+/** La exportación a partir de lo leído. Aparte para poder probarla sin red. */
+export function exportacionDelAlmacen(d: DatosDelAlmacen): Exportacion {
+  const articulos = articulosParaHoja(d)
+  const unidades = unidadesParaHoja(d)
+  const activos = articulos.filter((a) => a.activo)
+  const bajoMinimo = activos.filter(estaBajoMinimo).length
+  const disponibles = unidades.filter((u) => u.estado === 'disponible').length
+  const resumen = [
+    `${activos.length} ${activos.length === 1 ? 'artículo' : 'artículos'}`,
+    bajoMinimo > 0 ? `${bajoMinimo} bajo mínimo` : null,
+    `${disponibles} ${disponibles === 1 ? 'PC de repuesto disponible' : 'PCs de repuesto disponibles'}`,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  return {
+    titulo: 'Inventario del almacén',
+    resumen,
+    nombreBase: 'Almacén',
+    hojas: [
+      { hoja: hojaDeExistencias(articulos), pdf: { columnas: ['Artículo', 'Unidad', 'Existencias', 'Mínimo', 'Bajo mínimo', 'Tipo de equipo', 'Estado'] } },
+      { hoja: hojaDeMovimientos(movimientosParaHoja(d)), pdf: { incluir: false } },
+      { hoja: hojaDePcsDeRepuesto(unidades) },
+    ],
+  }
 }
 
 // -----------------------------------------------------------------------------

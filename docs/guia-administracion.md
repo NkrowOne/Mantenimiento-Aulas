@@ -913,19 +913,40 @@ de compra: hasta que se rellene, salen «sin datos», que es verdad.
 El técnico sigue dando de alta y pidiendo retiradas desde el aula como
 siempre; esto es el camino del despacho.
 
-### Exportar a Excel
+### Exportar: vista previa, Excel y PDF
 
-Al pie de **Inventario** y de **Entradas y salidas** hay un recuadro para
-exportar. Se hace en dos pasos —**Preparar Excel** y luego **Descargar**—
-porque en el iPhone y el iPad la hoja de compartir solo se abre desde la
-pulsación, y generar el fichero lleva unos segundos.
+Al pie de **Inventario** y de **Entradas y salidas**, y en la pestaña
+**Almacén**, hay un recuadro con **Ver y exportar**. Funciona como los
+informes: primero se ve lo que va a salir y luego se descarga.
 
-- **Inventario** exporta los equipos **que hay en la lista con los filtros
-  puestos**, con toda su ficha, y una segunda hoja con sus entradas y salidas.
-  Lo obsoleto sale en rojo, lo que caduca este año en ámbar y lo retirado
-  apagado.
-- **Entradas y salidas** exporta los movimientos del filtro, del más antiguo al
-  más reciente.
+1. **Ver y exportar** lee los datos del servidor (necesita conexión) y abre la
+   **vista previa**: una pestaña por hoja, con los mismos colores que llevará el
+   fichero. En pantalla salen las primeras 300 filas de cada hoja; el Excel y el
+   PDF las llevan todas.
+2. **Descargar Excel**: todas las hojas y todas las columnas, siempre.
+3. **Preparar PDF** y luego **Guardar PDF**: el PDF lo hace el servidor, con el
+   mismo sistema que la hoja de inventario de las aulas y que los informes. En
+   **Qué va en el PDF** se marcan las hojas que van al papel.
+
+Son dos pulsaciones para el PDF porque en el iPhone y el iPad la hoja de
+compartir solo se abre desde la pulsación, y el servidor tarda unos segundos.
+Si el servidor no puede hacerlo, en un navegador normal sale **Imprimir desde el
+navegador**, que también lo guarda como PDF. En la aplicación instalada solo se
+dice qué ha fallado. **Actualizar** vuelve a leer los datos sin cerrar la vista.
+
+| Exportación | Hojas | Qué va al PDF de partida |
+|---|---|---|
+| **Inventario de equipos** | Los equipos **de la lista, con los filtros puestos**, con toda su ficha, y sus entradas y salidas | Los equipos, con 14 columnas (edificio, aula, tipo, nombre, marca, modelo, serie, inventario, estado, adquisición, garantía, fin de vida, vida útil y hostname): las 29 del Excel no caben en un A4. Las entradas y salidas, solo si se marcan |
+| **Entradas y salidas** | Los movimientos del filtro, del más antiguo al más reciente | Todo |
+| **Inventario del almacén** | Existencias (también los retirados), movimientos con su saldo y PCs de repuesto | **Existencias y PCs de repuesto**: es el inventario de lo que hay hoy. Los movimientos, solo si se marcan |
+
+En el papel, como en el Excel, lo obsoleto o bajo mínimo sale en rojo, lo que
+caduca este año en ámbar y lo retirado apagado. La cabecera lleva la fecha de
+emisión y las cifras: en el inventario de equipos, también los filtros con los
+que se hizo («42 equipos en las aulas · Proyector · edificio H · obsoletos»).
+
+La hoja de inventario de **una sala o un edificio** sigue donde estaba (ficha de
+la sala y lista de salas): ya era una vista previa con su PDF.
 
 ```sql
 -- Qué hay que renovar el año que viene, por edificio
@@ -943,6 +964,10 @@ group by kind;
 ## 4. Almacén
 
 Desde la pestaña **Almacén**, con `+` y `−` por artículo.
+
+El inventario del almacén se exporta desde la misma pestaña, con **Ver y
+exportar**: vista previa, Excel y PDF (apartado «Exportar: vista previa, Excel
+y PDF», en 3 ter).
 
 **Las existencias no son un campo editable: son la suma de los movimientos.**
 Por eso no puede repetirse el descuadre del Excel, que llegó a tener stock

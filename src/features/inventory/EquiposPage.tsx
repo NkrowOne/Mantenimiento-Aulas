@@ -16,8 +16,7 @@ import {
   type EquipoDelRegistro,
   type FiltroDeEquipos,
 } from '@/domain/fichaDeEquipo'
-import { libroNuevo, nombreConFecha } from '@/domain/exportar'
-import { ExportarExcel } from '@/components/ExportarExcel'
+import { ExportarConVistaPrevia } from './ExportarConVistaPrevia'
 import { EntradaDeEquipo } from './EntradaDeEquipo'
 import { EtiquetaDeVida, FichaDeEquipo } from './FichaDeEquipo'
 import {
@@ -291,25 +290,87 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
             </button>
           )}
 
-          <ExportarExcel
-              titulo="Exportar el inventario"
-              descripcion={`Un Excel con los ${lista.length} equipos de la lista${filtrado ? ' (con los filtros de arriba)' : ''}, con toda su ficha, y sus entradas y salidas.`}
-              disabled={lista.length === 0}
-              preparar={async () => {
-                const ids = new Set(lista.map((e) => e.id))
-                const movimientos = (await cargarMovimientos({ clase: '', desde: '', hasta: '', edificio: '' })).filter((m) =>
-                  ids.has(m.asset_id),
-                )
-                return {
-                  nombre: nombreConFecha('Inventario de equipos'),
-                  bytes: await libroNuevo([hojaDeEquipos(lista), hojaDeEntradasYSalidas(movimientos)]),
-                }
-              }}
-            />
+          <ExportarConVistaPrevia
+            titulo="Inventario de equipos: Excel y PDF"
+            descripcion={`Los ${lista.length} equipos de la lista${filtrado ? ' (con los filtros de arriba)' : ''}, con toda su ficha, y sus entradas y salidas. Se ven antes de descargar.`}
+            disabled={lista.length === 0}
+            preparar={async () => {
+              const ids = new Set(lista.map((e) => e.id))
+              const movimientos = (await cargarMovimientos({ clase: '', desde: '', hasta: '', edificio: '' })).filter((m) =>
+                ids.has(m.asset_id),
+              )
+              return {
+                titulo: 'Inventario de equipos',
+                resumen: describirFiltro(lista.length, filtro, tiposConEquipos, maestro?.edificios ?? []),
+                nombreBase: 'Inventario de equipos',
+                hojas: [
+                  { hoja: hojaDeEquipos(lista), pdf: { columnas: COLUMNAS_DE_EQUIPOS_EN_PDF } },
+                  { hoja: hojaDeEntradasYSalidas(movimientos), pdf: { incluir: false } },
+                ],
+              }
+            }}
+          />
         </>
       )}
     </>
   )
+}
+
+/**
+ * Las columnas de la ficha que van al PDF. El Excel lleva las veintinueve; en
+ * un A4 apaisado caben estas, que son las que se piden en papel: dónde está,
+ * qué es, cómo se identifica y cuándo hay que renovarlo.
+ */
+const COLUMNAS_DE_EQUIPOS_EN_PDF = [
+  'Edificio',
+  'Aula',
+  'Tipo',
+  'Nombre en el aula',
+  'Marca',
+  'Modelo',
+  'N.º de serie',
+  'N.º de inventario',
+  'Estado',
+  'Adquisición',
+  'Garantía hasta',
+  'Fin de vida',
+  'Vida útil',
+  'Hostname',
+]
+
+const ESTADO_DEL_FILTRO: Record<FiltroDeEquipos['estado'], string> = {
+  activos: 'en las aulas',
+  instalado: 'instalados',
+  averiado: 'averiados',
+  retirado: 'retirados',
+  todos: 'también los retirados',
+}
+
+const VIDA_DEL_FILTRO: Record<FiltroDeEquipos['vida'], string | null> = {
+  todas: null,
+  obsoleto: 'obsoletos',
+  proximo: 'caducan en menos de un año',
+  vigente: 'vigentes',
+  sin_datos: 'sin datos de vida útil',
+}
+
+/** «42 equipos · Proyector · edificio H · obsoletos»: lo que dice la cabecera del papel. */
+function describirFiltro(
+  cuantos: number,
+  f: FiltroDeEquipos,
+  tipos: Array<[string, string]>,
+  edificios: Array<{ id: string; code: string }>,
+): string {
+  return [
+    `${cuantos} ${cuantos === 1 ? 'equipo' : 'equipos'} ${ESTADO_DEL_FILTRO[f.estado]}`,
+    f.tipo ? tipos.find(([id]) => id === f.tipo)?.[1] : null,
+    f.edificio ? `edificio ${edificios.find((b) => b.id === f.edificio)?.code ?? ''}` : null,
+    VIDA_DEL_FILTRO[f.vida],
+    f.soloOrdenadores ? 'solo ordenadores' : null,
+    f.consulta.trim() ? `búsqueda «${f.consulta.trim()}»` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 function FilaDeEquipo({
@@ -494,15 +555,21 @@ function Movimientos(): React.ReactElement {
             </button>
           )}
 
-          <ExportarExcel
-              titulo="Exportar las entradas y salidas"
-              descripcion={`Un Excel con los ${lista.length} movimientos de la lista, del más antiguo al más reciente.`}
-              disabled={lista.length === 0}
-              preparar={async () => ({
-                nombre: nombreConFecha('Entradas y salidas de equipos'),
-                bytes: await libroNuevo([hojaDeEntradasYSalidas(lista)]),
-              })}
-            />
+          <ExportarConVistaPrevia
+            titulo="Entradas y salidas: Excel y PDF"
+            descripcion={`Los ${lista.length} movimientos de la lista, del más antiguo al más reciente. Se ven antes de descargar.`}
+            disabled={lista.length === 0}
+            preparar={async () => ({
+              titulo: 'Entradas y salidas de equipos',
+              resumen: `${lista.length} movimientos · ${entradas} entradas · ${salidas} salidas${
+                filtro.desde || filtro.hasta
+                  ? ` · ${filtro.desde ? `desde el ${filtro.desde.split('-').reverse().join('/')}` : ''}${filtro.desde && filtro.hasta ? ' ' : ''}${filtro.hasta ? `hasta el ${filtro.hasta.split('-').reverse().join('/')}` : ''}`
+                  : ''
+              }`,
+              nombreBase: 'Entradas y salidas de equipos',
+              hojas: [{ hoja: hojaDeEntradasYSalidas(lista) }],
+            })}
+          />
         </>
       )}
     </>

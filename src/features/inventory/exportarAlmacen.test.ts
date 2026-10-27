@@ -6,7 +6,8 @@ import {
   hojaDePcsDeRepuesto,
   hojasDelAlmacen,
   movimientosParaHoja,
-  prepararExcelDelAlmacen,
+  exportacionDelAlmacen,
+  prepararExportacionDelAlmacen,
   tinteDelArticulo,
   unidadesParaHoja,
 } from './exportarAlmacen'
@@ -19,7 +20,7 @@ import type {
   UnidadParaHoja,
 } from './exportarAlmacen'
 import { hojaDeMovimientos } from '@/domain/hojasNuevas'
-import { libroNuevo } from '@/domain/exportar'
+import { libroNuevo, nombreConFecha } from '@/domain/exportar'
 import { abrirLibro, leerHoja } from '@/domain/xlsx'
 
 /**
@@ -686,6 +687,18 @@ describe('hojasDelAlmacen', () => {
     ],
   }
 
+  it('el inventario del almacén: título, cifras y qué va al PDF', () => {
+    const e = exportacionDelAlmacen(datos)
+    expect(e.titulo).toBe('Inventario del almacén')
+    expect(e.nombreBase).toBe('Almacén')
+    // Dos activos (el retirado no cuenta), el HDMI bajo mínimo, ningún PC disponible.
+    expect(e.resumen).toBe('2 artículos · 1 bajo mínimo · 0 PCs de repuesto disponibles')
+    // El historial va en el Excel y en el PDF solo si se pide; las existencias, sin
+    // la retirada, para que quepan en el A4.
+    expect(e.hojas.map((h) => h.pdf?.incluir !== false)).toEqual([true, false, true])
+    expect(e.hojas[0]!.pdf?.columnas).not.toContain('Motivo de la retirada')
+  })
+
   it('son tres, en este orden', () => {
     expect(hojasDelAlmacen(datos).map((h) => h.nombre)).toEqual([
       'Existencias',
@@ -752,7 +765,13 @@ describe('hojasDelAlmacen', () => {
 // Leer de la base y armar el fichero
 // -----------------------------------------------------------------------------
 
-describe('prepararExcelDelAlmacen', () => {
+/** Lo que descarga «Descargar Excel» en la vista previa: las hojas de la exportación, en un libro. */
+async function prepararExcelDelAlmacen(): Promise<{ nombre: string; bytes: Uint8Array }> {
+  const e = await prepararExportacionDelAlmacen()
+  return { nombre: nombreConFecha(e.nombreBase), bytes: await libroNuevo(e.hojas.map((h) => h.hoja)) }
+}
+
+describe('prepararExportacionDelAlmacen', () => {
   /** Lo mínimo de cada tabla, en el orden y con los nombres de la base. */
   function servidor(extra: Record<string, unknown[]> = {}): void {
     falso.estado.tablas = {

@@ -5,9 +5,9 @@ import { supabase } from '@/lib/supabase'
 import { pullMaster } from '@/sync/pull'
 import { fechaCorta } from '@/domain/fechas'
 import type { Role } from '@/domain/types'
-import { ExportarExcel } from '@/components/ExportarExcel'
+import { ExportarConVistaPrevia } from './ExportarConVistaPrevia'
 import { UnidadesDeAlmacen } from './UnidadesDeAlmacen'
-import { prepararExcelDelAlmacen } from './exportarAlmacen'
+import { prepararExportacionDelAlmacen } from './exportarAlmacen'
 import { MOTIVO_MIN, faltanParaElMotivo, motivoValido } from './motivo'
 
 interface StockLevel {
@@ -566,10 +566,10 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
         ordenadores). Es una copia de hoy para mirar fuera de la aplicación, no
         la sincronización con SharePoint, que vive en Datos → Excel.
       */}
-      <ExportarExcel
-        titulo="Exportar el almacén"
-        descripcion="Un Excel con las existencias (también los artículos retirados), todos los movimientos con su saldo y los PCs de repuesto por número de serie."
-        preparar={prepararExcelDelAlmacen}
+      <ExportarConVistaPrevia
+        titulo="Inventario del almacén: Excel y PDF"
+        descripcion="Las existencias (también los artículos retirados), los movimientos con su saldo y los PCs de repuesto por número de serie. Se ven antes de descargar."
+        preparar={prepararExportacionDelAlmacen}
       />
 
       <UnidadesDeAlmacen role={role} />
