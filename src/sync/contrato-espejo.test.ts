@@ -20,6 +20,11 @@ const sql = readFileSync(
   'utf8',
 )
 const pull = readFileSync(path.join(RAIZ, 'src/sync/pull.ts'), 'utf8')
+/** La migración que pone las unidades del almacén en `audit_log`, y con eso en el espejo. */
+const sqlUnidades = readFileSync(
+  path.join(RAIZ, 'supabase/migrations/20261027000200_cada_unidad_del_almacen_con_su_estado.sql'),
+  'utf8',
+)
 
 /** Las tablas y vistas que baja el espejo, tal y como las nombra `pullMaster()`. */
 function tablasDelEspejo(): string[] {
@@ -40,12 +45,14 @@ const FUENTES: Record<string, string[]> = {
   asset_types: ['asset_types'],
   assets: ['assets'],
   asset_removals: ['asset_removals'],
+  // `stock_unit_list`: la unidad, su artículo, su tipo y la sala donde está.
+  stock_units: ['stock_units', 'stock_items', 'asset_types', 'rooms', 'zones', 'buildings'],
 }
 
 /** Lo que deja rastro en audit_log (auth_rls + migraciones posteriores). */
 const AUDITADAS = new Set([
   'buildings', 'zones', 'rooms', 'stock_items', 'assets', 'incidents', 'profiles',
-  'asset_types', 'asset_removals', 'asset_defaults',
+  'asset_types', 'asset_removals', 'asset_defaults', 'stock_units',
 ])
 
 describe('contrato del espejo: la versión se mueve con todo lo que baja', () => {
@@ -75,6 +82,12 @@ describe('contrato del espejo: la versión se mueve con todo lo que baja', () =>
     }
     // Y las marcas nacen con su fila, para que la función no devuelva null de salida.
     for (const t of conDisparador) expect(sql).toContain(`('${t}')`)
+  })
+
+  it('las unidades del almacén se auditan: es lo que mueve la versión cuando se instala una', () => {
+    expect(sqlUnidades).toMatch(
+      /drop trigger if exists stock_units_audit on stock_units;\s*create trigger stock_units_audit\s+after insert or update or delete on stock_units\s+for each row execute function public\.audit_trigger\(\);/,
+    )
   })
 
   it('la bajada periódica pregunta primero y la manual baja siempre', () => {

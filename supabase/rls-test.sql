@@ -5525,3 +5525,1218 @@ begin;
     raise notice 'OK: sin motivo lleva la nota del cliente, y un retirado no se mueve';
   end $$;
 rollback;
+
+-- =============================================================================
+-- Cada unidad del almacén, con su estado (20261027000200)
+--
+-- Un edificio propio con dos salas vivas y una archivada; un tipo de ordenador
+-- (categoría `ti`), uno de proyector (`av`) y una lápida de fusión del
+-- ordenador que se llama como un cañón y es `av`, para que se vea que manda el
+-- tipo vivo; cuatro artículos —el del ordenador, el del proyector, uno sin tipo
+-- y uno retirado—; seis equipos y once unidades con números de serie que se
+-- cruzan a propósito:
+--
+--   U1  SN-89-0001  PC, nueva, disponible
+--   U2  SN-89-0002  PC, reacondicionada, disponible — y el equipo a2, retirado
+--                   hace un año, lleva el mismo número escrito «SN890002»
+--   U3  SN-89-0003  del artículo sin tipo, disponible
+--   U4  SN-89-0004  proyector, instalado en la 89.1 como el equipo a3
+--   U5  SN-89-0005  PC, de baja
+--   U6  SN-89-0006  sin artículo, con el tipo de la lápida, disponible
+--   U7  SN-89-0007  «Portátil HP», sin artículo ni tipo, disponible
+--   U8  SN-89-0100  PC, nueva, instalada en la 89.1 como el equipo a1
+--   U9  SN-89-0200  PC, reacondicionada, instalada en la 89.2 como el a4
+--   U10 SN-89-0010  PC, nueva, disponible
+--   U11 SN-89-0011  PC, disponible
+--
+-- y el a5 —«Puesto 5» de la 89.1, SN-89-0300— es un equipo con número de serie
+-- y SIN unidad; el a6 de la 89.2 no tiene número de serie.
+--
+-- Se monta SIEMPRE como dueño y antes del primer `test_as()`. Los equipos van
+-- antes que las unidades: el disparador del número de serie engancharía una
+-- unidad disponible a un equipo que se crea después, y aquí se quiere cada
+-- cosa en su sitio.
+-- =============================================================================
+
+create or replace function pg_temp.escenario_unidades() returns void
+language plpgsql as $$
+declare
+  v_ed     uuid;
+  v_zona   uuid;
+  v_s1     uuid;
+  v_s2     uuid;
+  v_s3     uuid;
+  v_pc     uuid;
+  v_proy   uuid;
+  v_lapida uuid;
+  v_ipc    uuid;
+  v_iproy  uuid;
+  v_isin   uuid;
+  v_iret   uuid;
+begin
+  insert into buildings (code, name, sort_order) values ('Z89', 'EDIFICIO DE LAS UNIDADES', 989)
+    returning id into v_ed;
+  insert into zones (building_id, name, sort_order) values (v_ed, 'PLANTA BAJA', 10)
+    returning id into v_zona;
+  insert into rooms (zone_id, code, name, kind) values (v_zona, '89.1', 'Aula 89.1', 'aula')
+    returning id into v_s1;
+  insert into rooms (zone_id, code, name, kind) values (v_zona, '89.2', 'Aula 89.2', 'aula')
+    returning id into v_s2;
+  insert into rooms (zone_id, code, name, kind, active) values (v_zona, '89.3', 'Aula 89.3', 'aula', false)
+    returning id into v_s3;
+
+  insert into asset_types (name, category, confirmed) values ('Ordenador de la prueba 89', 'ti', true)
+    returning id into v_pc;
+  insert into asset_types (name, category, confirmed) values ('Proyector de la prueba 89', 'av', true)
+    returning id into v_proy;
+  insert into asset_types (name, category, confirmed, merged_into)
+  values ('Cañón antiguo de la prueba 89', 'av', true, v_pc)
+    returning id into v_lapida;
+
+  insert into stock_items (name, asset_type_id) values ('PC de la prueba 89', v_pc)
+    returning id into v_ipc;
+  insert into stock_items (name, asset_type_id) values ('Proyector de la prueba 89 (almacén)', v_proy)
+    returning id into v_iproy;
+  insert into stock_items (name) values ('Caja sin tipo de la prueba 89')
+    returning id into v_isin;
+  insert into stock_items (name, asset_type_id, active) values ('PC retirado de la prueba 89', v_pc, false)
+    returning id into v_iret;
+
+  insert into stock_movements (id, stock_item_id, qty, kind, occurred_at)
+  values (gen_random_uuid(), v_ipc,   10, 'compra', now() - interval '5 days'),
+         (gen_random_uuid(), v_iproy,  3, 'compra', now() - interval '5 days');
+
+  insert into assets (id, asset_type_id, room_id, label, serial, brand, model, status, confirmed, created_at)
+  values
+    ('89890000-0000-4000-8000-0000000000a1', v_pc, v_s1, 'Ordenador de la prueba 89', 'SN-89-0100',
+     'Dell', 'OptiPlex', 'instalado', true, now() - interval '10 days'),
+    ('89890000-0000-4000-8000-0000000000a2', v_pc, null, 'Antiguo 89', 'SN890002',
+     'Lenovo', null, 'retirado', true, now() - interval '400 days'),
+    ('89890000-0000-4000-8000-0000000000a3', v_proy, v_s1, 'Proyector de la prueba 89', 'SN-89-0004',
+     'Epson', 'EB-L', 'instalado', true, now() - interval '10 days'),
+    ('89890000-0000-4000-8000-0000000000a4', v_pc, v_s2, 'Ordenador de la prueba 89', 'SN-89-0200',
+     'HP', 'ProDesk', 'instalado', true, now() - interval '10 days'),
+    ('89890000-0000-4000-8000-0000000000a5', v_pc, v_s1, 'Puesto 5', 'SN-89-0300',
+     'Lenovo', 'M70q', 'instalado', true, now() - interval '2 days'),
+    ('89890000-0000-4000-8000-0000000000a6', v_pc, v_s2, 'Ordenador de la prueba 89 2', null,
+     null, null, 'instalado', true, now() - interval '10 days');
+
+  insert into stock_units (id, stock_item_id, asset_type_id, articulo, brand, model, serial, condicion,
+                           status, asset_id, room_id, installed_at, retired_at)
+  values
+    ('89890000-0000-4000-8000-000000000001', v_ipc, v_pc, 'PC de la prueba 89', 'Lenovo', 'M70q',
+     'SN-89-0001', 'nuevo', 'disponible', null, null, null, null),
+    ('89890000-0000-4000-8000-000000000002', v_ipc, v_pc, 'PC de la prueba 89', 'Lenovo', 'M710q',
+     'SN-89-0002', 'reacondicionado', 'disponible', null, null, null, null),
+    ('89890000-0000-4000-8000-000000000003', v_isin, null, 'Caja sin tipo de la prueba 89', null, null,
+     'SN-89-0003', 'nuevo', 'disponible', null, null, null, null),
+    ('89890000-0000-4000-8000-000000000004', v_iproy, v_proy, 'Proyector de la prueba 89 (almacén)', 'Epson', 'EB-L',
+     'SN-89-0004', 'usado', 'instalado', '89890000-0000-4000-8000-0000000000a3', v_s1,
+     now() - interval '10 days', null),
+    ('89890000-0000-4000-8000-000000000005', v_ipc, v_pc, 'PC de la prueba 89', null, null,
+     'SN-89-0005', 'sin_indicar', 'baja', null, null, null, now() - interval '3 days'),
+    ('89890000-0000-4000-8000-000000000006', null, v_lapida, 'Equipo de la lápida 89', null, null,
+     'SN-89-0006', 'sin_indicar', 'disponible', null, null, null, null),
+    ('89890000-0000-4000-8000-000000000007', null, null, 'Portátil HP de la prueba 89', 'HP', null,
+     'SN-89-0007', 'sin_indicar', 'disponible', null, null, null, null),
+    ('89890000-0000-4000-8000-000000000008', v_ipc, v_pc, 'PC de la prueba 89', 'Dell', 'OptiPlex',
+     'SN-89-0100', 'nuevo', 'instalado', '89890000-0000-4000-8000-0000000000a1', v_s1,
+     now() - interval '10 days', null),
+    ('89890000-0000-4000-8000-000000000009', v_ipc, v_pc, 'PC de la prueba 89', 'HP', 'ProDesk',
+     'SN-89-0200', 'reacondicionado', 'instalado', '89890000-0000-4000-8000-0000000000a4', v_s2,
+     now() - interval '10 days', null),
+    ('89890000-0000-4000-8000-000000000010', v_ipc, v_pc, 'PC de la prueba 89', 'Lenovo', 'M70q',
+     'SN-89-0010', 'nuevo', 'disponible', null, null, null, null),
+    ('89890000-0000-4000-8000-000000000011', v_ipc, v_pc, 'PC de la prueba 89', null, null,
+     'SN-89-0011', 'sin_indicar', 'disponible', null, null, null, null);
+
+  perform set_config('prueba89.s1',     v_s1::text,     true);
+  perform set_config('prueba89.s2',     v_s2::text,     true);
+  perform set_config('prueba89.s3',     v_s3::text,     true);
+  perform set_config('prueba89.pc',     v_pc::text,     true);
+  perform set_config('prueba89.proy',   v_proy::text,   true);
+  perform set_config('prueba89.lapida', v_lapida::text, true);
+  perform set_config('prueba89.ipc',    v_ipc::text,    true);
+  perform set_config('prueba89.iproy',  v_iproy::text,  true);
+  perform set_config('prueba89.isin',   v_isin::text,   true);
+  perform set_config('prueba89.iret',   v_iret::text,   true);
+end $$;
+
+\echo ''
+\echo '=== 89. El estado de una unidad: «sin indicar» si nadie lo dice, y solo los que existen ==='
+begin;
+  select pg_temp.escenario_unidades();
+  do $$
+  begin
+    -- Como todas las unidades de hasta hoy: sin decir cómo están.
+    insert into stock_units (articulo, serial) values ('Unidad muda de la prueba 89', 'SN-89-0900');
+    if (select condicion from stock_units where serial = 'SN-89-0900') is distinct from 'sin_indicar' then
+      raise exception 'FALLO: una unidad sin estado no nace «sin indicar»';
+    end if;
+    begin
+      update stock_units set condicion = 'rota' where serial = 'SN-89-0900';
+      raise exception 'FALLO: se guardó el estado «rota»';
+    exception when check_violation then null;
+    end;
+    if not exists (select 1 from pg_constraint
+                    where conname = 'stock_units_condicion_check'
+                      and conrelid = 'public.stock_units'::regclass) then
+      raise exception 'FALLO: la restricción del estado no lleva su nombre, y no se podría reponer';
+    end if;
+    raise notice 'OK: sin estado es «sin indicar», y un estado que no existe no entra en la tabla';
+  end $$;
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  begin
+    begin
+      perform public.stock_unit_alta(jsonb_build_object(
+        'stock_item_id', current_setting('prueba89.ipc'), 'serial', 'SN-89-0901', 'condicion', 'rota'));
+      raise exception 'FALLO: el alta admitió el estado «rota»';
+    exception when invalid_parameter_value then null;
+    end;
+    raise notice 'OK: el alta rechaza un estado que no existe con 22023';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 90. Cada cambio de una unidad queda en la Actividad, y el técnico lo lee ==='
+begin;
+  select pg_temp.escenario_unidades();
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  declare
+    v_id uuid;
+  begin
+    v_id := public.stock_unit_alta(jsonb_build_object(
+      'stock_item_id', current_setting('prueba89.ipc'), 'serial', 'SN-89-0910', 'condicion', 'nuevo'));
+    perform public.stock_unit_editar(v_id, jsonb_build_object('condicion', 'averiado'));
+    perform set_config('prueba90.unidad', v_id::text, true);
+  end $$;
+
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_id text := current_setting('prueba90.unidad');
+  begin
+    if not exists (select 1 from audit_log
+                    where table_name = 'stock_units' and row_id = v_id and op = 'INSERT'
+                      and by_user = '22222222-2222-4222-8222-222222222222') then
+      raise exception 'FALLO: el alta de la unidad no quedó en la auditoría con su autor';
+    end if;
+    if not exists (select 1 from audit_log
+                    where table_name = 'stock_units' and row_id = v_id and op = 'UPDATE'
+                      and old_data ->> 'condicion' = 'nuevo' and new_data ->> 'condicion' = 'averiado') then
+      raise exception 'FALLO: el cambio de estado no quedó en la auditoría';
+    end if;
+    raise notice 'OK: el alta y el cambio de estado de una unidad quedan en la Actividad, y el técnico los lee';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 91. La lista de unidades: todas, con su tipo vivo, y cada ordenador sabe que lo es ==='
+begin;
+  select pg_temp.escenario_unidades();
+  do $$
+  declare
+    v_columnas text;
+  begin
+    select string_agg(column_name, ',' order by ordinal_position) into v_columnas
+      from information_schema.columns
+     where table_schema = 'public' and table_name = 'stock_unit_list';
+    if v_columnas is distinct from
+       'id,stock_item_id,item_name,item_active,articulo,asset_type_id,type_name,es_ordenador,brand,model,serial,notes,status,condicion,asset_id,room_id,room_code,room_name,building_code,installed_at,retired_at,source,created_at,updated_at' then
+      raise exception 'FALLO: las columnas de stock_unit_list no son las del contrato: %', v_columnas;
+    end if;
+    if has_table_privilege('anon', 'public.stock_unit_list', 'select') then
+      raise exception 'FALLO: un anónimo puede pedir la lista de unidades';
+    end if;
+    raise notice 'OK: la lista tiene las columnas del contrato, en su orden, y un anónimo no llega a ella';
+  end $$;
+
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_estados text;
+    r         record;
+  begin
+    select string_agg(distinct status, ',' order by status) into v_estados
+      from stock_unit_list where serial like 'SN-89-%';
+    if v_estados is distinct from 'baja,disponible,instalado' then
+      raise exception 'FALLO: la lista no trae las unidades en todas sus situaciones: %', v_estados;
+    end if;
+
+    select * into r from stock_unit_list where id = '89890000-0000-4000-8000-000000000001';
+    if r.es_ordenador is distinct from true or r.type_name is distinct from 'Ordenador de la prueba 89'
+       or r.item_name is distinct from 'PC de la prueba 89' or r.item_active is distinct from true
+       or r.condicion is distinct from 'nuevo' or r.status is distinct from 'disponible'
+       or r.room_code is not null then
+      raise exception 'FALLO: el ordenador del almacén no sale como tal: %', to_jsonb(r);
+    end if;
+
+    select * into r from stock_unit_list where id = '89890000-0000-4000-8000-000000000004';
+    if r.es_ordenador is distinct from false or r.type_name is distinct from 'Proyector de la prueba 89'
+       or r.status is distinct from 'instalado' or r.asset_id is distinct from '89890000-0000-4000-8000-0000000000a3'
+       or r.room_code is distinct from '89.1' or r.room_name is distinct from 'Aula 89.1'
+       or r.building_code is distinct from 'Z89' then
+      raise exception 'FALLO: el proyector instalado no sale con su sala ni como «no ordenador»: %', to_jsonb(r);
+    end if;
+
+    -- La lápida se llama como un cañón y es `av`; el tipo vivo es el ordenador.
+    select * into r from stock_unit_list where id = '89890000-0000-4000-8000-000000000006';
+    if r.asset_type_id is distinct from current_setting('prueba89.pc')::uuid
+       or r.type_name is distinct from 'Ordenador de la prueba 89' or r.es_ordenador is distinct from true then
+      raise exception 'FALLO: la unidad de un tipo fundido no sale con el tipo vivo: %', to_jsonb(r);
+    end if;
+
+    select * into r from stock_unit_list where id = '89890000-0000-4000-8000-000000000007';
+    if r.asset_type_id is not null or r.es_ordenador is distinct from true then
+      raise exception 'FALLO: un «Portátil» sin tipo no cuenta como ordenador: %', to_jsonb(r);
+    end if;
+
+    select * into r from stock_unit_list where id = '89890000-0000-4000-8000-000000000003';
+    if r.type_name is not null or r.es_ordenador is distinct from false then
+      raise exception 'FALLO: una caja sin tipo cuenta como ordenador: %', to_jsonb(r);
+    end if;
+
+    if (select count(*) from stock_unit_list where status = 'disponible' and serial like 'SN-89-%') <> 7 then
+      raise exception 'FALLO: el filtro del espejo no da las siete disponibles del escenario';
+    end if;
+    raise notice 'OK: todas las situaciones, el tipo vivo, la sala de la instalada, y es_ordenador bien para el PC, el proyector, la lápida, el portátil y la caja';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 92. Dar de alta una unidad: con su artículo, su estado y, si entra, sumando ==='
+begin;
+  select pg_temp.escenario_unidades();
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.stock_unit_alta(jsonb_build_object(
+      'stock_item_id', current_setting('prueba89.ipc'), 'serial', 'SN-89-1000'));
+    raise exception 'FALLO: un técnico dio de alta una unidad';
+  exception when insufficient_privilege then
+    raise notice 'OK: dar de alta unidades sigue siendo del despacho';
+  end $$;
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  declare
+    v_ipc   uuid := current_setting('prueba89.ipc')::uuid;
+    v_antes int;
+    v_id    uuid;
+    v_n     int;
+    u       record;
+    m       record;
+  begin
+    select on_hand into v_antes from stock_levels where stock_item_id = v_ipc;
+
+    -- Nueva, de un artículo nombrado y sumando: un +1 de compra, firmado.
+    v_id := public.stock_unit_alta(jsonb_build_object(
+      'stock_item_id', v_ipc, 'serial', 'SN-89-1001', 'marca', 'Lenovo', 'modelo', 'M70q',
+      'condicion', 'nuevo', 'sumar', true));
+    select * into u from stock_units where id = v_id;
+    if u.stock_item_id is distinct from v_ipc or u.articulo is distinct from 'PC de la prueba 89'
+       or u.asset_type_id is distinct from current_setting('prueba89.pc')::uuid
+       or u.condicion is distinct from 'nuevo' or u.status is distinct from 'disponible'
+       or u.source is distinct from 'app' then
+      raise exception 'FALLO: la unidad no nace con su artículo, su tipo y su estado: %', to_jsonb(u);
+    end if;
+    select * into m from stock_movements where note = 'Entrada de la unidad S/N SN-89-1001';
+    if m.stock_item_id is distinct from v_ipc or m.qty is distinct from 1 or m.kind is distinct from 'compra'
+       or m.by_user is distinct from '22222222-2222-4222-8222-222222222222' then
+      raise exception 'FALLO: la unidad nueva no sumó una compra firmada: %', to_jsonb(m);
+    end if;
+
+    -- Usada y sumando —con «sumar» como texto—: un +1 de ajuste.
+    perform public.stock_unit_alta(jsonb_build_object(
+      'stock_item_id', v_ipc, 'serial', 'SN-89-1002', 'condicion', 'usado', 'sumar', 'true'));
+    if (select kind from stock_movements where note = 'Entrada de la unidad S/N SN-89-1002') is distinct from 'ajuste' then
+      raise exception 'FALLO: una unidad usada que entra no es un ajuste';
+    end if;
+    if (select on_hand from stock_levels where stock_item_id = v_ipc) <> v_antes + 2 then
+      raise exception 'FALLO: el almacén no subió dos (% → %)', v_antes,
+        (select on_hand from stock_levels where stock_item_id = v_ipc);
+    end if;
+    raise notice 'OK: una unidad nueva que entra suma una compra; una usada, un ajuste';
+
+    -- La misma otra vez, escrita de otra manera y pidiendo sumar: la misma
+    -- unidad, con el estado nuevo, y ni un asiento más.
+    select count(*) into v_n from stock_movements where stock_item_id = v_ipc;
+    if public.stock_unit_alta(jsonb_build_object(
+         'stock_item_id', v_ipc, 'serial', 'sn 89 1001', 'condicion', 'averiado', 'sumar', true)) <> v_id then
+      raise exception 'FALLO: el mismo número de serie dio otra unidad';
+    end if;
+    if (select count(*) from stock_movements where stock_item_id = v_ipc) <> v_n then
+      raise exception 'FALLO: volver a dar de alta una unidad que ya existía sumó otra vez';
+    end if;
+    if (select condicion from stock_units where id = v_id) is distinct from 'averiado'
+       or (select serial from stock_units where id = v_id) is distinct from 'SN-89-1001' then
+      raise exception 'FALLO: la segunda alta no dejó el estado nuevo o cambió el número de serie';
+    end if;
+    -- Sin estado, el que tenía se queda; y repetir lo mismo no ensucia la Actividad.
+    select count(*) into v_n from audit_log where table_name = 'stock_units' and row_id = v_id::text;
+    perform public.stock_unit_alta(jsonb_build_object('stock_item_id', v_ipc, 'serial', 'SN-89-1001'));
+    if (select condicion from stock_units where id = v_id) is distinct from 'averiado' then
+      raise exception 'FALLO: un alta sin estado le quitó el suyo a una unidad que ya existía';
+    end if;
+    if (select count(*) from audit_log where table_name = 'stock_units' and row_id = v_id::text) <> v_n then
+      raise exception 'FALLO: repetir el alta sin cambiar nada dejó otra fila en la Actividad';
+    end if;
+    raise notice 'OK: volver a darla de alta es la misma unidad: no suma, y sin estado conserva el que tenía';
+
+    -- Un artículo sin tipo: la unidad tampoco lo tiene —nada de «Ordenador» por
+    -- defecto— y, sin «sumar», no suma.
+    v_id := public.stock_unit_alta(jsonb_build_object(
+      'stock_item_id', current_setting('prueba89.isin'), 'serial', 'SN-89-1003'));
+    select * into u from stock_units where id = v_id;
+    if u.asset_type_id is not null or u.condicion is distinct from 'sin_indicar'
+       or u.articulo is distinct from 'Caja sin tipo de la prueba 89' then
+      raise exception 'FALLO: la unidad de un artículo sin tipo se inventó uno: %', to_jsonb(u);
+    end if;
+    if exists (select 1 from stock_movements where note = 'Entrada de la unidad S/N SN-89-1003') then
+      raise exception 'FALLO: sin «sumar» se sumó';
+    end if;
+
+    -- Pidiendo sumar, pero su número de serie ya está en un aula: nace
+    -- instalada, apuntando al equipo, y no está en ninguna estantería.
+    v_id := public.stock_unit_alta(jsonb_build_object(
+      'stock_item_id', v_ipc, 'serial', 'sn-89-0300', 'sumar', true));
+    select * into u from stock_units where id = v_id;
+    if u.status is distinct from 'instalado' or u.asset_id is distinct from '89890000-0000-4000-8000-0000000000a5'
+       or u.room_id is distinct from current_setting('prueba89.s1')::uuid then
+      raise exception 'FALLO: una unidad cuyo número ya está en un aula no nace instalada: %', to_jsonb(u);
+    end if;
+    if exists (select 1 from stock_movements where note = 'Entrada de la unidad S/N sn-89-0300') then
+      raise exception 'FALLO: una unidad que ya está en un aula sumó al almacén';
+    end if;
+    raise notice 'OK: sin tipo en el artículo no hay tipo, sin «sumar» no se suma, y lo que ya está en un aula nace instalado y no suma';
+  end $$;
+
+  do $$
+  declare
+    v_mal jsonb;
+  begin
+    foreach v_mal in array array[
+      jsonb_build_object('stock_item_id', current_setting('prueba89.iret'), 'serial', 'SN-89-1010'),
+      jsonb_build_object('stock_item_id', gen_random_uuid(), 'serial', 'SN-89-1011'),
+      jsonb_build_object('stock_item_id', 'no-es-un-uuid', 'serial', 'SN-89-1012'),
+      jsonb_build_object('stock_item_id', current_setting('prueba89.ipc'), 'serial', 'SN-89-1013', 'sumar', 'quizá'),
+      jsonb_build_object('stock_item_id', current_setting('prueba89.ipc'), 'serial', '   ')
+    ] loop
+      begin
+        perform public.stock_unit_alta(v_mal);
+        raise exception 'FALLO: se admitió el alta %', v_mal;
+      exception when invalid_parameter_value then null;
+      end;
+    end loop;
+    raise notice 'OK: artículo retirado, inexistente o mal escrito, «sumar» que no es sí o no, o sin número de serie: 22023';
+  end $$;
+
+  -- Y el `jsonb` de la sincronización del Excel, tal cual llega desde
+  -- `sync_alta`: el «Ordenador» de siempre, sin estado y sin sumar.
+  select test_as('44444444-4444-4444-8444-444444444444', 'admin');
+  do $$
+  declare
+    v_out jsonb;
+    u     record;
+  begin
+    v_out := public.sync_aplicar(jsonb_build_object(
+      'origen', 'material_aulas',
+      'altas', jsonb_build_array(jsonb_build_object(
+        'hoja', 'PCs STOCK 2026', 'fila', 89, 'tipo', 'unidad',
+        'articulo', 'Tiny de la prueba 89 sin artículo', 'marca', 'Lenovo', 'modelo', 'M75q',
+        'serial', 'SN-89-1004', 'observaciones', null, 'celdas', '{}'::jsonb))));
+    select * into u from stock_units where serial = 'SN-89-1004';
+    if u.id is null or (v_out -> 'altas' -> 0 ->> 'clave') is distinct from u.id::text then
+      raise exception 'FALLO: el alta del Excel no entró: %', v_out;
+    end if;
+    if u.asset_type_id is distinct from public.asset_type_id('Ordenador') or u.stock_item_id is not null
+       or u.condicion is distinct from 'sin_indicar' or u.source is distinct from 'sharepoint'
+       or u.status is distinct from 'disponible' or u.brand is distinct from 'Lenovo' then
+      raise exception 'FALLO: el alta del Excel ya no hace lo de siempre: %', to_jsonb(u);
+    end if;
+    if exists (select 1 from stock_movements where note like '%SN-89-1004%') then
+      raise exception 'FALLO: el alta del Excel sumó al almacén';
+    end if;
+    if (select type_name from stock_unit_list where id = u.id) is distinct from 'Ordenador' then
+      raise exception 'FALLO: la unidad del Excel no sale como «Ordenador» en la lista';
+    end if;
+    raise notice 'OK: el jsonb de la sincronización entra como siempre: con «Ordenador», sin estado y sin sumar';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 93. Corregir una unidad: el técnico, el estado y las observaciones; el despacho, lo demás ==='
+begin;
+  select pg_temp.escenario_unidades();
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_u1 uuid := '89890000-0000-4000-8000-000000000001';
+    u    record;
+  begin
+    -- Con el resto del formulario detrás: la marca y el modelo que ya tenía no
+    -- son cambiarlos, y lo que no es de la unidad se ignora.
+    perform public.stock_unit_editar(v_u1, jsonb_build_object(
+      'condicion', 'Reacondicionado', 'observaciones', '  Imagen de octubre  ', 'lo_que_sea', 7,
+      'marca', 'Lenovo', 'modelo', ' M70q '));
+    select * into u from stock_units where id = v_u1;
+    if u.condicion is distinct from 'reacondicionado' or u.notes is distinct from 'Imagen de octubre'
+       or u.brand is distinct from 'Lenovo' or u.model is distinct from 'M70q' then
+      raise exception 'FALLO: el técnico no pudo corregir el estado y las observaciones: %', to_jsonb(u);
+    end if;
+    perform public.stock_unit_editar(v_u1, jsonb_build_object('observaciones', ''));
+    if (select notes from stock_units where id = v_u1) is not null then
+      raise exception 'FALLO: unas observaciones en blanco no dejan la unidad sin observaciones';
+    end if;
+    -- La fila entera de una unidad que nunca tuvo artículo, con su artículo vacío.
+    perform public.stock_unit_editar('89890000-0000-4000-8000-000000000007', jsonb_build_object(
+      'condicion', 'averiado', 'stock_item_id', null, 'serial', 'SN-89-0007', 'marca', 'HP', 'modelo', null));
+    if (select condicion from stock_units where id = '89890000-0000-4000-8000-000000000007') is distinct from 'averiado' then
+      raise exception 'FALLO: reenviar la fila entera de una unidad sin artículo le impidió al técnico cambiar el estado';
+    end if;
+    raise notice 'OK: el técnico cambia el estado y las observaciones, y reenviar lo que ya había no es cambiarlo';
+
+    begin
+      perform public.stock_unit_editar(v_u1, jsonb_build_object('marca', 'Dell'));
+      raise exception 'FALLO: un técnico cambió la marca';
+    exception when insufficient_privilege then null;
+    end;
+    begin
+      perform public.stock_unit_editar(v_u1, jsonb_build_object('modelo', 'M90q'));
+      raise exception 'FALLO: un técnico cambió el modelo';
+    exception when insufficient_privilege then null;
+    end;
+    begin
+      perform public.stock_unit_editar(v_u1, jsonb_build_object('serial', 'SN-89-0001-B'));
+      raise exception 'FALLO: un técnico cambió el número de serie';
+    exception when insufficient_privilege then null;
+    end;
+    begin
+      perform public.stock_unit_editar(v_u1, jsonb_build_object(
+        'condicion', 'averiado', 'stock_item_id', current_setting('prueba89.iproy')));
+      raise exception 'FALLO: un técnico cambió el artículo';
+    exception when insufficient_privilege then null;
+    end;
+    -- Y lo que sí podía cambiar no entra de rebote con lo que no.
+    if (select condicion from stock_units where id = v_u1) is distinct from 'reacondicionado' then
+      raise exception 'FALLO: un cambio rechazado dejó la mitad hecha';
+    end if;
+    raise notice 'OK: marca, modelo, número de serie y artículo no son del técnico: 42501, y nada a medias';
+
+    begin
+      perform public.stock_unit_editar(v_u1, jsonb_build_object('condicion', 'rota'));
+      raise exception 'FALLO: se admitió el estado «rota»';
+    exception when invalid_parameter_value then null;
+    end;
+    begin
+      perform public.stock_unit_editar(gen_random_uuid(), jsonb_build_object('condicion', 'usado'));
+      raise exception 'FALLO: se corrigió una unidad que no existe';
+    exception when invalid_parameter_value then null;
+    end;
+    raise notice 'OK: un estado que no existe o una unidad que no existe: 22023';
+  end $$;
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  declare
+    v_u1  uuid := '89890000-0000-4000-8000-000000000001';
+    u     record;
+    v_mal jsonb;
+    v_msg text;
+  begin
+    perform public.stock_unit_editar(v_u1, jsonb_build_object(
+      'marca', 'Dell', 'modelo', '', 'serial', ' SN-89-0001-B ',
+      'stock_item_id', current_setting('prueba89.iproy')));
+    select * into u from stock_units where id = v_u1;
+    if u.brand is distinct from 'Dell' or u.model is not null or u.serial is distinct from 'SN-89-0001-B'
+       or u.stock_item_id is distinct from current_setting('prueba89.iproy')::uuid
+       or u.articulo is distinct from 'Proyector de la prueba 89 (almacén)'
+       or u.asset_type_id is distinct from current_setting('prueba89.proy')::uuid then
+      raise exception 'FALLO: el supervisor no pudo corregir la unidad, o el artículo no trajo su nombre y su tipo: %', to_jsonb(u);
+    end if;
+    raise notice 'OK: el supervisor corrige marca, modelo, número de serie y artículo, que trae su nombre y su tipo';
+
+    begin
+      perform public.stock_unit_editar(v_u1, jsonb_build_object('serial', 'sn/89/0002'));
+      raise exception 'FALLO: dos unidades con el mismo número de serie, escrito distinto';
+    exception when unique_violation then
+      v_msg := sqlerrm;
+    end;
+    if v_msg not like '%SN-89-0002%' or v_msg not like '%PC de la prueba 89%' then
+      raise exception 'FALLO: el choque de número de serie no dice con qué unidad: %', v_msg;
+    end if;
+    raise notice 'OK: un número de serie de otra unidad: 23505, diciendo cuál («%»)', v_msg;
+
+    foreach v_mal in array array[
+      jsonb_build_object('serial', ''),
+      jsonb_build_object('stock_item_id', current_setting('prueba89.iret')),
+      jsonb_build_object('stock_item_id', null),
+      jsonb_build_object('stock_item_id', 'no-es-un-uuid')
+    ] loop
+      begin
+        perform public.stock_unit_editar(v_u1, v_mal);
+        raise exception 'FALLO: se admitió la corrección %', v_mal;
+      exception when invalid_parameter_value then null;
+      end;
+    end loop;
+    raise notice 'OK: sin número de serie, o con un artículo retirado, vacío o mal escrito: 22023';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 94. Instalar una unidad en un aula: el equipo, su alta, el descuento y la unidad, de una vez ==='
+begin;
+  select pg_temp.escenario_unidades();
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_s1    uuid := current_setting('prueba89.s1')::uuid;
+    v_ipc   uuid := current_setting('prueba89.ipc')::uuid;
+    v_u1    uuid := '89890000-0000-4000-8000-000000000001';
+    v_antes int;
+    v_id    uuid;
+    a       record;
+    e       record;
+    m       record;
+    u       record;
+  begin
+    select on_hand into v_antes from stock_levels where stock_item_id = v_ipc;
+    v_id := public.stock_unit_instalar_en(v_u1, v_s1, null, 'almacen', '  Puesto del profesor ');
+
+    select * into a from assets where id = v_id;
+    if a.serial is distinct from 'SN-89-0001' or a.room_id is distinct from v_s1
+       or a.status is distinct from 'instalado' or a.confirmed is distinct from true
+       or a.asset_type_id is distinct from current_setting('prueba89.pc')::uuid
+       or a.brand is distinct from 'Lenovo' or a.model is distinct from 'M70q'
+       or a.created_by is distinct from '11111111-1111-4111-8111-111111111111' then
+      raise exception 'FALLO: el equipo no nace instalado, validado y firmado con lo de la unidad: %', to_jsonb(a);
+    end if;
+    -- La 89.1 ya tiene su «Ordenador de la prueba 89».
+    if a.label is distinct from 'Ordenador de la prueba 89 2' then
+      raise exception 'FALLO: la etiqueta no es la siguiente libre de su tipo: «%»', a.label;
+    end if;
+
+    select * into e from asset_events where asset_id = v_id;
+    if e.kind is distinct from 'alta' or e.room_id is distinct from v_s1
+       or e.by_user is distinct from '11111111-1111-4111-8111-111111111111'
+       or e.meta ->> 'source' is distinct from 'stock_units' or e.meta ->> 'unidad' is distinct from v_u1::text
+       or e.meta ->> 'serial' is distinct from 'SN-89-0001' or e.meta ->> 'condicion' is distinct from 'nuevo'
+       or e.meta ->> 'nota' is distinct from 'Puesto del profesor'
+       or e.meta -> 'sustituye' is distinct from 'null'::jsonb then
+      raise exception 'FALLO: el alta no quedó en el histórico como se pide: %', to_jsonb(e);
+    end if;
+
+    select * into m from stock_movements
+     where stock_item_id = v_ipc and kind = 'consumo' and room_id = v_s1;
+    if m.qty is distinct from -1 or m.by_user is distinct from '11111111-1111-4111-8111-111111111111' then
+      raise exception 'FALLO: la instalación no descontó una unidad del artículo en la sala: %', to_jsonb(m);
+    end if;
+    if (select on_hand from stock_levels where stock_item_id = v_ipc) <> v_antes - 1 then
+      raise exception 'FALLO: el almacén no bajó uno';
+    end if;
+
+    select * into u from stock_units where id = v_u1;
+    if u.status is distinct from 'instalado' or u.asset_id is distinct from v_id
+       or u.room_id is distinct from v_s1 or u.installed_at is null or u.condicion is distinct from 'nuevo' then
+      raise exception 'FALLO: la unidad no dice dónde está: %', to_jsonb(u);
+    end if;
+
+    if (select count(*) from room_timeline
+         where room_id = v_s1 and kind = 'equipo' and subkind = 'alta'
+           and title = 'Ordenador de la prueba 89 2') <> 1 then
+      raise exception 'FALLO: el Historial cuenta la instalación % veces',
+        (select count(*) from room_timeline
+          where room_id = v_s1 and kind = 'equipo' and subkind = 'alta' and title = 'Ordenador de la prueba 89 2');
+    end if;
+    raise notice 'OK: el equipo nace con su número de serie y la etiqueta libre, el alta lleva la unidad, el almacén baja uno y el Historial lo cuenta una vez';
+  end $$;
+
+  -- El número de serie de U2 ya era del equipo a2, retirado hace un año y
+  -- escrito «SN890002»: es ese, que vuelve, y no otro.
+  do $$
+  declare
+    v_s2 uuid := current_setting('prueba89.s2')::uuid;
+    v_id uuid;
+    a    record;
+  begin
+    v_id := public.stock_unit_instalar_en('89890000-0000-4000-8000-000000000002', v_s2);
+    if v_id is distinct from '89890000-0000-4000-8000-0000000000a2' then
+      raise exception 'FALLO: no se reutilizó el equipo retirado con ese número de serie: %', v_id;
+    end if;
+    select * into a from assets where id = v_id;
+    -- La 89.2 tiene el «Ordenador de la prueba 89» y el «… 2».
+    if a.room_id is distinct from v_s2 or a.status is distinct from 'instalado' or a.serial is distinct from 'SN890002'
+       or a.label is distinct from 'Ordenador de la prueba 89 3' or a.model is distinct from 'M710q' then
+      raise exception 'FALLO: el equipo reutilizado no llegó a la sala con su etiqueta libre: %', to_jsonb(a);
+    end if;
+    if (select count(*) from assets where upper(regexp_replace(serial, '[\s\-_./]', '', 'g')) = 'SN890002') <> 1 then
+      raise exception 'FALLO: hay dos equipos con el mismo número de serie';
+    end if;
+    if (select asset_id from stock_units where id = '89890000-0000-4000-8000-000000000002') is distinct from v_id then
+      raise exception 'FALLO: la unidad no apunta al equipo reutilizado';
+    end if;
+    raise notice 'OK: el número de serie de un equipo retirado trae ESE equipo, con su id y su histórico';
+  end $$;
+
+  do $$
+  declare
+    v_s1  uuid := current_setting('prueba89.s1')::uuid;
+    v_s2  uuid := current_setting('prueba89.s2')::uuid;
+    v_msg text;
+  begin
+    begin
+      perform public.stock_unit_instalar_en('89890000-0000-4000-8000-000000000003', v_s1);
+      raise exception 'FALLO: se instaló una unidad cuyo artículo no dice qué tipo de equipo es';
+    exception when invalid_parameter_value then
+      v_msg := sqlerrm;
+    end;
+    if v_msg is distinct from 'Este artículo no dice qué tipo de equipo es: enlázalo con un tipo en el almacén.' then
+      raise exception 'FALLO: el artículo sin tipo no lo dice con sus palabras: %', v_msg;
+    end if;
+
+    begin
+      perform public.stock_unit_instalar_en('89890000-0000-4000-8000-000000000004', v_s2);
+      raise exception 'FALLO: se instaló una unidad que ya está instalada';
+    exception when invalid_parameter_value then
+      v_msg := sqlerrm;
+    end;
+    if v_msg is distinct from 'Esa unidad ya no está en el almacén: está instalada en 89.1 Z89.' then
+      raise exception 'FALLO: la unidad instalada no dice dónde está: %', v_msg;
+    end if;
+
+    begin
+      perform public.stock_unit_instalar_en('89890000-0000-4000-8000-000000000005', v_s2);
+      raise exception 'FALLO: se instaló una unidad de baja';
+    exception when invalid_parameter_value then
+      v_msg := sqlerrm;
+    end;
+    if v_msg not like '%dada de baja%' then
+      raise exception 'FALLO: la unidad de baja no lo dice: %', v_msg;
+    end if;
+
+    begin
+      perform public.stock_unit_instalar_en('89890000-0000-4000-8000-000000000006',
+                                            current_setting('prueba89.s3')::uuid);
+      raise exception 'FALLO: se instaló una unidad en una sala archivada';
+    exception when invalid_parameter_value then null;
+    end;
+    begin
+      perform public.stock_unit_instalar_en('89890000-0000-4000-8000-000000000006', v_s1, null, 'papelera');
+      raise exception 'FALLO: se admitió el destino «papelera»';
+    exception when invalid_parameter_value then null;
+    end;
+    begin
+      perform public.stock_unit_instalar_en(gen_random_uuid(), v_s1);
+      raise exception 'FALLO: se instaló una unidad que no existe';
+    exception when invalid_parameter_value then null;
+    end;
+    raise notice 'OK: sin tipo, ya instalada, de baja, a una sala archivada, a un destino que no existe o que no existe: 22023, con su motivo';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 95. Sustituir al instalar: el técnico pide la retirada y lo sustituido sigue en el aula ==='
+begin;
+  select pg_temp.escenario_unidades();
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  -- Una retirada que ya estaba pedida desde el aula, con su motivo.
+  insert into asset_removals (id, asset_id, room_id, destino, reason, requested_at, requested_by)
+  values ('89950000-0000-4000-8000-0000000000b4', '89890000-0000-4000-8000-0000000000a4',
+          current_setting('prueba89.s2')::uuid, 'almacen', 'No enciende desde el lunes', now(),
+          '11111111-1111-4111-8111-111111111111');
+  do $$
+  declare
+    v_s1 uuid := current_setting('prueba89.s1')::uuid;
+    v_id uuid;
+    s    record;
+    e    record;
+  begin
+    begin
+      perform public.stock_unit_instalar_en('89890000-0000-4000-8000-000000000001', v_s1,
+                                            '89890000-0000-4000-8000-0000000000a4');
+      raise exception 'FALLO: se sustituyó un equipo de otra sala';
+    exception when invalid_parameter_value then null;
+    end;
+    begin
+      perform public.stock_unit_instalar_en('89890000-0000-4000-8000-000000000001', v_s1,
+                                            '89890000-0000-4000-8000-0000000000a2');
+      raise exception 'FALLO: se sustituyó un equipo retirado';
+    exception when invalid_parameter_value then null;
+    end;
+    raise notice 'OK: solo se sustituye un equipo vivo de esa misma sala';
+
+    v_id := public.stock_unit_instalar_en('89890000-0000-4000-8000-000000000001', v_s1,
+                                          '89890000-0000-4000-8000-0000000000a1', 'almacén');
+    if (select status from assets where id = '89890000-0000-4000-8000-0000000000a1') is distinct from 'instalado' then
+      raise exception 'FALLO: el técnico retiró él solo el equipo sustituido';
+    end if;
+    select * into s from asset_removals where asset_id = '89890000-0000-4000-8000-0000000000a1';
+    if s.state is distinct from 'pendiente' or s.destino is distinct from 'almacen'
+       or s.reason is distinct from 'Sustituido por Ordenador de la prueba 89 S/N SN-89-0001'
+       or s.requested_by is distinct from '11111111-1111-4111-8111-111111111111'
+       or s.room_id is distinct from v_s1 then
+      raise exception 'FALLO: la retirada de lo sustituido no quedó pedida como se pide: %', to_jsonb(s);
+    end if;
+    select * into e from asset_events
+     where asset_id = '89890000-0000-4000-8000-0000000000a1' and kind = 'sustitucion';
+    if e.meta ->> 'source' is distinct from 'stock_units' or e.meta ->> 'por' is distinct from v_id::text
+       or e.meta ->> 'serial' is distinct from 'SN-89-0001'
+       or e.by_user is distinct from '11111111-1111-4111-8111-111111111111' then
+      raise exception 'FALLO: lo sustituido no lo cuenta en su histórico: %', to_jsonb(e);
+    end if;
+    if (select meta ->> 'sustituye' from asset_events where asset_id = v_id and kind = 'alta')
+       is distinct from '89890000-0000-4000-8000-0000000000a1' then
+      raise exception 'FALLO: el alta del nuevo no dice a quién sustituye';
+    end if;
+    -- Hasta que alguien decida, los dos están en el aula: el nuevo con la
+    -- siguiente etiqueta libre, y la unidad del viejo sigue instalada.
+    if (select label from assets where id = v_id) is distinct from 'Ordenador de la prueba 89 2'
+       or (select status from stock_units where id = '89890000-0000-4000-8000-000000000008') is distinct from 'instalado' then
+      raise exception 'FALLO: lo pendiente ya hizo efecto antes de decidirse';
+    end if;
+    raise notice 'OK: el técnico instala y PIDE la retirada: pendiente, con su motivo, y lo sustituido lo cuenta';
+
+    -- La que ya estaba pedida no se duplica: toma el destino de ahora y conserva su motivo.
+    perform public.stock_unit_instalar_en('89890000-0000-4000-8000-000000000010',
+                                          current_setting('prueba89.s2')::uuid,
+                                          '89890000-0000-4000-8000-0000000000a4', 'baja');
+    if (select count(*) from asset_removals where asset_id = '89890000-0000-4000-8000-0000000000a4') <> 1 then
+      raise exception 'FALLO: había una retirada pendiente y se pidió otra';
+    end if;
+    select * into s from asset_removals where id = '89950000-0000-4000-8000-0000000000b4';
+    if s.state is distinct from 'pendiente' or s.destino is distinct from 'baja'
+       or s.reason is distinct from 'No enciende desde el lunes' then
+      raise exception 'FALLO: la retirada que ya estaba pedida no se reutilizó como se pide: %', to_jsonb(s);
+    end if;
+    raise notice 'OK: una retirada ya pedida se reutiliza: destino de ahora y el motivo de quien la pidió';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 96. Sustituir al instalar: si instala un supervisor, la retirada sale aprobada ==='
+begin;
+  select pg_temp.escenario_unidades();
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  declare
+    v_s1    uuid := current_setting('prueba89.s1')::uuid;
+    v_s2    uuid := current_setting('prueba89.s2')::uuid;
+    v_ipc   uuid := current_setting('prueba89.ipc')::uuid;
+    v_antes int;
+    v_id    uuid;
+    s       record;
+    u       record;
+    e       record;
+  begin
+    select on_hand into v_antes from stock_levels where stock_item_id = v_ipc;
+    v_id := public.stock_unit_instalar_en('89890000-0000-4000-8000-000000000001', v_s1,
+                                          '89890000-0000-4000-8000-0000000000a1', 'almacen',
+                                          'Cambio del equipo del profesor');
+
+    if (select status from assets where id = '89890000-0000-4000-8000-0000000000a1') is distinct from 'retirado'
+       or (select room_id from assets where id = '89890000-0000-4000-8000-0000000000a1') is not null then
+      raise exception 'FALLO: lo sustituido no salió del aula';
+    end if;
+    select * into s from asset_removals where asset_id = '89890000-0000-4000-8000-0000000000a1';
+    if s.state is distinct from 'aprobada' or s.destino is distinct from 'almacen'
+       or s.decided_by is distinct from '22222222-2222-4222-8222-222222222222' then
+      raise exception 'FALLO: la retirada no salió aprobada por quien instaló: %', to_jsonb(s);
+    end if;
+    -- Su unidad vuelve a la estantería, y vuelve usada.
+    select * into u from stock_units where id = '89890000-0000-4000-8000-000000000008';
+    if u.status is distinct from 'disponible' or u.condicion is distinct from 'usado'
+       or u.room_id is not null or u.installed_at is not null
+       or u.asset_id is distinct from '89890000-0000-4000-8000-0000000000a1' then
+      raise exception 'FALLO: la unidad de lo sustituido no volvió al almacén, usada: %', to_jsonb(u);
+    end if;
+    -- El almacén: −1 de la que se instala y +1 de la que vuelve, en su artículo.
+    if (select on_hand from stock_levels where stock_item_id = v_ipc) <> v_antes then
+      raise exception 'FALLO: el almacén no quedó igual (% → %)', v_antes,
+        (select on_hand from stock_levels where stock_item_id = v_ipc);
+    end if;
+    if not exists (select 1 from stock_movements
+                    where stock_item_id = v_ipc and kind = 'devolucion' and qty = 1 and room_id = v_s1) then
+      raise exception 'FALLO: lo que vuelve no sumó en su artículo';
+    end if;
+    -- El nuevo hereda la etiqueta que la retirada acaba de liberar.
+    if (select label from assets where id = v_id) is distinct from 'Ordenador de la prueba 89' then
+      raise exception 'FALLO: el nuevo no ocupa el sitio del que sale: «%»', (select label from assets where id = v_id);
+    end if;
+    -- La baja dice de dónde vino y con qué motivo.
+    select * into e from asset_events where asset_id = '89890000-0000-4000-8000-0000000000a1' and kind = 'baja';
+    if e.meta ->> 'source' is distinct from 'stock_units' or e.meta ->> 'por' is distinct from v_id::text
+       or e.meta ->> 'destino' is distinct from 'almacen'
+       or e.meta ->> 'nota' is distinct from 'Sustituido por Ordenador de la prueba 89 S/N SN-89-0001' then
+      raise exception 'FALLO: la baja de lo sustituido no dice de dónde vino: %', to_jsonb(e);
+    end if;
+    -- Ya tenía su unidad: no nace otra.
+    if (select count(*) from stock_units where upper(regexp_replace(serial, '[\s\-_./]', '', 'g')) = 'SN890100') <> 1 then
+      raise exception 'FALLO: lo sustituido estrenó una segunda unidad';
+    end if;
+    raise notice 'OK: el supervisor instala y la retirada sale aprobada: lo viejo al almacén, su unidad usada, +1 y −1, y el nuevo en su sitio';
+
+    -- A la baja: lo sustituido conserva la sala, su unidad pasa a baja y el
+    -- almacén solo baja la que se instala.
+    select on_hand into v_antes from stock_levels where stock_item_id = v_ipc;
+    v_id := public.stock_unit_instalar_en('89890000-0000-4000-8000-000000000010', v_s2,
+                                          '89890000-0000-4000-8000-0000000000a4', 'baja');
+    if (select status from assets where id = '89890000-0000-4000-8000-0000000000a4') is distinct from 'retirado'
+       or (select room_id from assets where id = '89890000-0000-4000-8000-0000000000a4') is distinct from v_s2 then
+      raise exception 'FALLO: lo dado de baja no conserva la sala';
+    end if;
+    select * into u from stock_units where id = '89890000-0000-4000-8000-000000000009';
+    if u.status is distinct from 'baja' or u.condicion is distinct from 'reacondicionado' then
+      raise exception 'FALLO: la unidad de lo dado de baja no pasó a baja: %', to_jsonb(u);
+    end if;
+    if (select on_hand from stock_levels where stock_item_id = v_ipc) <> v_antes - 1 then
+      raise exception 'FALLO: una baja sumó al almacén';
+    end if;
+    raise notice 'OK: con destino baja lo sustituido conserva la sala, su unidad pasa a baja y no suma nada';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 97. La instalación que sube por la cola: una fila, y reenviarla no hace nada ==='
+begin;
+  select pg_temp.escenario_unidades();
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_s1  uuid := current_setting('prueba89.s1')::uuid;
+    v_s2  uuid := current_setting('prueba89.s2')::uuid;
+    v_ipc uuid := current_setting('prueba89.ipc')::uuid;
+    a     record;
+    e     record;
+    r     record;
+    v_msg text;
+  begin
+    -- Como la sube la cola: upsert que ignora los duplicados.
+    insert into stock_unit_installs (id, unit_id, room_id, asset_id, label, occurred_at)
+    values ('89970000-0000-4000-8000-000000000001', '89890000-0000-4000-8000-000000000001', v_s2,
+            '89970000-0000-4000-8000-0000000000e1', 'Puesto 1', now() - interval '1 hour')
+    on conflict (id) do nothing;
+
+    select * into r from stock_unit_installs where id = '89970000-0000-4000-8000-000000000001';
+    if r.result_asset_id is distinct from '89970000-0000-4000-8000-0000000000e1'
+       or r.by_user is distinct from '11111111-1111-4111-8111-111111111111' or r.destino is distinct from 'almacen' then
+      raise exception 'FALLO: la petición no quedó firmada y con su equipo: %', to_jsonb(r);
+    end if;
+    select * into a from assets where id = '89970000-0000-4000-8000-0000000000e1';
+    if a.label is distinct from 'Puesto 1' or a.room_id is distinct from v_s2 or a.serial is distinct from 'SN-89-0001'
+       or a.confirmed is distinct from true or a.created_at is distinct from now() - interval '1 hour' then
+      raise exception 'FALLO: el equipo no nace con el id y la etiqueta que propuso el cliente: %', to_jsonb(a);
+    end if;
+    select * into e from asset_events where asset_id = a.id;
+    if e.kind is distinct from 'alta' or e.occurred_at is distinct from now() - interval '1 hour'
+       or e.meta ->> 'source' is distinct from 'stock_units' then
+      raise exception 'FALLO: el alta no lleva la hora del dispositivo: %', to_jsonb(e);
+    end if;
+    if (select count(*) from stock_movements where stock_item_id = v_ipc and kind = 'consumo' and room_id = v_s2) <> 1 then
+      raise exception 'FALLO: la petición no descontó una unidad';
+    end if;
+    if (select status from stock_units where id = '89890000-0000-4000-8000-000000000001') is distinct from 'instalado'
+       or (select installed_at from stock_units where id = '89890000-0000-4000-8000-000000000001')
+          is distinct from now() - interval '1 hour' then
+      raise exception 'FALLO: la unidad no quedó instalada con la hora del dispositivo';
+    end if;
+    raise notice 'OK: la petición instala: el equipo con el id y la etiqueta propuestos, el alta con la hora del iPad, −1 y la unidad instalada';
+
+    -- El reenvío de la misma fila, como tras una respuesta perdida.
+    insert into stock_unit_installs (id, unit_id, room_id, asset_id, label, occurred_at)
+    values ('89970000-0000-4000-8000-000000000001', '89890000-0000-4000-8000-000000000001', v_s2,
+            '89970000-0000-4000-8000-0000000000e1', 'Puesto 1', now() - interval '1 hour')
+    on conflict (id) do nothing;
+    if (select count(*) from stock_movements where stock_item_id = v_ipc and kind = 'consumo' and room_id = v_s2) <> 1
+       or (select count(*) from asset_events where asset_id = '89970000-0000-4000-8000-0000000000e1') <> 1
+       or (select count(*) from stock_unit_installs where unit_id = '89890000-0000-4000-8000-000000000001') <> 1 then
+      raise exception 'FALLO: el reenvío volvió a instalar';
+    end if;
+    raise notice 'OK: el reenvío con on conflict do nothing no hace nada, y no falla';
+
+    -- El número de serie ya es de un equipo retirado: ese, y el id propuesto no se usa.
+    insert into stock_unit_installs (id, unit_id, room_id, asset_id, occurred_at)
+    values ('89970000-0000-4000-8000-000000000002', '89890000-0000-4000-8000-000000000002', v_s1,
+            '89970000-0000-4000-8000-0000000000e2', now())
+    on conflict (id) do nothing;
+    if (select result_asset_id from stock_unit_installs where id = '89970000-0000-4000-8000-000000000002')
+       is distinct from '89890000-0000-4000-8000-0000000000a2'
+       or exists (select 1 from assets where id = '89970000-0000-4000-8000-0000000000e2') then
+      raise exception 'FALLO: no se reutilizó el equipo retirado con ese número de serie';
+    end if;
+    raise notice 'OK: con el número de serie de un equipo retirado se reutiliza ese, y el resultado lo dice';
+
+    -- Sustituyendo, como técnico: la retirada queda pedida, con el destino que se dijo.
+    insert into stock_unit_installs (id, unit_id, room_id, asset_id, sustituye, destino, nota, occurred_at)
+    values ('89970000-0000-4000-8000-000000000003', '89890000-0000-4000-8000-000000000006', v_s1,
+            '89970000-0000-4000-8000-0000000000e3', '89890000-0000-4000-8000-0000000000a1', 'baja',
+            'El viejo no arranca', now())
+    on conflict (id) do nothing;
+    if (select state || ' · ' || destino from asset_removals
+         where asset_id = '89890000-0000-4000-8000-0000000000a1') is distinct from 'pendiente · baja'
+       or (select status from assets where id = '89890000-0000-4000-8000-0000000000a1') is distinct from 'instalado' then
+      raise exception 'FALLO: la sustitución por la cola no dejó la retirada pedida';
+    end if;
+    -- La lápida no llega al aula: el equipo es del tipo vivo.
+    if (select asset_type_id from assets where id = '89970000-0000-4000-8000-0000000000e3')
+       is distinct from current_setting('prueba89.pc')::uuid
+       or (select meta ->> 'motivo' from asset_events
+            where asset_id = '89970000-0000-4000-8000-0000000000e3' and kind = 'alta') is distinct from 'El viejo no arranca' then
+      raise exception 'FALLO: el equipo de la unidad de la lápida no nace del tipo vivo, o se perdió la nota';
+    end if;
+    raise notice 'OK: sustituir por la cola deja la retirada pedida, y el equipo nace del tipo vivo';
+
+    -- Un iPad con la hora del revés: la fila guarda lo que dijo, el histórico no pasa de ahora.
+    insert into stock_unit_installs (id, unit_id, room_id, occurred_at)
+    values ('89970000-0000-4000-8000-000000000004', '89890000-0000-4000-8000-000000000010', v_s2,
+            now() + interval '2 days')
+    on conflict (id) do nothing;
+    select * into r from stock_unit_installs where id = '89970000-0000-4000-8000-000000000004';
+    if r.occurred_at is distinct from now() + interval '2 days' or r.result_asset_id is null
+       or (select occurred_at from asset_events where asset_id = r.result_asset_id and kind = 'alta') > now() then
+      raise exception 'FALLO: una fecha del futuro llegó al histórico: %', to_jsonb(r);
+    end if;
+    raise notice 'OK: una fecha del futuro se queda en la petición y al histórico llega acotada a ahora';
+
+    -- Imposible: la unidad ya está instalada. Se rechaza, con su motivo.
+    begin
+      insert into stock_unit_installs (id, unit_id, room_id, occurred_at)
+      values ('89970000-0000-4000-8000-000000000005', '89890000-0000-4000-8000-000000000004', v_s2, now())
+      on conflict (id) do nothing;
+      raise exception 'FALLO: se aceptó instalar una unidad que ya está instalada';
+    exception when invalid_parameter_value then
+      v_msg := sqlerrm;
+    end;
+    if v_msg is distinct from 'Esa unidad ya no está en el almacén: está instalada en 89.1 Z89.' then
+      raise exception 'FALLO: el rechazo no dice dónde está la unidad: %', v_msg;
+    end if;
+    if exists (select 1 from stock_unit_installs where id = '89970000-0000-4000-8000-000000000005') then
+      raise exception 'FALLO: la petición imposible se quedó guardada';
+    end if;
+    raise notice 'OK: una petición imposible se rechaza diciendo por qué («%»)', v_msg;
+
+    -- A nombre de otro, no; y lo escrito no se reescribe ni se borra.
+    begin
+      insert into stock_unit_installs (id, unit_id, room_id, occurred_at, by_user)
+      values ('89970000-0000-4000-8000-000000000006', '89890000-0000-4000-8000-000000000011', v_s2, now(),
+              '22222222-2222-4222-8222-222222222222');
+      raise exception 'FALLO: un técnico pidió una instalación a nombre de otro';
+    exception when insufficient_privilege then null;
+    end;
+    begin
+      update stock_unit_installs set nota = 'reescrita' where id = '89970000-0000-4000-8000-000000000001';
+      raise exception 'FALLO: un técnico reescribió una petición';
+    exception when insufficient_privilege then null;
+    end;
+    begin
+      delete from stock_unit_installs where id = '89970000-0000-4000-8000-000000000001';
+      raise exception 'FALLO: un técnico borró una petición';
+    exception when insufficient_privilege then null;
+    end;
+    raise notice 'OK: la petición va firmada por quien la sube, y no se reescribe ni se borra';
+  end $$;
+
+  -- Y un anónimo no la ve ni la escribe.
+  do $$
+  begin
+    if has_table_privilege('anon', 'public.stock_unit_installs', 'select')
+       or has_table_privilege('anon', 'public.stock_unit_installs', 'insert') then
+      raise exception 'FALLO: un anónimo llega a las peticiones de instalación';
+    end if;
+    raise notice 'OK: un anónimo no llega a las peticiones de instalación';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 98. Un equipo que llega al aula con el número de serie de una unidad la saca del almacén ==='
+begin;
+  select pg_temp.escenario_unidades();
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_s2  uuid := current_setting('prueba89.s2')::uuid;
+    v_ipc uuid := current_setting('prueba89.ipc')::uuid;
+    v_n   int;
+    u     record;
+  begin
+    select count(*) into v_n from stock_movements where stock_item_id = v_ipc;
+
+    -- Como lo sube una aplicación vieja: la fila del equipo, con el número
+    -- tecleado a su manera.
+    insert into assets (id, asset_type_id, room_id, label, serial, status, created_by)
+    values ('89980000-0000-4000-8000-000000000001', current_setting('prueba89.pc')::uuid, v_s2,
+            'PC traído del almacén', 'sn 89 0010', 'instalado', '11111111-1111-4111-8111-111111111111');
+    select * into u from stock_units where id = '89890000-0000-4000-8000-000000000010';
+    if u.status is distinct from 'instalado' or u.asset_id is distinct from '89980000-0000-4000-8000-000000000001'
+       or u.room_id is distinct from v_s2 or u.installed_at is null then
+      raise exception 'FALLO: la unidad no salió del almacén al llegar su número de serie a un aula: %', to_jsonb(u);
+    end if;
+
+    -- Corregir el número de serie de un equipo que ya estaba también la saca.
+    update assets set serial = 'SN-89-0011' where id = '89890000-0000-4000-8000-0000000000a6';
+    if (select asset_id from stock_units where id = '89890000-0000-4000-8000-000000000011')
+       is distinct from '89890000-0000-4000-8000-0000000000a6' then
+      raise exception 'FALLO: corregir el número de serie en el aula no enganchó su unidad';
+    end if;
+
+    -- Una de baja no se toca: eso lo decidió un administrador.
+    insert into assets (id, asset_type_id, room_id, label, serial, status, created_by)
+    values ('89980000-0000-4000-8000-000000000002', current_setting('prueba89.pc')::uuid, v_s2,
+            'PC de la baja', 'SN-89-0005', 'instalado', '11111111-1111-4111-8111-111111111111');
+    if (select status from stock_units where id = '89890000-0000-4000-8000-000000000005') is distinct from 'baja' then
+      raise exception 'FALLO: el disparador sacó de la baja una unidad';
+    end if;
+
+    if (select count(*) from stock_movements where stock_item_id = v_ipc) <> v_n then
+      raise exception 'FALLO: el disparador apuntó un movimiento de almacén';
+    end if;
+    raise notice 'OK: el número de serie en un aula instala su unidad disponible, sin tocar el almacén ni las de baja';
+  end $$;
+
+  -- El supervisor descarta el alta del técnico: la unidad vuelve a la estantería.
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  declare
+    u record;
+  begin
+    if public.reject_asset('89980000-0000-4000-8000-000000000001') is distinct from 'borrado' then
+      raise exception 'FALLO: el equipo sin validar y sin nada colgado no se borró';
+    end if;
+    select * into u from stock_units where id = '89890000-0000-4000-8000-000000000010';
+    if u.status is distinct from 'disponible' or u.asset_id is not null or u.room_id is not null
+       or u.condicion is distinct from 'nuevo' then
+      raise exception 'FALLO: descartar el equipo no devolvió su unidad al almacén: %', to_jsonb(u);
+    end if;
+    raise notice 'OK: descartar el equipo devuelve su unidad al almacén, tal como estaba';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 99. Volver al almacén: la unidad vuelve usada, y la que no existía nace ==='
+begin;
+  select pg_temp.escenario_unidades();
+  -- Seis equipos más en la 89.2, como dueño: uno con el número de la unidad
+  -- de baja, uno que se dará de baja, y dos pares de duplicados.
+  insert into assets (id, asset_type_id, room_id, label, serial, status, confirmed)
+  values
+    ('89990000-0000-4000-8000-000000000001', current_setting('prueba89.pc')::uuid, current_setting('prueba89.s2')::uuid,
+     'Puesto 11', 'SN-89-0005', 'instalado', true),
+    ('89990000-0000-4000-8000-000000000002', current_setting('prueba89.pc')::uuid, current_setting('prueba89.s2')::uuid,
+     'Puesto 12', 'SN-89-0600', 'instalado', true),
+    ('89990000-0000-4000-8000-000000000003', current_setting('prueba89.pc')::uuid, current_setting('prueba89.s2')::uuid,
+     'Puesto 9', 'SN-89-0500', 'instalado', true),
+    ('89990000-0000-4000-8000-000000000004', current_setting('prueba89.pc')::uuid, current_setting('prueba89.s2')::uuid,
+     'Puesto 9 2', null, 'instalado', true),
+    ('89990000-0000-4000-8000-000000000005', current_setting('prueba89.pc')::uuid, current_setting('prueba89.s2')::uuid,
+     'Puesto 8', 'SN-89-0700', 'instalado', true),
+    ('89990000-0000-4000-8000-000000000006', current_setting('prueba89.pc')::uuid, current_setting('prueba89.s2')::uuid,
+     'Puesto 8 2', null, 'instalado', true);
+  insert into stock_units (id, stock_item_id, asset_type_id, articulo, serial, status, asset_id, room_id, installed_at)
+  values ('89990000-0000-4000-8000-0000000000f5', current_setting('prueba89.ipc')::uuid,
+          current_setting('prueba89.pc')::uuid, 'PC de la prueba 89', 'SN-89-0700', 'instalado',
+          '89990000-0000-4000-8000-000000000005', current_setting('prueba89.s2')::uuid, now() - interval '1 day');
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  declare
+    v_s2    uuid := current_setting('prueba89.s2')::uuid;
+    v_ipc   uuid := current_setting('prueba89.ipc')::uuid;
+    v_antes int;
+    u       record;
+  begin
+    -- Con número de serie y sin unidad, al almacén desde la ficha: nace, usada,
+    -- en el artículo que suma el +1.
+    select on_hand into v_antes from stock_levels where stock_item_id = v_ipc;
+    perform public.asset_dar_de_baja('89890000-0000-4000-8000-0000000000a5', 'almacen',
+                                     'Sobra en el aula: vuelve a la estantería');
+    select * into u from stock_units where upper(regexp_replace(serial, '[\s\-_./]', '', 'g')) = 'SN890300';
+    if u.id is null or u.status is distinct from 'disponible' or u.condicion is distinct from 'usado'
+       or u.stock_item_id is distinct from v_ipc or u.asset_type_id is distinct from current_setting('prueba89.pc')::uuid
+       or u.articulo is distinct from 'PC de la prueba 89' or u.brand is distinct from 'Lenovo'
+       or u.model is distinct from 'M70q' or u.asset_id is distinct from '89890000-0000-4000-8000-0000000000a5'
+       or u.source is distinct from 'retirada' or u.room_id is not null then
+      raise exception 'FALLO: el equipo que vuelve al almacén no trae su unidad: %', to_jsonb(u);
+    end if;
+    if (select on_hand from stock_levels where stock_item_id = v_ipc) <> v_antes + 1 then
+      raise exception 'FALLO: el almacén no sumó la que vuelve';
+    end if;
+    raise notice 'OK: lo que vuelve al almacén con número de serie y sin unidad trae la suya: disponible, usada y en su artículo';
+
+    -- Con una unidad de baja con ese mismo número: vuelve esa, no otra.
+    perform public.asset_dar_de_baja('89990000-0000-4000-8000-000000000001', 'almacen',
+                                     'Vuelve a la estantería tras la revisión');
+    select * into u from stock_units where id = '89890000-0000-4000-8000-000000000005';
+    if u.status is distinct from 'disponible' or u.asset_id is distinct from '89990000-0000-4000-8000-000000000001'
+       or u.condicion is distinct from 'usado' or u.retired_at is not null then
+      raise exception 'FALLO: la unidad de baja con ese número no volvió: %', to_jsonb(u);
+    end if;
+    if (select count(*) from stock_units where upper(regexp_replace(serial, '[\s\-_./]', '', 'g')) = 'SN890005') <> 1 then
+      raise exception 'FALLO: nació una segunda unidad con el mismo número';
+    end if;
+
+    -- Con su unidad reacondicionada: vuelve reacondicionada, que eso lo dijo alguien.
+    perform public.asset_dar_de_baja('89890000-0000-4000-8000-0000000000a4', 'almacen',
+                                     'Se recoge para otra aula del edificio');
+    select * into u from stock_units where id = '89890000-0000-4000-8000-000000000009';
+    if u.status is distinct from 'disponible' or u.condicion is distinct from 'reacondicionado'
+       or u.installed_at is not null or u.room_id is not null then
+      raise exception 'FALLO: la unidad reacondicionada no volvió como estaba: %', to_jsonb(u);
+    end if;
+    raise notice 'OK: si ya había unidad con ese número vuelve esa, y lo reacondicionado vuelve reacondicionado';
+
+    -- A la baja, o sin número de serie: no nace ninguna.
+    perform public.asset_dar_de_baja('89990000-0000-4000-8000-000000000002', 'baja',
+                                     'La fuente se ha quemado del todo');
+    perform public.asset_dar_de_baja('89890000-0000-4000-8000-0000000000a6', 'almacen',
+                                     'Sobra en el aula: vuelve a la estantería');
+    if exists (select 1 from stock_units where serial = 'SN-89-0600')
+       or exists (select 1 from stock_units where asset_id = '89890000-0000-4000-8000-0000000000a6') then
+      raise exception 'FALLO: una baja definitiva o un equipo sin número de serie crearon una unidad';
+    end if;
+
+    -- Una fusión no crea ninguna. Y la unidad del duplicado se va con el que se
+    -- queda, que es el que tiene ahora su número de serie: el aparato no se ha
+    -- movido de la mesa.
+    perform public.fusionar_equipo_duplicado('89990000-0000-4000-8000-000000000003',
+                                             '89990000-0000-4000-8000-000000000004');
+    if exists (select 1 from stock_units where upper(regexp_replace(serial, '[\s\-_./]', '', 'g')) = 'SN890500') then
+      raise exception 'FALLO: una fusión creó una unidad';
+    end if;
+    perform public.fusionar_equipo_duplicado('89990000-0000-4000-8000-000000000005',
+                                             '89990000-0000-4000-8000-000000000006');
+    select * into u from stock_units where id = '89990000-0000-4000-8000-0000000000f5';
+    if u.status is distinct from 'instalado' or u.asset_id is distinct from '89990000-0000-4000-8000-000000000006'
+       or u.room_id is distinct from v_s2 then
+      raise exception 'FALLO: la unidad del duplicado no siguió al equipo que se queda: %', to_jsonb(u);
+    end if;
+    raise notice 'OK: ni la baja definitiva, ni un equipo sin número, ni una fusión crean unidades; y en la fusión la unidad sigue al que se queda';
+  end $$;
+rollback;
+
+begin;
+  select pg_temp.escenario_unidades();
+  -- La instalación de septiembre sustituye sola al último ordenador de la sala
+  -- —en la 89.1, el «Puesto 5», con número de serie y sin unidad— y eso no es
+  -- una vuelta autorizada al almacén: no nace ninguna unidad.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_id uuid;
+  begin
+    v_id := public.stock_unit_instalar('89890000-0000-4000-8000-000000000010',
+                                       current_setting('prueba89.s1')::uuid, 'lo pone el técnico');
+    if (select status from assets where id = '89890000-0000-4000-8000-0000000000a5') is distinct from 'retirado' then
+      raise exception 'FALLO: la instalación de septiembre ya no sustituye al último ordenador de la sala';
+    end if;
+    if exists (select 1 from stock_units where upper(regexp_replace(serial, '[\s\-_./]', '', 'g')) = 'SN890300') then
+      raise exception 'FALLO: la sustitución de la instalación de septiembre creó una unidad';
+    end if;
+    if (select status from stock_units where id = '89890000-0000-4000-8000-000000000010') is distinct from 'instalado'
+       or (select asset_id from stock_units where id = '89890000-0000-4000-8000-000000000010') is distinct from v_id then
+      raise exception 'FALLO: la instalación de septiembre ya no deja la unidad instalada';
+    end if;
+    raise notice 'OK: la instalación de septiembre sigue igual, y su sustitución no crea unidades';
+  end $$;
+rollback;
