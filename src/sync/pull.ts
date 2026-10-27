@@ -33,6 +33,7 @@ import { pullPersonas } from './personas'
 import { claveDeVersion, hayQueBajar, type VersionGuardada } from './version'
 import type { Asset, AssetRemoval, AssetType, Building, Incident, Room, StockItem,
   StockLevel, Zone } from '@/domain/types'
+import type { UnidadDeAlmacen } from '@/domain/unidades'
 
 /** Dónde queda el parte de la última descarga, para que la interfaz lo lea. */
 export const DIAGNOSTICO_PULL = 'ultimo-pull'
@@ -118,6 +119,71 @@ export async function versionDelEspejo(): Promise<string | null> {
 }
 
 /**
+ * El equipo que el iPad apuntó al instalar una unidad, cuando el servidor ha
+ * reutilizado otro.
+ *
+ * Instalar una unidad sin cobertura deja en la sala un equipo con el id que
+ * propuso este dispositivo. Si su número de serie ya era de un equipo retirado
+ * —la unidad volvió al almacén desde otra aula—, la base reutiliza ese y el id
+ * propuesto no llega a existir. Sin esto la sala enseñaría el mismo aparato dos
+ * veces hasta la poda de los quince minutos: el de aquí y el de arriba.
+ */
+async function quitarCopiasDeUnidades(
+  res: Descarga<Record<string, unknown>>,
+  enCola: Set<string>,
+): Promise<void> {
+  if (res.error || !res.completa || !res.data?.length) return
+  const delServidor = new Map<string, string>()
+  for (const f of res.data) {
+    const serial = typeof f['serial'] === 'string' ? f['serial'].trim().toUpperCase() : ''
+    if (serial) delServidor.set(serial, f['id'] as string)
+  }
+  const copias = (await db.assets.toArray())
+    // Lo que este iPad tiene por subir no se toca: una corrección con un número
+    // de serie repetido es un choque que tiene que ver el técnico, no una copia.
+    .filter((a) => a.serial && a.status !== 'retirado' && !enCola.has(a.id))
+    .filter((a) => {
+      const arriba = delServidor.get(a.serial!.trim().toUpperCase())
+      return arriba !== undefined && arriba !== a.id
+    })
+    .map((a) => a.id)
+  if (copias.length > 0) await db.assets.bulkDelete(copias)
+}
+
+/**
+ * Un servidor sin la migración del 27 de octubre no tiene `stock_unit_list`.
+ *
+ * Eso no es un fallo del espejo: es un servidor que todavía no sabe de
+ * unidades, y para el aula equivale a «no hay ninguna que elegir». Contarlo como
+ * fallo pintaría la lámpara de sincronización en rojo en todos los iPads hasta
+ * que alguien aplicara la migración, por algo que no impide trabajar.
+ */
+function sinVistaDeUnidades<T>(r: Pagina<T>): Pagina<T> {
+  if (r.error && /stock_unit_list|schema cache|does not exist|PGRST20[05]/i.test(`${r.error.message} ${r.error.code ?? ''}`)) {
+    return { data: [], error: null }
+  }
+  return r
+}
+
+/**
+ * Las unidades disponibles, enteras: se sustituyen y no se suman.
+ *
+ * Aquí no vale la regla de las demás tablas de no podar sobre una respuesta
+ * vacía. Que no quede ninguna unidad disponible es lo normal —se instaló la
+ * última— y, si fuera un permiso mal puesto, lo peor que pasa es que el aula no
+ * ofrece ninguna para elegir, que es justo lo que pasaría sin el espejo. Lo que
+ * sí se respeta es no tocar nada con una descarga a medias.
+ */
+async function espejarUnidades(res: Descarga<Record<string, unknown>>): Promise<void> {
+  if (res.error || !res.completa) return
+  const filas = (res.data ?? []) as unknown as UnidadDeAlmacen[]
+  await db.transaction('rw', db.stockUnits, async () => {
+    await db.stockUnits.clear()
+    if (filas.length > 0) await db.stockUnits.bulkPut(filas)
+  })
+}
+
+/**
  * Baja el maestro del servidor al espejo del dispositivo.
  *
  * Con `soloSiCambio`, antes pregunta a `espejo_version()` y, si el servidor no
@@ -191,6 +257,7 @@ export async function pullMaster(opts: { soloSiCambio?: boolean } = {}): Promise
     // el aula —el equipo ya se fue, o sigue ahí— y las decididas crecen sin
     // parar.
     ['asset_removals', (d, h) => supabase.from('asset_removals').select('*').eq('state', 'pendiente').order('id').range(d, h)],
+    ['stock_units', (d, h) => supabase.from('stock_unit_list').select('*').eq('status', 'disponible').order('id').range(d, h).then(sinVistaDeUnidades)],
   ]
 
   const consultas: Array<{ tabla: string; res: Respuesta<Record<string, unknown>> }> =
@@ -331,7 +398,9 @@ export async function pullMaster(opts: { soloSiCambio?: boolean } = {}): Promise
   )
   await guardar<AssetType>(de('asset_types'), db.assetTypes)
   await guardar<Asset>(de('assets'), db.assets)
+  await quitarCopiasDeUnidades(de('assets'), enCola)
   await guardar<AssetRemoval>(de('asset_removals'), db.assetRemovals)
+  await espejarUnidades(de('stock_units'))
 
   const rooms = de('room_overview')
   if (!rooms.error && rooms.data?.length) {

@@ -2311,6 +2311,7 @@ function altaDeArticulo(plan: Plan, f: FilaLeida, nombre: string, e: EntradaDeBo
 export interface EntradaDeUnidades {
   hoja: Hoja
   filas: FilaLeida[]
+  /** Todas las de la base. Cruzan todas por número de serie; solo las que no son `soloEnLaApp` se añaden. */
   unidades: UnidadVolcada[]
   instantanea?: Instantanea
   respuestas?: Respuestas
@@ -2333,6 +2334,15 @@ export interface EntradaDeUnidades {
  * que la base tiene y la hoja no se añade al final, instalada o no: la hoja es
  * un registro, y un ordenador que se fue a un aula sigue siendo un ordenador
  * que pasó por el almacén.
+ *
+ * **La hoja es de ordenadores, y el almacén ya no solo guarda ordenadores.**
+ * Las unidades que no lo son (`soloEnLaApp`: un proyector, un teclado con su
+ * número de serie) no se añaden al final: no pintan nada en «PCs STOCK». Pero
+ * se **cruzan** igual que las demás, contra todas las unidades de la base. Si
+ * alguien teclea en la hoja el número de serie de un proyector, la fila se
+ * reconoce y se mantiene al día; si el cruce solo viera los ordenadores, esa
+ * fila saldría como «no está en la aplicación» y se preguntaría darla de alta
+ * una unidad que ya existe.
  */
 export function sincronizarUnidades(e: EntradaDeUnidades): Plan {
   const plan = planVacio(e.hoja.nombre)
@@ -2412,8 +2422,10 @@ export function sincronizarUnidades(e: EntradaDeUnidades): Plan {
 
   const enLaHoja = new Set(emparejadas.map((p) => p.dato.id))
   const ultima = ultimaFilaConDatos(e.filas, e.hoja.cabecera)
+  // Solo los ordenadores se añaden. El filtro va aquí y no sobre `e.unidades`
+  // de entrada: el cruce por número de serie de arriba ya ha visto todas.
   const nuevas = e.unidades
-    .filter((u) => !enLaHoja.has(u.id))
+    .filter((u) => !enLaHoja.has(u.id) && !u.soloEnLaApp)
     .sort(
       (a, b) =>
         a.articulo.localeCompare(b.articulo, 'es') ||

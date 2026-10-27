@@ -50,7 +50,11 @@ export interface DatosDeLaPasada {
   revisiones: RevisionParaHoja[]
   movimientos: MovimientoParaHoja[]
   equipos: EquipoParaHoja[]
-  /** Los ordenadores de repuesto, para la hoja «PCs STOCK». */
+  /**
+   * Las unidades del almacén con número de serie, para la hoja «PCs STOCK».
+   * Vienen todas, sean o no ordenadores: la hoja las cruza todas por su número
+   * de serie y solo añade las que no están marcadas `soloEnLaApp`.
+   */
   unidades: UnidadVolcada[]
   /** `true` si el servidor todavía no tiene la tabla: falta la migración de septiembre. */
   sinUnidades: boolean
@@ -170,7 +174,24 @@ interface FilaUnidad {
   room_id: string | null
   installed_at: string | null
   retired_at: string | null
+  /**
+   * Si la unidad es un ordenador. Solo la dice la vista `stock_unit_list`: la
+   * tabla de antes no lo sabe, y sin el dato todas se tratan como ordenadores.
+   */
+  es_ordenador?: boolean | null
 }
+
+/**
+ * ¿Dice este error que a la consulta le falta la vista, o una columna de ella?
+ *
+ * PostgREST lo cuenta de tres maneras según la versión y según qué falte:
+ * «Could not find the table 'public.stock_unit_list' in the schema cache»
+ * (`PGRST205`), `relation "…" does not exist` (`42P01`) y `column … does not
+ * exist` (`42703`). Se mira lo que **dicen** y no el nombre de la vista: así un
+ * permiso denegado o un plazo agotado no pasan por «falta la migración» y se
+ * cuentan como lo que son.
+ */
+const FALTA_ALGO_DE_LA_VISTA = /does not exist|schema cache|PGRST20[45]|42P01|42703/i
 
 /**
  * Lee el estado entero.
@@ -285,20 +306,36 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
         .order('id')
         .range(d, h).abortSignal(plazo()),
     ),
-    // Un servidor sin la migración de septiembre no tiene `stock_units`, y eso
-    // no puede parar la sincronización de las otras cinco hojas: se sigue sin
-    // ordenadores de repuesto y la pasada lo dice en un aviso.
+    // Las unidades salen de la vista `stock_unit_list`, que sabe cuáles son
+    // ordenadores. Un servidor sin la migración de octubre no la tiene, o no
+    // tiene alguna de sus columnas: se vuelve a pedir la tabla de siempre, que
+    // no sabe qué es cada una y las deja a todas como ordenadores. Y uno sin la
+    // migración de septiembre no tiene ni `stock_units`, y eso no puede parar la
+    // sincronización de las otras cinco hojas: se sigue sin ordenadores de
+    // repuesto y la pasada lo dice en un aviso.
     descargaEntera<FilaUnidad>((d, h) =>
       supabase
-        .from('stock_units')
-        .select('id, articulo, brand, model, serial, notes, status, room_id, installed_at, retired_at')
+        .from('stock_unit_list')
+        .select('id, articulo, brand, model, serial, notes, status, room_id, installed_at, retired_at, es_ordenador')
         .order('id')
         .range(d, h).abortSignal(plazo()),
-    ).then((r) =>
-      r.error && /stock_units/.test(r.error.message)
-        ? { data: [], completa: true, error: null, sinTabla: true }
-        : r,
-    ),
+    )
+      .then((r) =>
+        r.error && FALTA_ALGO_DE_LA_VISTA.test(`${r.error.message} ${r.error.code ?? ''}`)
+          ? descargaEntera<FilaUnidad>((d, h) =>
+              supabase
+                .from('stock_units')
+                .select('id, articulo, brand, model, serial, notes, status, room_id, installed_at, retired_at')
+                .order('id')
+                .range(d, h).abortSignal(plazo()),
+            )
+          : r,
+      )
+      .then((r) =>
+        r.error && /stock_units/.test(r.error.message)
+          ? { data: [], completa: true, error: null, sinTabla: true }
+          : r,
+      ),
   ])
 
   const descargas: Array<[string, { data: unknown[] | null; completa: boolean; error: { message: string } | null }]> = [
@@ -313,7 +350,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     ['las incidencias', incidenciasD],
     ['el material de las incidencias', materialesD],
     ['el catálogo del almacén', articulosD],
-    ['los ordenadores de repuesto', unidadesD],
+    ['las unidades del almacén', unidadesD],
     ['los movimientos de almacén', movimientosD],
   ]
   for (const [que, d] of descargas) {
@@ -636,7 +673,7 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     nota: m.note,
   }))
 
-  // --- Ordenadores de repuesto, para su hoja ------------------------------
+  // --- Unidades del almacén, para la hoja de PCs ---------------------------
   const unidades: UnidadVolcada[] = (unidadesD.data ?? []).map((u) => {
     const sala = u.room_id ? salaPorId.get(u.room_id) : undefined
     const estado = u.status === 'instalado' || u.status === 'baja' ? u.status : 'disponible'
@@ -655,6 +692,10 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
           : estado === 'baja' && u.retired_at
             ? diaEnMadrid(new Date(u.retired_at))
             : null,
+      // La hoja es de ordenadores: un proyector con número de serie no se añade
+      // a ella (se cruza igual si alguien lo teclea). Solo se marca cuando la
+      // vista lo ha dicho; sin ella, sin marca, y entran como siempre.
+      ...(typeof u.es_ordenador === 'boolean' ? { soloEnLaApp: !u.es_ordenador } : {}),
     }
   })
 

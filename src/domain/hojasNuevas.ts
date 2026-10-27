@@ -393,7 +393,10 @@ export function hojaDeInventario(equipos: EquipoParaHoja[]): HojaNueva {
  */
 export function hojaDeUnidades(hoja: Hoja, unidades: UnidadVolcada[]): HojaNueva {
   const filas: ValorCelda[][] = [[...hoja.columnas.map((c) => c.cabecera as ValorCelda), TITULO_DE_SITUACION]]
-  const ordenadas = [...unidades].sort(
+  // La hoja es de ordenadores: las unidades de otros artículos (proyectores,
+  // switches) viven en la aplicación y no se estrenan aquí, igual que la
+  // sincronización no las añade al final de una hoja que ya existe.
+  const ordenadas = unidades.filter((u) => !u.soloEnLaApp).sort(
     (a, b) =>
       a.articulo.localeCompare(b.articulo, 'es') ||
       (a.modelo ?? '').localeCompare(b.modelo ?? '', 'es') ||

@@ -34,6 +34,19 @@ export interface AddResult {
    * existente, o repetir con `comoOtraUnidad` si de verdad hay dos.
    */
   conflicto?: ConflictoDeAlta
+  /** El equipo creado en el espejo, para quien tenga que apuntar algo más de él. */
+  assetId?: string
+}
+
+/**
+ * Una unidad concreta del almacén elegida para instalarla: la del número de
+ * serie tal, con su marca y su modelo, que pasan al equipo del aula.
+ */
+export interface UnidadElegida {
+  id: string
+  serial: string
+  brand: string | null
+  model: string | null
 }
 
 /**
@@ -52,7 +65,15 @@ export interface AddResult {
  */
 export type Origen =
   | { tipo: 'sin_origen' }
-  | { tipo: 'almacen'; stockItemId: string; unidades: number }
+  | {
+      tipo: 'almacen'
+      stockItemId: string
+      unidades: number
+      /** Si se eligió una unidad por su número de serie. Entonces `unidades` es 1. */
+      unidad?: UnidadElegida
+      /** El equipo de la sala al que sustituye, y a dónde se pide que vaya. */
+      sustituye?: { assetId: string; destino: RemovalDestino }
+    }
   | { tipo: 'traslado'; assetId: string; desdeRoomId: string }
 
 export function useRoomInventory(roomId: string | null, userId: string | null) {
@@ -73,7 +94,18 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
     async (
       typeName: string,
       existing: AssetType | null,
-      opciones?: { comoOtraUnidad?: boolean },
+      opciones?: {
+        comoOtraUnidad?: boolean
+        /** El número de serie, la marca y el modelo de la unidad que se instala. */
+        datos?: Pick<Asset, 'serial' | 'brand' | 'model'>
+        /**
+         * El equipo lo creará el servidor al instalar la unidad, así que aquí
+         * solo se apunta en el espejo para que la sala lo enseñe ya. Mandarlo
+         * también por la cola chocaría con el número de serie de un equipo que
+         * la base quizá ya tiene retirado y va a reutilizar.
+         */
+        soloEnElEspejo?: boolean
+      },
     ): Promise<AddResult> => {
       if (!roomId) return { ok: false, error: 'Sin sala.' }
 
@@ -130,13 +162,14 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
         asset_type_id: type.id,
         room_id: roomId,
         label,
-        serial: null,
         // La marca y el modelo nacen vacíos y se rellenan corrigiendo, con el
         // aparato delante. Un alta es «aquí hay un proyector»; leerle el rótulo
         // es otro gesto y otro momento, y pedirlo para poder guardar es como se
-        // consigue que el equipo no se apunte.
-        brand: null,
-        model: null,
+        // consigue que el equipo no se apunte. Salvo que venga de una unidad del
+        // almacén: entonces ya se sabe cuál es, y se dice.
+        serial: opciones?.datos?.serial ?? null,
+        brand: opciones?.datos?.brand ?? null,
+        model: opciones?.datos?.model ?? null,
         status: 'instalado',
         created_at: new Date().toISOString(),
         // Lo apunta quien está en el aula, así que nace sin validar. Igual que
@@ -147,17 +180,19 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
       }
 
       await db.assets.put(asset)
-      await enqueue('asset', asset.id, {
-        id: asset.id,
-        asset_type_id: asset.asset_type_id,
-        room_id: asset.room_id,
-        label: asset.label,
-        status: asset.status,
-        created_by: userId,
-      })
-      void flush()
+      if (!opciones?.soloEnElEspejo) {
+        await enqueue('asset', asset.id, {
+          id: asset.id,
+          asset_type_id: asset.asset_type_id,
+          room_id: asset.room_id,
+          label: asset.label,
+          status: asset.status,
+          created_by: userId,
+        })
+        void flush()
+      }
 
-      return { ok: true, label }
+      return { ok: true, label, assetId: asset.id }
     },
     [roomId, userId],
   )
@@ -186,6 +221,41 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
     ): Promise<AddResult> => {
       if (origen.tipo === 'traslado') {
         return trasladarAsset(origen.assetId, roomId, userId)
+      }
+
+      /*
+       * Una unidad concreta: el equipo se enseña ya en la sala con su número de
+       * serie, y lo que sube es la petición de instalarla. El servidor hace el
+       * resto de una vez —el equipo, el descuento del almacén, la unidad
+       * instalada y, si sustituye a otro, la retirada pedida de ese—, así que
+       * aquí no se encola ni el equipo ni el movimiento: los dos saldrían
+       * dobles.
+       */
+      if (origen.tipo === 'almacen' && origen.unidad && roomId) {
+        const u = origen.unidad
+        const hecho = await addAsset(typeName, existing, {
+          comoOtraUnidad: (opciones?.duplicarEtiqueta ?? false) || Boolean(origen.sustituye),
+          datos: { serial: u.serial, brand: u.brand, model: u.model },
+          soloEnElEspejo: true,
+        })
+        if (!hecho.ok) return hecho
+        const id = uuidv7()
+        await enqueue('stock_unit_install', id, {
+          id,
+          unit_id: u.id,
+          room_id: roomId,
+          asset_id: hecho.assetId ?? null,
+          label: hecho.label ?? null,
+          sustituye: origen.sustituye?.assetId ?? null,
+          destino: origen.sustituye?.destino ?? 'almacen',
+          occurred_at: new Date().toISOString(),
+          by_user: userId,
+        })
+        // Fuera del espejo de unidades disponibles: ya no se puede elegir otra
+        // vez en este iPad, aunque el servidor todavía no se haya enterado.
+        await db.stockUnits.delete(u.id)
+        void flush()
+        return hecho
       }
 
       const unidades = origen.tipo === 'almacen' ? Math.max(1, origen.unidades) : 1

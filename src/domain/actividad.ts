@@ -2,11 +2,12 @@
  * La auditoría, leída con palabras.
  *
  * `audit_log` guarda cada cambio de lo que se puede editar —salas, edificios,
- * equipos, incidencias, usuarios, catálogo— con la fila entera antes y después,
- * en JSON. Es completo y es ilegible: `{"room_id":"7f3a…","label":"Pantalla 2"}`
- * no le dice a nadie que el proyector del 1.7 cambió de sala. Hasta ahora la
- * única forma de leerlo era SQL desde el servidor, así que en la práctica no se
- * leía, y «¿quién quitó esto?» se contestaba con «ni idea».
+ * equipos, incidencias, usuarios, catálogo, unidades del almacén— con la fila
+ * entera antes y después, en JSON. Es completo y es ilegible:
+ * `{"room_id":"7f3a…","label":"Pantalla 2"}` no le dice a nadie que el proyector
+ * del 1.7 cambió de sala. Hasta ahora la única forma de leerlo era SQL desde el
+ * servidor, así que en la práctica no se leía, y «¿quién quitó esto?» se
+ * contestaba con «ni idea».
  *
  * Aquí se traduce: qué fila era (con su nombre, no su uuid), quién la tocó,
  * y qué campos cambiaron con el valor de antes y el de después, en el
@@ -24,6 +25,7 @@ import {
   REMOVAL_DESTINO_LABELS,
   type RoomCapabilities,
 } from './types'
+import { CONDICION_LABEL, SITUACION_LABEL } from './unidades'
 
 export interface FilaDeAuditoria {
   id: number
@@ -121,6 +123,12 @@ export const TABLAS: Record<string, Tabla> = {
     nombre: 'Artículo de almacén',
     etiqueta: (d) => texto(d, 'name') ?? 'Artículo',
   },
+  stock_units: {
+    nombre: 'Unidad del almacén',
+    // El número de serie primero: es lo que se busca —«¿quién tocó la PF3ABC12?»—
+    // y lo único que identifica a la unidad entre otras del mismo artículo.
+    etiqueta: (d) => [texto(d, 'serial'), texto(d, 'articulo')].filter(Boolean).join(' · ') || 'Unidad',
+  },
   assets: {
     nombre: 'Equipo',
     etiqueta: (d, n) => {
@@ -192,6 +200,8 @@ const CAMPOS: Record<string, string> = {
   asset_type_id: 'Tipo de equipo',
   asset_id: 'Equipo',
   stock_item_id: 'Artículo',
+  articulo: 'Artículo',
+  condicion: 'Estado',
   merged_into: 'Agrupado en',
   aliases: 'Alias',
   category: 'Categoría',
@@ -226,6 +236,7 @@ const CAMPOS: Record<string, string> = {
   decided_at: 'Decidida el',
   decided_by: 'Decidida por',
   retired_at: 'Retirado el',
+  installed_at: 'Instalada el',
   retired_by: 'Retirado por',
   retired_reason: 'Motivo de la retirada',
   note: 'Nota',
@@ -248,11 +259,24 @@ const CAMPOS: Record<string, string> = {
   notes: 'Observaciones',
 }
 
-/** Los valores de enumerado, en el vocabulario de las pantallas. */
+/**
+ * Los valores de enumerado, en el vocabulario de las pantallas.
+ *
+ * Es un mapa plano: una palabra se lee igual en cualquier tabla, y si dos
+ * enumerados usan la misma gana la que se escribe después (`baja` es «Baja»
+ * aunque el destino de una retirada diga «Dar de baja»). Lo que no puede ser
+ * igual en todas las tablas —`instalado` es «Instalado» en un equipo y
+ * «Instalada» en una unidad— va en `VALORES_DE_TABLA`.
+ */
 const VALORES: Record<string, string> = {
   ...ASSET_STATUS_LABELS,
   ...INCIDENT_KIND_LABELS,
   ...REMOVAL_DESTINO_LABELS,
+  // Cómo está una unidad: nuevo, usado, reacondicionado, averiado, sin indicar.
+  // «Averiado» ya lo decía el equipo, con las mismas palabras.
+  ...CONDICION_LABEL,
+  // «Disponible» solo lo dice una unidad del almacén: está en el almacén.
+  disponible: SITUACION_LABEL.disponible,
   aula: 'Aula',
   sala_reunion: 'Sala de reunión',
   laboratorio: 'Laboratorio',
@@ -273,6 +297,26 @@ const VALORES: Record<string, string> = {
   app: 'Aplicación',
   import: 'Importación',
   system: 'Sistema',
+}
+
+/**
+ * Lo que una tabla dice con otras palabras que las demás.
+ *
+ * `CAMPOS` y `VALORES` son de todas las tablas a la vez y casi siempre sirven:
+ * `brand` es «Marca» en un equipo y en una unidad. Pero `status` no. En un
+ * equipo es su estado —instalado, averiado, retirado—; en una unidad del
+ * almacén es **dónde está** —en el almacén, instalada, de baja—, y cómo está lo
+ * dice `condicion`. Con los dos llamados «Estado», una unidad que se instala y
+ * pasa de nueva a usada se leería «Estado: En almacén → Instalada» y «Estado:
+ * Nuevo → Usado», dos líneas iguales que dicen cosas distintas. Se leen como
+ * en las pantallas del almacén: la situación y el estado.
+ */
+const CAMPOS_DE_TABLA: Record<string, Record<string, string>> = {
+  stock_units: { status: 'Situación' },
+}
+
+const VALORES_DE_TABLA: Record<string, Record<string, Record<string, string>>> = {
+  stock_units: { status: SITUACION_LABEL },
 }
 
 const EQUIPAMIENTO: Record<keyof RoomCapabilities, string> = {
@@ -346,12 +390,16 @@ export function valorLegible(v: unknown): string {
 function valorDe(tabla: string, campo: string, v: unknown, n: Nombres): string {
   const mapa = mapaDe(tabla, campo, n)
   if (mapa && typeof v === 'string') return nombreDe(mapa, v)
+  const propio = typeof v === 'string' ? VALORES_DE_TABLA[tabla]?.[campo]?.[v] : undefined
+  if (typeof propio === 'string') return propio
   if (campo === 'lamp_pct' && typeof v === 'number') return `${Math.round(v * 100)} %`
   return valorLegible(v)
 }
 
-export function nombreDelCampo(campo: string): string {
-  return CAMPOS[campo] ?? campo.replace(/_/g, ' ')
+/** Cómo se llama un campo; con la tabla, como lo llama ella si lo llama distinto. */
+export function nombreDelCampo(campo: string, tabla?: string): string {
+  const propio = tabla ? CAMPOS_DE_TABLA[tabla]?.[campo] : undefined
+  return propio ?? CAMPOS[campo] ?? campo.replace(/_/g, ' ')
 }
 
 const iguales = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
@@ -366,7 +414,7 @@ export function diferencias(tabla: string, antes: Datos, despues: Datos, n: Nomb
   for (const campo of campos) {
     if (iguales(antes[campo], despues[campo])) continue
     cambios.push({
-      campo: nombreDelCampo(campo),
+      campo: nombreDelCampo(campo, tabla),
       antes: antes[campo] === undefined || antes[campo] === null ? null : valorDe(tabla, campo, antes[campo], n),
       despues: despues[campo] === undefined || despues[campo] === null ? null : valorDe(tabla, campo, despues[campo], n),
     })

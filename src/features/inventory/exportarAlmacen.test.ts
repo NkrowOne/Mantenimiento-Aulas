@@ -3,12 +3,13 @@ import {
   articulosParaHoja,
   estaBajoMinimo,
   hojaDeExistencias,
-  hojaDePcsDeRepuesto,
+  hojaDeUnidadesConSerie,
   hojasDelAlmacen,
   movimientosParaHoja,
   exportacionDelAlmacen,
   prepararExportacionDelAlmacen,
   tinteDelArticulo,
+  tinteDeLaUnidad,
   unidadesParaHoja,
 } from './exportarAlmacen'
 import type {
@@ -104,7 +105,8 @@ function unidad(extra: Partial<UnidadParaHoja> = {}): UnidadParaHoja {
     marca: 'Lenovo',
     modelo: 'M70q Gen 3',
     serial: 'PF3ABC12',
-    estado: 'disponible',
+    condicion: 'nuevo',
+    situacion: 'disponible',
     aula: null,
     desde: null,
     observaciones: null,
@@ -261,58 +263,146 @@ describe('hojaDeExistencias', () => {
 })
 
 // -----------------------------------------------------------------------------
-// Ordenadores de repuesto
+// Unidades con número de serie
 // -----------------------------------------------------------------------------
 
-describe('hojaDePcsDeRepuesto', () => {
-  it('lleva las columnas pedidas', () => {
-    const h = hojaDePcsDeRepuesto([unidad()])
-    expect(h.nombre).toBe('PCs de repuesto')
+describe('tinteDeLaUnidad', () => {
+  it('una averiada es un aviso, esté donde esté', () => {
+    expect(tinteDeLaUnidad({ condicion: 'averiado', situacion: 'disponible' })).toBe('aviso')
+    expect(tinteDeLaUnidad({ condicion: 'averiado', situacion: 'instalado' })).toBe('aviso')
+  })
+
+  it('una de baja va apagada, también si además estaba averiada', () => {
+    expect(tinteDeLaUnidad({ condicion: 'usado', situacion: 'baja' })).toBe('apagado')
+    expect(tinteDeLaUnidad({ condicion: 'averiado', situacion: 'baja' })).toBe('apagado')
+  })
+
+  it('lo demás no se pinta: ni nuevo, ni usado, ni reacondicionado, ni sin indicar', () => {
+    for (const condicion of ['nuevo', 'usado', 'reacondicionado', 'sin_indicar'] as const) {
+      expect(tinteDeLaUnidad({ condicion, situacion: 'disponible' }), condicion).toBeUndefined()
+      expect(tinteDeLaUnidad({ condicion, situacion: 'instalado' }), condicion).toBeUndefined()
+    }
+  })
+})
+
+describe('hojaDeUnidadesConSerie', () => {
+  it('lleva las columnas pedidas, sin repetidos', () => {
+    const h = hojaDeUnidadesConSerie([unidad()])
+    expect(h.nombre).toBe('Unidades con n.º de serie')
+    expect(h.caracter).toBe('app')
     expect(h.filas[0]).toEqual([
       'Artículo',
       'Marca',
       'Modelo',
       'N.º de serie',
+      'Estado',
       'Situación',
       'Aula',
       'Desde',
       'Observaciones',
     ])
+    expect(new Set(h.filas[0]).size).toBe(h.filas[0]!.length)
+    expect(h.anchos).toHaveLength(h.filas[0]!.length)
   })
 
-  it('una unidad disponible no lleva aula ni fecha', () => {
-    expect(comoObjetos(hojaDePcsDeRepuesto([unidad()]))[0]).toEqual({
+  it('el nombre de la hoja cabe en un libro de Excel (31 caracteres, sin los prohibidos)', () => {
+    const { nombre } = hojaDeUnidadesConSerie([])
+    expect(nombre.length).toBeLessThanOrEqual(31)
+    expect(nombre).not.toMatch(/[:\\/?*[\]]/)
+  })
+
+  it('una unidad en el almacén lleva su estado y no lleva aula ni fecha', () => {
+    expect(comoObjetos(hojaDeUnidadesConSerie([unidad()]))[0]).toEqual({
       Artículo: 'Ordenador Tiny M70Q',
       Marca: 'Lenovo',
       Modelo: 'M70q Gen 3',
       'N.º de serie': 'PF3ABC12',
-      Situación: 'Disponible',
+      Estado: 'Nuevo',
+      Situación: 'En almacén',
       Aula: null,
       Desde: null,
       Observaciones: null,
     })
   })
 
+  it('el estado y la situación son dos columnas y se leen con las palabras de las pantallas', () => {
+    const h = hojaDeUnidadesConSerie([
+      unidad({ serial: 'A', condicion: 'nuevo' }),
+      unidad({ serial: 'B', condicion: 'usado' }),
+      unidad({ serial: 'C', condicion: 'reacondicionado' }),
+      unidad({ serial: 'D', condicion: 'averiado' }),
+      unidad({ serial: 'E', condicion: 'sin_indicar' }),
+      unidad({ serial: 'F', situacion: 'instalado' }),
+      unidad({ serial: 'G', situacion: 'baja' }),
+    ])
+    const porSerie = Object.fromEntries(comoObjetos(h).map((o) => [o['N.º de serie'], o]))
+    expect([porSerie['A']!.Estado, porSerie['B']!.Estado, porSerie['C']!.Estado, porSerie['D']!.Estado, porSerie['E']!.Estado]).toEqual([
+      'Nuevo',
+      'Usado',
+      'Reacondicionado',
+      'Averiado',
+      'Sin indicar',
+    ])
+    expect([porSerie['A']!.Situación, porSerie['F']!.Situación, porSerie['G']!.Situación]).toEqual([
+      'En almacén',
+      'Instalada',
+      'De baja',
+    ])
+  })
+
   it('una instalada lleva su aula y el día de la instalación como fecha de Excel', () => {
     const o = comoObjetos(
-      hojaDePcsDeRepuesto([unidad({ estado: 'instalado', aula: '2.1 C (Edificio H)', desde: '2026-09-08' })]),
+      hojaDeUnidadesConSerie([unidad({ situacion: 'instalado', aula: '2.1 C (Edificio H)', desde: '2026-09-08' })]),
     )[0]!
-    expect(o).toMatchObject({ Situación: 'Instalado', Aula: '2.1 C (Edificio H)', Desde: D_2026_09_08 })
+    expect(o).toMatchObject({ Situación: 'Instalada', Aula: '2.1 C (Edificio H)', Desde: D_2026_09_08 })
   })
 
   it('una de baja va apagada, con la fecha de la baja y sus observaciones', () => {
-    const h = hojaDePcsDeRepuesto([
+    const h = hojaDeUnidadesConSerie([
       unidad({ serial: 'A1' }),
-      unidad({ serial: 'B2', estado: 'baja', desde: '2026-09-23', observaciones: 'Placa quemada' }),
+      unidad({ serial: 'B2', situacion: 'baja', desde: '2026-09-23', observaciones: 'Placa quemada' }),
     ])
-    expect(comoObjetos(h)[1]).toMatchObject({ Situación: 'Baja', Desde: D_2026_09_23, Observaciones: 'Placa quemada' })
+    expect(comoObjetos(h)[1]).toMatchObject({ Situación: 'De baja', Desde: D_2026_09_23, Observaciones: 'Placa quemada' })
     expect(h.tintes).toEqual([undefined, 'apagado'])
   })
 
-  it('ordena por situación (disponible, instalado, baja), después artículo, modelo y serie', () => {
-    const h = hojaDePcsDeRepuesto([
-      unidad({ serial: 'Z', estado: 'baja' }),
-      unidad({ serial: 'Y', estado: 'instalado' }),
+  it('una averiada va en ámbar, y el tinte sigue a su fila cuando se reordena', () => {
+    const h = hojaDeUnidadesConSerie([
+      unidad({ serial: 'Z', condicion: 'averiado' }),
+      unidad({ serial: 'Y', situacion: 'baja' }),
+      unidad({ serial: 'X', condicion: 'usado' }),
+      unidad({ serial: 'W', condicion: 'averiado', situacion: 'baja' }),
+    ])
+    // Primero lo que está en el almacén, por serie; después lo de baja.
+    expect(comoObjetos(h).map((o) => [o['N.º de serie'], o.Estado])).toEqual([
+      ['X', 'Usado'],
+      ['Z', 'Averiado'],
+      ['W', 'Averiado'],
+      ['Y', 'Nuevo'],
+    ])
+    expect(h.tintes).toEqual([undefined, 'aviso', 'apagado', 'apagado'])
+    expect(h.tintes).toHaveLength(h.filas.length - 1)
+  })
+
+  it('lleva unidades de cualquier artículo, juntas por artículo', () => {
+    const h = hojaDeUnidadesConSerie([
+      unidad({ serial: 'P2', articulo: 'Proyector Epson EB-L200', marca: 'Epson', modelo: 'EB-L200' }),
+      unidad({ serial: 'T1', articulo: 'Teclado Logitech K120', marca: 'Logitech', modelo: 'K120' }),
+      unidad({ serial: 'P1', articulo: 'Proyector Epson EB-L200', marca: 'Epson', modelo: 'EB-L200' }),
+      unidad({ serial: 'O1' }),
+    ])
+    expect(comoObjetos(h).map((o) => [o['Artículo'], o['N.º de serie']])).toEqual([
+      ['Ordenador Tiny M70Q', 'O1'],
+      ['Proyector Epson EB-L200', 'P1'],
+      ['Proyector Epson EB-L200', 'P2'],
+      ['Teclado Logitech K120', 'T1'],
+    ])
+  })
+
+  it('ordena por situación (en el almacén, instalada, de baja), después artículo, modelo y serie', () => {
+    const h = hojaDeUnidadesConSerie([
+      unidad({ serial: 'Z', situacion: 'baja' }),
+      unidad({ serial: 'Y', situacion: 'instalado' }),
       unidad({ serial: 'B', modelo: 'M2' }),
       unidad({ serial: 'C', modelo: 'M1' }),
       unidad({ serial: 'A', modelo: 'M1' }),
@@ -321,10 +411,18 @@ describe('hojaDePcsDeRepuesto', () => {
     expect(h.tintes).toEqual([undefined, undefined, undefined, undefined, 'apagado'])
   })
 
-  it('declara la fecha y el ajuste de texto', () => {
-    const h = hojaDePcsDeRepuesto([unidad()])
-    expect(h.formatos?.[6]).toBe('fecha')
-    expect(h.formatos?.[7]).toBe('textoAjustado')
+  it('declara la fecha y el ajuste de texto en sus columnas', () => {
+    const h = hojaDeUnidadesConSerie([unidad()])
+    expect(h.filas[0]![7]).toBe('Desde')
+    expect(h.formatos?.[7]).toBe('fecha')
+    expect(h.filas[0]![8]).toBe('Observaciones')
+    expect(h.formatos?.[8]).toBe('textoAjustado')
+  })
+
+  it('sin unidades sale solo la cabecera', () => {
+    const h = hojaDeUnidadesConSerie([])
+    expect(h.filas).toHaveLength(1)
+    expect(h.tintes).toEqual([])
   })
 })
 
@@ -578,11 +676,13 @@ describe('movimientosParaHoja', () => {
 describe('unidadesParaHoja', () => {
   const FILA = (extra: Partial<FilaUnidad> = {}): FilaUnidad => ({
     articulo: 'Ordenador Tiny M70Q',
+    item_name: 'Ordenador Tiny M70Q',
     brand: 'Lenovo',
     model: 'M70q',
     serial: 'S1',
     notes: null,
     status: 'disponible',
+    condicion: 'nuevo',
     room_id: null,
     installed_at: null,
     retired_at: null,
@@ -600,15 +700,15 @@ describe('unidadesParaHoja', () => {
       ...sitio,
       unidades: [FILA({ status: 'instalado', room_id: 'r1', installed_at: '2026-09-07T22:30:00Z' })],
     })
-    expect(u).toMatchObject({ estado: 'instalado', aula: '2.1 C (Edificio H)', desde: '2026-09-08' })
+    expect(u).toMatchObject({ situacion: 'instalado', aula: '2.1 C (Edificio H)', desde: '2026-09-08' })
   })
 
-  it('una disponible no lleva aula ni fecha, aunque conserve un aula de antes', () => {
+  it('una en el almacén no lleva aula ni fecha, aunque conserve un aula de antes', () => {
     const [u] = unidadesParaHoja({
       ...sitio,
       unidades: [FILA({ room_id: 'r1', installed_at: '2026-09-07T10:00:00Z' })],
     })
-    expect(u).toMatchObject({ estado: 'disponible', aula: null, desde: null })
+    expect(u).toMatchObject({ situacion: 'disponible', aula: null, desde: null })
   })
 
   it('una de baja lleva la fecha de la baja, no la de la instalación', () => {
@@ -618,16 +718,16 @@ describe('unidadesParaHoja', () => {
         FILA({ status: 'baja', room_id: 'r1', installed_at: '2026-01-01T10:00:00Z', retired_at: '2026-09-23T10:00:00Z', notes: 'Quemado' }),
       ],
     })
-    expect(u).toMatchObject({ estado: 'baja', aula: null, desde: '2026-09-23', observaciones: 'Quemado' })
+    expect(u).toMatchObject({ situacion: 'baja', aula: null, desde: '2026-09-23', observaciones: 'Quemado' })
   })
 
-  it('un estado desconocido se lee como disponible; un aula que ya no existe, sin aula', () => {
+  it('una situación desconocida se lee como en el almacén; un aula que ya no existe, sin aula', () => {
     const r = unidadesParaHoja({
       ...sitio,
       unidades: [FILA({ status: 'raro' }), FILA({ status: 'instalado', room_id: 'borrada', installed_at: '2026-09-08T10:00:00Z' })],
     })
-    expect(r[0]!.estado).toBe('disponible')
-    expect(r[1]).toMatchObject({ estado: 'instalado', aula: null, desde: '2026-09-08' })
+    expect(r[0]!.situacion).toBe('disponible')
+    expect(r[1]).toMatchObject({ situacion: 'instalado', aula: null, desde: '2026-09-08' })
   })
 
   it('sin edificio conocido, solo el código del aula', () => {
@@ -643,6 +743,51 @@ describe('unidadesParaHoja', () => {
   it('conserva marca, modelo, serie y observaciones tal cual', () => {
     const [u] = unidadesParaHoja({ ...sitio, unidades: [FILA({ notes: 'Con cargador' })] })
     expect(u).toMatchObject({ articulo: 'Ordenador Tiny M70Q', marca: 'Lenovo', modelo: 'M70q', serial: 'S1', observaciones: 'Con cargador' })
+  })
+
+  describe('el artículo', () => {
+    it('es el del almacén, no lo que apuntó quien la dio de alta', () => {
+      const [u] = unidadesParaHoja({
+        ...sitio,
+        unidades: [FILA({ articulo: 'proyector epson', item_name: 'Proyector Epson EB-L200' })],
+      })
+      expect(u!.articulo).toBe('Proyector Epson EB-L200')
+    })
+
+    it('sin artículo casado, o con un servidor que no lo dice, queda lo apuntado', () => {
+      const r = unidadesParaHoja({
+        ...sitio,
+        unidades: [
+          FILA({ articulo: 'Ordenador Tiny', item_name: null }),
+          FILA({ articulo: 'Ordenador Tiny', item_name: '   ' }),
+          FILA({ articulo: 'Ordenador Tiny', item_name: undefined }),
+        ],
+      })
+      expect(r.map((u) => u.articulo)).toEqual(['Ordenador Tiny', 'Ordenador Tiny', 'Ordenador Tiny'])
+    })
+  })
+
+  describe('el estado', () => {
+    it('se lee tal cual lo dice la base', () => {
+      const r = unidadesParaHoja({
+        ...sitio,
+        unidades: (['nuevo', 'usado', 'reacondicionado', 'averiado', 'sin_indicar'] as const).map((c) => FILA({ condicion: c })),
+      })
+      expect(r.map((u) => u.condicion)).toEqual(['nuevo', 'usado', 'reacondicionado', 'averiado', 'sin_indicar'])
+    })
+
+    it('sin dato —un servidor sin la vista— es «sin indicar», nunca «nuevo»', () => {
+      const r = unidadesParaHoja({
+        ...sitio,
+        unidades: [FILA({ condicion: undefined }), FILA({ condicion: null }), FILA({ condicion: '' })],
+      })
+      expect(r.map((u) => u.condicion)).toEqual(['sin_indicar', 'sin_indicar', 'sin_indicar'])
+    })
+
+    it('uno que la aplicación no conoce también es «sin indicar»: la hoja no escribe lo que no entiende', () => {
+      const r = unidadesParaHoja({ ...sitio, unidades: [FILA({ condicion: 'roto' }), FILA({ condicion: 'toString' })] })
+      expect(r.map((u) => u.condicion)).toEqual(['sin_indicar', 'sin_indicar'])
+    })
   })
 })
 
@@ -675,11 +820,13 @@ describe('hojasDelAlmacen', () => {
     unidades: [
       {
         articulo: 'Ordenador Tiny M70Q',
+        item_name: 'Ordenador Tiny M70Q',
         brand: 'Lenovo',
         model: 'M70q',
         serial: 'S1',
         notes: null,
         status: 'instalado',
+        condicion: 'usado',
         room_id: 'r1',
         installed_at: '2026-09-08T10:00:00Z',
         retired_at: null,
@@ -687,29 +834,89 @@ describe('hojasDelAlmacen', () => {
     ],
   }
 
+  /** Una unidad en el almacén, de cualquier artículo. */
+  const EN_ALMACEN = (serial: string, extra: Partial<FilaUnidad> = {}): FilaUnidad => ({
+    articulo: 'Proyector Epson',
+    item_name: 'Proyector Epson EB-L200',
+    brand: 'Epson',
+    model: 'EB-L200',
+    serial,
+    notes: null,
+    status: 'disponible',
+    condicion: 'nuevo',
+    room_id: null,
+    installed_at: null,
+    retired_at: null,
+    ...extra,
+  })
+
   it('el inventario del almacén: título, cifras y qué va al PDF', () => {
     const e = exportacionDelAlmacen(datos)
     expect(e.titulo).toBe('Inventario del almacén')
     expect(e.nombreBase).toBe('Almacén')
-    // Dos activos (el retirado no cuenta), el HDMI bajo mínimo, ningún PC disponible.
-    expect(e.resumen).toBe('2 artículos · 1 bajo mínimo · 0 PCs de repuesto disponibles')
+    // Dos activos (el retirado no cuenta), el HDMI bajo mínimo, ninguna unidad en
+    // el almacén (la única está instalada).
+    expect(e.resumen).toBe('2 artículos · 1 bajo mínimo · 0 unidades con n.º de serie en el almacén')
     // El historial va en el Excel y en el PDF solo si se pide; las existencias, sin
     // la retirada, para que quepan en el A4.
     expect(e.hojas.map((h) => h.pdf?.incluir !== false)).toEqual([true, false, true])
     expect(e.hojas[0]!.pdf?.columnas).not.toContain('Motivo de la retirada')
   })
 
+  it('al PDF van por defecto las existencias y las unidades, con todas sus columnas; los movimientos, no', () => {
+    const e = exportacionDelAlmacen(datos)
+    expect(e.hojas.map((h) => [h.hoja.nombre, h.pdf?.incluir !== false])).toEqual([
+      ['Existencias', true],
+      ['Movimientos de Almacén', false],
+      ['Unidades con n.º de serie', true],
+    ])
+    expect(e.hojas[2]!.pdf?.columnas).toBeUndefined()
+  })
+
+  it('el resumen cuenta las unidades que están en el almacén, de cualquier artículo, en plural', () => {
+    const e = exportacionDelAlmacen({
+      ...datos,
+      unidades: [
+        EN_ALMACEN('P1'),
+        EN_ALMACEN('P2', { condicion: 'averiado' }),
+        EN_ALMACEN('T1', { item_name: 'Teclado Logitech K120' }),
+        EN_ALMACEN('O1', { item_name: 'Ordenador Tiny M70Q' }),
+        // Instalada y de baja no están en el almacén.
+        EN_ALMACEN('I1', { status: 'instalado', room_id: 'r1' }),
+        EN_ALMACEN('B1', { status: 'baja' }),
+      ],
+    })
+    expect(e.resumen).toBe('2 artículos · 1 bajo mínimo · 4 unidades con n.º de serie en el almacén')
+  })
+
+  it('y en singular si es una', () => {
+    const e = exportacionDelAlmacen({ ...datos, unidades: [EN_ALMACEN('P1')] })
+    expect(e.resumen).toBe('2 artículos · 1 bajo mínimo · 1 unidad con n.º de serie en el almacén')
+  })
+
+  it('las averiadas van en ámbar y las de baja apagadas, en la hoja que se ve y se descarga', () => {
+    const e = exportacionDelAlmacen({
+      ...datos,
+      unidades: [
+        EN_ALMACEN('A', { condicion: 'averiado' }),
+        EN_ALMACEN('B', { condicion: 'usado' }),
+        EN_ALMACEN('C', { status: 'baja', retired_at: '2026-09-23T10:00:00Z' }),
+      ],
+    })
+    expect(e.hojas[2]!.hoja.tintes).toEqual(['aviso', undefined, 'apagado'])
+  })
+
   it('son tres, en este orden', () => {
     expect(hojasDelAlmacen(datos).map((h) => h.nombre)).toEqual([
       'Existencias',
       'Movimientos de Almacén',
-      'PCs de repuesto',
+      'Unidades con n.º de serie',
     ])
   })
 
   it('con ellas se hace un libro que se abre y se lee', async () => {
     const libro = await abrirLibro(await libroNuevo(hojasDelAlmacen(datos)))
-    expect(libro.hojas.map((h) => h.nombre)).toEqual(['Existencias', 'Movimientos de Almacén', 'PCs de repuesto'])
+    expect(libro.hojas.map((h) => h.nombre)).toEqual(['Existencias', 'Movimientos de Almacén', 'Unidades con n.º de serie'])
 
     const existencias = await leerHoja(libro, 'Existencias')
     // Vivos por nombre, retirado al final.
@@ -723,15 +930,17 @@ describe('hojasDelAlmacen', () => {
     expect(movimientos).toHaveLength(4)
     expect(movimientos[3]!.celdas).toMatchObject({ A: D_2026_10_27, B: 'Cable HDMI', C: 'Consumo', E: 4, F: 2, G: 'I261027_0001', I: '2.1 C', J: 'Ana Pérez', K: 'Cambio de cable' })
 
-    const pcs = await leerHoja(libro, 'PCs de repuesto')
-    expect(pcs[1]!.celdas).toEqual({
+    const unidades = await leerHoja(libro, 'Unidades con n.º de serie')
+    expect(unidades[0]!.celdas).toMatchObject({ D: 'N.º de serie', E: 'Estado', F: 'Situación', G: 'Aula', H: 'Desde' })
+    expect(unidades[1]!.celdas).toEqual({
       A: 'Ordenador Tiny M70Q',
       B: 'Lenovo',
       C: 'M70q',
       D: 'S1',
-      E: 'Instalado',
-      F: '2.1 C (Edificio H)',
-      G: D_2026_09_08,
+      E: 'Usado',
+      F: 'Instalada',
+      G: '2.1 C (Edificio H)',
+      H: D_2026_09_08,
     })
   })
 
@@ -751,7 +960,7 @@ describe('hojasDelAlmacen', () => {
     }
     expect((await leerHoja(libro, 'Existencias'))[1]!.celdas.A).toBe('\'=HYPERLINK("http://malo","x")')
     expect((await leerHoja(libro, 'Movimientos de Almacén'))[1]!.celdas.K).toBe("'=1+1")
-    expect((await leerHoja(libro, 'PCs de repuesto'))[1]!.celdas.D).toBe("'=cmd|' /C calc'!A0")
+    expect((await leerHoja(libro, 'Unidades con n.º de serie'))[1]!.celdas.D).toBe("'=cmd|' /C calc'!A0")
   })
 
   it('un almacén vacío también da un libro con las tres hojas', async () => {
@@ -790,6 +999,12 @@ describe('prepararExportacionDelAlmacen', () => {
       zones: [{ id: 'z1', building_id: 'b1' }],
       buildings: [{ id: 'b1', name: 'Edificio H' }],
       profiles: [{ id: 'u1', full_name: 'Solo yo' }],
+      // La vista: las unidades de cualquier artículo, con su nombre y su estado.
+      stock_unit_list: [
+        { articulo: 'Ordenador Tiny', item_name: 'Ordenador Tiny M70Q', brand: 'Lenovo', model: 'M70q', serial: 'S1', notes: null, status: 'instalado', condicion: 'usado', room_id: 'r1', installed_at: '2026-09-08T10:00:00Z', retired_at: null },
+        { articulo: 'Proyector', item_name: 'Proyector Epson EB-L200', brand: 'Epson', model: 'EB-L200', serial: 'P1', notes: 'Lámpara por cambiar', status: 'disponible', condicion: 'averiado', room_id: null, installed_at: null, retired_at: null },
+      ],
+      // La tabla de antes —un servidor sin la migración de octubre—: solo ordenadores y sin estado.
       stock_units: [
         { articulo: 'Ordenador Tiny M70Q', brand: 'Lenovo', model: 'M70q', serial: 'S1', notes: null, status: 'instalado', room_id: 'r1', installed_at: '2026-09-08T10:00:00Z', retired_at: null },
       ],
@@ -809,13 +1024,46 @@ describe('prepararExportacionDelAlmacen', () => {
     expect(nombre).toMatch(/^Almacén \d{4}-\d{2}-\d{2}\.xlsx$/)
 
     const libro = await abrirLibro(bytes)
-    expect(libro.hojas.map((h) => h.nombre)).toEqual(['Existencias', 'Movimientos de Almacén', 'PCs de repuesto'])
+    expect(libro.hojas.map((h) => h.nombre)).toEqual(['Existencias', 'Movimientos de Almacén', 'Unidades con n.º de serie'])
     const existencias = await leerHoja(libro, 'Existencias')
     expect(existencias.map((f) => f.celdas.A)).toEqual(['Artículo', 'Cable HDMI', 'Cable VGA'])
     expect(existencias[1]!.celdas).toMatchObject({ C: 2, E: 'Sí', G: 'Activo' })
     expect(existencias[2]!.celdas).toMatchObject({ C: 3, G: 'Retirado', H: D_2026_09_23, I: 'Ya no se usa' })
-    const pcs = await leerHoja(libro, 'PCs de repuesto')
-    expect(pcs[1]!.celdas).toMatchObject({ D: 'S1', E: 'Instalado', F: '2.1 C (Edificio H)', G: D_2026_09_08 })
+  })
+
+  it('las unidades salen de la vista: de cualquier artículo, con el nombre del almacén y su estado', async () => {
+    const { bytes } = await prepararExcelDelAlmacen()
+    const unidades = await leerHoja(await abrirLibro(bytes), 'Unidades con n.º de serie')
+
+    // Primero lo que está en el almacén, después lo instalado.
+    expect(unidades.map((f) => f.celdas.D)).toEqual(['N.º de serie', 'P1', 'S1'])
+    expect(unidades[1]!.celdas).toEqual({
+      A: 'Proyector Epson EB-L200',
+      B: 'Epson',
+      C: 'EB-L200',
+      D: 'P1',
+      E: 'Averiado',
+      F: 'En almacén',
+      I: 'Lámpara por cambiar',
+    })
+    expect(unidades[2]!.celdas).toMatchObject({
+      A: 'Ordenador Tiny M70Q',
+      D: 'S1',
+      E: 'Usado',
+      F: 'Instalada',
+      G: '2.1 C (Edificio H)',
+      H: D_2026_09_08,
+    })
+    // Y sin tocar la tabla: la vista basta.
+    expect(falso.estado.peticiones.filter((p) => p.startsWith('stock_unit_list'))).toHaveLength(1)
+    expect(falso.estado.peticiones.some((p) => p.startsWith('stock_units'))).toBe(false)
+  })
+
+  it('la vista previa sale de esas mismas unidades: el resumen y el color de cada fila', async () => {
+    const e = await prepararExportacionDelAlmacen()
+    // Un artículo vivo (el VGA está retirado), el HDMI con 2 y mínimo 5, y el proyector averiado en el almacén.
+    expect(e.resumen).toBe('1 artículo · 1 bajo mínimo · 1 unidad con n.º de serie en el almacén')
+    expect(e.hojas[2]!.hoja.tintes).toEqual(['aviso', undefined])
   })
 
   it('los nombres salen de nombres_del_personal, no de profiles (que a un técnico solo le da el suyo)', async () => {
@@ -870,12 +1118,71 @@ describe('prepararExportacionDelAlmacen', () => {
     expect(existencias[2]!.celdas.H).toBeUndefined()
   })
 
-  it('un servidor sin stock_units saca el resto, y la hoja de PCs lleva solo la cabecera', async () => {
-    delete falso.estado.tablas['stock_units']
-    const { bytes } = await prepararExcelDelAlmacen()
-    const libro = await abrirLibro(bytes)
-    expect(await leerHoja(libro, 'PCs de repuesto')).toHaveLength(1)
-    expect(await leerHoja(libro, 'Existencias')).toHaveLength(3)
+  describe('un servidor sin la migración del 27 de octubre', () => {
+    it('sin la vista, lee la tabla de siempre: las unidades salen, sin estado y con lo que apuntó quien las dio de alta', async () => {
+      delete falso.estado.tablas['stock_unit_list']
+      const { bytes } = await prepararExcelDelAlmacen()
+      const unidades = await leerHoja(await abrirLibro(bytes), 'Unidades con n.º de serie')
+
+      expect(unidades).toHaveLength(2)
+      expect(unidades[1]!.celdas).toEqual({
+        A: 'Ordenador Tiny M70Q',
+        B: 'Lenovo',
+        C: 'M70q',
+        D: 'S1',
+        E: 'Sin indicar',
+        F: 'Instalada',
+        G: '2.1 C (Edificio H)',
+        H: D_2026_09_08,
+      })
+      // Primero la vista, y al no estar, la tabla —sin pedirle columnas que no tiene—.
+      const aLaTabla = falso.estado.peticiones.filter((p) => p.startsWith('stock_units'))
+      expect(aLaTabla).toHaveLength(1)
+      expect(aLaTabla[0]).not.toContain('condicion')
+      expect(aLaTabla[0]).not.toContain('item_name')
+    })
+
+    it('con la vista pero sin la columna del estado, lo mismo', async () => {
+      falso.estado.fallo = (tabla, columnas) =>
+        tabla === 'stock_unit_list' && columnas.includes('condicion')
+          ? { message: 'column stock_unit_list.condicion does not exist' }
+          : null
+      const { bytes } = await prepararExcelDelAlmacen()
+      const unidades = await leerHoja(await abrirLibro(bytes), 'Unidades con n.º de serie')
+
+      expect(unidades.map((f) => f.celdas.E)).toEqual(['Estado', 'Sin indicar'])
+    })
+
+    it('así lo cuenta PostgREST cuando falta la vista: «in the schema cache»', async () => {
+      falso.estado.fallo = (tabla) =>
+        tabla === 'stock_unit_list'
+          ? { message: "Could not find the table 'public.stock_unit_list' in the schema cache" }
+          : null
+      const { bytes } = await prepararExcelDelAlmacen()
+
+      expect(await leerHoja(await abrirLibro(bytes), 'Unidades con n.º de serie')).toHaveLength(2)
+    })
+
+    it('un servidor sin la vista ni stock_units saca el resto, y la hoja de unidades lleva solo la cabecera', async () => {
+      delete falso.estado.tablas['stock_unit_list']
+      delete falso.estado.tablas['stock_units']
+      const { bytes } = await prepararExcelDelAlmacen()
+      const libro = await abrirLibro(bytes)
+      expect(await leerHoja(libro, 'Unidades con n.º de serie')).toHaveLength(1)
+      expect(await leerHoja(libro, 'Existencias')).toHaveLength(3)
+    })
+  })
+
+  it('un fallo de la vista que no es «falta la migración» detiene la exportación y no se esconde con la tabla', async () => {
+    falso.estado.fallo = (tabla) => (tabla === 'stock_unit_list' ? { message: 'permission denied for view stock_unit_list' } : null)
+    await expect(prepararExcelDelAlmacen()).rejects.toThrow(/No se pudo leer las unidades del almacén: permission denied/)
+    expect(falso.estado.peticiones.some((p) => p.startsWith('stock_units'))).toBe(false)
+  })
+
+  it('una vista que no contesta a tiempo se dice con palabras, no como «falta la migración»', async () => {
+    falso.estado.fallo = (tabla) =>
+      tabla === 'stock_unit_list' ? { message: 'AbortError: The operation was aborted due to timeout' } : null
+    await expect(prepararExcelDelAlmacen()).rejects.toThrow(/las unidades del almacén: el servidor no ha contestado a tiempo/)
   })
 
   it('si una descarga falla, no se exporta medio almacén y el mensaje dice cuál', async () => {

@@ -25,6 +25,7 @@ import type {
   StockLevel,
   Zone,
 } from '@/domain/types'
+import type { UnidadDeAlmacen } from '@/domain/unidades'
 
 /** Una operación esperando a subir. El id es la clave de idempotencia. */
 export interface OutboxEntry {
@@ -60,6 +61,14 @@ export interface OutboxEntry {
     | 'asset'
     | 'asset_removal'
     | 'room_inventory'
+    /*
+     * Instalar una unidad concreta del almacén —esta, la del número de serie
+     * tal— en un aula. Es una petición y no el equipo: el servidor la convierte
+     * en el equipo, el descuento del almacén y la unidad instalada de una vez,
+     * porque el número de serie puede ser ya de un equipo retirado que hay que
+     * reutilizar, y eso solo lo sabe la base.
+     */
+    | 'stock_unit_install'
   op: 'upsert'
   payload: Record<string, unknown>
   createdAt: number
@@ -160,6 +169,10 @@ export class AulasDB extends Dexie {
   /* Cuánto queda de cada artículo. Se espeja para poder decidir dentro del
      aula si un proyector sale del almacén o de otra sala. */
   stockLevels!: EntityTable<StockLevel, 'stock_item_id'>
+  /* Las unidades del almacén que están disponibles, cada una con su número de
+     serie y su estado. Se espejan para que al añadir un equipo en el aula se
+     pueda elegir CUÁL se instala aunque no haya cobertura. */
+  stockUnits!: EntityTable<UnidadDeAlmacen, 'id'>
   incidents!: EntityTable<Incident, 'id'>
   assetTypes!: EntityTable<AssetType, 'id'>
 
@@ -248,6 +261,14 @@ export class AulasDB extends Dexie {
      */
     this.version(6).stores({
       libros: 'id',
+    })
+
+    /*
+     * Las unidades disponibles del almacén. Solo las disponibles: las
+     * instaladas ya están en `assets`, y las de baja no se eligen para nada.
+     */
+    this.version(7).stores({
+      stockUnits: 'id, stock_item_id, status',
     })
   }
 }

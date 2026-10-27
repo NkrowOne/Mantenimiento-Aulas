@@ -493,3 +493,85 @@ describe('la hoja de PCs de repuesto', () => {
     )
   })
 })
+
+// -----------------------------------------------------------------------------
+// «PCs STOCK» es una hoja de ordenadores, aunque el almacén ya guarde de todo
+// -----------------------------------------------------------------------------
+
+describe('la hoja de PCs de repuesto y las unidades que no son ordenadores', () => {
+  // Un proyector con su número de serie: una unidad del almacén que vive solo
+  // en la aplicación.
+  const proyector = (over: Partial<UnidadVolcada> = {}): UnidadVolcada =>
+    unidad({
+      id: 'u9',
+      articulo: 'Proyector',
+      marca: 'Epson',
+      modelo: 'EB-L200',
+      serial: 'X4TK123456',
+      observaciones: 'Sin estrenar',
+      soloEnLaApp: true,
+      ...over,
+    })
+
+  const FILA_PROYECTOR = { A: 'Proyector', B: 'Epson', C: 'EB-L200', D: 'X4TK123456', E: 'Sin estrenar' }
+
+  it('no se añaden al final: la hoja de PCs no es el listado de todo el almacén', () => {
+    const p = pcs([fila(3, FILA_PC)], [unidad(), proyector()])
+    expect(p.insertar).toEqual([])
+    expect(p.filasQueEntran).toEqual([])
+    expect(p.avisos.join(' ')).not.toContain('se añaden al final')
+  })
+
+  it('los ordenadores que faltan se añaden igual, estén o no con otras unidades', () => {
+    const p = pcs(
+      [fila(3, FILA_PC)],
+      [unidad(), unidad({ id: 'u2', serial: 'S4DF5471', modelo: 'M70Q' }), proyector()],
+    )
+    expect(p.insertar).toHaveLength(1)
+    expect(p.insertar[0]!.celdas).toContainEqual({ celda: 'D4', valor: 'S4DF5471' })
+    expect(p.filasQueEntran.map((f) => f.destino)).toEqual(['S4DF5471'])
+    // El aviso cuenta los que entran: uno, no dos.
+    expect(p.avisos.join(' ')).toMatch(/\b1 ordenador\w* de repuesto que el libro no tenía/)
+  })
+
+  it('pero si alguien la teclea en la hoja, se cruza por su número de serie: ni duda, ni alta, ni fila repetida', () => {
+    // Con la serie escrita a su manera: el cruce las compara sin espacios,
+    // guiones ni mayúsculas, como a las demás.
+    const p = pcs([fila(3, FILA_PC), fila(4, { ...FILA_PROYECTOR, D: ' x4tk-123456 ' })], [unidad(), proyector()])
+    expect(p.sinCruzar).toEqual([])
+    expect(p.dudas).toEqual([])
+    expect(p.altas).toEqual([])
+    expect(p.insertar).toEqual([])
+  })
+
+  it('y una vez en la hoja se mantiene al día como cualquier otra: su situación y sus cambios', () => {
+    const instalado = proyector({ estado: 'instalado', sala: '2.1 (EDIFICIO C)', desde: '2026-10-20' })
+    const p = sincronizarUnidades({
+      hoja: PCS_2026,
+      filas: [cabeceraDe(PCS_2026), fila(4, { ...FILA_PROYECTOR, E: 'Con garantía hasta 2028' })],
+      unidades: [instalado],
+      instantanea: (clave, letra) => (clave === 'u9' && letra === 'E' ? 'Sin estrenar' : undefined),
+    })
+    expect(p.celdas).toContainEqual({ celda: 'F4', valor: 'Instalado en 2.1 (EDIFICIO C) · 20/10/2026' })
+    expect(p.haciaLaBase).toContainEqual(
+      expect.objectContaining({ campo: 'unidad.observaciones', valor: 'Con garantía hasta 2028', destino: 'X4TK123456' }),
+    )
+  })
+
+  it('un número de serie que no es de ninguna unidad se sigue preguntando, sea de lo que sea', () => {
+    const p = pcs([fila(3, FILA_PC), fila(4, { ...FILA_PROYECTOR, D: 'X4TK999999' })], [unidad(), proyector()])
+    expect(p.dudas).toHaveLength(1)
+    expect(p.dudas[0]).toMatchObject({ tipo: 'alta', que: 'unidad', fila: 4 })
+  })
+
+  it('sin el dato, o diciendo que sí es un ordenador, entran como siempre', () => {
+    // Un servidor sin la vista no sabe qué es cada unidad: todas fueron
+    // ordenadores hasta ahora y siguen entrando.
+    const p = pcs(
+      [fila(3, FILA_PC)],
+      [unidad(), unidad({ id: 'u2', serial: 'A1' }), unidad({ id: 'u3', serial: 'A2', soloEnLaApp: false })],
+    )
+    expect(p.insertar).toHaveLength(2)
+    expect(p.filasQueEntran.map((f) => f.destino).sort()).toEqual(['A1', 'A2'])
+  })
+})

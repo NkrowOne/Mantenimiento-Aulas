@@ -3,7 +3,9 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { conflictoDeAlta, type ConflictoDeAlta } from '@/domain/inventory'
 import { displayRoomCode } from '@/domain/normalize'
-import type { AssetType } from '@/domain/types'
+import type { AssetType, RemovalDestino } from '@/domain/types'
+import { serialComparable, sinNumeroDeSerie, type UnidadDeAlmacen } from '@/domain/unidades'
+import { ElegirUnidad } from './ElegirUnidad'
 import type { Origen } from './useRoomInventory'
 
 /**
@@ -71,6 +73,41 @@ export function OrigenDelEquipo({
   const [stockItemId, setStockItemId] = useState('')
   const [unidades, setUnidades] = useState(1)
 
+  /*
+   * Las unidades disponibles de este tipo, del espejo: también sin cobertura.
+   *
+   * Se quitan las que ya son un equipo de alguna sala de este iPad —se acaban
+   * de instalar y el servidor todavía no lo sabe—, para que la misma no se
+   * pueda elegir dos veces seguidas.
+   */
+  // Por los ids y no por el array: el de por defecto es uno nuevo en cada
+  // pintado, y como dependencia relanzaría la consulta sin parar.
+  const idsDeArticulos = articulos.map((a) => a.id).join(',')
+  const unidadesDelTipo = useLiveQuery(
+    async (): Promise<UnidadDeAlmacen[]> => {
+      if (!type) return []
+      const ids = new Set(idsDeArticulos ? idsDeArticulos.split(',') : [])
+      const todas = await db.stockUnits.where('status').equals('disponible').toArray()
+      const enSalas = new Set(
+        (await db.assets.toArray())
+          .filter((a) => a.status !== 'retirado' && a.serial)
+          .map((a) => serialComparable(a.serial!)),
+      )
+      return todas.filter(
+        (u) =>
+          (u.asset_type_id === type.id || (u.stock_item_id !== null && ids.has(u.stock_item_id))) &&
+          !enSalas.has(serialComparable(u.serial)),
+      )
+    },
+    [type?.id, idsDeArticulos],
+    [] as UnidadDeAlmacen[],
+  )
+  /** `null` sin elegir; el id de una unidad, o `'sin_numero'`. */
+  const [unidadElegida, setUnidadElegida] = useState<string | null>(null)
+  /** `null` sin contestar; `'no'` si es una más; el id del equipo al que sustituye. */
+  const [sustituye, setSustituye] = useState<string | null>(null)
+  const [destinoDelViejo, setDestinoDelViejo] = useState<RemovalDestino>('almacen')
+
   // --- Traslado --------------------------------------------------------------
   const [buildingId, setBuildingId] = useState('')
   const [origenRoomId, setOrigenRoomId] = useState('')
@@ -134,9 +171,26 @@ export function OrigenDelEquipo({
     null as ConflictoDeAlta | null,
   )
 
+  /*
+   * Los del mismo tipo que ya están en la sala: a los que una unidad nueva puede
+   * estar sustituyendo. Es la pregunta que el alta normal no hacía: cambiar el
+   * proyector que se murió por uno del almacén dejaba dos proyectores en la
+   * sala, y el viejo seguía contando en las revisiones.
+   */
+  const mismosEnSala = useLiveQuery(
+    async () => {
+      if (!type) return []
+      return (await db.assets.where('room_id').equals(roomId).toArray()).filter(
+        (a) => a.asset_type_id === type.id && a.status !== 'retirado',
+      )
+    },
+    [roomId, type?.id],
+    [],
+  )
+
   // --- Modo ------------------------------------------------------------------
   const sugerido: Modo =
-    inventariando || conExistencias.length === 0 ? 'sin_origen' : 'almacen'
+    inventariando || (conExistencias.length === 0 && unidadesDelTipo.length === 0) ? 'sin_origen' : 'almacen'
   const [modo, setModo] = useState<Modo>(sugerido)
 
   // Las existencias llegan del espejo un instante después del primer pintado,
@@ -149,8 +203,19 @@ export function OrigenDelEquipo({
   }, [sugerido, tocado])
 
   useEffect(() => {
-    if (!stockItemId && conExistencias[0]) setStockItemId(conExistencias[0].id)
-  }, [conExistencias, stockItemId])
+    if (stockItemId) return
+    // Primero el artículo que tiene unidades por número de serie: es el que se
+    // está buscando cuando hay que elegir una concreta.
+    const conUnidades = articulos.find((a) => unidadesDelTipo.some((u) => u.stock_item_id === a.id))
+    const primero = conUnidades ?? conExistencias[0]
+    if (primero) setStockItemId(primero.id)
+  }, [articulos, conExistencias, stockItemId, unidadesDelTipo])
+
+  // Otro artículo, otras unidades: lo elegido del anterior ya no vale.
+  useEffect(() => {
+    setUnidadElegida(null)
+    setSustituye(null)
+  }, [stockItemId])
 
   useEffect(() => setOrigenRoomId(''), [buildingId])
   useEffect(() => setAssetId(''), [origenRoomId])
@@ -158,25 +223,57 @@ export function OrigenDelEquipo({
   const elegido = articulos.find((a) => a.id === stockItemId) ?? null
   const disponibles = elegido?.onHand ?? null
 
+  /*
+   * Las unidades que se ofrecen: las del artículo elegido, más las de este tipo
+   * que no tienen artículo (una unidad sin casar sigue siendo un aparato que
+   * está en la estantería).
+   */
+  const unidadesOfrecidas = unidadesDelTipo.filter(
+    (u) => u.stock_item_id === (stockItemId || null) || u.stock_item_id === null,
+  )
+  const conSerieDelArticulo = unidadesDelTipo.filter((u) => u.stock_item_id === stockItemId).length
+  const sinNumero = disponibles !== null ? sinNumeroDeSerie(disponibles, conSerieDelArticulo) : 0
+  const hayQueElegir = modo === 'almacen' && unidadesOfrecidas.length > 0
+  const unidad = unidadesOfrecidas.find((u) => u.id === unidadElegida) ?? null
+  const preguntaSustitucion = hayQueElegir && unidad !== null && mismosEnSala.length > 0
+
   const listo = useMemo(() => {
-    if (modo === 'almacen') return Boolean(stockItemId) && unidades >= 1
+    if (modo === 'almacen') {
+      if (hayQueElegir && unidadElegida === null) return false
+      if (preguntaSustitucion && sustituye === null) return false
+      if (unidad) return true
+      return Boolean(stockItemId) && unidades >= 1
+    }
     if (modo === 'traslado') return Boolean(assetId)
     return true
-  }, [modo, stockItemId, unidades, assetId])
+  }, [modo, hayQueElegir, unidadElegida, preguntaSustitucion, sustituye, unidad, stockItemId, unidades, assetId])
 
-  // El aviso de choque solo pesa cuando se va a CREAR una fila nueva.
-  const chocaAqui = conflicto !== null && modo !== 'traslado'
+  // El aviso de choque solo pesa cuando se va a CREAR una fila nueva. Con una
+  // unidad elegida lo sustituye la pregunta de si cambia a uno que ya está.
+  const chocaAqui = conflicto !== null && modo !== 'traslado' && !preguntaSustitucion
 
   function confirmar(): void {
-    const opciones = { duplicarEtiqueta: chocaAqui }
-    if (modo === 'almacen') onConfirmar({ tipo: 'almacen', stockItemId, unidades }, opciones)
+    const opciones = { duplicarEtiqueta: chocaAqui || sustituye === 'no' }
+    if (modo === 'almacen' && unidad) {
+      onConfirmar(
+        {
+          tipo: 'almacen',
+          stockItemId: unidad.stock_item_id ?? stockItemId,
+          unidades: 1,
+          unidad: { id: unidad.id, serial: unidad.serial, brand: unidad.brand, model: unidad.model },
+          sustituye:
+            sustituye && sustituye !== 'no' ? { assetId: sustituye, destino: destinoDelViejo } : undefined,
+        },
+        opciones,
+      )
+    } else if (modo === 'almacen') onConfirmar({ tipo: 'almacen', stockItemId, unidades }, opciones)
     else if (modo === 'traslado')
       onConfirmar({ tipo: 'traslado', assetId, desdeRoomId: origenRoomId }, opciones)
     else onConfirmar({ tipo: 'sin_origen' }, opciones)
   }
 
   const MODOS: Array<{ id: Modo; label: string; disponible: boolean }> = [
-    { id: 'almacen', label: 'Del almacén', disponible: articulos.length > 0 },
+    { id: 'almacen', label: 'Del almacén', disponible: articulos.length > 0 || unidadesDelTipo.length > 0 },
     { id: 'traslado', label: 'De otra sala', disponible: true },
     { id: 'sin_origen', label: 'Ya estaba', disponible: true },
   ]
@@ -219,9 +316,11 @@ export function OrigenDelEquipo({
       {modo === 'almacen' && (
         <div className="mt-3">
           {articulos.length === 0 ? (
-            <p className="text-xs text-muted">
-              Este tipo de equipo no tiene ningún artículo asociado en el almacén.
-            </p>
+            unidadesDelTipo.length === 0 && (
+              <p className="text-xs text-muted">
+                Este tipo de equipo no tiene ningún artículo asociado en el almacén.
+              </p>
+            )
           ) : (
             <>
               <label className="block text-xs text-muted">
@@ -231,15 +330,54 @@ export function OrigenDelEquipo({
                   onChange={(e) => setStockItemId(e.target.value)}
                   className="mt-1 h-11 w-full rounded-ctl border border-line bg-surface px-2 text-base text-ink"
                 >
-                  {articulos.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                      {a.onHand !== null ? ` · ${a.onHand} en almacén` : ''}
-                    </option>
-                  ))}
+                  {articulos.map((a) => {
+                    const conSerie = unidadesDelTipo.filter((u) => u.stock_item_id === a.id).length
+                    return (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                        {a.onHand !== null ? ` · ${a.onHand} en almacén` : ''}
+                        {conSerie > 0 ? ` · ${conSerie} con n.º de serie` : ''}
+                      </option>
+                    )
+                  })}
                 </select>
               </label>
+            </>
+          )}
 
+          {hayQueElegir && (
+            <ElegirUnidad
+              unidades={unidadesOfrecidas}
+              elegida={unidadElegida}
+              sinNumero={sinNumero}
+              conSinNumero={articulos.length > 0 && Boolean(stockItemId)}
+              onElegir={(id) => {
+                setTocado(true)
+                setUnidadElegida(id)
+                setSustituye(null)
+              }}
+            />
+          )}
+
+          {unidad?.condicion === 'averiado' && (
+            <p className="mt-2 text-xs text-warn">
+              Esta unidad está marcada como averiada. Si ya está reparada, cámbiale el estado en Almacén.
+            </p>
+          )}
+
+          {preguntaSustitucion && (
+            <Sustitucion
+              mismos={mismosEnSala}
+              sustituye={sustituye}
+              destino={destinoDelViejo}
+              siguiente={conflicto?.siguiente ?? null}
+              onSustituye={setSustituye}
+              onDestino={setDestinoDelViejo}
+            />
+          )}
+
+          {articulos.length > 0 && !unidad && !(hayQueElegir && unidadElegida === null) && (
+            <>
               <div className="mt-2 flex items-center justify-between gap-3">
                 <span className="text-xs text-muted">Unidades</span>
                 <span className="inline-flex items-center gap-2">
@@ -276,6 +414,13 @@ export function OrigenDelEquipo({
                 </p>
               )}
             </>
+          )}
+
+          {unidad && (
+            <p className="mt-2 text-xs text-muted">
+              El equipo se apunta en la sala con este número de serie, y el almacén descuenta la
+              unidad al sincronizar.
+            </p>
           )}
         </div>
       )}
@@ -387,10 +532,102 @@ export function OrigenDelEquipo({
       >
         {modo === 'traslado'
           ? 'Trasladar aquí'
-          : chocaAqui && conflicto
-            ? `Sí, añadir otra unidad («${conflicto.siguiente}»)`
-            : 'Añadir a la sala'}
+          : unidad && sustituye && sustituye !== 'no'
+            ? `Instalar ${unidad.serial} y pedir la retirada del otro`
+            : unidad
+              ? `Instalar ${unidad.serial}`
+              : chocaAqui && conflicto
+                ? `Sí, añadir otra unidad («${conflicto.siguiente}»)`
+                : 'Añadir a la sala'}
       </button>
+      {modo === 'almacen' && hayQueElegir && unidadElegida === null && (
+        <p className="mt-1 text-center text-xs text-muted">Elige cuál de arriba se instala.</p>
+      )}
+      {preguntaSustitucion && sustituye === null && (
+        <p className="mt-1 text-center text-xs text-muted">Di si sustituye a uno de la sala.</p>
+      )}
     </div>
+  )
+}
+
+/**
+ * ¿Sustituye a uno de los que ya están?
+ *
+ * Solo se pregunta al instalar una unidad concreta en una sala que ya tiene
+ * equipos de ese tipo. Si sustituye, el viejo no se quita aquí: se **pide** su
+ * retirada, con su destino, igual que desde la lista de equipos —quitar un
+ * equipo lo autoriza un supervisor—. Hasta entonces sigue en la sala.
+ */
+function Sustitucion({
+  mismos,
+  sustituye,
+  destino,
+  siguiente,
+  onSustituye,
+  onDestino,
+}: {
+  mismos: Array<{ id: string; label: string | null; model: string | null; serial: string | null }>
+  sustituye: string | null
+  destino: RemovalDestino
+  siguiente: string | null
+  onSustituye: (v: string) => void
+  onDestino: (d: RemovalDestino) => void
+}): React.ReactElement {
+  const opciones: Array<{ id: string; titulo: string; detalle: string }> = [
+    ...mismos.map((a) => ({
+      id: a.id,
+      titulo: `Sustituye a «${a.label ?? 'equipo'}»`,
+      detalle: [a.model, a.serial].filter(Boolean).join(' · ') || 'Sin modelo ni número de serie',
+    })),
+    {
+      id: 'no',
+      titulo: 'No, es uno más',
+      detalle: siguiente ? `Se añade como «${siguiente}».` : 'Se añade sin tocar los que hay.',
+    },
+  ]
+  return (
+    <fieldset role="radiogroup" className="mt-3 rounded-ctl border border-line bg-surface p-2">
+      <legend className="px-1 text-xs text-muted">La sala ya tiene de este tipo</legend>
+      <div className="space-y-1.5">
+        {opciones.map((o) => (
+          <button
+            key={o.id}
+            type="button"
+            role="radio"
+            aria-checked={sustituye === o.id}
+            onClick={() => onSustituye(o.id)}
+            className={`flex min-h-11 w-full flex-col items-start justify-center rounded-ctl border px-3 py-2 text-left ${
+              sustituye === o.id ? 'border-accent bg-accent-tint' : 'border-line bg-raised'
+            }`}
+          >
+            <span className="text-sm">{o.titulo}</span>
+            <span className="text-xs text-muted">{o.detalle}</span>
+          </button>
+        ))}
+      </div>
+      {sustituye && sustituye !== 'no' && (
+        <div className="mt-2">
+          <p className="px-1 text-xs text-muted">El que se quita va a…</p>
+          <div className="mt-1 flex gap-1 rounded-ctl border border-line bg-raised p-1">
+            {(['almacen', 'baja'] as const).map((d) => (
+              <button
+                key={d}
+                type="button"
+                aria-pressed={destino === d}
+                onClick={() => onDestino(d)}
+                className={`min-h-11 flex-1 rounded-ctl px-2 text-xs font-semibold ${
+                  destino === d ? 'key key-accent' : 'text-muted'
+                }`}
+              >
+                {d === 'almacen' ? 'Vuelve al almacén' : 'Baja definitiva'}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 px-1 text-xs text-muted">
+            Se pide su retirada: sigue en la sala hasta que un supervisor la autorice.
+          </p>
+        </div>
+      )}
+    </fieldset>
   )
 }
