@@ -57,7 +57,6 @@ export interface IncidenciaQueSeCierra {
 export function ResolverIncidencia({
   incidencia,
   equipo,
-  explicacion = '',
   conMaterial = false,
   onCerrada,
   onCancelar,
@@ -73,15 +72,6 @@ export function ResolverIncidencia({
    */
   equipo: string | null
   /**
-   * Con qué empieza la explicación del cierre. Vacío salvo en el cierre express.
-   *
-   * En el express —abrir y cerrar en el mismo minuto, el cable que se ve suelto
-   * y se enchufa— lo que se acaba de escribir arriba **es** lo que se hizo:
-   * pedirlo otra vez es pedir lo mismo dos veces, y quien lo escribe por segunda
-   * vez lo escribe peor o se lo salta. Viene relleno y se puede cambiar.
-   */
-  explicacion?: string
-  /**
    * Si el apunte de material empieza abierto. También del express: ahí el
    * siguiente gesto es elegir el material, no buscar el botón que lo enseña.
    */
@@ -91,7 +81,10 @@ export function ResolverIncidencia({
 }): React.ReactElement {
   const ayudaId = useId()
   const ayudaCodigoId = useId()
-  const [texto, setTexto] = useState(explicacion)
+  /* Siempre vacío, también en el cierre express: lo que se escribió al abrir
+     es la avería («no da imagen»), no el arreglo, y copiarlo aquí dejaba el
+     cierre diciendo el problema en lugar de lo que se hizo. */
+  const [texto, setTexto] = useState('')
   /*
    * El ticket de EasyVista, si se tiene al cerrar. Arranca con el que ya
    * tuviera la incidencia —puesto al abrirla— para que cerrar no lo borre ni
