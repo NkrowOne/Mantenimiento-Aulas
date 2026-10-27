@@ -98,7 +98,7 @@ export function estadoParaSacar(cuenta: CuentaPorEstado): Condicion | null {
 /**
  * Qué movimiento es meter una en ese estado: una nueva es una compra; una
  * usada, reacondicionada o averiada es algo que vuelve —de un aula, del
- * técnico que la arregló—. Es lo que dirá la columna «Tipo» del Excel.
+ * técnico que la arregló—. Es lo que dirá la columna «Movimiento» del Excel.
  */
 export function claseAlMeter(c: Condicion): 'compra' | 'devolucion' {
   return c === 'nuevo' ? 'compra' : 'devolucion'

@@ -938,7 +938,7 @@ dice qué ha fallado. **Actualizar** vuelve a leer los datos sin cerrar la vista
 |---|---|---|
 | **Inventario de equipos** | Los equipos **de la lista, con los filtros puestos**, con toda su ficha, y sus entradas y salidas | Los equipos, con 14 columnas (edificio, aula, tipo, nombre, marca, modelo, serie, inventario, estado, adquisición, garantía, fin de vida, vida útil y hostname): las 29 del Excel no caben en un A4. Las entradas y salidas, solo si se marcan |
 | **Entradas y salidas** | Los movimientos del filtro, del más antiguo al más reciente | Todo |
-| **Inventario del almacén** | Existencias (también los retirados), movimientos con su saldo y PCs de repuesto | **Existencias y PCs de repuesto**: es el inventario de lo que hay hoy. Los movimientos, solo si se marcan |
+| **Inventario del almacén** | Existencias (también los retirados), con cuántas hay de cada estado; movimientos con su saldo y unidades con n.º de serie | **Existencias y unidades con n.º de serie**: es el inventario de lo que hay hoy. Los movimientos, solo si se marcan |
 
 En el papel, como en el Excel, lo obsoleto o bajo mínimo sale en rojo, lo que
 caduca este año en ámbar y lo retirado apagado. La cabecera lleva la fecha de
@@ -964,20 +964,23 @@ group by kind;
 ## 4. Almacén
 
 La pestaña **Almacén** es una lista: una fila por artículo con su nombre y
-cuántos hay —en rojo si está bajo mínimo— y, si tiene unidades con número de
-serie, cómo están («3 con n.º de serie · 2 nuevas · 1 usada»).
+cuántos hay —en rojo si está bajo mínimo— y cómo están: «5 nuevas · 3 usadas»
+si se cuenta y alguien ha dicho de qué estado es cada una, o «3 con n.º de serie
+· 2 nuevas · 1 usada» si tiene unidades con número de serie (apartado «El estado
+de lo que se cuenta», más abajo).
 
 - **Los que solo se cuentan** (cables, teclados…) llevan el `−` en la fila, y el
-  `+` para quien puede meter material (supervisor y administrador).
-- **Tocar la fila abre su hoja**, desde abajo: la cantidad con el `−` y el `+`
-  grandes y «Varias de golpe…» para sacar o meter una caja entera, sus unidades
-  con número de serie y, para el administrador, **Ajustes del artículo** (tipo de
-  equipo, mínimo, nombre y retirarlo).
+  `+` para quien puede meter material (supervisor y administrador). El `−` de la
+  fila saca primero una usada, nunca una averiada, y el `+` mete una nueva.
+- **Tocar la fila abre su hoja**, desde abajo: la cantidad partida por estados,
+  cada uno con su `−` y su `+`, «Varias de golpe…» para sacar o meter una caja
+  entera, sus unidades con número de serie y, para el administrador, **Ajustes
+  del artículo** (cómo se cuenta, tipo de equipo, mínimo, nombre y retirarlo).
 - **El buscador encuentra artículos y números de serie.** Con tres caracteres de
   la pegatina salen las unidades que coinciden, encima de la lista; tocar una abre
   su ficha.
-- **Filtros** arriba: Todo, Bajo mínimo, Con n.º de serie y Sin existencias, cada
-  uno con su cuenta.
+- **Filtros** arriba: Todo, Bajo mínimo, Con n.º de serie, Con averiadas (solo
+  sale si hay alguna) y Sin existencias, cada uno con su cuenta.
 
 El inventario del almacén se exporta desde la misma pestaña, con **Ver y
 exportar**: vista previa, Excel y PDF (apartado «Exportar: vista previa, Excel
@@ -1174,7 +1177,9 @@ de baja—, y la deciden las acciones de abajo.
 **Añadir unidades** (supervisor): en la hoja del artículo, **Añadir unidades con
 número de serie**. Se escribe el número, se elige el estado y se guarda; el
 formulario se queda abierto, con el número vacío y lo demás igual, para la
-siguiente. Así se apunta una caja de seis tecleando seis números.
+siguiente. Así se apunta una caja de seis tecleando seis números; para veinte, o
+para los de un albarán, está **Pegar una lista** (ver más abajo). El botón solo
+sale en los artículos que se cuentan **por número de serie**.
 
 La casilla **Entra ahora en el almacén** decide si la unidad suma una a las
 existencias (acaba de llegar) o es una de las que el almacén ya contaba y por fin
@@ -1223,6 +1228,128 @@ instalarlas no descuenta nada.
 aplicación y salen en la exportación del almacén (hoja «Unidades con n.º de
 serie», con su estado). En el informe, «ordenadores de repuesto» cuenta solo los
 ordenadores disponibles.
+
+### El estado de lo que se cuenta: nuevas, usadas…
+
+«Quedan 8 teclados» no dice si los ocho están en su caja o si tres vuelven de un
+aula y uno tiene una tecla rota. Por eso el almacén apunta, además de **cuántas**
+hay, **en qué estado**: los mismos cuatro de las unidades con número de serie
+—**nueva, usada, reacondicionada, averiada**— y **sin estado** (en las unidades,
+«Sin indicar») para lo que nadie ha mirado todavía, que al principio es todo.
+Las existencias de siempre no cambian: son la suma de las cinco cifras.
+
+**Cómo se cuenta cada artículo.** Cada uno se lleva de una de dos maneras:
+
+| Cómo se cuenta | Para qué | De dónde salen las cifras por estado |
+|---|---|---|
+| **Por cantidad** | Cables, teclados, ratones…: no merece la pena apuntar cada uno | De los movimientos: cada entrada y cada salida dice de qué estado es. Se lee «5 nuevas · 3 usadas» |
+| **Por número de serie** | Ordenadores, proyectores, pantallas…: cada aparato con su número | De sus unidades, que llevan cada una su estado. Lo que el almacén cuenta y ninguna unidad nombra sale **sin estado**: con 8 contadas y 5 con número, las 3 restantes |
+
+Se elige al crear el artículo (**Nuevo artículo → Cómo se cuenta**) y se cambia
+después en **Ajustes del artículo → Cómo se cuenta**; las dos cosas, solo el
+administrador. Los artículos que ya tenían unidades con número de serie
+empezaron como **Por número de serie**; el resto, como **Por cantidad**.
+Cambiarlo no borra nada —los movimientos guardan su estado y las unidades el
+suyo—: solo cambia de dónde salen las cifras, y lo que no se pueda situar queda
+«sin estado» hasta que alguien lo clasifique. La pantalla dice antes qué va a
+pasar.
+
+**La hoja de un artículo que se cuenta por cantidad.** Arriba, el total; debajo,
+**una fila por estado** —nuevas, usadas, reacondicionadas, averiadas— con su
+cifra, su `−` y su `+`. Están siempre las cuatro, también a cero, porque el `+`
+de una fila a cero es el que hace falta cuando vuelve la primera averiada.
+
+- **`−`** (cualquiera del personal): saca una de ese estado. De un estado no se
+  puede sacar más de lo que tiene: «No quedan tantas en estado «Usado» de
+  «Teclado»: hay 2.».
+- **`+`** (supervisor y administrador): mete una de ese estado. En **Nuevas** es
+  una **compra**; en cualquier otro es una **devolución** —lo que vuelve de un
+  aula, lo que el técnico ha reparado—, y así sale en la columna «Movimiento» de
+  la hoja «Movimientos de Almacén» del Excel.
+- **Varias de golpe…**: lo mismo para una caja. Se pone cuántas y **de qué
+  estado**, y **Sacar** (cualquiera) o **Meter** (supervisor).
+- **Cambiar el estado de algunas…**: «2 de usadas a averiadas». Se elige cuántas,
+  en qué estado están ahora y a cuál pasan, y se puede añadir por qué; debajo se
+  ve cómo quedará. **El total no cambia.** Lo puede hacer **cualquiera del
+  personal**, técnicos incluidos: quien prueba el teclado y ve que no va es quien
+  lo sabe. En los movimientos quedan dos ajustes seguidos con la nota «Cambio de
+  estado: 2 de «Usado» a «Averiado»». Es solo para lo que se cuenta: en un
+  artículo por número de serie el estado se cambia en la ficha de cada unidad.
+
+**Lo que todavía no tiene estado.** Mientras quede algo «sin estado», la hoja lo
+pregunta arriba, en un recuadro ámbar —«¿Cómo están estas 8?»—, con la respuesta
+a un toque: **Todas nuevas**, **Todas usadas** o **Unas nuevas y otras
+usadas…**, que abre un reparto (cuántas hay de cada estado; las que no se pongan
+siguen sin estado, y se puede hacer en dos veces). Contestado, el recuadro
+desaparece. También lo puede hacer cualquiera del personal.
+
+**El `−` de la lista no pregunta de qué estado.** Saca **primero una usada,
+después una reacondicionada, una sin estado y, al final, una nueva; nunca una
+averiada**: lo que haría quien va a la estantería, lo usado antes que lo nuevo.
+La barra de **Deshacer** dice cuál ha sido —«Sacada 1 usada de Teclado.»— y la
+devuelve a su estado. Si solo quedan averiadas, el `−` de la fila se apaga: hay
+que abrir la hoja y sacar una a propósito. Quien quiere una concreta, abre la
+hoja.
+
+**Lo que llega sin decir el estado** —un parte cerrado con material, lo que entra
+por el Excel de SharePoint, una aplicación vieja que sigue en la caché de un
+iPad— lo resuelve el servidor, y no se rechaza por eso. Lo que **sale** sale por
+el **mismo orden**: usada, reacondicionada, sin estado, nueva y, solo si no
+queda otra cosa, una averiada (el material ya se lo han llevado y el total tiene
+que cuadrar). Lo que **entra** lo hace por su clase: una compra entra nueva, una
+devolución usada y un ajuste sin estado.
+
+**Averiadas.** Cuentan en las existencias —siguen en el almacén—, pero no se
+sacan sin querer, y la hoja dice cuántas «se pueden usar». El filtro **Con
+averiadas** de la lista (solo sale si hay alguna) enseña qué artículos tienen
+algo que reparar. El aviso de mínimo se compara con el total, averiadas
+incluidas. En SQL:
+
+```sql
+-- Qué hay que reparar
+select si.name, v.seguimiento, v.averiado, v.on_hand
+from stock_levels_por_estado v
+join stock_items si on si.id = v.stock_item_id
+where v.averiado > 0
+order by v.averiado desc, si.name;
+```
+
+**Pegar una lista de números de serie.** En un artículo por número de serie,
+**Añadir unidades con número de serie** tiene dos modos, **Una a una** y **Pegar
+una lista**, para una caja entera, el albarán del proveedor o una columna del
+Excel:
+
+- Los números se pegan **uno por línea**, o separados por **comas o puntos y
+  comas**. El **lector de códigos de barras** también vale: escribe cada lectura
+  y pulsa Intro. No se corta por espacios, porque hay números de serie que los
+  llevan.
+- Todos entran con el **mismo estado, marca y modelo**, y la casilla **Entran
+  ahora en el almacén** vale para todos a la vez, como en una sola unidad. La
+  pantalla cuenta antes cuántos hay.
+- **Como mucho 500 de una vez**; con más, se parten en dos listas. Los vacíos se
+  ignoran y **los repetidos cuentan una vez**: dos que solo se distinguen por
+  guiones, espacios, puntos o mayúsculas son el mismo.
+- La base contesta **por cada número**: **apuntada**, **ya estaba** (no se toca:
+  no se le cambia el estado ni la marca) o **error**, con su motivo —«10
+  apuntadas · 2 ya estaban · 1 con error»—. Un error no tumba los demás, y **los
+  que han fallado se quedan en la caja** para corregirlos y volver a pulsar.
+
+**En el Excel y en el PDF.** La hoja **Existencias** lleva, detrás de
+«Existencias», las columnas **Nuevas, Usadas, Reacondicionadas, Averiadas y Sin
+estado**, y detrás de «Tipo de equipo», **Cómo se cuenta**. Lo que es cero sale
+**en blanco**, para que la hoja se lea limpia: filtrar «Averiadas» por no vacías
+da la lista de lo que hay que reparar. Los artículos retirados no llevan cifras
+por estado. La columna que antes se llamaba «Estado» (Activo o Retirado) es ahora
+**Situación**: «estado» es siempre cómo está algo —nueva, usada…—, también en la
+hoja de unidades. La cabecera del documento añade «N averiadas» si las hay. Al
+PDF van Artículo, Existencias, las cinco cifras, Mínimo, Bajo mínimo y Situación;
+el Excel lleva todas.
+
+**Sin la migración, todo sigue como antes.** Un servidor al que aún no se le ha
+aplicado `20261027000300_el_estado_tambien_por_cantidad.sql` no tiene los
+estados por cantidad: la pantalla y la exportación se quedan como estaban —sin
+filas por estado, sin «Cómo se cuenta»— y no falla nada. Se aplica con el resto
+de las migraciones pendientes.
 
 ## 4b. El Excel de SharePoint
 

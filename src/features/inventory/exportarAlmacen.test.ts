@@ -15,8 +15,10 @@ import {
 import type {
   ArticuloParaHoja,
   DatosDelAlmacen,
+  EstadosParaHoja,
   FilaArticulo,
   FilaMovimiento,
+  FilaNivelPorEstado,
   FilaUnidad,
   UnidadParaHoja,
 } from './exportarAlmacen'
@@ -90,6 +92,8 @@ function articulo(extra: Partial<ArticuloParaHoja> = {}): ArticuloParaHoja {
     nombre: 'Cable HDMI',
     unidad: 'ud',
     existencias: 10,
+    // Por defecto, sin estados: la hoja de un servidor que no sabe de ellos.
+    estados: null,
     minimo: 3,
     tipoDeEquipo: null,
     activo: true,
@@ -97,6 +101,11 @@ function articulo(extra: Partial<ArticuloParaHoja> = {}): ArticuloParaHoja {
     motivoDeRetirada: null,
     ...extra,
   }
+}
+
+/** Cuántas hay de cada estado de un artículo, con lo que no se diga a cero. */
+function estadosDe(extra: Partial<EstadosParaHoja> = {}): EstadosParaHoja {
+  return { seguimiento: 'cantidad', nuevo: 0, usado: 0, reacondicionado: 0, averiado: 0, sin_indicar: 0, ...extra }
 }
 
 function unidad(extra: Partial<UnidadParaHoja> = {}): UnidadParaHoja {
@@ -173,12 +182,27 @@ describe('hojaDeExistencias', () => {
       'Mínimo',
       'Bajo mínimo',
       'Tipo de equipo',
-      'Estado',
+      'Situación',
       'Retirado el',
       'Motivo de la retirada',
     ])
     // La cabecera de una tabla es de texto, sin vacíos ni repetidos.
     expect(new Set(h.filas[0]).size).toBe(h.filas[0]!.length)
+  })
+
+  it('«Estado» es cómo está y «Situación» es si sigue en el catálogo: la columna de Activo/Retirado ya no se llama Estado', () => {
+    for (const conEstados of [false, true]) {
+      const cabecera = hojaDeExistencias([articulo()], conEstados).filas[0]!
+      expect(cabecera, `conEstados=${conEstados}`).toContain('Situación')
+      expect(cabecera, `conEstados=${conEstados}`).not.toContain('Estado')
+    }
+  })
+
+  it('sin estados la hoja es la de siempre, aunque el artículo los traiga: es el servidor quien decide', () => {
+    const h = hojaDeExistencias([articulo({ estados: estadosDe({ nuevo: 3, averiado: 1 }) })])
+    expect(h.filas[0]).not.toContain('Nuevas')
+    expect(h.filas[0]).not.toContain('Cómo se cuenta')
+    expect(h.filas[1]).toHaveLength(9)
   })
 
   it('una fila por artículo, con «Sí» o «No» en Bajo mínimo', () => {
@@ -187,8 +211,8 @@ describe('hojaDeExistencias', () => {
       articulo({ nombre: 'Teclado', unidad: 'ud', existencias: 9, minimo: 5 }),
     ])
     expect(comoObjetos(h)).toEqual([
-      expect.objectContaining({ Artículo: 'Ratón', Existencias: 2, Mínimo: 5, 'Bajo mínimo': 'Sí', Estado: 'Activo' }),
-      expect.objectContaining({ Artículo: 'Teclado', Existencias: 9, Mínimo: 5, 'Bajo mínimo': 'No', Estado: 'Activo' }),
+      expect.objectContaining({ Artículo: 'Ratón', Existencias: 2, Mínimo: 5, 'Bajo mínimo': 'Sí', Situación: 'Activo' }),
+      expect.objectContaining({ Artículo: 'Teclado', Existencias: 9, Mínimo: 5, 'Bajo mínimo': 'No', Situación: 'Activo' }),
     ])
   })
 
@@ -203,7 +227,7 @@ describe('hojaDeExistencias', () => {
     expect(h.tintes).toHaveLength(h.filas.length - 1)
   })
 
-  it('los retirados salen, con su estado, su fecha y su motivo, y «No» en Bajo mínimo', () => {
+  it('los retirados salen, con su situación, su fecha y su motivo, y «No» en Bajo mínimo', () => {
     const h = hojaDeExistencias([
       articulo({
         nombre: 'Cable VGA',
@@ -216,7 +240,7 @@ describe('hojaDeExistencias', () => {
     ])
     expect(comoObjetos(h)[0]).toMatchObject({
       Artículo: 'Cable VGA',
-      Estado: 'Retirado',
+      Situación: 'Retirado',
       'Bajo mínimo': 'No',
       'Retirado el': D_2026_09_23,
       'Motivo de la retirada': 'Ya no se usa ningún VGA',
@@ -259,6 +283,151 @@ describe('hojaDeExistencias', () => {
     const h = hojaDeExistencias([])
     expect(h.filas).toHaveLength(1)
     expect(h.tintes).toEqual([])
+  })
+
+  describe('con las columnas de estado (el servidor sabe de estados)', () => {
+    /** El índice de una columna por su cabecera, para no contar columnas a mano. */
+    const columna = (h: { filas: Array<Array<string | number | boolean | null>> }, nombre: string): number =>
+      h.filas[0]!.indexOf(nombre)
+
+    it('detrás de «Existencias» van las cinco cifras, y detrás de «Tipo de equipo», «Cómo se cuenta»', () => {
+      const h = hojaDeExistencias([articulo({ estados: estadosDe() })], true)
+      expect(h.filas[0]).toEqual([
+        'Artículo',
+        'Unidad',
+        'Existencias',
+        'Nuevas',
+        'Usadas',
+        'Reacondicionadas',
+        'Averiadas',
+        'Sin estado',
+        'Mínimo',
+        'Bajo mínimo',
+        'Tipo de equipo',
+        'Cómo se cuenta',
+        'Situación',
+        'Retirado el',
+        'Motivo de la retirada',
+      ])
+      expect(new Set(h.filas[0]).size).toBe(h.filas[0]!.length)
+      expect(h.filas[1]).toHaveLength(h.filas[0]!.length)
+    })
+
+    it('el ancho y el formato siguen a su columna, no a su posición de antes', () => {
+      const h = hojaDeExistencias([articulo({ estados: estadosDe() })], true)
+      expect(h.anchos).toHaveLength(h.filas[0]!.length)
+      expect(h.formatos).toHaveLength(h.filas[0]!.length)
+      for (const nombre of ['Existencias', 'Nuevas', 'Usadas', 'Reacondicionadas', 'Averiadas', 'Sin estado', 'Mínimo']) {
+        expect(h.formatos?.[columna(h, nombre)], nombre).toBe('entero')
+      }
+      expect(h.formatos?.[columna(h, 'Retirado el')]).toBe('fecha')
+      expect(h.formatos?.[columna(h, 'Motivo de la retirada')]).toBe('textoAjustado')
+      // Lo demás es texto: sin formato.
+      for (const nombre of ['Artículo', 'Unidad', 'Bajo mínimo', 'Tipo de equipo', 'Cómo se cuenta', 'Situación']) {
+        expect(h.formatos?.[columna(h, nombre)], nombre).toBeUndefined()
+      }
+      // Cabe «Reacondicionadas» entera en su columna.
+      expect(h.anchos![columna(h, 'Reacondicionadas')]).toBeGreaterThanOrEqual('Reacondicionadas'.length)
+    })
+
+    it('cada estado, en su columna, con las palabras de las pantallas', () => {
+      const h = hojaDeExistencias(
+        [articulo({ existencias: 12, estados: estadosDe({ nuevo: 5, usado: 3, reacondicionado: 2, averiado: 1, sin_indicar: 1 }) })],
+        true,
+      )
+      expect(comoObjetos(h)[0]).toMatchObject({
+        Existencias: 12,
+        Nuevas: 5,
+        Usadas: 3,
+        Reacondicionadas: 2,
+        Averiadas: 1,
+        'Sin estado': 1,
+      })
+    })
+
+    it('lo que es cero sale en blanco para que la hoja se lea limpia; «Existencias» sí lleva su cero', () => {
+      const h = hojaDeExistencias(
+        [
+          articulo({ nombre: 'Teclado', existencias: 8, estados: estadosDe({ nuevo: 8 }) }),
+          articulo({ nombre: 'Ratón', existencias: 0, minimo: 0, estados: estadosDe() }),
+        ],
+        true,
+      )
+      const [raton, teclado] = comoObjetos(h)
+      expect(teclado).toMatchObject({ Existencias: 8, Nuevas: 8, Usadas: null, Reacondicionadas: null, Averiadas: null, 'Sin estado': null })
+      // Agotado: las existencias dicen 0 —es lo que se busca en esa columna— y los estados, nada.
+      expect(raton).toMatchObject({ Existencias: 0, Nuevas: null, Usadas: null, Reacondicionadas: null, Averiadas: null, 'Sin estado': null })
+    })
+
+    it('un blanco no es un cero escrito: la celda del libro no existe', async () => {
+      const libro = await abrirLibro(
+        await libroNuevo([hojaDeExistencias([articulo({ existencias: 8, estados: estadosDe({ nuevo: 8 }) })], true)]),
+      )
+      const [, fila] = await leerHoja(libro, 'Existencias')
+      // A Artículo, B Unidad, C Existencias, D Nuevas… y nada en E a H.
+      expect(fila!.celdas).toMatchObject({ C: 8, D: 8 })
+      for (const letra of ['E', 'F', 'G', 'H']) expect(fila!.celdas[letra], letra).toBeUndefined()
+    })
+
+    it('«Cómo se cuenta» usa las palabras de las pantallas', () => {
+      const h = hojaDeExistencias(
+        [
+          articulo({ nombre: 'A cables', estados: estadosDe({ seguimiento: 'cantidad' }) }),
+          articulo({ nombre: 'B proyectores', estados: estadosDe({ seguimiento: 'serie' }) }),
+        ],
+        true,
+      )
+      expect(comoObjetos(h).map((o) => [o['Artículo'], o['Cómo se cuenta']])).toEqual([
+        ['A cables', 'Por cantidad'],
+        ['B proyectores', 'Por número de serie'],
+      ])
+    })
+
+    it('un retirado —que la vista no trae— sale con todo en blanco, también «Cómo se cuenta»', () => {
+      const h = hojaDeExistencias(
+        [articulo({ nombre: 'Cable VGA', activo: false, existencias: 3, estados: null, retiradoEl: '2026-09-23', motivoDeRetirada: 'Ya no se usa' })],
+        true,
+      )
+      expect(comoObjetos(h)[0]).toMatchObject({
+        Artículo: 'Cable VGA',
+        Existencias: 3,
+        Nuevas: null,
+        Usadas: null,
+        Reacondicionadas: null,
+        Averiadas: null,
+        'Sin estado': null,
+        'Cómo se cuenta': null,
+        Situación: 'Retirado',
+        'Retirado el': D_2026_09_23,
+      })
+    })
+
+    it('un seguimiento que la aplicación no conoce se deja en blanco: la hoja no escribe lo que no entiende', () => {
+      const raros = ['roto', 'toString', ''] as unknown as Array<EstadosParaHoja['seguimiento']>
+      const h = hojaDeExistencias(
+        raros.map((seguimiento, i) => articulo({ nombre: `Artículo ${i}`, estados: estadosDe({ seguimiento }) })),
+        true,
+      )
+      expect(comoObjetos(h).map((o) => o['Cómo se cuenta'])).toEqual([null, null, null])
+    })
+
+    it('una cifra que no cuadra se enseña, no se esconde: solo el cero queda en blanco', () => {
+      const h = hojaDeExistencias([articulo({ estados: estadosDe({ sin_indicar: -2 }) })], true)
+      expect(comoObjetos(h)[0]!['Sin estado']).toBe(-2)
+    })
+
+    it('el color de la fila no cambia con las columnas, y sigue a su fila cuando se reordena', () => {
+      const h = hojaDeExistencias(
+        [
+          articulo({ nombre: 'B bajo', existencias: 1, minimo: 3, estados: estadosDe({ nuevo: 1 }) }),
+          articulo({ nombre: 'C retirado', activo: false, existencias: 0, minimo: 3 }),
+          articulo({ nombre: 'A normal', existencias: 10, minimo: 3, estados: estadosDe({ usado: 10 }) }),
+        ],
+        true,
+      )
+      expect(comoObjetos(h).map((o) => o['Artículo'])).toEqual(['A normal', 'B bajo', 'C retirado'])
+      expect(h.tintes).toEqual([undefined, 'critico', 'apagado'])
+    })
   })
 })
 
@@ -458,6 +627,8 @@ function kindDe(n: number): string {
 const VACIO: DatosDelAlmacen = {
   articulos: [],
   niveles: [],
+  // Un servidor que no sabe de estados: lo que cada prueba que los necesita pone a mano.
+  estados: null,
   tipos: [],
   movimientos: [],
   incidencias: [],
@@ -524,6 +695,73 @@ describe('articulosParaHoja', () => {
     const sinColumnas: FilaArticulo = { id: 'a', name: 'X', unit: 'ud', min_threshold: 0, asset_type_id: null, active: false }
     const r = articulosParaHoja({ ...VACIO, articulos: [sinColumnas] })
     expect(r[0]).toMatchObject({ activo: false, retiradoEl: null, motivoDeRetirada: null })
+  })
+
+  describe('el estado', () => {
+    const FILA = (extra: Partial<FilaNivelPorEstado> & { stock_item_id: string }): FilaNivelPorEstado => ({
+      seguimiento: 'cantidad',
+      nuevo: 0,
+      usado: 0,
+      reacondicionado: 0,
+      averiado: 0,
+      sin_indicar: 0,
+      ...extra,
+    })
+
+    it('las cifras de cada artículo salen de su fila de la vista, y solo esas seis columnas', () => {
+      const r = articulosParaHoja({
+        ...VACIO,
+        articulos: [ART({ id: 'a', name: 'Teclado' }), ART({ id: 'b', name: 'Proyector' })],
+        // Una fila de la base trae más de lo que la hoja usa: no se arrastra.
+        estados: [
+          { ...FILA({ stock_item_id: 'a', nuevo: 5, usado: 3, averiado: 1 }), on_hand: 9, disponibles: 8 } as FilaNivelPorEstado,
+          FILA({ stock_item_id: 'b', seguimiento: 'serie', sin_indicar: 2 }),
+        ],
+      })
+      expect(r[0]!.estados).toEqual({
+        seguimiento: 'cantidad',
+        nuevo: 5,
+        usado: 3,
+        reacondicionado: 0,
+        averiado: 1,
+        sin_indicar: 0,
+      })
+      expect(r[1]!.estados).toEqual({
+        seguimiento: 'serie',
+        nuevo: 0,
+        usado: 0,
+        reacondicionado: 0,
+        averiado: 0,
+        sin_indicar: 2,
+      })
+    })
+
+    it('un retirado no está en la vista y no tiene estados, aunque el servidor los dé', () => {
+      const r = articulosParaHoja({
+        ...VACIO,
+        articulos: [ART({ id: 'a', name: 'Teclado' }), ART({ id: 'c', name: 'VGA', active: false })],
+        estados: [FILA({ stock_item_id: 'a', nuevo: 1 })],
+      })
+      expect(r.map((a) => [a.nombre, a.estados === null])).toEqual([
+        ['Teclado', false],
+        ['VGA', true],
+      ])
+    })
+
+    it('con un servidor que no sabe de estados, ninguno los tiene', () => {
+      const r = articulosParaHoja({ ...VACIO, articulos: [ART({ id: 'a', name: 'Teclado' })], estados: null })
+      expect(r[0]!.estados).toBeNull()
+    })
+
+    it('el saldo sigue siendo el de stock_levels: la vista no lo toca', () => {
+      const r = articulosParaHoja({
+        ...VACIO,
+        articulos: [ART({ id: 'a', name: 'Teclado' })],
+        niveles: [{ stock_item_id: 'a', on_hand: 7 }],
+        estados: [FILA({ stock_item_id: 'a', nuevo: 99 })],
+      })
+      expect(r[0]!.existencias).toBe(7)
+    })
   })
 })
 
@@ -806,6 +1044,8 @@ describe('hojasDelAlmacen', () => {
       { stock_item_id: 'a', on_hand: 2 },
       { stock_item_id: 'b', on_hand: 0 },
     ],
+    // Sin estados: un servidor que no tiene la vista. Con ellos, abajo.
+    estados: null,
     tipos: [{ id: 't', name: 'Proyector' }],
     movimientos: [
       MOV({ stock_item_id: 'a', qty: 6, occurred_at: '2026-09-23T09:00:00Z' }),
@@ -914,6 +1154,165 @@ describe('hojasDelAlmacen', () => {
     ])
   })
 
+  it('un servidor sin estados: la hoja de siempre, y al PDF van las existencias sin la unidad ni el tipo', () => {
+    const e = exportacionDelAlmacen(datos)
+    expect(e.hojas[0]!.hoja.filas[0]).toEqual([
+      'Artículo',
+      'Unidad',
+      'Existencias',
+      'Mínimo',
+      'Bajo mínimo',
+      'Tipo de equipo',
+      'Situación',
+      'Retirado el',
+      'Motivo de la retirada',
+    ])
+    expect(e.hojas[0]!.pdf?.columnas).toEqual(['Artículo', 'Existencias', 'Mínimo', 'Bajo mínimo', 'Situación'])
+  })
+
+  describe('con el estado de lo que se cuenta', () => {
+    /**
+     * El HDMI se cuenta (1 nueva y 1 averiada: las 2 que dice `stock_levels`); el
+     * ratón se lleva por número de serie y no tiene ninguna; el VGA está retirado
+     * y la vista no lo trae.
+     */
+    const estados: FilaNivelPorEstado[] = [
+      { stock_item_id: 'a', seguimiento: 'cantidad', nuevo: 1, usado: 0, reacondicionado: 0, averiado: 1, sin_indicar: 0 },
+      { stock_item_id: 'b', seguimiento: 'serie', nuevo: 0, usado: 0, reacondicionado: 0, averiado: 0, sin_indicar: 0 },
+    ]
+    const conEstados: DatosDelAlmacen = { ...datos, estados }
+
+    it('el resumen dice cuántas están averiadas, entre lo bajo mínimo y las unidades con número de serie', () => {
+      const e = exportacionDelAlmacen(conEstados)
+      expect(e.resumen).toBe('2 artículos · 1 bajo mínimo · 1 averiada · 0 unidades con n.º de serie en el almacén')
+    })
+
+    it('suma las de todos los artículos, en plural, se cuenten como se cuenten', () => {
+      const e = exportacionDelAlmacen({
+        ...conEstados,
+        estados: [
+          { stock_item_id: 'a', seguimiento: 'cantidad', nuevo: 0, usado: 0, reacondicionado: 0, averiado: 2, sin_indicar: 0 },
+          { stock_item_id: 'b', seguimiento: 'serie', nuevo: 0, usado: 0, reacondicionado: 0, averiado: 3, sin_indicar: 0 },
+        ],
+      })
+      expect(e.resumen).toBe('2 artículos · 1 bajo mínimo · 5 averiadas · 0 unidades con n.º de serie en el almacén')
+    })
+
+    it('sin averiadas no dice nada de ellas, igual que lo bajo mínimo', () => {
+      const e = exportacionDelAlmacen({
+        ...conEstados,
+        estados: [{ stock_item_id: 'a', seguimiento: 'cantidad', nuevo: 2, usado: 0, reacondicionado: 0, averiado: 0, sin_indicar: 0 }],
+      })
+      expect(e.resumen).toBe('2 artículos · 1 bajo mínimo · 0 unidades con n.º de serie en el almacén')
+    })
+
+    it('solo cuentan los artículos vivos: las de un retirado no se suman', () => {
+      const e = exportacionDelAlmacen({
+        ...conEstados,
+        estados: [
+          ...estados,
+          // La vista no los trae, pero si alguna vez uno se colara no debe engordar la cifra.
+          { stock_item_id: 'c', seguimiento: 'cantidad', nuevo: 0, usado: 0, reacondicionado: 0, averiado: 7, sin_indicar: 0 },
+        ],
+      })
+      expect(e.resumen).toBe('2 artículos · 1 bajo mínimo · 1 averiada · 0 unidades con n.º de serie en el almacén')
+    })
+
+    it('una vista sin filas es un servidor al día, no uno viejo: las columnas salen, en blanco, y no hay averiadas que decir', () => {
+      const e = exportacionDelAlmacen({ ...conEstados, estados: [] })
+      expect(e.hojas[0]!.hoja.filas[0]).toContain('Nuevas')
+      expect(e.hojas[0]!.hoja.filas[0]).toContain('Cómo se cuenta')
+      for (const o of comoObjetos(e.hojas[0]!.hoja)) {
+        expect([o['Nuevas'], o['Usadas'], o['Reacondicionadas'], o['Averiadas'], o['Sin estado'], o['Cómo se cuenta']]).toEqual(
+          [null, null, null, null, null, null],
+        )
+      }
+      expect(e.resumen).toBe('2 artículos · 1 bajo mínimo · 0 unidades con n.º de serie en el almacén')
+    })
+
+    it('al PDF van las existencias con las cinco cifras, sin la unidad, el tipo ni la retirada', () => {
+      const e = exportacionDelAlmacen(conEstados)
+      expect(e.hojas[0]!.pdf?.columnas).toEqual([
+        'Artículo',
+        'Existencias',
+        'Nuevas',
+        'Usadas',
+        'Reacondicionadas',
+        'Averiadas',
+        'Sin estado',
+        'Mínimo',
+        'Bajo mínimo',
+        'Situación',
+      ])
+    })
+
+    it('todas las columnas del PDF existen en la hoja, con y sin estados: ninguna se pierde por un nombre cambiado', () => {
+      for (const d of [datos, conEstados]) {
+        const e = exportacionDelAlmacen(d)
+        const cabecera = e.hojas[0]!.hoja.filas[0]!
+        for (const c of e.hojas[0]!.pdf!.columnas!) expect(cabecera, c).toContain(c)
+      }
+    })
+
+    it('las otras dos hojas no cambian: ni los movimientos ni las unidades saben de estados por cantidad', () => {
+      const con = exportacionDelAlmacen(conEstados)
+      const sin = exportacionDelAlmacen(datos)
+      expect(con.hojas[1]).toEqual(sin.hojas[1])
+      expect(con.hojas[2]).toEqual(sin.hojas[2])
+    })
+
+    it('el libro lleva las columnas en su sitio, con los blancos en blanco', async () => {
+      const libro = await abrirLibro(await libroNuevo(hojasDelAlmacen(conEstados)))
+      const existencias = await leerHoja(libro, 'Existencias')
+
+      expect(existencias[0]!.celdas).toEqual({
+        A: 'Artículo',
+        B: 'Unidad',
+        C: 'Existencias',
+        D: 'Nuevas',
+        E: 'Usadas',
+        F: 'Reacondicionadas',
+        G: 'Averiadas',
+        H: 'Sin estado',
+        I: 'Mínimo',
+        J: 'Bajo mínimo',
+        K: 'Tipo de equipo',
+        L: 'Cómo se cuenta',
+        M: 'Situación',
+        N: 'Retirado el',
+        O: 'Motivo de la retirada',
+      })
+      // Vivos por nombre, retirado al final.
+      expect(existencias.map((f) => f.celdas.A)).toEqual(['Artículo', 'Cable HDMI', 'Ratón', 'Cable VGA'])
+      // El HDMI: 1 nueva y 1 averiada; ni usadas, ni reacondicionadas, ni sin estado.
+      expect(existencias[1]!.celdas).toEqual({
+        A: 'Cable HDMI',
+        B: 'ud',
+        C: 2,
+        D: 1,
+        G: 1,
+        I: 5,
+        J: 'Sí',
+        K: 'Proyector',
+        L: 'Por cantidad',
+        M: 'Activo',
+      })
+      // El ratón no tiene ninguno: agotado, y por número de serie.
+      expect(existencias[2]!.celdas).toEqual({ A: 'Ratón', B: 'ud', C: 0, I: 0, J: 'No', L: 'Por número de serie', M: 'Activo' })
+      // El retirado: su saldo sale de los movimientos y no tiene estados ni «cómo se cuenta».
+      expect(existencias[3]!.celdas).toEqual({
+        A: 'Cable VGA',
+        B: 'ud',
+        C: 3,
+        I: 0,
+        J: 'No',
+        M: 'Retirado',
+        N: D_2026_09_23,
+        O: 'Ya no se usa',
+      })
+    })
+  })
+
   it('con ellas se hace un libro que se abre y se lee', async () => {
     const libro = await abrirLibro(await libroNuevo(hojasDelAlmacen(datos)))
     expect(libro.hojas.map((h) => h.nombre)).toEqual(['Existencias', 'Movimientos de Almacén', 'Unidades con n.º de serie'])
@@ -981,7 +1380,23 @@ async function prepararExcelDelAlmacen(): Promise<{ nombre: string; bytes: Uint8
 }
 
 describe('prepararExportacionDelAlmacen', () => {
-  /** Lo mínimo de cada tabla, en el orden y con los nombres de la base. */
+  /**
+   * La vista `stock_levels_por_estado` tal como la da la base, con todas sus
+   * columnas: el cable HDMI se cuenta y tiene 1 nueva y 1 averiada. El retirado
+   * no está: la vista solo trae los activos.
+   */
+  const VISTA_DE_ESTADOS = [
+    { stock_item_id: 'a', seguimiento: 'cantidad', on_hand: 2, nuevo: 1, usado: 0, reacondicionado: 0, averiado: 1, sin_indicar: 0, disponibles: 1 },
+  ]
+
+  /**
+   * Lo mínimo de cada tabla, en el orden y con los nombres de la base.
+   *
+   * **Sin `stock_levels_por_estado` a menos que se pase**: por defecto es un
+   * servidor que todavía no sabe de estados, y las pruebas de abajo que no
+   * hablan de ellos leen la hoja de siempre. Las del estado la ponen a mano con
+   * `servidor({ stock_levels_por_estado: VISTA_DE_ESTADOS })`.
+   */
   function servidor(extra: Record<string, unknown[]> = {}): void {
     falso.estado.tablas = {
       stock_items: [
@@ -1116,6 +1531,153 @@ describe('prepararExportacionDelAlmacen', () => {
     const existencias = await leerHoja(await abrirLibro(bytes), 'Existencias')
     expect(existencias[2]!.celdas).toMatchObject({ A: 'Cable VGA', G: 'Retirado' })
     expect(existencias[2]!.celdas.H).toBeUndefined()
+  })
+
+  describe('el estado de lo que se cuenta', () => {
+    it('con la vista, el Excel lleva las columnas de estado y «Cómo se cuenta»', async () => {
+      servidor({ stock_levels_por_estado: VISTA_DE_ESTADOS })
+      const { bytes } = await prepararExcelDelAlmacen()
+      const existencias = await leerHoja(await abrirLibro(bytes), 'Existencias')
+
+      expect(existencias[0]!.celdas).toMatchObject({
+        C: 'Existencias',
+        D: 'Nuevas',
+        E: 'Usadas',
+        F: 'Reacondicionadas',
+        G: 'Averiadas',
+        H: 'Sin estado',
+        L: 'Cómo se cuenta',
+        M: 'Situación',
+      })
+      // El HDMI: 1 nueva y 1 averiada, y se cuenta. El VGA, retirado, no está en la vista.
+      expect(existencias[1]!.celdas).toMatchObject({ A: 'Cable HDMI', C: 2, D: 1, G: 1, J: 'Sí', L: 'Por cantidad', M: 'Activo' })
+      expect(existencias[1]!.celdas.E).toBeUndefined()
+      expect(existencias[2]!.celdas).toMatchObject({ A: 'Cable VGA', C: 3, M: 'Retirado', N: D_2026_09_23, O: 'Ya no se usa' })
+      for (const letra of ['D', 'E', 'F', 'G', 'H', 'L']) expect(existencias[2]!.celdas[letra], letra).toBeUndefined()
+    })
+
+    it('la cabecera del documento dice cuántas están averiadas', async () => {
+      servidor({ stock_levels_por_estado: VISTA_DE_ESTADOS })
+      const e = await prepararExportacionDelAlmacen()
+      expect(e.resumen).toBe('1 artículo · 1 bajo mínimo · 1 averiada · 1 unidad con n.º de serie en el almacén')
+    })
+
+    it('se lee la vista una vez, con las columnas que se usan, y las existencias siguen siendo las de stock_levels', async () => {
+      servidor({ stock_levels_por_estado: VISTA_DE_ESTADOS })
+      const { bytes } = await prepararExcelDelAlmacen()
+
+      const alaVista = falso.estado.peticiones.filter((p) => p.startsWith('stock_levels_por_estado'))
+      expect(alaVista).toHaveLength(1)
+      for (const columna of ['stock_item_id', 'seguimiento', 'nuevo', 'usado', 'reacondicionado', 'averiado', 'sin_indicar']) {
+        expect(alaVista[0], columna).toContain(columna)
+      }
+      // Y la vista no sustituye a nadie: el saldo sigue saliendo de `stock_levels`.
+      expect(falso.estado.peticiones.filter((p) => p.startsWith('stock_levels['))).toHaveLength(1)
+      const existencias = await leerHoja(await abrirLibro(bytes), 'Existencias')
+      expect(existencias[1]!.celdas.C).toBe(2)
+    })
+
+    it('pasa de las mil filas: pide la vista página a página y no pierde ninguna', async () => {
+      // El cable HDMI va el último: si una página se perdiera, saldría sin estados.
+      const relleno = Array.from({ length: 2299 }, (_, i) => ({
+        stock_item_id: `otro-${i}`,
+        seguimiento: 'cantidad',
+        nuevo: 1,
+        usado: 0,
+        reacondicionado: 0,
+        averiado: 0,
+        sin_indicar: 0,
+      }))
+      servidor({ stock_levels_por_estado: [...relleno, ...VISTA_DE_ESTADOS] })
+      const { bytes } = await prepararExcelDelAlmacen()
+
+      const existencias = await leerHoja(await abrirLibro(bytes), 'Existencias')
+      expect(existencias[1]!.celdas).toMatchObject({ A: 'Cable HDMI', D: 1, G: 1, L: 'Por cantidad' })
+      expect(falso.estado.peticiones.filter((p) => p.startsWith('stock_levels_por_estado'))).toHaveLength(3)
+    })
+
+    it('una vista sin filas no es un servidor viejo: las columnas salen, en blanco', async () => {
+      servidor({ stock_levels_por_estado: [] })
+      const { bytes } = await prepararExcelDelAlmacen()
+      const existencias = await leerHoja(await abrirLibro(bytes), 'Existencias')
+      expect(existencias[0]!.celdas.D).toBe('Nuevas')
+      expect(existencias[1]!.celdas).toMatchObject({ A: 'Cable HDMI', C: 2, J: 'Sí', M: 'Activo' })
+      expect(existencias[1]!.celdas.L).toBeUndefined()
+    })
+
+    describe('un servidor sin la migración del estado por cantidad', () => {
+      it('sin la vista, el Excel sale como siempre: sin columnas de estado y sin un error', async () => {
+        // `servidor()` no la tiene: la base contesta que la relación no existe.
+        const { bytes } = await prepararExcelDelAlmacen()
+        const libro = await abrirLibro(bytes)
+        const existencias = await leerHoja(libro, 'Existencias')
+
+        expect(existencias[0]!.celdas).toEqual({
+          A: 'Artículo',
+          B: 'Unidad',
+          C: 'Existencias',
+          D: 'Mínimo',
+          E: 'Bajo mínimo',
+          F: 'Tipo de equipo',
+          G: 'Situación',
+          H: 'Retirado el',
+          I: 'Motivo de la retirada',
+        })
+        expect(existencias.map((f) => f.celdas.A)).toEqual(['Artículo', 'Cable HDMI', 'Cable VGA'])
+        // Las otras dos hojas, enteras.
+        expect(await leerHoja(libro, 'Movimientos de Almacén')).toHaveLength(3)
+        expect(await leerHoja(libro, 'Unidades con n.º de serie')).toHaveLength(3)
+        // Se intentó una vez, y una vez bastó.
+        expect(falso.estado.peticiones.filter((p) => p.startsWith('stock_levels_por_estado'))).toHaveLength(1)
+      })
+
+      it('la cabecera del documento y el PDF también salen como siempre: ni averiadas ni columnas de estado', async () => {
+        const e = await prepararExportacionDelAlmacen()
+        expect(e.resumen).toBe('1 artículo · 1 bajo mínimo · 1 unidad con n.º de serie en el almacén')
+        expect(e.hojas[0]!.pdf?.columnas).toEqual(['Artículo', 'Existencias', 'Mínimo', 'Bajo mínimo', 'Situación'])
+      })
+
+      it('así lo cuenta PostgREST cuando falta la vista: «in the schema cache»', async () => {
+        falso.estado.fallo = (tabla) =>
+          tabla === 'stock_levels_por_estado'
+            ? { message: "Could not find the table 'public.stock_levels_por_estado' in the schema cache" }
+            : null
+        const { bytes } = await prepararExcelDelAlmacen()
+        const existencias = await leerHoja(await abrirLibro(bytes), 'Existencias')
+        expect(existencias[0]!.celdas.D).toBe('Mínimo')
+        expect(existencias).toHaveLength(3)
+      })
+
+      it('con la vista pero sin alguna de sus columnas, lo mismo: el servidor está a medias', async () => {
+        servidor({ stock_levels_por_estado: VISTA_DE_ESTADOS })
+        falso.estado.fallo = (tabla, columnas) =>
+          tabla === 'stock_levels_por_estado' && columnas.includes('seguimiento')
+            ? { message: 'column stock_levels_por_estado.seguimiento does not exist' }
+            : null
+        const { bytes } = await prepararExcelDelAlmacen()
+        const existencias = await leerHoja(await abrirLibro(bytes), 'Existencias')
+        expect(existencias[0]!.celdas.D).toBe('Mínimo')
+        expect(existencias[1]!.celdas).toMatchObject({ A: 'Cable HDMI', C: 2, E: 'Sí', G: 'Activo' })
+      })
+    })
+
+    it('un fallo de la vista que no es «falta la migración» detiene la exportación: no sale un Excel sin estados en silencio', async () => {
+      servidor({ stock_levels_por_estado: VISTA_DE_ESTADOS })
+      falso.estado.fallo = (tabla) =>
+        tabla === 'stock_levels_por_estado' ? { message: 'permission denied for view stock_levels_por_estado' } : null
+      await expect(prepararExcelDelAlmacen()).rejects.toThrow(
+        /No se pudo leer las existencias por estado: permission denied/,
+      )
+    })
+
+    it('una vista que no contesta a tiempo se dice con palabras, no como «falta la migración»', async () => {
+      servidor({ stock_levels_por_estado: VISTA_DE_ESTADOS })
+      falso.estado.fallo = (tabla) =>
+        tabla === 'stock_levels_por_estado' ? { message: 'AbortError: The operation was aborted due to timeout' } : null
+      await expect(prepararExcelDelAlmacen()).rejects.toThrow(
+        /las existencias por estado: el servidor no ha contestado a tiempo/,
+      )
+    })
   })
 
   describe('un servidor sin la migración del 27 de octubre', () => {
