@@ -1330,9 +1330,11 @@ Excel:
   ignoran y **los repetidos cuentan una vez**: dos que solo se distinguen por
   guiones, espacios, puntos o mayúsculas son el mismo.
 - La base contesta **por cada número**: **apuntada**, **ya estaba** (no se toca:
-  no se le cambia el estado ni la marca) o **error**, con su motivo —«10
-  apuntadas · 2 ya estaban · 1 con error»—. Un error no tumba los demás, y **los
-  que han fallado se quedan en la caja** para corregirlos y volver a pulsar.
+  no se le cambia el estado ni la marca; si es de **otro artículo**, dice de
+  cuál) o **error**, con su motivo —«10 apuntadas · 2 ya estaban · 1 con
+  error»—. Un error no tumba los demás, y **los que han fallado se quedan en la
+  caja** para corregirlos y volver a pulsar. Si un número ya está puesto en un
+  aula, la unidad nace instalada allí, no suma, y también se dice.
 
 **En el Excel y en el PDF.** La hoja **Existencias** lleva, detrás de
 «Existencias», las columnas **Nuevas, Usadas, Reacondicionadas, Averiadas y Sin

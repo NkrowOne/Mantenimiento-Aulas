@@ -157,7 +157,7 @@ export function NuevaUnidad({
             autoCapitalize="characters"
             spellCheck={false}
             enterKeyHint="done"
-            className="mt-1 h-12 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-lg uppercase text-ink"
+            className="mt-1 h-12 w-full rounded-ctl border border-line bg-surface px-3 font-mono text-lg uppercase text-ink placeholder:font-sans placeholder:normal-case"
           />
         </label>
       ) : (
@@ -177,7 +177,7 @@ export function NuevaUnidad({
             autoCorrect="off"
             autoCapitalize="characters"
             spellCheck={false}
-            className="mt-1 w-full rounded-ctl border border-line bg-surface px-3 py-2 font-mono text-base uppercase text-ink"
+            className="mt-1 w-full rounded-ctl border border-line bg-surface px-3 py-2 font-mono text-base uppercase text-ink placeholder:font-sans placeholder:normal-case"
           />
           <span className={`mt-1 block ${demasiadas ? 'text-crit' : ''}`}>
             {n === 0
@@ -248,7 +248,9 @@ export function NuevaUnidad({
             <span className="block text-xs text-muted">
               {modo === 'lista'
                 ? sumarAhora
-                  ? `Suman ${n}: quedarán ${total + n}.`
+                  ? n === 0
+                    ? 'Las que pegues sumarán al almacén.'
+                    : `Suman ${n}: quedarán ${total + n}.`
                   : `No suman: son de las ${total} que ya cuenta el almacén${sinNumero > 0 ? ` (${sinNumero} aún sin número)` : ''}.`
                 : sumarAhora
                   ? `Suma una: quedarán ${total + 1}.`
@@ -295,16 +297,29 @@ export function NuevaUnidad({
       {resultado && (
         <div role="status" className="mt-3 rounded-ctl border border-line bg-surface p-3 text-sm">
           <p className="font-medium">{resumenDeLasAltas(resultado)}</p>
-          {resultado.some((x) => x.resultado === 'ya_estaba') && (
+          {resultado.some((x) => x.resultado === 'ya_estaba' && !x.mensaje) && (
             <p className="mt-1 text-xs text-muted">
               Ya estaban (no se han tocado):{' '}
               <span className="font-mono">
                 {resultado
-                  .filter((x) => x.resultado === 'ya_estaba')
+                  .filter((x) => x.resultado === 'ya_estaba' && !x.mensaje)
                   .map((x) => x.serial)
                   .join(' · ')}
               </span>
             </p>
+          )}
+          {/* Lo que la base explica de una en una: la que ya es de otro
+              artículo, la que nace instalada porque su número está en un aula. */}
+          {resultado.some((x) => x.resultado !== 'error' && x.mensaje) && (
+            <ul className="mt-1 space-y-0.5 text-xs text-warn">
+              {resultado
+                .filter((x) => x.resultado !== 'error' && x.mensaje)
+                .map((x) => (
+                  <li key={x.serial}>
+                    <span className="font-mono">{x.serial}</span>: {x.mensaje}
+                  </li>
+                ))}
+            </ul>
           )}
           {resultado.some((x) => x.resultado === 'error') && (
             <ul className="mt-1 space-y-0.5 text-xs text-crit">

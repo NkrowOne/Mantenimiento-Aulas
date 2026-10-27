@@ -457,6 +457,13 @@ begin
     exit when v_falta = 0;
   end loop;
 
+  -- No puede sobrar nada: el orden recorre los cinco estados, los mismos que
+  -- suma `v_libres`. Si algún día dejara de ser así, mejor un error que una
+  -- salida apuntada por menos de lo que salió.
+  if v_falta > 0 then
+    raise exception 'La salida de «%» no se ha podido repartir entre sus estados: faltan %.', v_nombre, v_falta;
+  end if;
+
   return new;
 end $$;
 
@@ -952,7 +959,8 @@ grant execute on function public.stock_unit_alta(jsonb) to authenticated;
 --   {serial, id, resultado: 'nueva'}       y, si su número ya estaba puesto en
 --                                          un aula, un `mensaje` que lo dice:
 --                                          nace instalada y no suma;
---   {serial, id, resultado: 'ya_estaba'}
+--   {serial, id, resultado: 'ya_estaba'}  y, si es de otro artículo, un
+--                                          `mensaje` que dice de cuál;
 --   {serial, id: null, resultado: 'error', mensaje}
 -- -----------------------------------------------------------------------------
 
@@ -1063,8 +1071,16 @@ begin
       from stock_units
      where upper(regexp_replace(serial, '[\s\-_./]', '', 'g')) = v_claves[i];
     if found then
-      v_out := v_out || jsonb_build_array(jsonb_build_object(
-        'serial', v_series[i], 'id', v_unidad.id, 'resultado', 'ya_estaba'));
+      -- Si es de otro artículo, se dice de cuál: «ya estaba» a secas haría creer
+      -- que está en el que se está apuntando.
+      v_out := v_out || jsonb_build_array(
+        jsonb_build_object('serial', v_series[i], 'id', v_unidad.id, 'resultado', 'ya_estaba')
+        || case when v_unidad.stock_item_id is distinct from v_item
+                then jsonb_build_object('mensaje', format('Ya está apuntada en otro artículo: «%s».',
+                       coalesce((select si.name from stock_items si where si.id = v_unidad.stock_item_id),
+                                v_unidad.articulo)))
+                else '{}'::jsonb
+           end);
       continue;
     end if;
 

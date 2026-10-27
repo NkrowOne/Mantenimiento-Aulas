@@ -7555,6 +7555,9 @@ begin;
   insert into stock_units (stock_item_id, asset_type_id, articulo, serial, brand, condicion, status)
   values (current_setting('prueba100.proy')::uuid, current_setting('prueba100.tipo')::uuid,
           'Proyector de la prueba 100 (almacén)', 'SN-113-B', 'Optoma', 'reacondicionado', 'disponible');
+  -- Uno de otro artículo: «ya estaba», pero diciendo de cuál.
+  insert into stock_units (stock_item_id, articulo, serial, condicion, status)
+  values (current_setting('prueba100.teclado')::uuid, 'Teclado de la prueba 100', 'SN-113-F', 'nuevo', 'disponible');
   insert into assets (id, asset_type_id, room_id, label, serial, status, confirmed)
   values ('10130000-0000-4000-8000-0000000000a1', current_setting('prueba100.tipo')::uuid,
           current_setting('prueba100.sala')::uuid, 'Proyector de la prueba 100', 'SN-113-D', 'instalado', true);
@@ -7597,13 +7600,13 @@ begin;
     v_out := public.stock_unit_alta_varias(jsonb_build_object(
       'stock_item_id', v_item,
       'seriales', jsonb_build_array(' SN-113-A ', 'sn 113 a', '', null, 'SN-113-B', 'SN-113-C',
-                                    'SN-113-D', 'SN-113-E', 12345),
+                                    'SN-113-D', 'SN-113-E', 12345, 'sn-113-f'),
       'condicion', 'usado', 'marca', 'Epson', 'modelo', 'EB-L', 'observaciones', 'Del albarán 113',
       'sumar', true));
 
     if (select string_agg(x ->> 'serial' || ':' || (x ->> 'resultado'), ',' order by o)
           from jsonb_array_elements(v_out) with ordinality as t(x, o))
-       is distinct from 'SN-113-A:nueva,SN-113-B:ya_estaba,SN-113-C:nueva,SN-113-D:nueva,SN-113-E:error,12345:nueva' then
+       is distinct from 'SN-113-A:nueva,SN-113-B:ya_estaba,SN-113-C:nueva,SN-113-D:nueva,SN-113-E:error,12345:nueva,sn-113-f:ya_estaba' then
       raise exception 'FALLO: la lista no vuelve una fila por número, sin repetir ni vacíos y en su orden: %', v_out;
     end if;
 
@@ -7619,6 +7622,14 @@ begin;
         raise exception 'FALLO: la unidad % no nació como la habría dado de alta stock_unit_alta', u.x;
       end if;
     end loop;
+
+    -- La de otro artículo: ya estaba, y dice en cuál. La del mismo, sin mensaje.
+    if (v_out -> 6 ->> 'mensaje') is distinct from
+         format('Ya está apuntada en otro artículo: «%s».',
+                (select name from stock_items where id = current_setting('prueba100.teclado')::uuid))
+       or (v_out -> 1) ? 'mensaje' then
+      raise exception 'FALLO: «ya estaba» no dice de qué otro artículo es, o lo dice del mismo: %', v_out;
+    end if;
 
     -- La que ya estaba, intacta y con su id; ni una fila más en la Actividad.
     if (v_out -> 1 ->> 'id')::uuid is distinct from v_b.id
@@ -7648,7 +7659,7 @@ begin;
               and kind = 'ajuste' and qty = 1 and condicion = 'usado') <> 3 then
       raise exception 'FALLO: «sumar» no apuntó un +1 usado por cada nueva del almacén';
     end if;
-    raise notice 'OK: nuevas como stock_unit_alta y sumando con su estado, la que ya estaba intacta, la del aula instalada y dicho, y la que falla con su motivo sin tumbar las demás';
+    raise notice 'OK: nuevas como stock_unit_alta y sumando con su estado, la que ya estaba intacta (y, si es de otro artículo, dicho), la del aula instalada y dicho, y la que falla con su motivo sin tumbar las demás';
   end $$;
 
   do $$
