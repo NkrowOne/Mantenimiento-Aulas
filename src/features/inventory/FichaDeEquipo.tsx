@@ -371,7 +371,7 @@ function Lectura({
 const TONO_DE_VIDA: Record<EstadoDeVida, string> = {
   obsoleto: 'bg-crit-tint text-crit',
   proximo: 'bg-warn-tint text-warn',
-  vigente: 'bg-ok-tint text-ok-ink',
+  vigente: 'bg-ok-tint text-ok',
   sin_datos: 'bg-sunken text-muted',
 }
 
@@ -526,7 +526,11 @@ function DarDeBaja({
     },
     onSuccess: () => {
       refrescarTrasCambio(qc, [equipo.room_id])
-      onFin(destino === 'almacen' ? 'Devuelto al almacén: suma una unidad a su artículo.' : 'Dado de baja.')
+      onFin(
+        destino === 'almacen'
+          ? 'Devuelto al almacén. Si su tipo tiene artículo en el almacén, suma una unidad; si no, ajústalo a mano en Almacén.'
+          : 'Dado de baja.',
+      )
     },
   })
 

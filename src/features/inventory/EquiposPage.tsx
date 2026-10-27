@@ -464,7 +464,7 @@ function Movimientos(): React.ReactElement {
               <li key={m.id} className="py-2 text-sm">
                 <div className="flex flex-wrap items-baseline gap-x-2">
                   <span
-                    className={`font-medium ${m.kind === 'alta' ? 'text-ok-ink' : m.kind === 'baja' ? 'text-crit' : ''}`}
+                    className={`font-medium ${m.kind === 'alta' ? 'text-ok' : m.kind === 'baja' ? 'text-crit' : ''}`}
                   >
                     {MOVIMIENTO_LABEL[m.kind] ?? m.kind}
                   </span>

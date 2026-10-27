@@ -4779,3 +4779,749 @@ begin;
     raise notice 'OK: el supervisor sigue viéndolo todo';
   end $$;
 rollback;
+
+-- =============================================================================
+-- La ficha del equipo (20261027000100)
+--
+-- Un edificio propio con tres salas —dos vivas y una archivada—, un tipo
+-- propio con su artículo de almacén y tres equipos de hace dos días: uno con
+-- ficha (precio, número de inventario y nombre de red) y dos sin ella. Va en
+-- una función temporal porque cada bloque lo monta de nuevo dentro de su
+-- transacción, y los ids viajan en ajustes locales —como `prueba.firma` en el
+-- bloque 82— para que los lea cualquier rol.
+--
+-- Se monta SIEMPRE como dueño y antes del primer `test_as()`: sin token la
+-- puerta de la ficha se aparta, que es justo lo que hace una migración.
+-- =============================================================================
+
+create or replace function pg_temp.escenario_ficha() returns void
+language plpgsql as $$
+declare
+  v_ed   uuid;
+  v_zona uuid;
+  v_s1   uuid;
+  v_s2   uuid;
+  v_s3   uuid;
+  v_tipo uuid;
+  v_item uuid;
+begin
+  insert into buildings (code, name, sort_order) values ('Z84', 'EDIFICIO DE LA FICHA', 984)
+    returning id into v_ed;
+  insert into zones (building_id, name, sort_order) values (v_ed, 'PLANTA BAJA', 10)
+    returning id into v_zona;
+  insert into rooms (zone_id, code, name, kind) values (v_zona, '84.1', 'Aula 84.1', 'aula')
+    returning id into v_s1;
+  insert into rooms (zone_id, code, name, kind) values (v_zona, '84.2', 'Aula 84.2', 'aula')
+    returning id into v_s2;
+  insert into rooms (zone_id, code, name, kind, active) values (v_zona, '84.3', 'Aula 84.3', 'aula', false)
+    returning id into v_s3;
+  insert into asset_types (name, category, confirmed) values ('Equipo de la ficha', 'ti', true)
+    returning id into v_tipo;
+  insert into stock_items (name, asset_type_id) values ('Equipo de la ficha (almacén)', v_tipo)
+    returning id into v_item;
+
+  insert into assets (id, asset_type_id, room_id, label, serial, status, confirmed, created_at,
+                      inventory_tag, purchase_price, hostname)
+  values
+    ('84840000-0000-4000-8000-000000000001', v_tipo, v_s1, 'Equipo de la ficha', 'SN-84-0001',
+     'instalado', true, now() - interval '2 days', 'INV-84-0001', 100, 'pc-84-01'),
+    ('84840000-0000-4000-8000-000000000002', v_tipo, v_s1, 'Equipo de la ficha 2', 'SN-84-0002',
+     'instalado', true, now() - interval '2 days', null, null, null),
+    -- En la otra sala y con el mismo nombre: con esto choca el traslado.
+    ('84840000-0000-4000-8000-000000000003', v_tipo, v_s2, 'Equipo de la ficha', null,
+     'instalado', true, now() - interval '2 days', null, null, null);
+
+  perform set_config('prueba84.tipo', v_tipo::text, true);
+  perform set_config('prueba84.item', v_item::text, true);
+  perform set_config('prueba84.s1',   v_s1::text,   true);
+  perform set_config('prueba84.s2',   v_s2::text,   true);
+  perform set_config('prueba84.s3',   v_s3::text,   true);
+end $$;
+
+\echo ''
+\echo '=== 84. La ficha del equipo: el técnico sigue corrigiendo y no toca la compra ==='
+begin;
+  select pg_temp.escenario_ficha();
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+
+  -- Lo de siempre, tal cual lo sube la cola de salida: un alta con sus seis
+  -- columnas y una corrección con las suyas sobre un equipo que SÍ tiene ficha.
+  -- PostgREST lo manda como `insert … on conflict (id) do update` con las
+  -- columnas del cuerpo, y así se escribe aquí.
+  do $$
+  declare
+    v_tipo uuid := current_setting('prueba84.tipo')::uuid;
+    v_s1   uuid := current_setting('prueba84.s1')::uuid;
+    v_n    int;
+    a      record;
+  begin
+    insert into assets (id, asset_type_id, room_id, label, status, created_by)
+    values ('84840000-0000-4000-8000-000000000010', v_tipo, v_s1, 'Equipo de la ficha 3', 'instalado',
+            '11111111-1111-4111-8111-111111111111')
+    on conflict (id) do update
+       set asset_type_id = excluded.asset_type_id, room_id = excluded.room_id,
+           label = excluded.label, status = excluded.status, created_by = excluded.created_by;
+
+    insert into assets (id, asset_type_id, room_id, label, serial, brand, model, status)
+    values ('84840000-0000-4000-8000-000000000001', v_tipo, v_s1, 'Equipo de la ficha',
+            'SN-84-0001-B', 'Lenovo', 'M70q', 'averiado')
+    on conflict (id) do update
+       set asset_type_id = excluded.asset_type_id, room_id = excluded.room_id,
+           label = excluded.label, serial = excluded.serial, brand = excluded.brand,
+           model = excluded.model, status = excluded.status;
+
+    select * into a from assets where id = '84840000-0000-4000-8000-000000000001';
+    if a.serial <> 'SN-84-0001-B' or a.brand <> 'Lenovo' or a.model <> 'M70q' or a.status <> 'averiado' then
+      raise exception 'FALLO: la corrección desde el aula no entró: %', to_jsonb(a);
+    end if;
+    if a.purchase_price is distinct from 100.00 or a.inventory_tag is distinct from 'INV-84-0001'
+       or a.hostname is distinct from 'pc-84-01' then
+      raise exception 'FALLO: la corrección desde el aula se llevó por delante la ficha: %', to_jsonb(a);
+    end if;
+    if not exists (select 1 from assets where id = '84840000-0000-4000-8000-000000000010') then
+      raise exception 'FALLO: el alta desde el aula no entró';
+    end if;
+
+    -- Y un UPDATE suelto de etiqueta y estado, como el de «marcar averiado».
+    update assets set label = 'Equipo de la ficha bis', status = 'instalado'
+     where id = '84840000-0000-4000-8000-000000000002';
+    get diagnostics v_n = row_count;
+    if v_n <> 1 then
+      raise exception 'FALLO: el técnico ya no corrige la etiqueta ni el estado';
+    end if;
+
+    -- Reenviar lo que ya hay no es cambiarlo: un dispositivo que suba la fila
+    -- entera con el precio que bajó no puede quedarse atascado en la cola.
+    update assets set purchase_price = 100 where id = '84840000-0000-4000-8000-000000000001';
+    raise notice 'OK: el técnico da de alta y corrige desde el aula como siempre, también un equipo con ficha';
+  end $$;
+
+  -- Lo de la ficha, no: ni al dar de alta, ni corrigiendo, ni vaciándolo.
+  do $$
+  declare
+    v_tipo uuid := current_setting('prueba84.tipo')::uuid;
+    v_s1   uuid := current_setting('prueba84.s1')::uuid;
+    v_msg  text;
+  begin
+    begin
+      update assets set purchase_price = 1 where id = '84840000-0000-4000-8000-000000000001';
+      raise exception 'FALLO: un técnico cambió el precio de compra';
+    exception when insufficient_privilege then
+      v_msg := sqlerrm;
+    end;
+    if v_msg not like 'Solo un supervisor o administrador puede cambiar los datos de compra%' then
+      raise exception 'FALLO: el rechazo no lo dio la puerta de la ficha: %', v_msg;
+    end if;
+
+    begin
+      insert into assets (id, asset_type_id, room_id, label, status, hostname)
+      values (gen_random_uuid(), v_tipo, v_s1, 'Equipo de la ficha 9', 'instalado', 'pc-colado');
+      raise exception 'FALLO: un técnico dio de alta un equipo con nombre de red';
+    exception when insufficient_privilege then null;
+    end;
+
+    begin
+      update assets set inventory_tag = null where id = '84840000-0000-4000-8000-000000000001';
+      raise exception 'FALLO: un técnico borró el número de inventario';
+    exception when insufficient_privilege then null;
+    end;
+
+    begin
+      update assets set warranty_until = current_date + 365, notes = 'apunte'
+       where id = '84840000-0000-4000-8000-000000000002';
+      raise exception 'FALLO: un técnico cambió la garantía';
+    exception when insufficient_privilege then null;
+    end;
+
+    -- Y la vida útil al proponer un tipo desde el aula, que la RLS sí deja.
+    begin
+      insert into asset_types (name, vida_util_anyos) values ('Tipo con vida de la prueba 84', 3);
+      raise exception 'FALLO: un técnico propuso un tipo con vida útil';
+    exception when insufficient_privilege then
+      v_msg := sqlerrm;
+    end;
+    if v_msg not like '%vida útil%' then
+      raise exception 'FALLO: el tipo se rechazó por otra cosa: %', v_msg;
+    end if;
+    raise notice 'OK: ni precio, ni nombre de red, ni número de inventario, ni garantía, ni vida útil: 42501';
+  end $$;
+
+  -- El supervisor sí, y la fecha de cambio se mueve con la ficha.
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  declare
+    v_antes timestamptz;
+    a       record;
+  begin
+    select updated_at into v_antes from assets where id = '84840000-0000-4000-8000-000000000003';
+    update assets
+       set acquired_at = date '2024-09-01', supplier = '   ', purchase_price = 249.99,
+           warranty_until = current_date + 30, hostname = 'pc-84-03'
+     where id = '84840000-0000-4000-8000-000000000003';
+    select * into a from assets where id = '84840000-0000-4000-8000-000000000003';
+    if a.purchase_price <> 249.99 or a.hostname <> 'pc-84-03' or a.acquired_at <> date '2024-09-01' then
+      raise exception 'FALLO: el supervisor no pudo escribir la ficha: %', to_jsonb(a);
+    end if;
+    if a.updated_at <= v_antes then
+      raise exception 'FALLO: cambiar la ficha no movió la fecha de cambio (% → %)', v_antes, a.updated_at;
+    end if;
+    if a.supplier is not null then
+      raise exception 'FALLO: un proveedor en blanco se guardó como «%»', a.supplier;
+    end if;
+    raise notice 'OK: el supervisor escribe la ficha, la fecha de cambio se mueve y un blanco es un hueco';
+
+    begin
+      update assets set inventory_tag = 'inv 84/0001' where id = '84840000-0000-4000-8000-000000000003';
+      raise exception 'FALLO: dos equipos con el mismo número de inventario, escrito distinto';
+    exception when unique_violation then null;
+    end;
+    begin
+      update assets set purchase_price = -1 where id = '84840000-0000-4000-8000-000000000003';
+      raise exception 'FALLO: un precio de compra negativo';
+    exception when check_violation then null;
+    end;
+    raise notice 'OK: el número de inventario no se repite ni con guiones ni con barras, y el precio no es negativo';
+  end $$;
+
+  select test_as('44444444-4444-4444-8444-444444444444', 'admin');
+  do $$
+  begin
+    update assets set notes = 'Revisado por administración'
+     where id = '84840000-0000-4000-8000-000000000002';
+    if (select notes from assets where id = '84840000-0000-4000-8000-000000000002')
+       is distinct from 'Revisado por administración' then
+      raise exception 'FALLO: el administrador no pudo escribir la ficha';
+    end if;
+    raise notice 'OK: el administrador también';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 85. El registro y los movimientos: los lee el personal, y la vida sale bien ==='
+begin;
+  select pg_temp.escenario_ficha();
+
+  -- Un equipo por estado de vida, con las fronteras exactas: hoy ya es
+  -- obsoleto y dentro de un año justo todavía es «próximo». Y dos retirados:
+  -- uno que se fue al almacén —sin sala, con la sala en su baja— y uno que se
+  -- retiró y volvió, cuya baja ya no cuenta.
+  do $$
+  declare
+    v_tipo uuid := current_setting('prueba84.tipo')::uuid;
+    v_s2   uuid := current_setting('prueba84.s2')::uuid;
+  begin
+    insert into assets (id, asset_type_id, room_id, label, status, confirmed,
+                        acquired_at, end_of_life, warranty_until)
+    values
+      ('84850000-0000-4000-8000-000000000001', v_tipo, v_s2, 'Vida 1', 'instalado', true,
+       null, current_date, current_date),
+      ('84850000-0000-4000-8000-000000000002', v_tipo, v_s2, 'Vida 2', 'instalado', true,
+       (current_date - interval '4 years 6 months')::date, null, current_date - 1),
+      ('84850000-0000-4000-8000-000000000003', v_tipo, v_s2, 'Vida 3', 'instalado', true,
+       (current_date - interval '1 year')::date, null, null),
+      ('84850000-0000-4000-8000-000000000004', v_tipo, v_s2, 'Vida 4', 'instalado', true,
+       null, null, null),
+      -- Comprado hace veinte años, pero con fin de vida fijado a mano: gana.
+      ('84850000-0000-4000-8000-000000000005', v_tipo, v_s2, 'Vida 5', 'instalado', true,
+       (current_date - interval '20 years')::date, current_date + 3 * 365, null),
+      ('84850000-0000-4000-8000-000000000006', v_tipo, v_s2, 'Vida 6', 'instalado', true,
+       null, (current_date + interval '1 year')::date, null),
+      ('84850000-0000-4000-8000-000000000007', v_tipo, null, 'Al almacén', 'retirado', true,
+       null, null, null),
+      ('84850000-0000-4000-8000-000000000008', v_tipo, v_s2, 'Vuelve', 'instalado', true,
+       null, null, null);
+
+    insert into asset_events (id, asset_id, room_id, kind, occurred_at, by_user, meta)
+    values
+      ('84850000-0000-4000-8000-0000000000e1', '84850000-0000-4000-8000-000000000007', v_s2, 'baja',
+       now() - interval '1 day', '22222222-2222-4222-8222-222222222222',
+       jsonb_build_object('destino', 'almacen', 'nota', 'Sobra en el aula de la prueba 85')),
+      ('84850000-0000-4000-8000-0000000000e2', '84850000-0000-4000-8000-000000000008', v_s2, 'baja',
+       now() - interval '2 days', '22222222-2222-4222-8222-222222222222',
+       jsonb_build_object('destino', 'baja', 'nota', 'Se retiró por error')),
+      ('84850000-0000-4000-8000-0000000000e3', '84850000-0000-4000-8000-000000000008', v_s2, 'alta',
+       now() - interval '1 hour', '22222222-2222-4222-8222-222222222222',
+       jsonb_build_object('nota', 'Vuelve al inventario'));
+  end $$;
+
+  -- La vida útil la fija el despacho.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.asset_type_vida_util(current_setting('prueba84.tipo')::uuid, 5);
+    raise exception 'FALLO: un técnico fijó la vida útil de un tipo';
+  exception when insufficient_privilege then
+    raise notice 'OK: la vida útil de un tipo no la fija un técnico';
+  end $$;
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  declare
+    v_tipo uuid := current_setting('prueba84.tipo')::uuid;
+    v_n    int;
+  begin
+    foreach v_n in array array[0, 51] loop
+      begin
+        perform public.asset_type_vida_util(v_tipo, v_n);
+        raise exception 'FALLO: se admitió una vida útil de % años', v_n;
+      exception when invalid_parameter_value then null;
+      end;
+    end loop;
+    begin
+      perform public.asset_type_vida_util(gen_random_uuid(), 5);
+      raise exception 'FALLO: se fijó la vida útil de un tipo que no existe';
+    exception when invalid_parameter_value then null;
+    end;
+    perform public.asset_type_vida_util(v_tipo, 5);
+    if (select vida_util_anyos from asset_types where id = v_tipo) is distinct from 5 then
+      raise exception 'FALLO: la vida útil no se guardó';
+    end if;
+    raise notice 'OK: el supervisor fija la vida útil, de 1 a 50 años y de un tipo que exista';
+  end $$;
+
+  -- Y el técnico lee las dos vistas enteras.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_estados text;
+    v_s2      uuid := current_setting('prueba84.s2')::uuid;
+    r         record;
+  begin
+    if (select count(*) from asset_registry) < 1000 then
+      raise exception 'FALLO: el técnico no ve el registro entero';
+    end if;
+
+    select string_agg(label || '=' || estado_vida, ' ' order by label) into v_estados
+      from asset_registry
+     where id::text like '84850000-%' and label like 'Vida %';
+    if v_estados <> 'Vida 1=obsoleto Vida 2=proximo Vida 3=vigente Vida 4=sin_datos Vida 5=vigente Vida 6=proximo' then
+      raise exception 'FALLO: los estados de vida salen mal: %', v_estados;
+    end if;
+
+    select * into r from asset_registry where id = '84850000-0000-4000-8000-000000000002';
+    if r.fin_vida <> (r.acquired_at + interval '5 years')::date or r.vida_util_anyos <> 5 then
+      raise exception 'FALLO: el fin de vida no es adquisición + vida útil: %', to_jsonb(r);
+    end if;
+    if r.en_garantia is distinct from false
+       or (select en_garantia from asset_registry where id = '84850000-0000-4000-8000-000000000001') is distinct from true
+       or (select en_garantia from asset_registry where id = '84850000-0000-4000-8000-000000000004') is not null then
+      raise exception 'FALLO: la garantía no distingue «sí», «no» y «no consta»';
+    end if;
+    raise notice 'OK: obsoleto, próximo, vigente y sin datos, con el fin de vida a mano por delante';
+
+    -- El que se fue al almacén sigue en el registro, con la sala de la que salió.
+    select * into r from asset_registry where id = '84850000-0000-4000-8000-000000000007';
+    if r.id is null or r.status <> 'retirado' or r.room_id is distinct from v_s2
+       or r.room_code <> '84.2' or r.building_code <> 'Z84' or r.baja_at is null then
+      raise exception 'FALLO: el retirado al almacén no sale bien en el registro: %', to_jsonb(r);
+    end if;
+    -- Y el que volvió ya no tiene fecha de baja, aunque la baja siga en su histórico.
+    select * into r from asset_registry where id = '84850000-0000-4000-8000-000000000008';
+    if r.baja_at is not null or r.ultimo_evento_at is null then
+      raise exception 'FALLO: una baja deshecha sigue mandando en el registro: %', to_jsonb(r);
+    end if;
+    raise notice 'OK: los retirados están en el registro, y una baja deshecha deja de contar';
+
+    select * into r from asset_movements where id = '84850000-0000-4000-8000-0000000000e1';
+    if r.kind <> 'baja' or r.destino <> 'almacen' or r.motivo <> 'Sobra en el aula de la prueba 85'
+       or r.room_code <> '84.2' or r.by_name is distinct from 'super' or r.type_name <> 'Equipo de la ficha' then
+      raise exception 'FALLO: el movimiento no sale con su motivo, su destino o su firma: %', to_jsonb(r);
+    end if;
+    raise notice 'OK: los movimientos salen con su motivo, su destino, su sala y la firma de un compañero';
+  end $$;
+
+  -- Quitar la vida útil devuelve a «sin datos» lo que dependía de ella, y no
+  -- lo que llevaba la fecha a mano.
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  select public.asset_type_vida_util(current_setting('prueba84.tipo')::uuid, null);
+  do $$
+  begin
+    if (select estado_vida from asset_registry where id = '84850000-0000-4000-8000-000000000003') <> 'sin_datos'
+       or (select estado_vida from asset_registry where id = '84850000-0000-4000-8000-000000000005') <> 'vigente' then
+      raise exception 'FALLO: quitar la vida útil no se refleja bien en el registro';
+    end if;
+    if has_table_privilege('anon', 'public.asset_registry', 'select')
+       or has_table_privilege('anon', 'public.asset_movements', 'select') then
+      raise exception 'FALLO: un anónimo puede pedir el registro o los movimientos';
+    end if;
+    raise notice 'OK: sin vida útil, «sin datos»; y un anónimo no llega a ninguna de las dos vistas';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 86. Registrar una entrada desde la ficha ==='
+begin;
+  select pg_temp.escenario_ficha();
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.asset_registrar_entrada(jsonb_build_object(
+      'asset_type_id', current_setting('prueba84.tipo'), 'room_id', current_setting('prueba84.s1')));
+    raise exception 'FALLO: un técnico registró una entrada desde la ficha';
+  exception when insufficient_privilege then
+    raise notice 'OK: registrar una entrada es cosa del despacho';
+  end $$;
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  declare
+    v_tipo uuid := current_setting('prueba84.tipo')::uuid;
+    v_s1   uuid := current_setting('prueba84.s1')::uuid;
+    v_p    jsonb;
+    v_id   uuid;
+    a      record;
+    e      record;
+  begin
+    v_p := jsonb_build_object(
+      'id',             '84860000-0000-4000-8000-000000000001',
+      'asset_type_id',  v_tipo,
+      'room_id',        v_s1,
+      'brand',          'Lenovo',
+      'model',          '  ThinkCentre M70q ',
+      'serial',         'SN-84-0020',
+      'inventory_tag',  'INV-84-0020',
+      'acquired_at',    '2024-01-15',
+      'supplier',       '',
+      'purchase_price', '812,40',
+      'warranty_until', '2027-01-15',
+      'hostname',       'pc-84-20',
+      'mac_address',    'AA:BB:CC:DD:EE:20',
+      'ram',            '16 GB',
+      'motivo',         'Compra del expediente 84/2026');
+    v_id := public.asset_registrar_entrada(v_p);
+
+    select * into a from assets where id = v_id;
+    if v_id <> '84860000-0000-4000-8000-000000000001' or a.status <> 'instalado' or not a.confirmed
+       or a.created_by is distinct from '22222222-2222-4222-8222-222222222222' then
+      raise exception 'FALLO: la entrada no nace instalada, validada y firmada: %', to_jsonb(a);
+    end if;
+    -- La sala ya tiene «Equipo de la ficha» y «Equipo de la ficha 2».
+    if a.label <> 'Equipo de la ficha 3' then
+      raise exception 'FALLO: la etiqueta no es la siguiente libre: «%»', a.label;
+    end if;
+    if a.model <> 'ThinkCentre M70q' or a.supplier is not null or a.purchase_price <> 812.40
+       or a.acquired_at <> date '2024-01-15' or a.warranty_until <> date '2027-01-15'
+       or a.hostname <> 'pc-84-20' or a.ram <> '16 GB' or a.inventory_tag <> 'INV-84-0020' then
+      raise exception 'FALLO: la ficha no se guardó como llegó: %', to_jsonb(a);
+    end if;
+
+    select * into e from asset_events where asset_id = v_id;
+    if e.kind <> 'alta' or e.room_id <> v_s1 or e.by_user <> '22222222-2222-4222-8222-222222222222'
+       or e.meta ->> 'source' <> 'ficha' or e.meta ->> 'motivo' <> 'Compra del expediente 84/2026' then
+      raise exception 'FALLO: el alta no quedó en el histórico como se pide: %', to_jsonb(e);
+    end if;
+    raise notice 'OK: la entrada nace instalada, con su ficha, su etiqueta libre y su alta firmada';
+
+    -- La pantalla reenvía porque se cortó la red: el mismo equipo, ni otro ni otra alta.
+    if public.asset_registrar_entrada(v_p) <> v_id
+       or (select count(*) from asset_events where asset_id = v_id) <> 1 then
+      raise exception 'FALLO: reenviar la misma entrada creó otra';
+    end if;
+    -- Y el Historial de la sala la cuenta una vez, no dos.
+    if (select count(*) from room_timeline
+         where room_id = v_s1 and kind = 'equipo' and subkind = 'alta'
+           and title = 'Equipo de la ficha 3') <> 1 then
+      raise exception 'FALLO: el Historial cuenta la entrada % veces',
+        (select count(*) from room_timeline
+          where room_id = v_s1 and kind = 'equipo' and subkind = 'alta' and title = 'Equipo de la ficha 3');
+    end if;
+    if (select motivo from asset_movements where asset_id = v_id) <> 'Compra del expediente 84/2026' then
+      raise exception 'FALLO: el movimiento de la entrada no lleva su motivo';
+    end if;
+    raise notice 'OK: reenviarla no la duplica, y el Historial la cuenta una sola vez';
+
+    -- Sin etiqueta ni id, a la otra sala: «Equipo de la ficha 2», que allí está libre.
+    v_id := public.asset_registrar_entrada(jsonb_build_object(
+      'asset_type_id', v_tipo, 'room_id', current_setting('prueba84.s2'), 'serial', '   '));
+    if (select label from assets where id = v_id) <> 'Equipo de la ficha 2'
+       or (select serial from assets where id = v_id) is not null then
+      raise exception 'FALLO: la segunda entrada sale como «%»', (select label from assets where id = v_id);
+    end if;
+    raise notice 'OK: sin etiqueta se le pone la siguiente libre de su sala, y un blanco es un hueco';
+  end $$;
+
+  -- Los duplicados se rechazan diciendo de quién son y dónde están.
+  do $$
+  declare
+    v_tipo uuid := current_setting('prueba84.tipo')::uuid;
+    v_s1   uuid := current_setting('prueba84.s1')::uuid;
+    v_s2   uuid := current_setting('prueba84.s2')::uuid;
+    v_msg  text;
+  begin
+    begin
+      perform public.asset_registrar_entrada(jsonb_build_object(
+        'asset_type_id', v_tipo, 'room_id', v_s2, 'serial', 'SN-84-0001'));
+      raise exception 'FALLO: se registró un número de serie repetido';
+    exception when unique_violation then
+      v_msg := sqlerrm;
+    end;
+    if v_msg not like '%SN-84-0001%' or v_msg not like '%sala 84.1%' then
+      raise exception 'FALLO: el duplicado de serie no dice dónde está el otro: %', v_msg;
+    end if;
+
+    begin
+      perform public.asset_registrar_entrada(jsonb_build_object(
+        'asset_type_id', v_tipo, 'room_id', v_s2, 'inventory_tag', 'inv/84 0001'));
+      raise exception 'FALLO: se registró un número de inventario repetido';
+    exception when unique_violation then
+      v_msg := sqlerrm;
+    end;
+    if v_msg not like '%«Equipo de la ficha» en la sala 84.1 (edificio Z84)%' then
+      raise exception 'FALLO: el duplicado de inventario no dice cuál es ni dónde está: %', v_msg;
+    end if;
+
+    begin
+      perform public.asset_registrar_entrada(jsonb_build_object(
+        'asset_type_id', v_tipo, 'room_id', v_s1, 'label', 'equipo de la FICHA'));
+      raise exception 'FALLO: se registró una etiqueta que ya está en la sala';
+    exception when unique_violation then null;
+    end;
+    raise notice 'OK: serie, inventario o etiqueta repetidos: 23505, con el equipo y la sala en el mensaje';
+  end $$;
+
+  -- Y lo que no vale, con 22023 y diciendo qué casilla es.
+  do $$
+  declare
+    v_tipo uuid := current_setting('prueba84.tipo')::uuid;
+    v_s1   uuid := current_setting('prueba84.s1')::uuid;
+    v_mal  jsonb;
+    v_msg  text;
+  begin
+    foreach v_mal in array array[
+      jsonb_build_object('room_id', v_s1),
+      jsonb_build_object('asset_type_id', v_tipo),
+      jsonb_build_object('asset_type_id', gen_random_uuid(), 'room_id', v_s1),
+      jsonb_build_object('asset_type_id', v_tipo, 'room_id', current_setting('prueba84.s3')),
+      jsonb_build_object('asset_type_id', v_tipo, 'room_id', v_s1, 'purchase_price', -5),
+      jsonb_build_object('asset_type_id', v_tipo, 'room_id', v_s1, 'occurred_at', now() + interval '2 days'),
+      jsonb_build_object('asset_type_id', v_tipo, 'room_id', v_s1, 'id', 'no-es-un-uuid')
+    ] loop
+      begin
+        perform public.asset_registrar_entrada(v_mal);
+        raise exception 'FALLO: se admitió la entrada %', v_mal;
+      exception when invalid_parameter_value then null;
+      end;
+    end loop;
+
+    begin
+      perform public.asset_registrar_entrada(jsonb_build_object(
+        'asset_type_id', v_tipo, 'room_id', v_s1, 'acquired_at', 'ayer'));
+      raise exception 'FALLO: se admitió «ayer» como fecha de adquisición';
+    exception when invalid_parameter_value then
+      v_msg := sqlerrm;
+    end;
+    if v_msg not like '%fecha de adquisición%' then
+      raise exception 'FALLO: el error de la fecha no dice qué casilla es: %', v_msg;
+    end if;
+    raise notice 'OK: sin tipo, sin sala, sala archivada, precio negativo, fecha futura o mala: 22023';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 87. Dar de baja desde la ficha es la misma baja de siempre ==='
+begin;
+  select pg_temp.escenario_ficha();
+  -- Dos de los equipos son unidades de repuesto instaladas: tienen que seguir
+  -- al equipo igual que cuando la baja la aprueba la bandeja.
+  insert into stock_units (stock_item_id, asset_type_id, articulo, serial, status, asset_id, room_id, installed_at)
+  select current_setting('prueba84.item')::uuid, a.asset_type_id, 'Equipo de la ficha', a.serial,
+         'instalado', a.id, a.room_id, now()
+    from assets a
+   where a.id in ('84840000-0000-4000-8000-000000000001', '84840000-0000-4000-8000-000000000002');
+
+  -- Un técnico pidió desde el aula retirar el tercero, con su motivo.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  insert into asset_removals (id, asset_id, room_id, destino, reason, requested_at, requested_by)
+  values ('84870000-0000-4000-8000-0000000000a3', '84840000-0000-4000-8000-000000000003',
+          current_setting('prueba84.s2')::uuid, 'almacen', 'No enciende desde el lunes', now(),
+          '11111111-1111-4111-8111-111111111111');
+  do $$
+  begin
+    perform public.asset_dar_de_baja('84840000-0000-4000-8000-000000000001', 'baja', 'La placa base ha muerto');
+    raise exception 'FALLO: un técnico dio de baja un equipo desde la ficha';
+  exception when insufficient_privilege then
+    raise notice 'OK: dar de baja desde la ficha es cosa del despacho';
+  end $$;
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  begin
+    begin
+      perform public.asset_dar_de_baja('84840000-0000-4000-8000-000000000001', 'basura', 'La placa base ha muerto');
+      raise exception 'FALLO: se admitió el destino «basura»';
+    exception when invalid_parameter_value then null;
+    end;
+    begin
+      perform public.asset_dar_de_baja('84840000-0000-4000-8000-000000000001', 'baja', '  roto   ');
+      raise exception 'FALLO: se admitió un motivo de cuatro letras';
+    exception when invalid_parameter_value then null;
+    end;
+    begin
+      perform public.asset_dar_de_baja(gen_random_uuid(), 'baja', 'La placa base ha muerto');
+      raise exception 'FALLO: se dio de baja un equipo que no existe';
+    exception when invalid_parameter_value then null;
+    end;
+    raise notice 'OK: destino que no es baja ni almacén, motivo corto o equipo inexistente: 22023';
+  end $$;
+
+  -- Al almacén: fuera del aula, una unidad más en el almacén y la unidad de
+  -- repuesto otra vez disponible. Exactamente lo del bloque 48.
+  select on_hand as antes from stock_levels where stock_item_id = current_setting('prueba84.item')::uuid \gset
+  select public.asset_dar_de_baja('84840000-0000-4000-8000-000000000002', 'almacén',
+                                  'Sobra en el aula: vuelve a la estantería');
+  select case
+    when (select status from assets where id = '84840000-0000-4000-8000-000000000002') = 'retirado'
+     and (select room_id from assets where id = '84840000-0000-4000-8000-000000000002') is null
+     and (select on_hand from stock_levels where stock_item_id = current_setting('prueba84.item')::uuid) = :'antes'::int + 1
+     and (select status from stock_units where asset_id = '84840000-0000-4000-8000-000000000002') = 'disponible'
+    then 'OK: al almacén, el equipo sale, el almacén pasa de ' || :'antes' || ' a ' ||
+         (select on_hand from stock_levels where stock_item_id = current_setting('prueba84.item')::uuid) ||
+         ' y la unidad de repuesto vuelve a estar disponible'
+    else 'FALLO: la baja al almacén desde la ficha no hace lo de la bandeja'
+  end as resultado;
+
+  do $$
+  declare
+    s record;
+    e record;
+    r record;
+  begin
+    select * into s from asset_removals where asset_id = '84840000-0000-4000-8000-000000000002';
+    if s.state <> 'aprobada' or s.destino <> 'almacen'
+       or s.requested_by <> '22222222-2222-4222-8222-222222222222'
+       or s.decided_by <> '22222222-2222-4222-8222-222222222222'
+       or s.reason <> 'Sobra en el aula: vuelve a la estantería' then
+      raise exception 'FALLO: la solicitud no queda firmada y aprobada: %', to_jsonb(s);
+    end if;
+    select * into e from asset_events where asset_id = '84840000-0000-4000-8000-000000000002' and kind = 'baja';
+    if e.room_id <> current_setting('prueba84.s1')::uuid or e.meta ->> 'destino' <> 'almacen'
+       or e.meta ->> 'solicitud' <> s.id::text or e.meta ->> 'source' <> 'ficha'
+       or e.meta ->> 'nota' <> 'Sobra en el aula: vuelve a la estantería' then
+      raise exception 'FALLO: la baja no quedó en el histórico de su sala con su motivo: %', to_jsonb(e);
+    end if;
+    select * into r from asset_registry where id = '84840000-0000-4000-8000-000000000002';
+    if r.baja_at is null or r.room_code <> '84.1' then
+      raise exception 'FALLO: el registro pierde la sala o la fecha del que se fue al almacén: %', to_jsonb(r);
+    end if;
+    if (select destino || ' · ' || source || ' · ' || by_name from asset_movements where id = e.id)
+       <> 'almacen · ficha · super' then
+      raise exception 'FALLO: el movimiento de la baja no dice destino, origen y firma';
+    end if;
+    raise notice 'OK: la solicitud queda aprobada, la baja en el histórico de su sala y en los movimientos';
+  end $$;
+
+  do $$
+  begin
+    -- De baja: conserva la sala, y la unidad de repuesto pasa a baja.
+    perform public.asset_dar_de_baja('84840000-0000-4000-8000-000000000001', 'baja', 'La placa base ha muerto');
+    if (select room_id from assets where id = '84840000-0000-4000-8000-000000000001') <> current_setting('prueba84.s1')::uuid
+       or (select status from stock_units where asset_id = '84840000-0000-4000-8000-000000000001') <> 'baja' then
+      raise exception 'FALLO: la baja definitiva no conserva la sala o no se lleva la unidad';
+    end if;
+
+    -- La que pidió el técnico no se duplica: se corrige el destino y se aprueba,
+    -- y su motivo sigue en la solicitud.
+    perform public.asset_dar_de_baja('84840000-0000-4000-8000-000000000003', 'baja', 'Se tira: no tiene arreglo');
+    if (select count(*) from asset_removals where asset_id = '84840000-0000-4000-8000-000000000003') <> 1 then
+      raise exception 'FALLO: había una solicitud pendiente y se creó otra';
+    end if;
+    if (select state || ' · ' || destino || ' · ' || reason || ' · ' || decision_note
+          from asset_removals where id = '84870000-0000-4000-8000-0000000000a3')
+       <> 'aprobada · baja · No enciende desde el lunes · Se tira: no tiene arreglo' then
+      raise exception 'FALLO: la solicitud del técnico no se aprobó como se pidió: %',
+        (select to_jsonb(x) from asset_removals x where x.id = '84870000-0000-4000-8000-0000000000a3');
+    end if;
+    if (select meta ->> 'nota' from asset_events
+         where asset_id = '84840000-0000-4000-8000-000000000003' and kind = 'baja') <> 'Se tira: no tiene arreglo' then
+      raise exception 'FALLO: la baja no lleva el motivo del despacho';
+    end if;
+    raise notice 'OK: la baja definitiva conserva la sala, y la solicitud pendiente se reutiliza';
+
+    begin
+      perform public.asset_dar_de_baja('84840000-0000-4000-8000-000000000003', 'baja', 'Otra vez, por si acaso');
+      raise exception 'FALLO: se dio de baja dos veces el mismo equipo';
+    exception when invalid_parameter_value then null;
+    end;
+    raise notice 'OK: lo ya retirado no se vuelve a dar de baja';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 88. Trasladar desde la ficha: la misma fila, con la etiqueta libre del destino ==='
+begin;
+  select pg_temp.escenario_ficha();
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.asset_trasladar('84840000-0000-4000-8000-000000000001',
+                                   current_setting('prueba84.s2')::uuid, 'Por obras en el aula');
+    raise exception 'FALLO: un técnico trasladó un equipo desde la ficha';
+  exception when insufficient_privilege then
+    raise notice 'OK: trasladar desde la ficha es cosa del despacho';
+  end $$;
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  declare
+    v_s1 uuid := current_setting('prueba84.s1')::uuid;
+    v_s2 uuid := current_setting('prueba84.s2')::uuid;
+    a    record;
+    e    record;
+  begin
+    begin
+      perform public.asset_trasladar('84840000-0000-4000-8000-000000000001', v_s1, null);
+      raise exception 'FALLO: se trasladó un equipo a la sala donde ya estaba';
+    exception when invalid_parameter_value then null;
+    end;
+    begin
+      perform public.asset_trasladar('84840000-0000-4000-8000-000000000001',
+                                     current_setting('prueba84.s3')::uuid, null);
+      raise exception 'FALLO: se trasladó un equipo a una sala archivada';
+    exception when invalid_parameter_value then null;
+    end;
+    begin
+      perform public.asset_trasladar(gen_random_uuid(), v_s2, null);
+      raise exception 'FALLO: se trasladó un equipo que no existe';
+    exception when invalid_parameter_value then null;
+    end;
+    raise notice 'OK: a la misma sala, a una archivada o un equipo que no existe: 22023';
+
+    -- En la 84.2 ya hay un «Equipo de la ficha»: llega como el 2.
+    perform public.asset_trasladar('84840000-0000-4000-8000-000000000001', v_s2, '  Por obras en el aula ');
+    select * into a from assets where id = '84840000-0000-4000-8000-000000000001';
+    if a.room_id <> v_s2 or a.label <> 'Equipo de la ficha 2' then
+      raise exception 'FALLO: el equipo no llegó al destino con la etiqueta libre: % «%»', a.room_id, a.label;
+    end if;
+    if a.serial <> 'SN-84-0001' or a.purchase_price <> 100 or a.inventory_tag <> 'INV-84-0001' then
+      raise exception 'FALLO: el traslado no se llevó la ficha con el aparato: %', to_jsonb(a);
+    end if;
+    select * into e from asset_events where asset_id = a.id and kind = 'traslado';
+    if e.room_id <> v_s2 or e.meta ->> 'desde_room_id' <> v_s1::text
+       or e.meta ->> 'nota' <> 'Trasladado desde otra sala: Por obras en el aula'
+       or e.meta ->> 'motivo' <> 'Por obras en el aula' or e.meta ->> 'source' <> 'ficha'
+       or e.by_user <> '22222222-2222-4222-8222-222222222222' then
+      raise exception 'FALLO: el traslado no dejó el evento que deja el cliente: %', to_jsonb(e);
+    end if;
+    if (select motivo || ' · ' || room_code from asset_movements where id = e.id) <> 'Por obras en el aula · 84.2' then
+      raise exception 'FALLO: el movimiento del traslado no dice motivo y destino';
+    end if;
+    raise notice 'OK: la misma fila cambia de sala, con la etiqueta libre y el evento del cliente';
+
+    -- Sin motivo, la nota es la del cliente, tal cual.
+    perform public.asset_trasladar('84840000-0000-4000-8000-000000000002', v_s2);
+    if (select label from assets where id = '84840000-0000-4000-8000-000000000002') <> 'Equipo de la ficha 3'
+       or (select meta ->> 'nota' from asset_events
+            where asset_id = '84840000-0000-4000-8000-000000000002' and kind = 'traslado') <> 'Trasladado desde otra sala' then
+      raise exception 'FALLO: el traslado sin motivo no sale como el del cliente';
+    end if;
+
+    -- Lo retirado no se traslada.
+    perform public.asset_dar_de_baja('84840000-0000-4000-8000-000000000003', 'baja', 'Fuera de servicio, sin arreglo');
+    begin
+      perform public.asset_trasladar('84840000-0000-4000-8000-000000000003', v_s1, null);
+      raise exception 'FALLO: se trasladó un equipo retirado';
+    exception when invalid_parameter_value then null;
+    end;
+    raise notice 'OK: sin motivo lleva la nota del cliente, y un retirado no se mueve';
+  end $$;
+rollback;
