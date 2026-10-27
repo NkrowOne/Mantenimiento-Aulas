@@ -291,8 +291,7 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
             </button>
           )}
 
-          <div className="mt-6">
-            <ExportarExcel
+          <ExportarExcel
               titulo="Exportar el inventario"
               descripcion={`Un Excel con los ${lista.length} equipos de la lista${filtrado ? ' (con los filtros de arriba)' : ''}, con toda su ficha, y sus entradas y salidas.`}
               disabled={lista.length === 0}
@@ -307,7 +306,6 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
                 }
               }}
             />
-          </div>
         </>
       )}
     </>
@@ -496,8 +494,7 @@ function Movimientos(): React.ReactElement {
             </button>
           )}
 
-          <div className="mt-6">
-            <ExportarExcel
+          <ExportarExcel
               titulo="Exportar las entradas y salidas"
               descripcion={`Un Excel con los ${lista.length} movimientos de la lista, del más antiguo al más reciente.`}
               disabled={lista.length === 0}
@@ -506,7 +503,6 @@ function Movimientos(): React.ReactElement {
                 bytes: await libroNuevo([hojaDeEntradasYSalidas(lista)]),
               })}
             />
-          </div>
         </>
       )}
     </>

@@ -5,7 +5,9 @@ import { supabase } from '@/lib/supabase'
 import { pullMaster } from '@/sync/pull'
 import { fechaCorta } from '@/domain/fechas'
 import type { Role } from '@/domain/types'
+import { ExportarExcel } from '@/components/ExportarExcel'
 import { UnidadesDeAlmacen } from './UnidadesDeAlmacen'
+import { prepararExcelDelAlmacen } from './exportarAlmacen'
 import { MOTIVO_MIN, faltanParaElMotivo, motivoValido } from './motivo'
 
 interface StockLevel {
@@ -557,6 +559,18 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
           </button>
         </div>
       )}
+
+      {/*
+        Al final del almacén y antes de los PCs de repuesto: se lee después de ver
+        la lista y no la desplaza, y el Excel lleva las dos cosas (existencias y
+        ordenadores). Es una copia de hoy para mirar fuera de la aplicación, no
+        la sincronización con SharePoint, que vive en Datos → Excel.
+      */}
+      <ExportarExcel
+        titulo="Exportar el almacén"
+        descripcion="Un Excel con las existencias (también los artículos retirados), todos los movimientos con su saldo y los PCs de repuesto por número de serie."
+        preparar={prepararExcelDelAlmacen}
+      />
 
       <UnidadesDeAlmacen role={role} />
     </div>
