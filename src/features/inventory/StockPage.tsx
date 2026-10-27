@@ -5,11 +5,30 @@ import { supabase } from '@/lib/supabase'
 import { fechaCorta } from '@/domain/fechas'
 import { norm } from '@/domain/normalize'
 import type { Role } from '@/domain/types'
-import { coincideUnidad, resumenDeCondiciones, serialComparable, type UnidadDeAlmacen } from '@/domain/unidades'
+import {
+  SEGUIMIENTO_AYUDA,
+  SEGUIMIENTO_LABEL,
+  cuentaDe,
+  estadoParaSacar,
+  hayEstadoQueContar,
+  textoDelMovimiento,
+  type NivelPorEstado,
+  type Seguimiento,
+} from '@/domain/estados'
+import {
+  coincideUnidad,
+  palabraDelEstado,
+  resumenDeCondiciones,
+  resumenDeCuentas,
+  serialComparable,
+  type Condicion,
+  type UnidadDeAlmacen,
+} from '@/domain/unidades'
 import { ExportarConVistaPrevia } from './ExportarConVistaPrevia'
 import { FilaDeUnidad, HojaDelArticulo, type ArticuloDeLaLista } from './HojaDelArticulo'
 import { prepararExportacionDelAlmacen } from './exportarAlmacen'
-import { esDuplicado, esFalloDeRed, esSinExistencias, falloDeAdministracion, mensajeDe } from './fallos'
+import { useEstados, type MovimientoPedido } from './estadosDatos'
+import { esDuplicado, esFalloDeRed, esSinExistencias, falloAlMover, falloDeAdministracion, mensajeDe } from './fallos'
 import { useUnidades } from './unidadesDatos'
 
 /** Una fila de `stock_levels`. Lo que se lee de la vista está entre sus columnas: lo comprueba `contrato-saldos`. */
@@ -31,7 +50,7 @@ interface ArticuloRetirado {
   retired_reason: string | null
 }
 
-type Filtro = 'todo' | 'bajo' | 'serie' | 'cero'
+type Filtro = 'todo' | 'bajo' | 'serie' | 'averiadas' | 'cero'
 
 /** La hoja abierta: de un artículo, o del grupo de unidades sin artículo, y quizá ya en una unidad. */
 type Abierta = { articulo: string | null; unidad?: string } | null
@@ -49,8 +68,9 @@ type Abierta = { articulo: string | null; unidad?: string } | null
  * apagado a cero, que es la mitad amable de la misma regla.
  *
  * **La lista es para recorrerla.** Cada fila dice cómo se llama el artículo y
- * cuántos hay —en rojo si está bajo mínimo— y, si tiene unidades con número de
- * serie, cómo están. Lo demás —sus unidades, instalarlas, los ajustes— se abre
+ * cuántos hay —en rojo si está bajo mínimo— y cómo están: «5 nuevas · 3
+ * usadas», sumando lo que se cuenta o las unidades con número de serie, según
+ * cómo se lleve el artículo. Lo demás —sus unidades, instalarlas, los ajustes— se abre
  * tocando la fila, en una hoja desde abajo. Los artículos que solo se cuentan
  * llevan el menos y el más en la propia fila, porque gastar un cable es el
  * gesto más frecuente de esta pantalla y no merece dos toques.
@@ -80,6 +100,10 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
     },
   })
   const unidades = useUnidades()
+  // Cuántas hay de cada estado. `null` con un servidor que no sabe de estados:
+  // entonces todo se cuenta como antes, y nada de lo que se manda lleva estado.
+  const estados = useEstados()
+  const porEstado = estados.data ?? null
 
   /**
    * El id viaja **dentro** del movimiento, no se genera al enviarlo.
@@ -96,7 +120,9 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
     itemId: string
     nombre: string
     qty: number
-    kind: 'compra' | 'consumo' | 'ajuste'
+    kind: 'compra' | 'consumo' | 'ajuste' | 'devolucion'
+    /** De qué estado sale o en cuál entra. Sin él, lo decide la base. */
+    condicion?: Condicion
   }
   const [ultimo, setUltimo] = useState<Movimiento | null>(null)
 
@@ -111,6 +137,9 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
           kind: input.kind,
           occurred_at: new Date().toISOString(),
           by_user: data.session?.user.id ?? null,
+          // Solo si lo hay: un servidor sin la columna rechazaría el movimiento
+          // entero, y la pantalla solo lo pone cuando el servidor sabe de estados.
+          ...(input.condicion ? { condicion: input.condicion } : {}),
         },
         // `ignoreDuplicates` y no un upsert normal: el reenvío tiene que ser un
         // no-op, nunca una reescritura del asiento que ya está puesto.
@@ -125,11 +154,16 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
       setUltimo(input.kind === 'ajuste' ? null : input)
       void qc.invalidateQueries({ queryKey: ['stock-levels'] })
     },
+    // Si no quedaban tantas, la cifra de la pantalla era vieja: otro técnico se
+    // llevó la última. Se vuelve a leer para que el siguiente toque acierte.
+    onError: (e: unknown) => {
+      if (esSinExistencias(e)) void qc.invalidateQueries({ queryKey: ['stock-levels'] })
+    },
   })
 
-  function mover(l: ArticuloDeLaLista, qty: number, kind: 'compra' | 'consumo'): void {
+  function mover(l: ArticuloDeLaLista, m: MovimientoPedido): void {
     setAviso(null)
-    move.mutate({ id: uuidv7(), itemId: l.stock_item_id, nombre: l.name, qty, kind })
+    move.mutate({ id: uuidv7(), itemId: l.stock_item_id, nombre: l.name, qty: m.qty, kind: m.kind, condicion: m.condicion })
   }
 
   /**
@@ -139,12 +173,14 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
    * es la que decide de verdad, y ofrecer el botón a un supervisor solo serviría
    * para que el servidor le dijera que no.
    */
+  const [seguimientoNuevo, setSeguimientoNuevo] = useState<Seguimiento>('cantidad')
   const crear = useMutation({
-    mutationFn: async (input: { name: string; unit: string }) => {
+    mutationFn: async (input: { name: string; unit: string; seguimiento: Seguimiento | null }) => {
       const { error } = await supabase.from('stock_items').insert({
         name: input.name,
         unit: input.unit || 'ud',
         active: true,
+        ...(input.seguimiento ? { seguimiento: input.seguimiento } : {}),
       })
       if (error) throw error
     },
@@ -200,22 +236,33 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
     [todasLasUnidades, idsVivos],
   )
 
+  // «Con n.º de serie»: los que se llevan así, y los que tienen alguna unidad
+  // apuntada aunque se cuenten por cantidad.
+  const esDeSerie = useMemo(
+    () => (id: string) =>
+      (porArticulo.get(id)?.length ?? 0) > 0 || porEstado?.get(id)?.seguimiento === 'serie',
+    [porArticulo, porEstado],
+  )
+  const tieneAveriadas = useMemo(() => (id: string) => (porEstado?.get(id)?.averiado ?? 0) > 0, [porEstado])
+
   const cuenta = useMemo(() => {
     const ls = levels ?? []
     return {
       todo: ls.length,
       bajo: ls.filter((l) => l.below_threshold).length,
-      serie: ls.filter((l) => (porArticulo.get(l.stock_item_id)?.length ?? 0) > 0).length,
+      serie: ls.filter((l) => esDeSerie(l.stock_item_id)).length,
+      averiadas: ls.filter((l) => tieneAveriadas(l.stock_item_id)).length,
       cero: ls.filter((l) => l.on_hand <= 0).length,
     }
-  }, [levels, porArticulo])
+  }, [levels, esDeSerie, tieneAveriadas])
 
   const q = consulta.trim()
   const filas = useMemo(() => {
     const palabras = norm(q).split(' ').filter(Boolean)
     return (levels ?? []).filter((l) => {
       if (filtro === 'bajo' && !l.below_threshold) return false
-      if (filtro === 'serie' && (porArticulo.get(l.stock_item_id)?.length ?? 0) === 0) return false
+      if (filtro === 'serie' && !esDeSerie(l.stock_item_id)) return false
+      if (filtro === 'averiadas' && !tieneAveriadas(l.stock_item_id)) return false
       if (filtro === 'cero' && l.on_hand > 0) return false
       if (palabras.length === 0) return true
       const nombre = norm(l.name)
@@ -224,7 +271,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
         (porArticulo.get(l.stock_item_id) ?? []).some((u) => coincideUnidad(u, q))
       )
     })
-  }, [levels, filtro, q, porArticulo])
+  }, [levels, filtro, q, porArticulo, esDeSerie, tieneAveriadas])
 
   /* Los números de serie que coinciden con lo tecleado: desde tres caracteres,
      que con menos coinciden todos. */
@@ -245,10 +292,13 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
     setAbierta({ articulo: u.stock_item_id && idsVivos.has(u.stock_item_id) ? u.stock_item_id : null, unidad: u.id })
   }
 
+  // «Con averiadas» solo cuando hay alguna: un filtro que siempre da cero es
+  // un botón más que no lleva a ningún sitio.
   const FILTROS: Array<{ id: Filtro; label: string }> = [
     { id: 'todo', label: 'Todo' },
     { id: 'bajo', label: 'Bajo mínimo' },
     { id: 'serie', label: 'Con n.º de serie' },
+    ...(cuenta.averiadas > 0 || filtro === 'averiadas' ? [{ id: 'averiadas' as const, label: 'Con averiadas' }] : []),
     { id: 'cero', label: 'Sin existencias' },
   ]
 
@@ -278,6 +328,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
             crear.mutate({
               name,
               unit: String(f.get('unidad-del-articulo') ?? '').trim(),
+              seguimiento: porEstado ? seguimientoNuevo : null,
             })
           }}
         >
@@ -302,6 +353,28 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
               />
             </label>
           </div>
+          {porEstado && (
+            <fieldset className="mt-3">
+              <legend className="text-sm text-muted">Cómo se cuenta</legend>
+              <div role="radiogroup" className="mt-1 grid gap-2 sm:grid-cols-2">
+                {(['cantidad', 'serie'] as const).map((sg) => (
+                  <button
+                    key={sg}
+                    type="button"
+                    role="radio"
+                    aria-checked={seguimientoNuevo === sg}
+                    onClick={() => setSeguimientoNuevo(sg)}
+                    className={`min-h-11 rounded-ctl border px-3 py-2 text-left ${
+                      seguimientoNuevo === sg ? 'border-accent bg-accent-tint' : 'border-line bg-surface'
+                    }`}
+                  >
+                    <span className="block text-sm font-medium text-ink">{SEGUIMIENTO_LABEL[sg]}</span>
+                    <span className="block text-xs text-muted">{SEGUIMIENTO_AYUDA[sg]}</span>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          )}
           {crear.isError && (
             <p className="mt-3 text-sm text-crit">
               {esDuplicado(crear.error)
@@ -352,7 +425,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
       {porSerie.length > 0 && (
         <section aria-label="Números de serie" className="mt-4">
           <p className="eyebrow">Números de serie</p>
-          <ul className="mt-2 divide-y divide-hair rounded-ctl border border-line bg-surface">
+          <ul className="mt-2 divide-y divide-line-soft rounded-ctl border border-line bg-surface">
             {porSerie.map((u) => (
               <li key={u.id}>
                 <FilaDeUnidad unidad={u} onAbrir={() => abrirUnidad(u)} />
@@ -375,16 +448,17 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
       )}
 
       {filas.length > 0 && (
-        <ul className="mt-3 divide-y divide-hair">
+        <ul className="mt-3 divide-y divide-line-soft">
           {filas.map((l) => (
             <FilaDeArticulo
               key={l.stock_item_id}
               nivel={l}
+              estados={porEstado?.get(l.stock_item_id) ?? null}
               unidades={porArticulo.get(l.stock_item_id) ?? []}
               esSupervisor={esSupervisor}
-              ocupado={move.isPending}
+              ocupado={move.isPending || estados.isPending}
               onAbrir={() => setAbierta({ articulo: l.stock_item_id })}
-              onMover={(qty, kind) => mover(l, qty, kind)}
+              onMover={(m) => mover(l, m)}
             />
           ))}
         </ul>
@@ -394,7 +468,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
         <button
           type="button"
           onClick={() => setAbierta({ articulo: null })}
-          className="mt-2 flex min-h-14 w-full items-center gap-3 border-t border-hair py-2 text-left"
+          className="mt-2 flex min-h-14 w-full items-center gap-3 border-t border-line-soft py-2 text-left"
         >
           <span className="min-w-0 flex-1">
             <span className="block text-[0.9375rem] font-medium">Unidades sin artículo</span>
@@ -457,10 +531,11 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
         <div className="card mt-4 p-4">
           {esSinExistencias(move.error) ? (
             <>
-              <p className="text-sm text-crit">No quedan tantas unidades: el movimiento no se ha registrado.</p>
+              <p className="text-sm text-crit">{falloAlMover(move.error)}</p>
               <p className="mt-1 text-sm text-muted">
-                Las existencias no pueden quedar en negativo. Si el material está en el almacén pero la cifra dice que
-                no, falta por apuntar la compra que lo trajo.
+                {/no quedan tantas en estado/i.test(mensajeDe(move.error))
+                  ? 'Alguien acaba de sacarla o de cambiarle el estado: las cifras ya están al día. Elige otra.'
+                  : 'Las existencias no pueden quedar en negativo. Si el material está en el almacén pero la cifra dice que no, falta por apuntar la compra que lo trajo.'}
               </p>
             </>
           ) : !navigator.onLine || esFalloDeRed(move.error) ? (
@@ -489,10 +564,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
           saldo que se calcula sumando. */}
       {ultimo && !move.isPending && !move.isError && (
         <div className="mt-4 flex items-center justify-between gap-3 rounded-ctl border border-line bg-surface px-3 py-2">
-          <span className="min-w-0 text-sm text-muted">
-            {ultimo.qty > 0 ? 'Metida' : 'Sacada'}
-            {Math.abs(ultimo.qty) === 1 ? ' 1 unidad' : `s ${Math.abs(ultimo.qty)} unidades`} de {ultimo.nombre}.
-          </span>
+          <span className="min-w-0 text-sm text-muted">{textoDelMovimiento(ultimo.qty, ultimo.nombre, ultimo.condicion)}</span>
           <button
             type="button"
             onClick={() => {
@@ -526,7 +598,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
                 <p className="text-sm text-muted">No hay ningún artículo retirado.</p>
               )}
               {retirados.data && retirados.data.length > 0 && (
-                <ul className="divide-y divide-hair">
+                <ul className="divide-y divide-line-soft">
                   {retirados.data.map((a) => (
                     <li key={a.id} className="flex items-center gap-3 py-2">
                       <span className="min-w-0 flex-1">
@@ -560,7 +632,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
       */}
       <ExportarConVistaPrevia
         titulo="Inventario del almacén: Excel y PDF"
-        descripcion="Las existencias (también los artículos retirados), los movimientos con su saldo y las unidades con número de serie y su estado. Se ven antes de descargar."
+        descripcion="Las existencias con cuántas hay de cada estado (también los artículos retirados), los movimientos con su saldo y las unidades con número de serie y su estado. Se ven antes de descargar."
         preparar={prepararExportacionDelAlmacen}
       />
 
@@ -572,8 +644,10 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
           unidadInicial={abierta.unidad ?? null}
           role={role}
           articulos={(levels ?? []).map((l) => ({ id: l.stock_item_id, name: l.name }))}
-          ocupado={move.isPending}
-          onMover={(qty, kind) => articuloAbierto && mover(articuloAbierto, qty, kind)}
+          nivel={abierta.articulo ? (porEstado?.get(abierta.articulo) ?? null) : null}
+          ocupado={move.isPending || estados.isPending}
+          falloAlMover={move.isError ? falloAlMover(move.error) : null}
+          onMover={(m) => articuloAbierto && mover(articuloAbierto, m)}
           onCerrar={() => setAbierta(null)}
           onAviso={setAviso}
         />
@@ -583,12 +657,19 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
 }
 
 /**
- * Una fila del almacén: cómo se llama, cuántos hay y, si tiene unidades con
- * número de serie, cómo están. Tocarla abre su hoja. Los que solo se cuentan
- * llevan además el menos —y el más, para quien puede meter— a mano.
+ * Una fila del almacén: cómo se llama, cuántos hay y cómo están. Tocarla abre
+ * su hoja. Los que solo se cuentan llevan además el menos —y el más, para quien
+ * puede meter— a mano.
+ *
+ * El menos de la fila no pregunta de qué estado: saca primero una usada, luego
+ * una reacondicionada, una sin estado y, al final, una nueva —nunca una
+ * averiada—, y la barra de «Deshacer» dice cuál fue. Quien quiere una concreta
+ * abre la hoja, donde cada estado tiene su menos. El más mete una nueva, que es
+ * lo que trae una compra.
  */
 function FilaDeArticulo({
   nivel: l,
+  estados,
   unidades,
   esSupervisor,
   ocupado,
@@ -596,21 +677,32 @@ function FilaDeArticulo({
   onMover,
 }: {
   nivel: StockLevel
+  /** Cuántas hay de cada estado y cómo se lleva; `null` con un servidor que no lo sabe. */
+  estados: NivelPorEstado | null
   unidades: UnidadDeAlmacen[]
   esSupervisor: boolean
   ocupado: boolean
   onAbrir: () => void
-  onMover: (qty: number, kind: 'compra' | 'consumo') => void
+  onMover: (m: MovimientoPedido) => void
 }): React.ReactElement {
   const conSerie = unidades.filter((u) => u.status === 'disponible')
+  const porCantidad = estados?.seguimiento === 'cantidad'
+  const cuentas = estados ? cuentaDe(estados) : null
+  const deCual = porCantidad && cuentas ? estadoParaSacar(cuentas) : null
   const detalle = [
     l.below_threshold ? `Bajo mínimo (${l.min_threshold})` : null,
-    unidades.length > 0
-      ? `${conSerie.length} con n.º de serie${conSerie.length > 0 ? ` · ${resumenDeCondiciones(unidades)}` : ''}`
-      : null,
+    porCantidad && cuentas
+      ? hayEstadoQueContar(cuentas)
+        ? resumenDeCuentas(cuentas)
+        : null
+      : unidades.length > 0
+        ? `${conSerie.length} con n.º de serie${conSerie.length > 0 ? ` · ${resumenDeCondiciones(unidades)}` : ''}`
+        : null,
   ]
     .filter(Boolean)
     .join(' · ')
+  // Solo quedan averiadas: hay, pero ninguna que llevarse sin querer.
+  const soloAveriadas = porCantidad && l.on_hand > 0 && deCual === null
 
   return (
     <li className="flex items-center gap-2">
@@ -628,7 +720,7 @@ function FilaDeArticulo({
         </span>
         <span className={`shrink-0 font-mono text-lg tabular ${l.below_threshold ? 'text-crit' : ''}`}>{l.on_hand}</span>
       </button>
-      {unidades.length > 0 ? (
+      {unidades.length > 0 && !porCantidad ? (
         <span aria-hidden className="w-6 shrink-0 text-center text-muted">
           ›
         </span>
@@ -640,10 +732,18 @@ function FilaDeArticulo({
               ningún sitio: el servidor lo rechaza. */}
           <button
             type="button"
-            disabled={ocupado || l.on_hand <= 0}
-            onClick={() => onMover(-1, 'consumo')}
+            disabled={ocupado || l.on_hand <= 0 || soloAveriadas}
+            onClick={() => onMover(deCual ? { qty: -1, kind: 'consumo', condicion: deCual } : { qty: -1, kind: 'consumo' })}
             className="key key-quiet h-11 w-11"
-            aria-label={l.on_hand <= 0 ? `No quedan unidades de ${l.name}` : `Sacar una unidad de ${l.name}`}
+            aria-label={
+              l.on_hand <= 0
+                ? `No quedan unidades de ${l.name}`
+                : soloAveriadas
+                  ? `Solo quedan averiadas de ${l.name}: ábrelo para sacar una`
+                  : deCual && deCual !== 'sin_indicar'
+                    ? `Sacar una ${palabraDelEstado(deCual, 1)} de ${l.name}`
+                    : `Sacar una unidad de ${l.name}`
+            }
           >
             −
           </button>
@@ -651,9 +751,11 @@ function FilaDeArticulo({
             <button
               type="button"
               disabled={ocupado}
-              onClick={() => onMover(1, 'compra')}
+              onClick={() =>
+                onMover(porCantidad ? { qty: 1, kind: 'compra', condicion: 'nuevo' } : { qty: 1, kind: 'compra' })
+              }
               className="key key-quiet h-11 w-11"
-              aria-label={`Meter una unidad de ${l.name}`}
+              aria-label={porCantidad ? `Meter una nueva de ${l.name}` : `Meter una unidad de ${l.name}`}
             >
               +
             </button>

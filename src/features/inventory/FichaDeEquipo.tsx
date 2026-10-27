@@ -250,7 +250,7 @@ export function FichaDeEquipo({
       </form>
 
       {editable && (
-        <div className="mt-4 border-t border-hair pt-3">
+        <div className="mt-4 border-t border-line-soft pt-3">
           <p className="eyebrow">Mover el equipo</p>
           {accion === null && (
             <div className="mt-2 flex flex-wrap gap-2">
@@ -590,7 +590,7 @@ function DarDeBaja({
 function Historial({ assetId }: { assetId: string }): React.ReactElement {
   const { data, isPending, isError, error } = useHistorialDeEquipo(assetId)
   return (
-    <div className="mt-4 border-t border-hair pt-3">
+    <div className="mt-4 border-t border-line-soft pt-3">
       <p className="eyebrow">Historial del equipo</p>
       {isPending && <p className="mt-2 text-sm text-muted">Cargando…</p>}
       {isError && <p className="mt-2 text-sm text-crit">{mensajeDeFallo(error)}</p>}

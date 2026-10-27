@@ -137,26 +137,46 @@ export function ordenarUnidades(unidades: UnidadDeAlmacen[]): UnidadDeAlmacen[] 
   )
 }
 
+/** Cuántas hay en cada estado. Lo que no está, es cero. */
+export type CuentaPorEstado = Partial<Record<Condicion, number>>
+
+/** Los estados en el orden en que se leen: los cuatro de los botones y, al final, las que nadie ha mirado. */
+export const ESTADOS_EN_ORDEN: Condicion[] = [...CONDICIONES, 'sin_indicar']
+
+/**
+ * En femenino, porque se habla de unidades: «1 nueva», «3 usadas», «2 sin
+ * estado». Sirve igual para los teclados que para las pantallas.
+ */
+const EN_FEMENINO: Record<Condicion, [string, string]> = {
+  nuevo: ['nueva', 'nuevas'],
+  usado: ['usada', 'usadas'],
+  reacondicionado: ['reacondicionada', 'reacondicionadas'],
+  averiado: ['averiada', 'averiadas'],
+  sin_indicar: ['sin estado', 'sin estado'],
+}
+
+/** «usada», «usadas»: la palabra sola, para «Sacar una usada». */
+export function palabraDelEstado(c: Condicion, n: number): string {
+  return EN_FEMENINO[c][n === 1 ? 0 : 1]
+}
+
+/** «3 usadas», «1 nueva». */
+export function cuantasEnEstado(c: Condicion, n: number): string {
+  return `${n} ${palabraDelEstado(c, n)}`
+}
+
+/** «5 nuevas · 3 usadas · 2 sin estado»: lo que no es cero, en el orden de los botones. */
+export function resumenDeCuentas(cuenta: CuentaPorEstado): string {
+  return ESTADOS_EN_ORDEN.filter((c) => (cuenta[c] ?? 0) > 0)
+    .map((c) => cuantasEnEstado(c, cuenta[c]!))
+    .join(' · ')
+}
+
 /** «3 nuevas · 1 usada»: cómo están las del almacén, en una línea. */
 export function resumenDeCondiciones(unidades: Array<Pick<UnidadDeAlmacen, 'condicion' | 'status'>>): string {
-  const enAlmacen = unidades.filter((u) => u.status === 'disponible')
-  const cuenta = new Map<Condicion, number>()
-  for (const u of enAlmacen) cuenta.set(u.condicion, (cuenta.get(u.condicion) ?? 0) + 1)
-  const orden: Condicion[] = ['nuevo', 'reacondicionado', 'usado', 'averiado', 'sin_indicar']
-  const FEM: Record<Condicion, [string, string]> = {
-    nuevo: ['nueva', 'nuevas'],
-    reacondicionado: ['reacondicionada', 'reacondicionadas'],
-    usado: ['usada', 'usadas'],
-    averiado: ['averiada', 'averiadas'],
-    sin_indicar: ['sin estado', 'sin estado'],
-  }
-  return orden
-    .filter((c) => (cuenta.get(c) ?? 0) > 0)
-    .map((c) => {
-      const n = cuenta.get(c)!
-      return `${n} ${FEM[c][n === 1 ? 0 : 1]}`
-    })
-    .join(' · ')
+  const cuenta: CuentaPorEstado = {}
+  for (const u of unidades) if (u.status === 'disponible') cuenta[u.condicion] = (cuenta[u.condicion] ?? 0) + 1
+  return resumenDeCuentas(cuenta)
 }
 
 /**

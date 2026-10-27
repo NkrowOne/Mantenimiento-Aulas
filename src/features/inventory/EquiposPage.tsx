@@ -259,7 +259,7 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
             {filtrado ? ' con estos filtros' : ''}
           </p>
 
-          <ul className="mt-2 divide-y divide-hair">
+          <ul className="mt-2 divide-y divide-line-soft">
             {lista.slice(0, cuantos).map((e) => (
               <FilaDeEquipo
                 key={e.id}
@@ -520,7 +520,7 @@ function Movimientos(): React.ReactElement {
           <p className="mt-3 text-sm text-muted">
             {lista.length} movimientos · {entradas} entradas · {salidas} salidas
           </p>
-          <ul className="mt-2 divide-y divide-hair">
+          <ul className="mt-2 divide-y divide-line-soft">
             {lista.slice(0, cuantos).map((m) => (
               <li key={m.id} className="py-2 text-sm">
                 <div className="flex flex-wrap items-baseline gap-x-2">
@@ -633,7 +633,7 @@ function VidaUtilPorTipo({ puedeEditar }: { puedeEditar: boolean }): React.React
       </p>
       {isPending && <p className="mt-4 text-sm text-muted">Cargando…</p>}
       {isError && <p className="mt-4 text-sm text-crit">{mensajeDeFallo(error)}</p>}
-      <ul className="mt-3 divide-y divide-hair">
+      <ul className="mt-3 divide-y divide-line-soft">
         {tipos.map((t) => (
           <FilaDeVida
             key={t.id}

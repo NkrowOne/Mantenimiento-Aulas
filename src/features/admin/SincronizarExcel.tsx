@@ -1675,7 +1675,7 @@ function Tabla({
         </thead>
         <tbody>
           {visibles.map((f, i) => (
-            <tr key={`${f[0]}-${i}`} className="border-t border-hair">
+            <tr key={`${f[0]}-${i}`} className="border-t border-line-soft">
               {f.map((v, j) => (
                 <td key={j} className="py-1 pr-4 align-top">
                   {v}

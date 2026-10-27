@@ -18,6 +18,7 @@ import { supabase } from '@/lib/supabase'
 import { descargaEntera } from '@/sync/paginada'
 import { pullMaster } from '@/sync/pull'
 import { displayRoomCode, norm } from '@/domain/normalize'
+import type { ResultadoDeAlta } from '@/domain/estados'
 import type { Condicion, UnidadDeAlmacen } from '@/domain/unidades'
 import type { RemovalDestino } from '@/domain/types'
 
@@ -93,6 +94,29 @@ export async function darDeAltaUnidad(a: AltaDeUnidad): Promise<string> {
   })
   if (error) throw error
   return String(data ?? '')
+}
+
+/**
+ * Muchas de golpe: la lista que se pega del albarán, de una columna del Excel o
+ * del lector de códigos de barras. Todas con el mismo estado, marca y modelo.
+ *
+ * La base contesta por cada número —apuntada, ya estaba, o el motivo por el que
+ * no— y un número malo no impide apuntar los demás.
+ */
+export async function darDeAltaVarias(a: Omit<AltaDeUnidad, 'serial'> & { seriales: string[] }): Promise<ResultadoDeAlta[]> {
+  const { data, error } = await supabase.rpc('stock_unit_alta_varias', {
+    p: {
+      stock_item_id: a.stockItemId,
+      seriales: a.seriales.map((s) => s.trim()).filter(Boolean),
+      condicion: a.condicion,
+      marca: a.marca.trim(),
+      modelo: a.modelo.trim(),
+      observaciones: a.observaciones.trim(),
+      sumar: a.sumar,
+    },
+  })
+  if (error) throw error
+  return Array.isArray(data) ? (data as ResultadoDeAlta[]) : []
 }
 
 /**

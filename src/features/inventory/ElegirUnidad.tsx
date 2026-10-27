@@ -106,6 +106,15 @@ export function ElegirUnidad({
   )
 }
 
+/** El punto de color de cada estado, para las filas que cuentan en vez de nombrar. */
+export const PUNTO_DE_CONDICION: Record<Condicion, string> = {
+  nuevo: 'bg-ok',
+  reacondicionado: 'bg-accent',
+  usado: 'bg-muted',
+  averiado: 'bg-crit',
+  sin_indicar: 'border-2 border-line',
+}
+
 const TONO: Record<Condicion, string> = {
   nuevo: 'bg-ok-tint text-ok',
   reacondicionado: 'bg-accent-tint text-accent',
