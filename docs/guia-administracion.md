@@ -837,9 +837,137 @@ select at, pedida, asignada, resolved
   from asset_label_conflicts order by at desc limit 20;
 ```
 
+## 3 ter. Equipos — la ficha de cada aparato, su vida útil y sus entradas y salidas
+
+La pestaña **Equipos** (en la barra de abajo, detrás de **Más**) es el
+inventario entero del campus en una lista. La abre cualquiera del personal
+—buscar un número de serie es trabajo de pasillo—, y **cambiar es de supervisor
+y de administrador**: lo decide la base, no la pantalla. Necesita conexión,
+como todo lo que se toca desde un despacho.
+
+Tiene tres pestañas:
+
+| Pestaña | Para qué |
+|---|---|
+| **Inventario** | Todos los equipos, uno por fila. Buscador por número de serie, nº de inventario, marca, modelo, aula, hostname, MAC o IP; filtros por tipo, edificio, estado, vida útil y «solo ordenadores». Al tocar una fila se abre su ficha debajo |
+| **Entradas y salidas** | Cada alta, baja, traslado y sustitución, con fecha, sala, quién y por qué. Se filtra por clase, edificio y fechas |
+| **Vida útil por tipo** | Cuántos años dura cada clase de aparato |
+
+### La ficha
+
+| Grupo | Campos |
+|---|---|
+| Identificación | Nombre en el aula, marca, modelo, número de serie, **nº de inventario**, estado (instalado o averiado) |
+| Adquisición | Fecha de adquisición, proveedor, precio, pedido o factura, garantía hasta |
+| Vida útil | Fin de vida fijado a mano (si no, se calcula) |
+| Datos del ordenador | Hostname, MAC, IP, procesador, RAM, disco y sistema operativo. Sale abierto en los ordenadores y plegado en lo demás |
+| Observaciones | Texto libre |
+
+Lo que se escribe se normaliza al guardar: la MAC queda como
+`AA:BB:CC:DD:EE:FF` se escriba como se escriba, los códigos en mayúsculas y el
+precio admite `849,00`, `1.299,00` o `849.50`. **Solo se guarda lo que ha
+cambiado**: si mientras tanto alguien corrigió el número de serie desde el
+aula, guardar el precio desde el despacho no lo pisa. Cada cambio queda en
+**Actividad** con su campo y su valor anterior.
+
+El nº de inventario no se puede repetir: dos equipos con el mismo los rechaza
+la base, y dice en qué aula está el otro.
+
+Un técnico ve la ficha entera, sin casillas. Si intenta escribir los datos de
+compra o del ordenador por otro camino, la base lo rechaza.
+
+### Vida útil y obsolescencia
+
+El **fin de vida** de un equipo es la fecha fijada a mano en su ficha, o, si
+no la hay, su **fecha de adquisición más los años de su tipo**. Con eso, cada
+equipo está en uno de cuatro estados:
+
+| Estado | Cuándo |
+|---|---|
+| **Obsoleto** (rojo) | El fin de vida ya ha pasado |
+| **Caduca pronto** (ámbar) | Le queda menos de un año |
+| **Vigente** (verde) | Le queda más de un año |
+| **Sin datos** | No hay fecha de compra o su tipo no tiene años definidos |
+
+**Los años por tipo nacen vacíos, a propósito.** Una vida útil inventada
+convertiría en «obsoletos» equipos que nadie ha decidido renovar. Se ponen en
+la pestaña **Vida útil por tipo**, que dice cuántos equipos de cada tipo hay y
+cuántos tienen ya fecha de compra. Los 1.094 equipos importados no tienen fecha
+de compra: hasta que se rellene, salen «sin datos», que es verdad.
+
+### Entradas, traslados y bajas desde la ficha
+
+- **Registrar entrada** (arriba de la lista): un equipo nuevo que llega y se
+  instala. Solo el tipo y la sala son obligatorios; lo demás se puede rellenar
+  ya —con la factura delante— o después. Entra **validado** y deja su evento de
+  alta en el histórico de la sala. El nombre en el aula, si no se escribe, es
+  el del tipo («Proyector», y si ya hay uno, «Proyector 2»).
+- **Trasladar a otra sala**: el equipo cambia de sala, toma el siguiente nombre
+  libre de su tipo en la de destino y deja el traslado en el histórico de las
+  dos.
+- **Dar de baja**: igual que autorizar una retirada (apartado «Retiradas por
+  autorizar»), con su destino —**baja definitiva** o **devuelto al almacén**,
+  que suma una unidad a su artículo— y un motivo de al menos diez caracteres.
+  Si ya había una solicitud pendiente para ese equipo, se decide esa.
+
+El técnico sigue dando de alta y pidiendo retiradas desde el aula como
+siempre; esto es el camino del despacho.
+
+### Exportar: vista previa, Excel y PDF
+
+Al pie de **Inventario** y de **Entradas y salidas**, y en la pestaña
+**Almacén**, hay un recuadro con **Ver y exportar**. Funciona como los
+informes: primero se ve lo que va a salir y luego se descarga.
+
+1. **Ver y exportar** lee los datos del servidor (necesita conexión) y abre la
+   **vista previa**: una pestaña por hoja, con los mismos colores que llevará el
+   fichero. En pantalla salen las primeras 300 filas de cada hoja; el Excel y el
+   PDF las llevan todas.
+2. **Descargar Excel**: todas las hojas y todas las columnas, siempre.
+3. **Preparar PDF** y luego **Guardar PDF**: el PDF lo hace el servidor, con el
+   mismo sistema que la hoja de inventario de las aulas y que los informes. En
+   **Qué va en el PDF** se marcan las hojas que van al papel.
+
+Son dos pulsaciones para el PDF porque en el iPhone y el iPad la hoja de
+compartir solo se abre desde la pulsación, y el servidor tarda unos segundos.
+Si el servidor no puede hacerlo, en un navegador normal sale **Imprimir desde el
+navegador**, que también lo guarda como PDF. En la aplicación instalada solo se
+dice qué ha fallado. **Actualizar** vuelve a leer los datos sin cerrar la vista.
+
+| Exportación | Hojas | Qué va al PDF de partida |
+|---|---|---|
+| **Inventario de equipos** | Los equipos **de la lista, con los filtros puestos**, con toda su ficha, y sus entradas y salidas | Los equipos, con 14 columnas (edificio, aula, tipo, nombre, marca, modelo, serie, inventario, estado, adquisición, garantía, fin de vida, vida útil y hostname): las 29 del Excel no caben en un A4. Las entradas y salidas, solo si se marcan |
+| **Entradas y salidas** | Los movimientos del filtro, del más antiguo al más reciente | Todo |
+| **Inventario del almacén** | Existencias (también los retirados), movimientos con su saldo y PCs de repuesto | **Existencias y PCs de repuesto**: es el inventario de lo que hay hoy. Los movimientos, solo si se marcan |
+
+En el papel, como en el Excel, lo obsoleto o bajo mínimo sale en rojo, lo que
+caduca este año en ámbar y lo retirado apagado. La cabecera lleva la fecha de
+emisión y las cifras: en el inventario de equipos, también los filtros con los
+que se hizo («42 equipos en las aulas · Proyector · edificio H · obsoletos»).
+
+La hoja de inventario de **una sala o un edificio** sigue donde estaba (ficha de
+la sala y lista de salas): ya era una vista previa con su PDF.
+
+```sql
+-- Qué hay que renovar el año que viene, por edificio
+select building_code, type_name, count(*)
+from asset_registry
+where status <> 'retirado' and estado_vida in ('obsoleto', 'proximo')
+group by 1, 2 order by 1, 2;
+
+-- Lo que ha entrado y salido en el trimestre
+select kind, count(*) from asset_movements
+where occurred_at >= date_trunc('quarter', now())
+group by kind;
+```
+
 ## 4. Almacén
 
 Desde la pestaña **Almacén**, con `+` y `−` por artículo.
+
+El inventario del almacén se exporta desde la misma pestaña, con **Ver y
+exportar**: vista previa, Excel y PDF (apartado «Exportar: vista previa, Excel
+y PDF», en 3 ter).
 
 **Las existencias no son un campo editable: son la suma de los movimientos.**
 Por eso no puede repetirse el descuadre del Excel, que llegó a tener stock

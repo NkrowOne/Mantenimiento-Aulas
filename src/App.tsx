@@ -73,6 +73,11 @@ const IncidentsPage = lazy(() =>
 const StockPage = lazy(() =>
   import('@/features/inventory/StockPage').then((m) => ({ default: m.StockPage })),
 )
+/* El inventario entero, con la ficha de cada equipo. Se abre desde un
+   despacho y no en la ronda, así que no entra en la carga inicial. */
+const EquiposPage = lazy(() =>
+  import('@/features/inventory/EquiposPage').then((m) => ({ default: m.EquiposPage })),
+)
 const CleanupPage = lazy(() =>
   import('@/features/admin/CleanupPage').then((m) => ({ default: m.CleanupPage })),
 )
@@ -110,6 +115,7 @@ type Tab =
   | 'panel'
   | 'incidencias'
   | 'almacen'
+  | 'equipos'
   | 'historial'
   | 'actividad'
   | 'informes'
@@ -213,6 +219,9 @@ const TABS: Array<{ id: Tab; label: string; minRole: Role }> = [
   { id: 'panel', label: 'Panel', minRole: 'tecnico' },
   { id: 'incidencias', label: 'Incidencias', minRole: 'tecnico' },
   { id: 'almacen', label: 'Almacén', minRole: 'tecnico' },
+  /* La abre cualquiera —buscar un número de serie es trabajo de pasillo— y
+     cambiar la ficha es de supervisor: lo decide la base, no esta lista. */
+  { id: 'equipos', label: 'Equipos', minRole: 'tecnico' },
   { id: 'historial', label: 'Historial', minRole: 'tecnico' },
   /* Quién cambió qué y cuándo. Vivía solo dentro de Datos, así que la
      trazabilidad era cosa del administrador; la necesita quien trabaja en las
@@ -272,10 +281,11 @@ function etiquetaDe(tab: Tab): string {
  * desborda.
  */
 const EN_LA_BARRA: Tab[] = ['revisar', 'incidencias', 'almacen', 'historial']
-const EN_MAS: Tab[] = ['panel', 'actividad', 'informes', 'datos']
+const EN_MAS: Tab[] = ['panel', 'equipos', 'actividad', 'informes', 'datos']
 /** La segunda línea de cada entrada de «Más»: qué hay detrás, en una frase. */
 const QUE_HAY_EN: Partial<Record<Tab, string>> = {
   panel: 'Cómo va la ronda: retrasos, averías abiertas y lo que va a dar guerra.',
+  equipos: 'Todo el inventario: ficha de cada equipo, vida útil, entradas y salidas, y Excel.',
   actividad: 'Quién cambió qué y cuándo: salas, equipos, incidencias y catálogo.',
   informes: 'Se arman con los datos del periodo que elijas y quedan archivados.',
   datos: 'Por decidir, maestro, Excel, importación, actividad y usuarios.',
@@ -1612,6 +1622,7 @@ export function App(): React.ReactElement {
             />
           )}
           {tab === 'almacen' && <StockPage role={role} />}
+          {tab === 'equipos' && <EquiposPage role={role} />}
           {tab === 'historial' && <HistorialPage />}
           {tab === 'actividad' && (
             <div className="mx-auto max-w-4xl p-4">

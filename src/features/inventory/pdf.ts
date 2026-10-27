@@ -43,7 +43,7 @@ function escapar(texto: string): string {
  * que la hoja usa de verdad, traducidas a CSS que WeasyPrint entiende: sin
  * variables, sin `grid`, sin nada que pueda ignorar sin avisar.
  */
-const ESTILO = `
+export const ESTILO_DE_LA_HOJA = `
 @page { size: A4 landscape; margin: 12mm 10mm; }
 * { box-sizing: border-box; }
 body { margin: 0; font-family: "DejaVu Sans", Helvetica, Arial, sans-serif; font-size: 9pt; color: #000; background: #fff; }
@@ -97,7 +97,7 @@ export function documentoDeLaHoja(contenedor: HTMLElement, titulo: string): stri
     '<head>',
     '<meta charset="utf-8">',
     `<title>${escapar(titulo)}</title>`,
-    `<style>${ESTILO}</style>`,
+    `<style>${ESTILO_DE_LA_HOJA}</style>`,
     '</head>',
     `<body>${copia.outerHTML}</body>`,
     '</html>',

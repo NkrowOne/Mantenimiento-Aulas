@@ -229,6 +229,23 @@ const CAMPOS: Record<string, string> = {
   retired_by: 'Retirado por',
   retired_reason: 'Motivo de la retirada',
   note: 'Nota',
+  // La ficha del equipo: compra, vida útil y datos del ordenador.
+  inventory_tag: 'Nº de inventario',
+  acquired_at: 'Fecha de adquisición',
+  supplier: 'Proveedor',
+  purchase_price: 'Precio',
+  purchase_ref: 'Pedido o factura',
+  warranty_until: 'Garantía hasta',
+  end_of_life: 'Fin de vida',
+  vida_util_anyos: 'Vida útil (años)',
+  hostname: 'Hostname',
+  mac_address: 'MAC',
+  ip_address: 'IP',
+  cpu: 'Procesador',
+  ram: 'Memoria RAM',
+  storage: 'Disco',
+  os: 'Sistema operativo',
+  notes: 'Observaciones',
 }
 
 /** Los valores de enumerado, en el vocabulario de las pantallas. */
