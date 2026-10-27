@@ -70,7 +70,7 @@ export function Dudas({
             <p className="eyebrow">{hoja}</p>
             <ul className="mt-2 space-y-3">
               {lista.map((d) => (
-                <li key={d.id} className="rounded-ctl border border-hair p-3">
+                <li key={d.id} className="rounded-ctl border border-line-soft p-3">
                   {d.tipo === 'sala' ? (
                     <DudaDeSala
                       duda={d}

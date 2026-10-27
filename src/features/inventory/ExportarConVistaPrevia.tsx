@@ -248,7 +248,7 @@ function VistaPrevia({
   }
 
   return (
-    <div className="mt-3 border-t border-hair pt-3">
+    <div className="mt-3 border-t border-line-soft pt-3">
       <p className="eyebrow">Vista previa</p>
       <h3 ref={cabeceraRef} tabIndex={-1} className="mt-1 text-base font-semibold outline-none">
         {exportacion.titulo}
@@ -290,7 +290,7 @@ function VistaPrevia({
               {datos.slice(0, FILAS_EN_PANTALLA).map((fila, n) => {
                 const tinte = hoja.tintes?.[n]
                 return (
-                  <tr key={n} className={`border-b border-hair ${tinte ? FONDO_DE_TINTE[tinte] : ''}`}>
+                  <tr key={n} className={`border-b border-line-soft ${tinte ? FONDO_DE_TINTE[tinte] : ''}`}>
                     {cabecera.map((_, i) => (
                       <td key={i} className="max-w-[18rem] truncate whitespace-nowrap px-2 py-1.5" title={textoDeCelda(fila[i] ?? null, hoja.formatos?.[i])}>
                         {textoDeCelda(fila[i] ?? null, hoja.formatos?.[i])}

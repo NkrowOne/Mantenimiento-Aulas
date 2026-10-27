@@ -6,20 +6,24 @@ import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { pullMaster } from '@/sync/pull'
 import type { Role } from '@/domain/types'
+import { SEGUIMIENTO_AYUDA, SEGUIMIENTO_LABEL, type NivelPorEstado, type Seguimiento } from '@/domain/estados'
 import {
   coincideUnidad,
   descripcionDeUnidad,
   ordenarUnidades,
   resumenDeCondiciones,
   sinNumeroDeSerie,
+  type Condicion,
   type UnidadDeAlmacen,
 } from '@/domain/unidades'
 import { EtiquetaDeCondicion } from './ElegirUnidad'
 import { Volver } from './ElegirCondicion'
+import { CambiarEstado, ExistenciasPorEstado, Repartir } from './EstadosDelArticulo'
 import { FichaDeUnidad } from './FichaDeUnidad'
 import { NuevaUnidad } from './NuevaUnidad'
 import { MOTIVO_MIN, faltanParaElMotivo, motivoValido } from './motivo'
 import { falloDeAdministracion } from './fallos'
+import type { MovimientoPedido } from './estadosDatos'
 
 /** Lo que la lista sabe de un artículo: la fila de `stock_levels`. */
 export interface ArticuloDeLaLista {
@@ -38,6 +42,8 @@ type Vista =
   | { tipo: 'ajustes' }
   | { tipo: 'renombrar' }
   | { tipo: 'retirar' }
+  | { tipo: 'cambiar'; de?: Condicion }
+  | { tipo: 'repartir' }
 
 /**
  * Todo lo de un artículo, en una hoja que sube desde abajo.
@@ -49,11 +55,15 @@ type Vista =
  * recorrerla —cómo se llama y cuántos hay— y todo lo demás vive aquí, a un toque:
  *
  *  - **Arriba, la cantidad**, con el menos y el más grandes, y «varias» para
- *    la caja de veinte cables que no se cuentan de uno en uno.
+ *    la caja de veinte cables que no se cuentan de uno en uno. Si el artículo
+ *    se cuenta por cantidad, partida por estados —nuevas, usadas,
+ *    reacondicionadas, averiadas—, cada una con su menos y su más
+ *    (`EstadosDelArticulo`).
  *  - **Después, las unidades** con su número de serie y su estado, si el
  *    artículo las tiene: cuál está, cómo está, y desde cada una, instalarla.
- *  - **Al final, los ajustes**, que se tocan una vez: el tipo de equipo, el
- *    mínimo, el nombre, retirarlo. Detrás de un botón, para que no estorben.
+ *  - **Al final, los ajustes**, que se tocan una vez: cómo se cuenta (por
+ *    cantidad o por número de serie), el tipo de equipo, el mínimo, el nombre,
+ *    retirarlo. Detrás de un botón, para que no estorben.
  *
  * Cada cosa abre su vista dentro de la misma hoja, con «Volver»: nada se abre
  * encima de nada.
@@ -64,26 +74,42 @@ export function HojaDelArticulo({
   unidadInicial,
   role,
   articulos,
+  nivel,
   ocupado,
+  falloAlMover,
   onMover,
   onCerrar,
   onAviso,
 }: {
   /** `null` es el grupo de las unidades que no están en ningún artículo. */
   articulo: ArticuloDeLaLista | null
+  /**
+   * Cómo se lleva el artículo y cuántas hay de cada estado. `null` con un
+   * servidor que todavía no sabe de estados: la hoja cuenta como antes.
+   */
+  nivel?: NivelPorEstado | null
   unidades: UnidadDeAlmacen[]
   /** Abrir directamente en una unidad: la que se encontró buscando su número de serie. */
   unidadInicial?: string | null
   role: Role
   articulos: Array<{ id: string; name: string }>
   ocupado: boolean
-  onMover: (qty: number, kind: 'compra' | 'consumo') => void
+  /** Por qué no se ha registrado el último menos o más: la tarjeta de la lista queda debajo de la hoja. */
+  falloAlMover?: string | null
+  onMover: (m: MovimientoPedido) => void
   onCerrar: () => void
   onAviso: (mensaje: string) => void
 }): React.ReactElement {
   const esSupervisor = role === 'supervisor' || role === 'admin'
   const esAdmin = role === 'admin'
   const [vista, setVista] = useState<Vista>(unidadInicial ? { tipo: 'unidad', id: unidadInicial } : { tipo: 'articulo' })
+  // Lo que se acaba de hacer en una vista de dentro (cambiar estados,
+  // repartirlos), dicho al volver al artículo, donde se ven ya las cifras nuevas.
+  const [hecho, setHecho] = useState<string | null>(null)
+  const volverConAviso = (m: string): void => {
+    setHecho(m)
+    setVista({ tipo: 'articulo' })
+  }
 
   const enAlmacen = unidades.filter((u) => u.status === 'disponible')
   const titulo = articulo?.name ?? 'Unidades sin artículo'
@@ -128,8 +154,35 @@ export function HojaDelArticulo({
         onVolver={() => setVista({ tipo: 'articulo' })}
       />
     )
+  } else if (vista.tipo === 'cambiar' && articulo && nivel) {
+    contenido = (
+      <CambiarEstado
+        articulo={articulo}
+        nivel={nivel}
+        deInicial={vista.de}
+        onVolver={() => setVista({ tipo: 'articulo' })}
+        onHecho={volverConAviso}
+      />
+    )
+  } else if (vista.tipo === 'repartir' && articulo && nivel) {
+    contenido = (
+      <Repartir
+        articulo={articulo}
+        nivel={nivel}
+        onVolver={() => setVista({ tipo: 'articulo' })}
+        onHecho={volverConAviso}
+      />
+    )
   } else if (vista.tipo === 'ajustes' && articulo) {
-    contenido = <Ajustes articulo={articulo} onVolver={() => setVista({ tipo: 'articulo' })} onVista={setVista} />
+    contenido = (
+      <Ajustes
+        articulo={articulo}
+        nivel={nivel ?? null}
+        unidadesEnAlmacen={enAlmacen.length}
+        onVolver={() => setVista({ tipo: 'articulo' })}
+        onVista={setVista}
+      />
+    )
   } else if (vista.tipo === 'renombrar' && articulo) {
     contenido = (
       <Renombrar
@@ -154,17 +207,37 @@ export function HojaDelArticulo({
     )
   } else {
     contenido = (
-      <Resumen
-        articulo={articulo}
-        unidades={unidades}
-        esSupervisor={esSupervisor}
-        esAdmin={esAdmin}
-        ocupado={ocupado}
-        onMover={onMover}
-        onUnidad={(id) => setVista({ tipo: 'unidad', id })}
-        onNueva={() => setVista({ tipo: 'nueva' })}
-        onAjustes={() => setVista({ tipo: 'ajustes' })}
-      />
+      <>
+        {hecho && (
+          <p role="status" className="mb-3 rounded-ctl bg-ok-tint p-3 text-sm text-ok">
+            {hecho}
+          </p>
+        )}
+        <Resumen
+          articulo={articulo}
+          nivel={nivel ?? null}
+          unidades={unidades}
+          esSupervisor={esSupervisor}
+          esAdmin={esAdmin}
+          ocupado={ocupado}
+          falloAlMover={falloAlMover ?? null}
+          onMover={(m) => {
+            setHecho(null)
+            onMover(m)
+          }}
+          onUnidad={(id) => setVista({ tipo: 'unidad', id })}
+          onNueva={() => setVista({ tipo: 'nueva' })}
+          onAjustes={() => setVista({ tipo: 'ajustes' })}
+          onCambiar={(de) => {
+            setHecho(null)
+            setVista({ tipo: 'cambiar', de })
+          }}
+          onRepartir={() => {
+            setHecho(null)
+            setVista({ tipo: 'repartir' })
+          }}
+        />
+      </>
     )
   }
 
@@ -185,24 +258,32 @@ export function HojaDelArticulo({
 
 function Resumen({
   articulo,
+  nivel,
   unidades,
   esSupervisor,
   esAdmin,
   ocupado,
+  falloAlMover,
   onMover,
   onUnidad,
   onNueva,
   onAjustes,
+  onCambiar,
+  onRepartir,
 }: {
   articulo: ArticuloDeLaLista | null
+  nivel: NivelPorEstado | null
   unidades: UnidadDeAlmacen[]
   esSupervisor: boolean
   esAdmin: boolean
   ocupado: boolean
-  onMover: (qty: number, kind: 'compra' | 'consumo') => void
+  falloAlMover: string | null
+  onMover: (m: MovimientoPedido) => void
   onUnidad: (id: string) => void
   onNueva: () => void
   onAjustes: () => void
+  onCambiar: (de?: Condicion) => void
+  onRepartir: () => void
 }): React.ReactElement {
   const [consulta, setConsulta] = useState('')
   const [todas, setTodas] = useState(false)
@@ -218,10 +299,30 @@ function Resumen({
   const sinNumero = articulo ? sinNumeroDeSerie(articulo.on_hand, enAlmacen.length) : 0
   const n = Number.parseInt(cuantas, 10)
   const nValido = Number.isInteger(n) && n > 0
+  // Por cantidad, con un servidor que sabe de estados: la cantidad partida por
+  // estados. Por número de serie —o con un servidor de antes—, como siempre: la
+  // cifra con su menos y su más, y las unidades debajo.
+  const porEstados = articulo !== null && nivel !== null && nivel.seguimiento === 'cantidad'
+  // Añadir unidades con número es de los artículos que se llevan así. Con un
+  // servidor de antes no hay manera de saberlo, y se ofrece como hasta ahora.
+  const conUnidades = nivel === null || nivel.seguimiento === 'serie'
 
   return (
     <>
-      {articulo && (
+      {articulo && porEstados && nivel && (
+        <ExistenciasPorEstado
+          articulo={articulo}
+          nivel={nivel}
+          esSupervisor={esSupervisor}
+          ocupado={ocupado}
+          fallo={falloAlMover}
+          onMover={onMover}
+          onCambiar={onCambiar}
+          onRepartir={onRepartir}
+        />
+      )}
+
+      {articulo && !porEstados && (
         <section aria-label="Existencias" className="rounded-ctl border border-line bg-surface p-3">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -237,7 +338,7 @@ function Resumen({
               <button
                 type="button"
                 disabled={ocupado || articulo.on_hand <= 0}
-                onClick={() => onMover(-1, 'consumo')}
+                onClick={() => onMover({ qty: -1, kind: 'consumo' })}
                 className="key key-quiet h-14 w-14 text-xl"
                 aria-label={`Sacar una unidad de ${articulo.name}`}
               >
@@ -247,7 +348,7 @@ function Resumen({
                 <button
                   type="button"
                   disabled={ocupado}
-                  onClick={() => onMover(1, 'compra')}
+                  onClick={() => onMover({ qty: 1, kind: 'compra' })}
                   className="key key-quiet h-14 w-14 text-xl"
                   aria-label={`Meter una unidad de ${articulo.name}`}
                 >
@@ -281,7 +382,7 @@ function Resumen({
                 type="button"
                 disabled={!nValido || ocupado || n > articulo.on_hand}
                 onClick={() => {
-                  onMover(-n, 'consumo')
+                  onMover({ qty: -n, kind: 'consumo' })
                   setCuantas('')
                 }}
                 className="key key-quiet min-h-11 px-3 text-sm"
@@ -293,7 +394,7 @@ function Resumen({
                   type="button"
                   disabled={!nValido || ocupado}
                   onClick={() => {
-                    onMover(n, 'compra')
+                    onMover({ qty: n, kind: 'compra' })
                     setCuantas('')
                   }}
                   className="key key-accent min-h-11 px-3 text-sm"
@@ -306,10 +407,15 @@ function Resumen({
               )}
             </div>
           )}
+          {falloAlMover && (
+            <p role="alert" className="mt-2 text-sm text-crit">
+              {falloAlMover}
+            </p>
+          )}
         </section>
       )}
 
-      {(unidades.length > 0 || (esSupervisor && articulo)) && (
+      {(unidades.length > 0 || (esSupervisor && articulo && conUnidades)) && (
         <section aria-label="Unidades con número de serie" className="mt-4">
           <div className="flex items-baseline justify-between gap-2">
             <p className="eyebrow">Con número de serie</p>
@@ -320,6 +426,14 @@ function Resumen({
           {unidades.length === 0 ? (
             <p className="mt-1 text-sm text-muted">
               Apunta cada aparato con su número de serie y su estado, y al instalar se podrá elegir cuál.
+            </p>
+          ) : porEstados ? (
+            // Un artículo por cantidad con unidades apuntadas (de antes, o del
+            // Excel): se ven y se abren, pero su estado no es el de las cifras
+            // de arriba. Quien puede cambiarlo lo tiene en Ajustes.
+            <p className="mt-1 text-xs text-muted">
+              Este artículo se cuenta por cantidad: estas unidades están apuntadas, pero las cifras de arriba no salen de
+              ellas.{esAdmin ? ' Si cada una lleva su número, cámbialo en «Ajustes del artículo».' : ''}
             </p>
           ) : (
             <p className="mt-1 text-xs text-muted">
@@ -345,7 +459,7 @@ function Resumen({
           )}
 
           {lista.length > 0 && (
-            <ul className="mt-2 divide-y divide-hair rounded-ctl border border-line bg-surface">
+            <ul className="mt-2 divide-y divide-line-soft rounded-ctl border border-line bg-surface">
               {lista.map((u) => (
                 <li key={u.id}>
                   <FilaDeUnidad unidad={u} onAbrir={() => onUnidad(u.id)} />
@@ -368,7 +482,7 @@ function Resumen({
             </button>
           )}
 
-          {esSupervisor && articulo && (
+          {esSupervisor && articulo && conUnidades && (
             <button type="button" onClick={onNueva} className="key key-accent mt-2 min-h-touch w-full px-4 text-sm">
               Añadir unidades con número de serie
             </button>
@@ -379,7 +493,9 @@ function Resumen({
       {esAdmin && articulo && (
         <button type="button" onClick={onAjustes} className="key key-quiet mt-4 min-h-11 w-full px-4 text-left text-sm">
           Ajustes del artículo
-          <span className="block text-xs font-normal text-muted">Tipo de equipo, mínimo, nombre y retirarlo.</span>
+          <span className="block text-xs font-normal text-muted">
+            {nivel ? 'Cómo se cuenta, tipo de equipo, mínimo, nombre y retirarlo.' : 'Tipo de equipo, mínimo, nombre y retirarlo.'}
+          </span>
         </button>
       )}
     </>
@@ -420,10 +536,15 @@ export function FilaDeUnidad({ unidad: u, onAbrir }: { unidad: UnidadDeAlmacen; 
 
 function Ajustes({
   articulo,
+  nivel,
+  unidadesEnAlmacen,
   onVolver,
   onVista,
 }: {
   articulo: ArticuloDeLaLista
+  /** `null` con un servidor que no sabe de estados: entonces no hay «cómo se cuenta». */
+  nivel: NivelPorEstado | null
+  unidadesEnAlmacen: number
   onVolver: () => void
   onVista: (v: Vista) => void
 }): React.ReactElement {
@@ -444,8 +565,12 @@ function Ajustes({
   const tipoElegido = tipo ?? tipoActual
   const minimoN = Number.parseInt(minimo, 10)
 
+  const [seguimiento, setSeguimiento] = useState<Seguimiento | null>(null)
+  const seguimientoActual = nivel?.seguimiento ?? null
+  const seguimientoElegido = seguimiento ?? seguimientoActual
+
   const guardar = useMutation({
-    mutationFn: async (cambios: { asset_type_id?: string | null; min_threshold?: number }) => {
+    mutationFn: async (cambios: { asset_type_id?: string | null; min_threshold?: number; seguimiento?: Seguimiento }) => {
       const { data, error } = await supabase
         .from('stock_items')
         .update(cambios)
@@ -455,7 +580,14 @@ function Ajustes({
       if (!data || data.length === 0) throw new Error('Solo un administrador puede hacer esto.')
     },
     onSuccess: (_d, cambios) => {
-      setHecho('asset_type_id' in cambios ? 'Tipo de equipo guardado.' : 'Mínimo guardado.')
+      setHecho(
+        'seguimiento' in cambios
+          ? 'Guardado: ahora se cuenta ' + (cambios.seguimiento === 'serie' ? 'por número de serie.' : 'por cantidad.')
+          : 'asset_type_id' in cambios
+            ? 'Tipo de equipo guardado.'
+            : 'Mínimo guardado.',
+      )
+      setSeguimiento(null)
       void qc.invalidateQueries({ queryKey: ['stock-levels'] })
       void pullMaster()
     },
@@ -466,7 +598,69 @@ function Ajustes({
       <Volver onVolver={onVolver} />
       <p className="text-base font-semibold">Ajustes del artículo</p>
 
-      <label className="mt-3 block text-xs text-muted">
+      {/*
+        Cómo se cuenta: la pregunta de cualquier programa de almacén al dar de
+        alta un artículo. Se puede cambiar, y no se pierde nada: los movimientos
+        guardan su estado y las unidades el suyo; cambia de dónde salen las
+        cifras por estado.
+      */}
+      {seguimientoActual && seguimientoElegido && (
+        <fieldset className="mt-3">
+          <legend className="text-xs text-muted">Cómo se cuenta</legend>
+          <div role="radiogroup" className="mt-1 space-y-1.5">
+            {(['cantidad', 'serie'] as const).map((sg) => (
+              <button
+                key={sg}
+                type="button"
+                role="radio"
+                aria-checked={seguimientoElegido === sg}
+                onClick={() => {
+                  setSeguimiento(sg)
+                  setHecho(null)
+                }}
+                className={`flex min-h-11 w-full items-start gap-3 rounded-ctl border px-3 py-2 text-left ${
+                  seguimientoElegido === sg ? 'border-accent bg-accent-tint' : 'border-line bg-surface'
+                }`}
+              >
+                <span
+                  aria-hidden
+                  className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${
+                    seguimientoElegido === sg ? 'border-accent' : 'border-line'
+                  }`}
+                >
+                  {seguimientoElegido === sg && <span className="h-2.5 w-2.5 rounded-full bg-accent" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium text-ink">{SEGUIMIENTO_LABEL[sg]}</span>
+                  <span className="block text-xs text-muted">{SEGUIMIENTO_AYUDA[sg]}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+          {seguimientoElegido !== seguimientoActual && (
+            <>
+              <p className="mt-2 text-xs text-muted">
+                {seguimientoElegido === 'serie'
+                  ? unidadesEnAlmacen > 0
+                    ? `Las cifras por estado saldrán de sus ${unidadesEnAlmacen} unidades con número de serie; las que no tengan número quedarán «sin estado».`
+                    : 'Las cifras por estado saldrán de sus unidades con número de serie. Las que hay ahora quedarán «sin número» hasta que se apunten.'
+                  : 'Las cifras por estado saldrán de lo que se meta y se saque. Lo que hay ahora quedará «sin estado» hasta que se clasifique, con un toque.'}{' '}
+                No se borra nada: los movimientos guardan su estado y las unidades el suyo.
+              </p>
+              <button
+                type="button"
+                disabled={guardar.isPending}
+                onClick={() => guardar.mutate({ seguimiento: seguimientoElegido })}
+                className="key key-accent mt-2 min-h-11 px-3 text-sm"
+              >
+                Guardar: {SEGUIMIENTO_LABEL[seguimientoElegido].toLowerCase()}
+              </button>
+            </>
+          )}
+        </fieldset>
+      )}
+
+      <label className="mt-4 block text-xs text-muted">
         Tipo de equipo
         <select
           value={tipoElegido}
@@ -533,7 +727,7 @@ function Ajustes({
       )}
       {hecho && <p className="mt-2 text-sm text-ok">{hecho}</p>}
 
-      <div className="mt-4 space-y-2 border-t border-hair pt-3">
+      <div className="mt-4 space-y-2 border-t border-line-soft pt-3">
         <button
           type="button"
           onClick={() => onVista({ tipo: 'renombrar' })}

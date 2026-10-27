@@ -176,7 +176,7 @@ export function FichaDeUnidad({
       )}
 
       {(puedeCorregir || (puedeDarDeBaja && u.status !== 'instalado' && u.status !== 'baja')) && (
-        <div className="mt-4 space-y-2 border-t border-hair pt-3">
+        <div className="mt-4 space-y-2 border-t border-line-soft pt-3">
           {puedeCorregir && (
             <button
               type="button"

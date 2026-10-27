@@ -6740,3 +6740,1023 @@ begin;
     raise notice 'OK: la instalación de septiembre sigue igual, y su sustitución no crea unidades';
   end $$;
 rollback;
+
+-- =============================================================================
+-- El estado, también por cantidad (`20261027000300`)
+--
+-- Un edificio de pruebas con dos aulas y cuatro artículos, sin un solo
+-- movimiento:
+--
+--   teclado  «Teclado de la prueba 100», por cantidad
+--   raton    «Ratón de la prueba 100», por cantidad
+--   proy     «Proyector de la prueba 100 (almacén)», por número de serie, del
+--            tipo «Proyector de la prueba 100»
+--   ret      «Cable retirado de la prueba 100», por cantidad y retirado
+--
+-- Cada prueba apunta sus asientos con `pg_temp.asiento()` —como lo escribiría
+-- cualquiera, diciendo o no el estado— y lee el saldo de un estado con
+-- `pg_temp.en()`. Las dos, como dueño y antes del primer `test_as()`, igual que
+-- el escenario.
+-- =============================================================================
+
+create or replace function pg_temp.escenario_estados() returns void
+language plpgsql as $$
+declare
+  v_ed   uuid;
+  v_zona uuid;
+  v_sala uuid;
+  v_tipo uuid;
+  v_item uuid;
+begin
+  insert into buildings (code, name, sort_order) values ('Z100', 'EDIFICIO DE LOS ESTADOS', 1000)
+    returning id into v_ed;
+  insert into zones (building_id, name, sort_order) values (v_ed, 'PLANTA BAJA', 10)
+    returning id into v_zona;
+  insert into rooms (zone_id, code, name, kind) values (v_zona, '100.1', 'Aula 100.1', 'aula')
+    returning id into v_sala;
+  perform set_config('prueba100.sala', v_sala::text, true);
+  insert into rooms (zone_id, code, name, kind) values (v_zona, '100.2', 'Aula 100.2', 'aula')
+    returning id into v_sala;
+  perform set_config('prueba100.sala2', v_sala::text, true);
+
+  insert into asset_types (name, category, confirmed) values ('Proyector de la prueba 100', 'av', true)
+    returning id into v_tipo;
+  perform set_config('prueba100.tipo', v_tipo::text, true);
+
+  insert into stock_items (name) values ('Teclado de la prueba 100') returning id into v_item;
+  perform set_config('prueba100.teclado', v_item::text, true);
+  insert into stock_items (name) values ('Ratón de la prueba 100') returning id into v_item;
+  perform set_config('prueba100.raton', v_item::text, true);
+  insert into stock_items (name, asset_type_id, seguimiento)
+  values ('Proyector de la prueba 100 (almacén)', v_tipo, 'serie') returning id into v_item;
+  perform set_config('prueba100.proy', v_item::text, true);
+  insert into stock_items (name, active) values ('Cable retirado de la prueba 100', false)
+    returning id into v_item;
+  perform set_config('prueba100.ret', v_item::text, true);
+end $$;
+
+/** Un asiento como dueño, del artículo que nombra el ajuste `prueba100.*`. */
+create or replace function pg_temp.asiento(p_item text, p_qty int, p_kind text, p_condicion text default null)
+returns uuid
+language plpgsql as $$
+declare
+  v_id uuid := gen_random_uuid();
+begin
+  insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, source, condicion)
+  values (v_id, current_setting(p_item)::uuid, p_qty, p_kind::stock_movement_kind, now(), 'prueba', p_condicion);
+  return v_id;
+end $$;
+
+/** El saldo de un artículo en un estado. */
+create or replace function pg_temp.en(p_item text, p_condicion text) returns int
+language sql as $$
+  select coalesce(sum(on_hand), 0)::int from stock_balances_por_estado
+   where stock_item_id = current_setting(p_item)::uuid and condicion = p_condicion
+$$;
+
+\echo ''
+\echo '=== 100. El estado de cada movimiento: obligatorio, «sin indicar» lo de antes, y el saldo por estado es el libro ==='
+begin;
+  select pg_temp.escenario_estados();
+  do $$
+  declare
+    r record;
+  begin
+    select is_nullable, column_default into r
+      from information_schema.columns
+     where table_schema = 'public' and table_name = 'stock_movements' and column_name = 'condicion';
+    if r.is_nullable is distinct from 'NO' or r.column_default is not null then
+      raise exception 'FALLO: condicion no es obligatoria o se ha quedado con un defecto: %', to_jsonb(r);
+    end if;
+    if not exists (select 1 from pg_constraint
+                    where conname = 'stock_movements_condicion_check'
+                      and conrelid = 'public.stock_movements'::regclass) then
+      raise exception 'FALLO: la restricción del estado del movimiento no lleva su nombre';
+    end if;
+    begin
+      perform pg_temp.asiento('prueba100.teclado', 1, 'compra', 'rota');
+      raise exception 'FALLO: entró un movimiento en estado «rota»';
+    exception when check_violation then null;
+    end;
+
+    -- El seed son saldos de apertura y consumos del histórico, sin estado: como
+    -- lo que ya había en la base el día de la migración, todo «sin indicar».
+    if not exists (select 1 from stock_movements where source = 'import') then
+      raise exception 'FALLO: no hay movimientos del histórico con los que probar';
+    end if;
+    if exists (select 1 from stock_movements where source = 'import' and condicion <> 'sin_indicar') then
+      raise exception 'FALLO: un movimiento del histórico salió con un estado que nadie dijo';
+    end if;
+
+    -- El saldo por estado es la suma del libro por artículo y estado, ninguno
+    -- es negativo, y los de cada artículo suman su total.
+    if exists (
+      select 1
+        from (select stock_item_id, condicion, sum(qty)::int as s
+                from stock_movements group by stock_item_id, condicion) l
+        full join stock_balances_por_estado e using (stock_item_id, condicion)
+       where coalesce(l.s, 0) <> coalesce(e.on_hand, 0)) then
+      raise exception 'FALLO: el saldo por estado no es la suma de los movimientos';
+    end if;
+    if exists (select 1 from stock_balances_por_estado where on_hand < 0) then
+      raise exception 'FALLO: hay un saldo por estado negativo';
+    end if;
+    if exists (
+      select 1 from stock_balances b
+       where b.on_hand <> coalesce((select sum(e.on_hand) from stock_balances_por_estado e
+                                     where e.stock_item_id = b.stock_item_id), 0)) then
+      raise exception 'FALLO: los estados de un artículo no suman su total';
+    end if;
+    raise notice 'OK: el estado es obligatorio y sin defecto, lo del histórico está «sin indicar», y el saldo por estado es el libro y suma el total';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 101. Cómo se lleva cada artículo: por cantidad si nadie dice otra cosa, y lo cambia un administrador ==='
+begin;
+  select pg_temp.escenario_estados();
+  do $$
+  declare
+    r record;
+  begin
+    select is_nullable, column_default into r
+      from information_schema.columns
+     where table_schema = 'public' and table_name = 'stock_items' and column_name = 'seguimiento';
+    if r.is_nullable is distinct from 'NO' or r.column_default is distinct from '''cantidad''::text' then
+      raise exception 'FALLO: seguimiento no nace «cantidad» y obligatorio: %', to_jsonb(r);
+    end if;
+    if (select seguimiento from stock_items where id = current_setting('prueba100.teclado')::uuid) <> 'cantidad' then
+      raise exception 'FALLO: un artículo nuevo no se lleva por cantidad';
+    end if;
+    begin
+      update stock_items set seguimiento = 'lote' where id = current_setting('prueba100.teclado')::uuid;
+      raise exception 'FALLO: se guardó la manera «lote»';
+    exception when check_violation then null;
+    end;
+    raise notice 'OK: un artículo se lleva por cantidad si nadie dice otra cosa, y solo por cantidad o por número de serie';
+  end $$;
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  declare
+    n int;
+  begin
+    update stock_items set seguimiento = 'serie' where id = current_setting('prueba100.teclado')::uuid;
+    get diagnostics n = row_count;
+    if n > 0 then
+      raise exception 'FALLO: un supervisor cambió cómo se lleva un artículo';
+    end if;
+  end $$;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    n int;
+  begin
+    update stock_items set seguimiento = 'serie' where id = current_setting('prueba100.teclado')::uuid;
+    get diagnostics n = row_count;
+    if n > 0 then
+      raise exception 'FALLO: un técnico cambió cómo se lleva un artículo';
+    end if;
+  end $$;
+  select test_as('44444444-4444-4444-8444-444444444444', 'admin');
+  do $$
+  declare
+    n int;
+  begin
+    update stock_items set seguimiento = 'serie' where id = current_setting('prueba100.teclado')::uuid;
+    get diagnostics n = row_count;
+    if n <> 1 or (select seguimiento from stock_items where id = current_setting('prueba100.teclado')::uuid) <> 'serie' then
+      raise exception 'FALLO: un administrador no pudo cambiar cómo se lleva un artículo';
+    end if;
+    raise notice 'OK: cómo se lleva un artículo lo cambia un administrador; un supervisor o un técnico, no';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 102. Lo que entra: en el estado que diga y, si no dice ninguno, por su clase ==='
+begin;
+  select pg_temp.escenario_estados();
+  do $$
+  declare
+    v uuid;
+  begin
+    v := pg_temp.asiento('prueba100.teclado', 5, 'compra');
+    if (select condicion from stock_movements where id = v) <> 'nuevo' then
+      raise exception 'FALLO: una compra sin estado no entra nueva';
+    end if;
+    v := pg_temp.asiento('prueba100.teclado', 2, 'devolucion');
+    if (select condicion from stock_movements where id = v) <> 'usado' then
+      raise exception 'FALLO: una devolución sin estado no entra usada';
+    end if;
+    v := pg_temp.asiento('prueba100.teclado', 3, 'ajuste');
+    if (select condicion from stock_movements where id = v) <> 'sin_indicar' then
+      raise exception 'FALLO: un ajuste sin estado no entra «sin indicar»';
+    end if;
+    v := pg_temp.asiento('prueba100.teclado', 1, 'devolucion', 'averiado');
+    if (select condicion from stock_movements where id = v) <> 'averiado' then
+      raise exception 'FALLO: una devolución que dice «averiado» no entra averiada';
+    end if;
+    v := pg_temp.asiento('prueba100.teclado', 1, 'ajuste', '  Reacondicionado ');
+    if (select condicion from stock_movements where id = v) <> 'reacondicionado' then
+      raise exception 'FALLO: «  Reacondicionado » no se leyó como reacondicionado';
+    end if;
+    if (pg_temp.en('prueba100.teclado', 'nuevo'), pg_temp.en('prueba100.teclado', 'usado'),
+        pg_temp.en('prueba100.teclado', 'sin_indicar'), pg_temp.en('prueba100.teclado', 'averiado'),
+        pg_temp.en('prueba100.teclado', 'reacondicionado')) is distinct from (5, 2, 3, 1, 1) then
+      raise exception 'FALLO: el saldo por estado no es 5 nuevos, 2 usados, 3 sin indicar, 1 averiado y 1 reacondicionado';
+    end if;
+
+    -- Por número de serie, igual: entra lo que diga o lo de su clase.
+    v := pg_temp.asiento('prueba100.proy', 2, 'compra');
+    if (select condicion from stock_movements where id = v) <> 'nuevo' then
+      raise exception 'FALLO: por número de serie, una compra sin estado no entra nueva';
+    end if;
+    v := pg_temp.asiento('prueba100.proy', 1, 'devolucion', 'reacondicionado');
+    if (select condicion from stock_movements where id = v) <> 'reacondicionado' then
+      raise exception 'FALLO: por número de serie, lo que entra diciendo su estado no entra en él';
+    end if;
+    raise notice 'OK: compra nueva, devolución usada, ajuste sin indicar; y lo que dice su estado, en el suyo, se lleve como se lleve';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 103. Lo que sale sin estado: primero lo usado, y repartido si un estado no llega ==='
+begin;
+  select pg_temp.escenario_estados();
+  do $$
+  begin
+    perform pg_temp.asiento('prueba100.teclado', 2, 'devolucion');                -- 2 usados
+    perform pg_temp.asiento('prueba100.teclado', 5, 'ajuste');                    -- 5 sin indicar
+    perform pg_temp.asiento('prueba100.raton', 2, 'compra');                      -- 2 nuevos
+    perform pg_temp.asiento('prueba100.raton', 1, 'ajuste');                      -- 1 sin indicar
+    perform pg_temp.asiento('prueba100.raton', 1, 'ajuste', 'reacondicionado');   -- 1 reacondicionado
+    perform pg_temp.asiento('prueba100.raton', 1, 'devolucion', 'averiado');      -- 1 averiado
+  end $$;
+
+  -- El técnico, como lo sube la cola: con su id y sin estado.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_id   uuid := '10030000-0000-4000-8000-000000000001';
+    v_item uuid := current_setting('prueba100.teclado')::uuid;
+    v_sala uuid := current_setting('prueba100.sala')::uuid;
+    m      record;
+    v_n    int;
+    v_cual text;
+  begin
+    insert into stock_movements (id, stock_item_id, qty, kind, room_id, occurred_at, by_user, note)
+    values (v_id, v_item, -4, 'consumo', v_sala, now() - interval '1 hour',
+            '11111111-1111-4111-8111-111111111111', 'Cuatro teclados para la 100.1')
+    on conflict (id) do nothing;
+
+    select * into m from stock_movements where id = v_id;
+    if m.qty is distinct from -2 or m.condicion is distinct from 'usado' then
+      raise exception 'FALLO: la fila que llegó no se quedó con las dos usadas: %', to_jsonb(m);
+    end if;
+    select count(*) into v_n
+      from stock_movements x
+     where x.stock_item_id = v_item and x.id <> v_id
+       and x.qty = -2 and x.condicion = 'sin_indicar' and x.kind = 'consumo'
+       and x.occurred_at = m.occurred_at and x.recorded_at = m.recorded_at
+       and x.room_id = v_sala and x.by_user = m.by_user
+       and x.note = m.note and x.source = m.source
+       and x.incident_id is not distinct from m.incident_id;
+    if v_n <> 1 or (select count(*) from stock_movements where stock_item_id = v_item and kind = 'consumo') <> 2 then
+      raise exception 'FALLO: el resto no salió en una sola fila igual, de las sin indicar';
+    end if;
+    if (select on_hand from stock_levels where stock_item_id = v_item) <> 3
+       or (select (usado, sin_indicar) from stock_levels_por_estado where stock_item_id = v_item)
+          is distinct from (0, 3) then
+      raise exception 'FALLO: después de sacar cuatro no quedan 3, todas sin indicar';
+    end if;
+    raise notice 'OK: cuatro sin estado con 2 usados y 5 sin indicar: −2 usados en la fila que llegó, con su id, y −2 sin indicar en otra igual';
+
+    -- El orden entero: reacondicionado antes que sin indicar, nuevo después, y
+    -- lo averiado no se toca mientras quede otra cosa.
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user)
+    values ('10030000-0000-4000-8000-000000000002', current_setting('prueba100.raton')::uuid, -3, 'consumo',
+            now(), '11111111-1111-4111-8111-111111111111');
+    select string_agg(condicion || ' ' || qty, ', ' order by (id <> '10030000-0000-4000-8000-000000000002'), condicion)
+      into v_cual
+      from stock_movements
+     where stock_item_id = current_setting('prueba100.raton')::uuid and kind = 'consumo';
+    if v_cual is distinct from 'reacondicionado -1, nuevo -1, sin_indicar -1' then
+      raise exception 'FALLO: tres ratones sin estado no salieron de reacondicionado, sin indicar y nuevo: %', v_cual;
+    end if;
+    if (select (nuevo, reacondicionado, sin_indicar, averiado)
+          from stock_levels_por_estado where stock_item_id = current_setting('prueba100.raton')::uuid)
+       is distinct from (1, 0, 0, 1) then
+      raise exception 'FALLO: el averiado se tocó con otras cosas en el almacén';
+    end if;
+    raise notice 'OK: el orden es usado, reacondicionado, sin indicar y nuevo, y lo averiado se queda mientras haya otra cosa';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 104. Lo que sale diciendo el estado, por cantidad: lo que se pide, o 23514 con cuántas hay ==='
+begin;
+  select pg_temp.escenario_estados();
+  do $$
+  begin
+    perform pg_temp.asiento('prueba100.teclado', 1, 'devolucion');   -- 1 usado
+    perform pg_temp.asiento('prueba100.teclado', 5, 'compra');       -- 5 nuevos
+  end $$;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_item uuid := current_setting('prueba100.teclado')::uuid;
+    v_n    int;
+  begin
+    select count(*) into v_n from stock_movements where stock_item_id = v_item;
+    begin
+      insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user, condicion)
+      values (gen_random_uuid(), v_item, -2, 'consumo', now(), '11111111-1111-4111-8111-111111111111', 'usado');
+      raise exception 'FALLO: se sacaron dos usados habiendo uno';
+    exception when check_violation then
+      if sqlerrm <> 'No quedan tantas en estado «Usado» de «Teclado de la prueba 100»: hay 1.' then
+        raise exception 'FALLO: el rechazo no lo dice con sus palabras: %', sqlerrm;
+      end if;
+    end;
+    if (select count(*) from stock_movements where stock_item_id = v_item) <> v_n
+       or (select (usado, nuevo) from stock_levels_por_estado where stock_item_id = v_item) is distinct from (1, 5) then
+      raise exception 'FALLO: el rechazo dejó algo escrito';
+    end if;
+
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user, condicion)
+    values (gen_random_uuid(), v_item, -2, 'consumo', now(), '11111111-1111-4111-8111-111111111111', 'nuevo');
+    if (select count(*) from stock_movements where stock_item_id = v_item) <> v_n + 1
+       or (select (usado, nuevo) from stock_levels_por_estado where stock_item_id = v_item) is distinct from (1, 3) then
+      raise exception 'FALLO: dos nuevos pedidos no salieron, enteros, de los nuevos';
+    end if;
+    raise notice 'OK: por cantidad, lo que se pide en un estado sale de él; si no hay bastantes, 23514 con cuántas hay y sin escribir nada';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 105. Si ni con todo llega, lo rechaza el total, como siempre ==='
+begin;
+  select pg_temp.escenario_estados();
+  do $$
+  begin
+    perform pg_temp.asiento('prueba100.teclado', 1, 'devolucion');
+    perform pg_temp.asiento('prueba100.teclado', 1, 'devolucion', 'averiado');
+  end $$;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_item uuid := current_setting('prueba100.teclado')::uuid;
+    v_n    int;
+  begin
+    select count(*) into v_n from stock_movements where stock_item_id = v_item;
+    begin
+      insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user)
+      values (gen_random_uuid(), v_item, -3, 'consumo', now(), '11111111-1111-4111-8111-111111111111');
+      raise exception 'FALLO: salieron tres de un almacén con dos';
+    exception when check_violation then
+      if sqlerrm <> 'No hay tantas unidades de «Teclado de la prueba 100»: quedarían -1 en el almacén' then
+        raise exception 'FALLO: el total no lo rechaza con el mensaje de siempre: %', sqlerrm;
+      end if;
+    end;
+    if (select count(*) from stock_movements where stock_item_id = v_item) <> v_n
+       or (select (usado, averiado, on_hand) from stock_levels_por_estado where stock_item_id = v_item)
+          is distinct from (1, 1, 2) then
+      raise exception 'FALLO: el rechazo del total dejó algo escrito';
+    end if;
+    raise notice 'OK: tres sin estado con dos en el almacén: lo rechaza el total con el mensaje de siempre, y no queda nada escrito';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 106. El reenvío de la cola no reparte dos veces ==='
+begin;
+  select pg_temp.escenario_estados();
+  do $$
+  begin
+    perform pg_temp.asiento('prueba100.teclado', 2, 'devolucion');
+    perform pg_temp.asiento('prueba100.teclado', 5, 'ajuste');
+  end $$;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_id   uuid := '10060000-0000-4000-8000-000000000001';
+    v_item uuid := current_setting('prueba100.teclado')::uuid;
+  begin
+    -- La aplicación vieja: el mismo consumo tres veces, porque se perdió la
+    -- respuesta. El primero se reparte; los otros dos no hacen nada.
+    for i in 1 .. 3 loop
+      insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user)
+      values (v_id, v_item, -4, 'consumo', now(), '11111111-1111-4111-8111-111111111111')
+      on conflict (id) do nothing;
+    end loop;
+    if (select count(*) from stock_movements where stock_item_id = v_item and kind = 'consumo') <> 2 then
+      raise exception 'FALLO: el reenvío repartió otra vez';
+    end if;
+    if (select (on_hand, usado, sin_indicar) from stock_levels_por_estado where stock_item_id = v_item)
+       is distinct from (3, 0, 3) then
+      raise exception 'FALLO: el reenvío movió el saldo';
+    end if;
+    -- Sin `on conflict`, el «ya existe» de siempre, no un «falta el estado».
+    begin
+      insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user)
+      values (v_id, v_item, -4, 'consumo', now(), '11111111-1111-4111-8111-111111111111');
+      raise exception 'FALLO: entró dos veces el mismo id';
+    exception when unique_violation then null;
+    end;
+    raise notice 'OK: tres envíos del mismo consumo repartido dejan las mismas dos filas y el mismo saldo, y sin on conflict es un 23505';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 107. Por número de serie, el estado de lo que sale es una preferencia, y las cifras siguen sumando el total ==='
+begin;
+  select pg_temp.escenario_estados();
+  do $$
+  begin
+    perform pg_temp.asiento('prueba100.proy', 3, 'compra');                    -- 3 nuevos
+    perform pg_temp.asiento('prueba100.proy', 2, 'devolucion');                -- 2 usados
+    perform pg_temp.asiento('prueba100.proy', 1, 'devolucion', 'averiado');    -- 1 averiado
+  end $$;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_item uuid := current_setting('prueba100.proy')::uuid;
+  begin
+    -- Prefiere lo nuevo: sale de lo nuevo aunque haya usados.
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user, condicion)
+    values ('10070000-0000-4000-8000-000000000001', v_item, -1, 'consumo', now(),
+            '11111111-1111-4111-8111-111111111111', 'nuevo');
+    if (select (condicion, qty) from stock_movements where id = '10070000-0000-4000-8000-000000000001')
+       is distinct from ('nuevo'::text, -1) then
+      raise exception 'FALLO: por número de serie no se sacó de lo que se prefería';
+    end if;
+    -- Pide tres reacondicionados y no hay ninguno: no es un error, salen de lo
+    -- que haya —los dos usados y un nuevo—.
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user, condicion)
+    values ('10070000-0000-4000-8000-000000000002', v_item, -3, 'consumo', now(),
+            '11111111-1111-4111-8111-111111111111', 'reacondicionado');
+    if (select (condicion, qty) from stock_movements where id = '10070000-0000-4000-8000-000000000002')
+       is distinct from ('usado'::text, -2)
+       or (select count(*) from stock_movements
+            where stock_item_id = v_item and kind = 'consumo' and condicion = 'nuevo') <> 2 then
+      raise exception 'FALLO: por número de serie, un estado que no tiene bastantes no se repartió por el orden de siempre';
+    end if;
+    -- Por número de serie la vista cuenta unidades; el saldo por estado se lee
+    -- en su tabla.
+    if (select (coalesce(sum(on_hand) filter (where condicion = 'nuevo'), 0),
+                coalesce(sum(on_hand) filter (where condicion = 'usado'), 0),
+                coalesce(sum(on_hand) filter (where condicion = 'averiado'), 0))
+          from stock_balances_por_estado where stock_item_id = v_item)
+       is distinct from (1::bigint, 0::bigint, 1::bigint) then
+      raise exception 'FALLO: el saldo por estado no quedó en 1 nuevo, 0 usados y 1 averiado';
+    end if;
+    raise notice 'OK: por número de serie, el estado que se dice al sacar es una preferencia: primero de él y después por el orden de siempre, sin rechazar';
+  end $$;
+
+  -- Un administrador lo pasa a cantidad: las cifras son las del libro, ninguna
+  -- negativa, y suman el total.
+  select test_as('44444444-4444-4444-8444-444444444444', 'admin');
+  update stock_items set seguimiento = 'cantidad' where id = current_setting('prueba100.proy')::uuid;
+  do $$
+  declare
+    r record;
+  begin
+    select * into r from stock_levels_por_estado where stock_item_id = current_setting('prueba100.proy')::uuid;
+    if r.seguimiento <> 'cantidad' or r.on_hand <> 2
+       or r.nuevo + r.usado + r.reacondicionado + r.averiado + r.sin_indicar <> r.on_hand
+       or least(r.nuevo, r.usado, r.reacondicionado, r.averiado, r.sin_indicar) < 0
+       or (r.nuevo, r.averiado, r.disponibles) is distinct from (1, 1, 1) then
+      raise exception 'FALLO: al pasar a cantidad las cifras no suman el total: %', to_jsonb(r);
+    end if;
+    if exists (select 1 from stock_balances_por_estado where on_hand < 0) then
+      raise exception 'FALLO: queda un saldo por estado negativo';
+    end if;
+    raise notice 'OK: sacado por número de serie y pasado a cantidad, las cifras suman el total y ninguna es negativa';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 108. Sin estado y con solo averiadas: sale de las averiadas, no se rechaza ==='
+begin;
+  select pg_temp.escenario_estados();
+  do $$
+  begin
+    perform pg_temp.asiento('prueba100.raton', 2, 'devolucion', 'averiado');     -- 2 averiados
+    perform pg_temp.asiento('prueba100.teclado', 1, 'devolucion');               -- 1 usado
+    perform pg_temp.asiento('prueba100.teclado', 2, 'devolucion', 'averiado');   -- 2 averiados
+  end $$;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_raton   uuid := current_setting('prueba100.raton')::uuid;
+    v_teclado uuid := current_setting('prueba100.teclado')::uuid;
+    v_cual    text;
+  begin
+    -- La aplicación vieja no sabe de estados, y no puede quedarse atascada.
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user)
+    values ('10080000-0000-4000-8000-000000000001', v_raton, -1, 'consumo', now(),
+            '11111111-1111-4111-8111-111111111111');
+    if (select condicion from stock_movements where id = '10080000-0000-4000-8000-000000000001') <> 'averiado'
+       or (select (on_hand, averiado, disponibles) from stock_levels_por_estado where stock_item_id = v_raton)
+          is distinct from (1, 1, 0) then
+      raise exception 'FALLO: sin estado y con solo averiados no salió de los averiados';
+    end if;
+
+    -- Un usado y dos averiados, dos sin estado: el usado y, después, un averiado.
+    insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user)
+    values ('10080000-0000-4000-8000-000000000002', v_teclado, -2, 'consumo', now(),
+            '11111111-1111-4111-8111-111111111111');
+    select string_agg(condicion || ' ' || qty, ', ' order by (id <> '10080000-0000-4000-8000-000000000002'))
+      into v_cual
+      from stock_movements where stock_item_id = v_teclado and kind = 'consumo';
+    if v_cual is distinct from 'usado -1, averiado -1' then
+      raise exception 'FALLO: dos sin estado con un usado y dos averiados no salieron del usado y de un averiado: %', v_cual;
+    end if;
+
+    -- Pedido a propósito, por cantidad, sigue siendo estricto.
+    begin
+      insert into stock_movements (id, stock_item_id, qty, kind, occurred_at, by_user, condicion)
+      values (gen_random_uuid(), v_teclado, -2, 'consumo', now(), '11111111-1111-4111-8111-111111111111', 'averiado');
+      raise exception 'FALLO: se sacaron dos averiados habiendo uno';
+    exception when check_violation then
+      if sqlerrm <> 'No quedan tantas en estado «Averiado» de «Teclado de la prueba 100»: hay 1.' then
+        raise exception 'FALLO: el rechazo no lo dice con sus palabras: %', sqlerrm;
+      end if;
+    end;
+    raise notice 'OK: sin estado, lo averiado es lo último pero no un rechazo; pedido a propósito, sigue siendo lo que se pide';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 109. La vista por estado: sus columnas, las dos maneras de contar y el total de stock_levels ==='
+begin;
+  select pg_temp.escenario_estados();
+  do $$
+  begin
+    -- Teclados, por cantidad: 5 nuevos, 2 usados, 1 averiado y 3 sin indicar.
+    perform pg_temp.asiento('prueba100.teclado', 5, 'compra');
+    perform pg_temp.asiento('prueba100.teclado', 2, 'devolucion');
+    perform pg_temp.asiento('prueba100.teclado', 1, 'devolucion', 'averiado');
+    perform pg_temp.asiento('prueba100.teclado', 3, 'ajuste');
+    -- Proyectores, por número de serie: el almacén cuenta 5 y las unidades
+    -- disponibles son 3 —dos nuevas y una averiada—; la de baja no cuenta.
+    perform pg_temp.asiento('prueba100.proy', 5, 'ajuste');
+    insert into stock_units (stock_item_id, asset_type_id, articulo, serial, condicion, status)
+    values (current_setting('prueba100.proy')::uuid, current_setting('prueba100.tipo')::uuid,
+            'Proyector de la prueba 100 (almacén)', 'SN-109-1', 'nuevo', 'disponible'),
+           (current_setting('prueba100.proy')::uuid, current_setting('prueba100.tipo')::uuid,
+            'Proyector de la prueba 100 (almacén)', 'SN-109-2', 'nuevo', 'disponible'),
+           (current_setting('prueba100.proy')::uuid, current_setting('prueba100.tipo')::uuid,
+            'Proyector de la prueba 100 (almacén)', 'SN-109-3', 'averiado', 'disponible'),
+           (current_setting('prueba100.proy')::uuid, current_setting('prueba100.tipo')::uuid,
+            'Proyector de la prueba 100 (almacén)', 'SN-109-4', 'usado', 'baja');
+    -- Y el retirado, con saldo, que no sale.
+    perform pg_temp.asiento('prueba100.ret', 4, 'ajuste');
+  end $$;
+  do $$
+  declare
+    v_columnas text;
+  begin
+    select string_agg(column_name, ',' order by ordinal_position) into v_columnas
+      from information_schema.columns
+     where table_schema = 'public' and table_name = 'stock_levels_por_estado';
+    if v_columnas is distinct from
+       'stock_item_id,seguimiento,on_hand,nuevo,usado,reacondicionado,averiado,sin_indicar,disponibles' then
+      raise exception 'FALLO: las columnas de stock_levels_por_estado no son las del contrato: %', v_columnas;
+    end if;
+    if not exists (select 1 from pg_class
+                    where oid = 'public.stock_levels_por_estado'::regclass
+                      and 'security_invoker=on' = any (reloptions)) then
+      raise exception 'FALLO: la vista por estado corre con los permisos de su dueño';
+    end if;
+    if has_table_privilege('anon', 'public.stock_levels_por_estado', 'select')
+       or has_table_privilege('anon', 'public.stock_balances_por_estado', 'select')
+       or has_table_privilege('authenticated', 'public.stock_balances_por_estado', 'insert')
+       or has_table_privilege('authenticated', 'public.stock_balances_por_estado', 'update')
+       or not has_table_privilege('authenticated', 'public.stock_levels_por_estado', 'select') then
+      raise exception 'FALLO: la vista o el saldo por estado se abren a quien no deben';
+    end if;
+    raise notice 'OK: la vista tiene las columnas del contrato, en su orden, corre con los permisos de quien pregunta y un anónimo no llega';
+  end $$;
+
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    r record;
+  begin
+    select * into r from stock_levels_por_estado where stock_item_id = current_setting('prueba100.teclado')::uuid;
+    if (r.seguimiento, r.on_hand, r.nuevo, r.usado, r.reacondicionado, r.averiado, r.sin_indicar, r.disponibles)
+       is distinct from ('cantidad'::text, 11, 5, 2, 0, 1, 3, 10) then
+      raise exception 'FALLO: los teclados por cantidad no salen 11 = 5 nuevos + 2 usados + 1 averiado + 3 sin indicar: %', to_jsonb(r);
+    end if;
+    select * into r from stock_levels_por_estado where stock_item_id = current_setting('prueba100.proy')::uuid;
+    if (r.seguimiento, r.on_hand, r.nuevo, r.usado, r.reacondicionado, r.averiado, r.sin_indicar, r.disponibles)
+       is distinct from ('serie'::text, 5, 2, 0, 0, 1, 2, 4) then
+      raise exception 'FALLO: los proyectores por número de serie no salen de sus unidades disponibles: %', to_jsonb(r);
+    end if;
+    if exists (select 1 from stock_levels_por_estado where stock_item_id = current_setting('prueba100.ret')::uuid) then
+      raise exception 'FALLO: un artículo retirado sale en la vista por estado';
+    end if;
+    if (select count(*) from stock_levels_por_estado) <> (select count(*) from stock_levels)
+       or exists (select 1 from stock_levels_por_estado v join stock_levels l using (stock_item_id)
+                   where v.on_hand <> l.on_hand) then
+      raise exception 'FALLO: la vista por estado no tiene los mismos artículos y el mismo on_hand que stock_levels';
+    end if;
+    raise notice 'OK: el técnico la lee; por cantidad, el saldo de cada estado; por número de serie, sus unidades y el resto sin indicar; y el mismo on_hand que stock_levels';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 110. Cambiar el estado: dos ajustes en el mismo instante, el mismo total, y una sola vez ==='
+begin;
+  select pg_temp.escenario_estados();
+  do $$
+  begin
+    perform pg_temp.asiento('prueba100.teclado', 5, 'ajuste');   -- 5 sin indicar
+    perform pg_temp.asiento('prueba100.proy', 2, 'compra');
+  end $$;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  declare
+    v_id   uuid := '10100000-0000-4000-8000-000000000001';
+    v_par  uuid := md5('stock_cambiar_estado:10100000-0000-4000-8000-000000000001')::uuid;
+    v_item uuid := current_setting('prueba100.teclado')::uuid;
+    a      record;
+    b      record;
+    v_n    int;
+  begin
+    perform public.stock_cambiar_estado(v_id, v_item, 3, 'sin_indicar', 'averiado', '  se han mojado  ');
+    select * into a from stock_movements where id = v_id;
+    select * into b from stock_movements where id = v_par;
+    if (a.qty, a.condicion, a.kind::text, b.qty, b.condicion, b.kind::text)
+       is distinct from (-3, 'sin_indicar'::text, 'ajuste'::text, 3, 'averiado'::text, 'ajuste'::text)
+       or a.occurred_at is distinct from b.occurred_at
+       or a.by_user is distinct from '11111111-1111-4111-8111-111111111111'
+       or b.by_user is distinct from a.by_user
+       or a.note is distinct from 'Cambio de estado: 3 de «Sin indicar» a «Averiado» · se han mojado'
+       or b.note is distinct from a.note or a.source <> 'app' then
+      raise exception 'FALLO: el cambio de estado no son dos ajustes iguales y firmados: % / %', to_jsonb(a), to_jsonb(b);
+    end if;
+    if (select (on_hand, sin_indicar, averiado, disponibles) from stock_levels_por_estado where stock_item_id = v_item)
+       is distinct from (5, 2, 3, 2) then
+      raise exception 'FALLO: después del cambio no hay 5, con 2 sin indicar y 3 averiadas';
+    end if;
+    raise notice 'OK: el técnico pasa 3 de sin indicar a averiadas: dos ajustes en el mismo instante, firmados y con su nota, y el total no se mueve';
+
+    select count(*) into v_n from stock_movements where stock_item_id = v_item;
+    perform public.stock_cambiar_estado(v_id, v_item, 3, 'sin_indicar', 'averiado', 'se han mojado');
+    if (select count(*) from stock_movements where stock_item_id = v_item) <> v_n then
+      raise exception 'FALLO: repetir el mismo cambio lo hizo dos veces';
+    end if;
+    raise notice 'OK: repetir el mismo id no hace nada';
+
+    begin
+      perform public.stock_cambiar_estado(gen_random_uuid(), v_item, 4, 'averiado', 'usado');
+      raise exception 'FALLO: se cambiaron 4 averiadas habiendo 3';
+    exception when check_violation then
+      if sqlerrm <> 'No quedan tantas en estado «Averiado» de «Teclado de la prueba 100»: hay 3.' then
+        raise exception 'FALLO: el rechazo no lo dice con sus palabras: %', sqlerrm;
+      end if;
+    end;
+
+    begin
+      perform public.stock_cambiar_estado(gen_random_uuid(), current_setting('prueba100.proy')::uuid, 1, 'nuevo', 'averiado');
+      raise exception 'FALLO: se cambió el estado de un artículo por número de serie';
+    exception when invalid_parameter_value then
+      if sqlerrm <> 'Este artículo se controla por número de serie: cambia el estado en cada unidad.' then
+        raise exception 'FALLO: el rechazo del artículo por número de serie no lo dice con sus palabras: %', sqlerrm;
+      end if;
+    end;
+    raise notice 'OK: sin bastantes en el de partida, 23514 con cuántas hay; un artículo por número de serie, 22023 y a la unidad';
+  end $$;
+
+  do $$
+  declare
+    v_mal record;
+  begin
+    for v_mal in
+      select * from (values
+        (current_setting('prueba100.teclado')::uuid, 0, 'sin_indicar', 'usado'),
+        (current_setting('prueba100.teclado')::uuid, -1, 'sin_indicar', 'usado'),
+        (current_setting('prueba100.teclado')::uuid, 1, 'usado', 'usado'),
+        (current_setting('prueba100.teclado')::uuid, 1, 'rota', 'usado'),
+        (current_setting('prueba100.teclado')::uuid, 1, 'sin_indicar', null),
+        (current_setting('prueba100.ret')::uuid, 1, 'sin_indicar', 'usado'),
+        (gen_random_uuid(), 1, 'sin_indicar', 'usado')
+      ) as t(item, cantidad, de, a)
+    loop
+      begin
+        perform public.stock_cambiar_estado(gen_random_uuid(), v_mal.item, v_mal.cantidad, v_mal.de, v_mal.a);
+        raise exception 'FALLO: se admitió el cambio %', to_jsonb(v_mal);
+      exception when invalid_parameter_value then null;
+      end;
+    end loop;
+    if has_function_privilege('anon', 'public.stock_cambiar_estado(uuid, uuid, int, text, text, text)', 'execute') then
+      raise exception 'FALLO: un anónimo puede cambiar el estado';
+    end if;
+    raise notice 'OK: cantidad de cero o menos, el mismo estado, uno que no existe, sin estado de llegada, un artículo retirado o inexistente: 22023; y un anónimo no llega';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 111. Lo que vuelve de un aula al almacén entra usado ==='
+begin;
+  select pg_temp.escenario_unidades();
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  declare
+    v_ipc uuid := current_setting('prueba89.ipc')::uuid;
+    m     record;
+  begin
+    -- El PC de la prueba 89 se creó después de la migración: se lleva por
+    -- cantidad, y la vuelta se ve en sus cifras.
+    perform public.asset_dar_de_baja('89890000-0000-4000-8000-0000000000a6', 'almacen',
+                                     'Sobra en el aula: vuelve a la estantería');
+    select * into m from stock_movements
+     where stock_item_id = v_ipc and kind = 'devolucion' and note = 'Devuelto desde el aula al retirar un equipo';
+    if m.qty is distinct from 1 or m.condicion is distinct from 'usado' then
+      raise exception 'FALLO: lo que vuelve de un aula no entra usado: %', to_jsonb(m);
+    end if;
+    if (select (usado, nuevo) from stock_levels_por_estado where stock_item_id = v_ipc) is distinct from (1, 10) then
+      raise exception 'FALLO: la vuelta no sumó un usado a las cifras del artículo';
+    end if;
+    raise notice 'OK: aprobar la vuelta al almacén apunta un +1 usado';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 112. Cerrar una incidencia sigue descontando su material, de lo que haya ==='
+begin;
+  select pg_temp.escenario_estados();
+  do $$
+  begin
+    perform pg_temp.asiento('prueba100.teclado', 1, 'devolucion');               -- 1 usado
+    perform pg_temp.asiento('prueba100.teclado', 5, 'compra');                   -- 5 nuevos
+    perform pg_temp.asiento('prueba100.raton', 2, 'devolucion', 'averiado');     -- solo averiados
+  end $$;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  insert into incidents (id, room_id, title, severity, state, kind, opened_at, opened_by)
+  values ('10120000-0000-4000-8000-000000000001', current_setting('prueba100.sala')::uuid,
+          'Teclados de la 100.1', 'baja', 'abierta', 'incidencia', now() - interval '1 day',
+          '11111111-1111-4111-8111-111111111111'),
+         ('10120000-0000-4000-8000-000000000002', current_setting('prueba100.sala')::uuid,
+          'Ratón de la 100.1', 'baja', 'abierta', 'incidencia', now() - interval '1 day',
+          '11111111-1111-4111-8111-111111111111');
+  insert into incident_materials (id, incident_id, stock_item_id, qty, origen)
+  values (gen_random_uuid(), '10120000-0000-4000-8000-000000000001', current_setting('prueba100.teclado')::uuid, 3, 'app'),
+         (gen_random_uuid(), '10120000-0000-4000-8000-000000000002', current_setting('prueba100.raton')::uuid, 1, 'app');
+  insert into incident_resolutions (id, incident_id, resolution, resolved_at, resolved_by)
+  values (gen_random_uuid(), '10120000-0000-4000-8000-000000000001', 'Cambiados los tres teclados.',
+          now() - interval '1 hour', '11111111-1111-4111-8111-111111111111'),
+         (gen_random_uuid(), '10120000-0000-4000-8000-000000000002', 'Puesto el ratón que había.',
+          now() - interval '1 hour', '11111111-1111-4111-8111-111111111111');
+  do $$
+  declare
+    v_inc  uuid := '10120000-0000-4000-8000-000000000001';
+    v_cual text;
+  begin
+    if (select count(*) from incidents where id in (v_inc, '10120000-0000-4000-8000-000000000002')
+          and state = 'resuelta') <> 2 then
+      raise exception 'FALLO: los cierres no entraron';
+    end if;
+    select string_agg(condicion || ' ' || qty, ', ' order by condicion) into v_cual
+      from stock_movements where incident_id = v_inc;
+    if v_cual is distinct from 'nuevo -2, usado -1' then
+      raise exception 'FALLO: tres teclados con un usado no salieron del usado y de dos nuevos: %', v_cual;
+    end if;
+    if exists (select 1 from stock_movements m
+                where m.incident_id = v_inc
+                  and (m.kind <> 'consumo' or m.room_id is distinct from current_setting('prueba100.sala')::uuid
+                       or m.by_user is distinct from '11111111-1111-4111-8111-111111111111'
+                       or m.occurred_at is distinct from (select resolved_at from incidents where id = v_inc))) then
+      raise exception 'FALLO: una de las filas del cierre no lleva su clase, su sala, su autor o la fecha del cierre';
+    end if;
+    if (select condicion from stock_movements where incident_id = '10120000-0000-4000-8000-000000000002')
+       is distinct from 'averiado' then
+      raise exception 'FALLO: el cierre con solo ratones averiados no salió de ellos';
+    end if;
+    raise notice 'OK: el cierre descuenta su parte repartido entre estados, con su sala, su autor y su fecha, y no se atasca si solo quedan averiados';
+
+    -- Bajar el parte después del cierre devuelve la de más, usada, y la cuenta
+    -- neta del parte sigue cuadrando con las filas repartidas.
+    update incident_materials set qty = 2 where incident_id = v_inc;
+    if (select coalesce(-sum(qty), 0) from stock_movements
+         where incident_id = v_inc and kind in ('consumo', 'devolucion')) <> 2
+       or (select condicion from stock_movements where incident_id = v_inc and kind = 'devolucion') <> 'usado' then
+      raise exception 'FALLO: bajar el parte de una incidencia repartida no devolvió una, usada';
+    end if;
+    raise notice 'OK: bajar el parte de una incidencia cerrada devuelve una usada y la cuenta neta sigue cuadrando';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 113. Dar de alta muchas unidades de golpe: las nuevas, las que ya estaban y las que fallan ==='
+begin;
+  select pg_temp.escenario_estados();
+  insert into stock_units (stock_item_id, asset_type_id, articulo, serial, brand, condicion, status)
+  values (current_setting('prueba100.proy')::uuid, current_setting('prueba100.tipo')::uuid,
+          'Proyector de la prueba 100 (almacén)', 'SN-113-B', 'Optoma', 'reacondicionado', 'disponible');
+  -- Uno de otro artículo: «ya estaba», pero diciendo de cuál.
+  insert into stock_units (stock_item_id, articulo, serial, condicion, status)
+  values (current_setting('prueba100.teclado')::uuid, 'Teclado de la prueba 100', 'SN-113-F', 'nuevo', 'disponible');
+  insert into assets (id, asset_type_id, room_id, label, serial, status, confirmed)
+  values ('10130000-0000-4000-8000-0000000000a1', current_setting('prueba100.tipo')::uuid,
+          current_setting('prueba100.sala')::uuid, 'Proyector de la prueba 100', 'SN-113-D', 'instalado', true);
+  do $$ begin perform pg_temp.asiento('prueba100.proy', 1, 'compra'); end $$;
+  -- Un número que va a fallar dentro de `stock_unit_alta`: un disparador de pega.
+  create function public.prueba113_rechaza() returns trigger language plpgsql as $f$
+  begin
+    if new.serial = 'SN-113-E' then
+      raise exception 'Ese número lo rechaza la prueba 113';
+    end if;
+    return new;
+  end $f$;
+  create trigger prueba113_rechaza before insert on stock_units
+    for each row execute function public.prueba113_rechaza();
+
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.stock_unit_alta_varias(jsonb_build_object(
+      'stock_item_id', current_setting('prueba100.proy'), 'seriales', jsonb_build_array('SN-113-X')));
+    raise exception 'FALLO: un técnico dio de alta una lista de unidades';
+  exception when insufficient_privilege then
+    raise notice 'OK: dar de alta una lista es del despacho, como una sola';
+  end $$;
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  declare
+    v_item  uuid := current_setting('prueba100.proy')::uuid;
+    v_b     stock_units%rowtype;
+    v_audit int;
+    v_antes int;
+    v_out   jsonb;
+    u       record;
+  begin
+    select * into v_b from stock_units where serial = 'SN-113-B';
+    select count(*) into v_audit from audit_log where table_name = 'stock_units' and row_id = v_b.id::text;
+    select on_hand into v_antes from stock_levels where stock_item_id = v_item;
+
+    v_out := public.stock_unit_alta_varias(jsonb_build_object(
+      'stock_item_id', v_item,
+      'seriales', jsonb_build_array(' SN-113-A ', 'sn 113 a', '', null, 'SN-113-B', 'SN-113-C',
+                                    'SN-113-D', 'SN-113-E', 12345, 'sn-113-f'),
+      'condicion', 'usado', 'marca', 'Epson', 'modelo', 'EB-L', 'observaciones', 'Del albarán 113',
+      'sumar', true));
+
+    if (select string_agg(x ->> 'serial' || ':' || (x ->> 'resultado'), ',' order by o)
+          from jsonb_array_elements(v_out) with ordinality as t(x, o))
+       is distinct from 'SN-113-A:nueva,SN-113-B:ya_estaba,SN-113-C:nueva,SN-113-D:nueva,SN-113-E:error,12345:nueva,sn-113-f:ya_estaba' then
+      raise exception 'FALLO: la lista no vuelve una fila por número, sin repetir ni vacíos y en su orden: %', v_out;
+    end if;
+
+    -- Las nuevas, como `stock_unit_alta`: del artículo, con su estado, marca,
+    -- modelo y notas, en el almacén, y su id en la respuesta.
+    for u in select x, o from jsonb_array_elements(v_out) with ordinality as t(x, o)
+              where x ->> 'resultado' = 'nueva' and x ->> 'serial' <> 'SN-113-D' loop
+      if not exists (
+        select 1 from stock_units s
+         where s.id = (u.x ->> 'id')::uuid and s.serial = u.x ->> 'serial' and s.stock_item_id = v_item
+           and s.condicion = 'usado' and s.brand = 'Epson' and s.model = 'EB-L' and s.notes = 'Del albarán 113'
+           and s.status = 'disponible' and s.source = 'app') then
+        raise exception 'FALLO: la unidad % no nació como la habría dado de alta stock_unit_alta', u.x;
+      end if;
+    end loop;
+
+    -- La de otro artículo: ya estaba, y dice en cuál. La del mismo, sin mensaje.
+    if (v_out -> 6 ->> 'mensaje') is distinct from
+         format('Ya está apuntada en otro artículo: «%s».',
+                (select name from stock_items where id = current_setting('prueba100.teclado')::uuid))
+       or (v_out -> 1) ? 'mensaje' then
+      raise exception 'FALLO: «ya estaba» no dice de qué otro artículo es, o lo dice del mismo: %', v_out;
+    end if;
+
+    -- La que ya estaba, intacta y con su id; ni una fila más en la Actividad.
+    if (v_out -> 1 ->> 'id')::uuid is distinct from v_b.id
+       or (select (brand, condicion, model, notes) from stock_units where id = v_b.id)
+          is distinct from (v_b.brand, v_b.condicion, v_b.model, v_b.notes)
+       or (select count(*) from audit_log where table_name = 'stock_units' and row_id = v_b.id::text) <> v_audit then
+      raise exception 'FALLO: la unidad que ya estaba se tocó';
+    end if;
+
+    -- La que ya está puesta en un aula nace instalada, no suma, y lo dice.
+    select * into u from stock_units where serial = 'SN-113-D';
+    if u.status <> 'instalado' or u.asset_id is distinct from '10130000-0000-4000-8000-0000000000a1'
+       or (v_out -> 3 ->> 'mensaje') not like 'Ese número de serie ya está puesto en 100.1 Z100%' then
+      raise exception 'FALLO: la que ya estaba en un aula no nace instalada o no lo dice: %', v_out -> 3;
+    end if;
+
+    -- La que falla, con su motivo y sin tumbar a las de detrás.
+    if (v_out -> 4 -> 'id') <> 'null'::jsonb or (v_out -> 4 ->> 'mensaje') <> 'Ese número lo rechaza la prueba 113'
+       or exists (select 1 from stock_units where serial = 'SN-113-E') then
+      raise exception 'FALLO: el número que falla no vuelve con su motivo: %', v_out -> 4;
+    end if;
+
+    -- Y sumando: un ajuste usado por cada nueva que entra en la estantería.
+    if (select on_hand from stock_levels where stock_item_id = v_item) <> v_antes + 3
+       or (select count(*) from stock_movements
+            where stock_item_id = v_item and note like 'Entrada de la unidad S/N %'
+              and kind = 'ajuste' and qty = 1 and condicion = 'usado') <> 3 then
+      raise exception 'FALLO: «sumar» no apuntó un +1 usado por cada nueva del almacén';
+    end if;
+    raise notice 'OK: nuevas como stock_unit_alta y sumando con su estado, la que ya estaba intacta (y, si es de otro artículo, dicho), la del aula instalada y dicho, y la que falla con su motivo sin tumbar las demás';
+  end $$;
+
+  do $$
+  declare
+    v_item uuid := current_setting('prueba100.proy')::uuid;
+    v_mal  jsonb;
+  begin
+    foreach v_mal in array array[
+      jsonb_build_object('stock_item_id', v_item, 'seriales', 'SN-113-Z1'),
+      jsonb_build_object('stock_item_id', v_item, 'seriales', jsonb_build_array('SN-113-Z2', jsonb_build_object('s', 1))),
+      jsonb_build_object('stock_item_id', current_setting('prueba100.ret'), 'seriales', jsonb_build_array('SN-113-Z3')),
+      jsonb_build_object('seriales', jsonb_build_array('SN-113-Z4')),
+      jsonb_build_object('stock_item_id', 'no-es-un-uuid', 'seriales', jsonb_build_array('SN-113-Z5')),
+      jsonb_build_object('stock_item_id', v_item, 'seriales', jsonb_build_array('SN-113-Z6'), 'condicion', 'rota'),
+      jsonb_build_object('stock_item_id', v_item, 'seriales', jsonb_build_array('SN-113-Z7'), 'sumar', 'quizá'),
+      jsonb_build_object('stock_item_id', v_item,
+                         'seriales', (select jsonb_agg('SN-113-L' || g) from generate_series(1, 501) g))
+    ] loop
+      begin
+        perform public.stock_unit_alta_varias(v_mal);
+        raise exception 'FALLO: se admitió la lista %', left(v_mal::text, 120);
+      exception when invalid_parameter_value then null;
+      end;
+    end loop;
+    if exists (select 1 from stock_units where serial like 'SN-113-Z%' or serial like 'SN-113-L%') then
+      raise exception 'FALLO: una lista rechazada dejó alguna unidad';
+    end if;
+    if has_function_privilege('anon', 'public.stock_unit_alta_varias(jsonb)', 'execute') then
+      raise exception 'FALLO: un anónimo puede dar de alta una lista';
+    end if;
+    raise notice 'OK: sin lista, con algo que no es un número, artículo retirado, sin artículo o mal escrito, estado o «sumar» que no valen, o más de 500: 22023 y ni una unidad';
+  end $$;
+rollback;
+
+\echo ''
+\echo '=== 114. La unidad que se instala sale de su estado si quedan, y la que entra sumando entra con el suyo ==='
+begin;
+  select pg_temp.escenario_estados();
+  insert into stock_units (id, stock_item_id, asset_type_id, articulo, serial, condicion, status)
+  select ('10140000-0000-4000-8000-00000000000' || n)::uuid, current_setting('prueba100.proy')::uuid,
+         current_setting('prueba100.tipo')::uuid, 'Proyector de la prueba 100 (almacén)', 'SN-114-' || n, c, 'disponible'
+    from (values (1, 'nuevo'), (2, 'reacondicionado'), (3, 'averiado'), (4, 'reacondicionado')) as t(n, c);
+  do $$
+  begin
+    perform pg_temp.asiento('prueba100.proy', 2, 'devolucion');                -- 2 usados
+    perform pg_temp.asiento('prueba100.proy', 2, 'compra');                    -- 2 nuevos
+    perform pg_temp.asiento('prueba100.proy', 1, 'devolucion', 'averiado');    -- 1 averiado
+  end $$;
+
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    -- Por número de serie: la nueva sale de las nuevas, no de las usadas.
+    perform public.stock_unit_instalar_en('10140000-0000-4000-8000-000000000001', current_setting('prueba100.sala')::uuid);
+    if (select condicion from stock_movements where note = 'Unidad S/N SN-114-1 instalada') is distinct from 'nuevo' then
+      raise exception 'FALLO: instalar una unidad nueva no descontó de las nuevas';
+    end if;
+    -- La reacondicionada, sin reacondicionadas que descontar: de lo que haya.
+    perform public.stock_unit_instalar_en('10140000-0000-4000-8000-000000000002', current_setting('prueba100.sala')::uuid);
+    if (select condicion from stock_movements where note = 'Unidad S/N SN-114-2 instalada') is distinct from 'usado' then
+      raise exception 'FALLO: sin unidades en su estado, la instalación no descontó de lo que había';
+    end if;
+  end $$;
+
+  -- Por cantidad, donde un estado dicho es estricto, la instalación tampoco se
+  -- tumba: prefiere el de la unidad si quedan, y si no, sale de lo que haya.
+  reset role;
+  update stock_items set seguimiento = 'cantidad' where id = current_setting('prueba100.proy')::uuid;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    perform public.stock_unit_instalar('10140000-0000-4000-8000-000000000003', current_setting('prueba100.sala2')::uuid);
+    if (select condicion from stock_movements where note = 'Ordenador de repuesto SN-114-3 instalado') is distinct from 'averiado' then
+      raise exception 'FALLO: la instalación de septiembre no descontó del estado de la unidad';
+    end if;
+    perform public.stock_unit_instalar_en('10140000-0000-4000-8000-000000000004', current_setting('prueba100.sala2')::uuid);
+    if (select condicion from stock_movements where note = 'Unidad S/N SN-114-4 instalada') is distinct from 'usado'
+       or (select status from stock_units where id = '10140000-0000-4000-8000-000000000004') <> 'instalado' then
+      raise exception 'FALLO: por cantidad, una unidad sin existencias en su estado no se instaló o no descontó';
+    end if;
+    if (select (on_hand, nuevo, usado, averiado) from stock_levels_por_estado
+         where stock_item_id = current_setting('prueba100.proy')::uuid) is distinct from (1, 1, 0, 0) then
+      raise exception 'FALLO: cuatro instalaciones no dejaron un nuevo';
+    end if;
+    raise notice 'OK: la unidad que se instala sale de su estado si quedan; si no, de lo que haya, también por cantidad, y la instalación no se tumba';
+  end $$;
+
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  begin
+    perform public.stock_unit_alta(jsonb_build_object(
+      'stock_item_id', current_setting('prueba100.teclado'), 'serial', 'SN-114-9', 'condicion', 'averiado', 'sumar', true));
+    if (select (kind::text, condicion) from stock_movements where note = 'Entrada de la unidad S/N SN-114-9')
+       is distinct from ('ajuste'::text, 'averiado'::text)
+       or (select averiado from stock_levels_por_estado where stock_item_id = current_setting('prueba100.teclado')::uuid) <> 1 then
+      raise exception 'FALLO: la unidad averiada que entra sumando no apuntó su estado';
+    end if;
+    raise notice 'OK: la unidad que entra sumando apunta su estado en el asiento';
+  end $$;
+rollback;

@@ -46,7 +46,32 @@ export function esFalloDeRed(error: unknown): boolean {
  * registra compras», que manda a pedir un permiso que no falta.
  */
 export function esSinExistencias(error: unknown): boolean {
-  return /no hay tantas unidades|en negativo/i.test(mensajeDe(error))
+  return /no hay tantas unidades|en negativo|no quedan tantas/i.test(mensajeDe(error))
+}
+
+/**
+ * Qué decir cuando un menos o un más del almacén no se ha registrado.
+ *
+ * Lo mismo que la tarjeta de debajo de la lista, en una línea: es lo que se
+ * pinta dentro de la hoja del artículo, que tapa esa tarjeta mientras está
+ * abierta. Cuando lo que falta es de un estado —«No quedan tantas en estado
+ * «Usado» de «Teclado»: hay 0»— la base ya lo dice con las cifras, y va tal cual.
+ */
+export function falloAlMover(error: unknown): string {
+  if (/no quedan tantas en estado/i.test(mensajeDe(error))) return mensajeDe(error)
+  if (esSinExistencias(error)) return 'No quedan tantas: el movimiento no se ha registrado.'
+  if (!navigator.onLine || esFalloDeRed(error)) return 'Sin conexión: no se ha registrado. Busca cobertura y repítelo.'
+  if (esFaltaDePermiso(error) || codigoDe(error) === '42501') return 'Solo un supervisor registra entradas en el almacén.'
+  return mensajeDe(error) || 'No se ha podido registrar.'
+}
+
+/** Lo mismo para cambiar el estado de unas cuantas. */
+export function falloDeEstado(error: unknown): string {
+  if (!navigator.onLine || esFalloDeRed(error)) return 'Sin conexión: no se ha guardado. Busca cobertura y repítelo.'
+  if (/stock_cambiar_estado|schema cache|does not exist/i.test(mensajeDe(error))) {
+    return 'El servidor todavía no sabe de estados: falta aplicar la migración del 27 de octubre.'
+  }
+  return mensajeDe(error) || 'No se ha podido guardar.'
 }
 
 /**

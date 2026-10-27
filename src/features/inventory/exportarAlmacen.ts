@@ -9,11 +9,14 @@
  *
  * Tres hojas, y cada una contesta una pregunta distinta:
  *
- *  - **Existencias**: qué hay. Una fila por artículo, con lo que queda, el
- *    mínimo y si está por debajo. Los **retirados salen también**, apagados y
- *    con su motivo: `stock_levels` los deja fuera (filtra por `active`) y por
- *    eso el saldo de un retirado no se lee de ahí sino de sumar sus
- *    movimientos, que es de donde sale el saldo de todos.
+ *  - **Existencias**: qué hay. Una fila por artículo, con lo que queda, cuántas
+ *    hay de cada estado (nuevas, usadas, reacondicionadas, averiadas, sin
+ *    estado), cómo se cuenta (por cantidad o por número de serie), el mínimo y
+ *    si está por debajo. Los **retirados salen también**, apagados y con su
+ *    motivo: `stock_levels` los deja fuera (filtra por `active`) y por eso el
+ *    saldo de un retirado no se lee de ahí sino de sumar sus movimientos, que
+ *    es de donde sale el saldo de todos. Por la misma razón **no llevan cifras
+ *    por estado**: `stock_levels_por_estado`, que las da, tampoco los trae.
  *  - **Movimientos de Almacén**: qué pasó, con el saldo detrás. Es la hoja de
  *    la sincronización tal cual (`hojaDeMovimientos`), así que los dos libros
  *    dicen lo mismo del mismo movimiento.
@@ -22,6 +25,22 @@
  *    cada una (nueva, usada, averiada…) y dónde: en el almacén, instalada en un
  *    aula o de baja. El almacén cuenta y esto nombra; no tienen por qué cuadrar,
  *    y no es un error: son las que nadie ha apuntado todavía.
+ *
+ * **«Estado» es cómo está y «Situación» es dónde está.** Estado es nueva, usada,
+ * reacondicionada, averiada: lo dice quien tiene el aparato delante, y se llama
+ * igual en las pantallas, en las columnas de existencias y en la hoja de
+ * unidades. Lo que en «Existencias» se llamaba «Estado» y valía «Activo» o
+ * «Retirado» es la **situación** del artículo —si sigue en el catálogo—, como la
+ * de una unidad es si está en el almacén, instalada o de baja. Con la misma
+ * palabra para las dos cosas, una columna «Estado» que dijera «Activo», junto a
+ * otras que cuentan las nuevas y las averiadas, se leería como una sola
+ * pregunta con dos respuestas que no tienen nada que ver.
+ *
+ * **Un servidor sin la migración del estado por cantidad** no tiene la vista
+ * `stock_levels_por_estado`. Eso no puede impedir sacar el almacén: la
+ * exportación sale como salía —sin las columnas de estado ni «Cómo se cuenta»— y
+ * no se avisa de nada, porque no ha fallado nada. Es lo mismo que se hace con la
+ * vista de las unidades.
  *
  * La carga es lo único que toca la red; todo lo demás son funciones puras que
  * reciben las filas tal como las devuelve la base. Es la separación que permite
@@ -41,10 +60,12 @@ import type { Descarga } from '@/sync/paginada'
 import { esSilencio, señalConTope } from '@/features/reports/informe/espera'
 import { tipoVivo } from '@/domain/equipos'
 import type { TipoConocido } from '@/domain/equipos'
+import { ESTADO_EN_PLURAL, SEGUIMIENTO_LABEL } from '@/domain/estados'
+import type { NivelPorEstado } from '@/domain/estados'
 import { hojaDeMovimientos } from '@/domain/hojasNuevas'
 import type { MovimientoParaHoja } from '@/domain/hojasNuevas'
 import type { Formato, HojaNueva, Tinte } from '@/domain/libro'
-import { CONDICION_LABEL, SITUACION_LABEL } from '@/domain/unidades'
+import { CONDICION_LABEL, ESTADOS_EN_ORDEN, SITUACION_LABEL, cuantasEnEstado } from '@/domain/unidades'
 import type { Condicion, SituacionDeUnidad } from '@/domain/unidades'
 import { fechaAExcel } from '@/domain/valores'
 import type { ValorCelda } from '@/domain/xlsx'
@@ -71,6 +92,18 @@ export interface FilaNivel {
   stock_item_id: string
   on_hand: number
 }
+
+/**
+ * Una fila de `stock_levels_por_estado`: un artículo **activo**, con su cantidad
+ * partida por estados y cómo se lleva.
+ *
+ * Solo las columnas que el export lee. `on_hand` y `disponibles` están en la
+ * vista y aquí sobran: las existencias salen de `stock_levels`, como siempre, y
+ * «disponibles» es una resta que quien abre el Excel hace si la quiere. Pedir
+ * menos columnas es arriesgar menos: si a un servidor a medias le faltara una de
+ * las que aquí sobran, la exportación perdería los estados enteros por nada.
+ */
+export type FilaNivelPorEstado = Pick<NivelPorEstado, 'stock_item_id' | 'seguimiento' | Condicion>
 
 export interface FilaMovimiento {
   stock_item_id: string
@@ -135,6 +168,14 @@ export interface FilaUnidad {
 export interface DatosDelAlmacen {
   articulos: FilaArticulo[]
   niveles: FilaNivel[]
+  /**
+   * Cuántas hay de cada estado, de los artículos activos. `null` es que el
+   * servidor no tiene la vista `stock_levels_por_estado` —no ha pasado la
+   * migración del estado por cantidad—: la exportación sale entonces sin las
+   * columnas de estado, como antes. Una lista vacía es otra cosa: un servidor al
+   * día sin ningún artículo activo.
+   */
+  estados: FilaNivelPorEstado[] | null
   tipos: TipoConocido[]
   movimientos: FilaMovimiento[]
   incidencias: FilaIncidencia[]
@@ -171,10 +212,19 @@ function serieDelDia(dia: string | null): number | null {
 // Existencias
 // -----------------------------------------------------------------------------
 
+/** Cómo se lleva un artículo y cuántas hay de cada estado: lo que dice su fila de `stock_levels_por_estado`. */
+export type EstadosParaHoja = Pick<NivelPorEstado, 'seguimiento' | Condicion>
+
 export interface ArticuloParaHoja {
   nombre: string
   unidad: string
   existencias: number
+  /**
+   * Cuántas hay de cada estado y cómo se cuenta el artículo. `null` cuando no se
+   * sabe: un servidor que no tiene estados, o un artículo retirado, que la vista
+   * no trae. No es lo mismo que «ninguna».
+   */
+  estados: EstadosParaHoja | null
   /** `0` es «sin umbral», igual que en la base. */
   minimo: number
   /** El tipo de equipo al que está enlazado el artículo (un cable de proyector → «Proyector»), si lo está. */
@@ -185,17 +235,103 @@ export interface ArticuloParaHoja {
   motivoDeRetirada: string | null
 }
 
-const COL_EXISTENCIAS = [
-  'Artículo',
-  'Unidad',
-  'Existencias',
-  'Mínimo',
-  'Bajo mínimo',
-  'Tipo de equipo',
-  'Estado',
-  'Retirado el',
-  'Motivo de la retirada',
-]
+/**
+ * Una columna de «Existencias»: cómo se llama, cuánto mide, cómo se formatea y de
+ * dónde sale lo que lleva cada artículo.
+ *
+ * Las cuatro cosas van juntas porque la hoja tiene dos formas —con las columnas
+ * de estado y sin ellas— y, repartidas en arrays paralelos, cada columna de más
+ * obligaría a recontar a mano los índices de los anchos y de los formatos. Un
+ * índice mal contado pone el formato de fecha en la columna de al lado sin que
+ * falle nada: la cabecera, el ancho y el formato de una columna no se separan.
+ */
+interface ColumnaDeExistencias {
+  cabecera: string
+  /** En caracteres. */
+  ancho: number
+  formato?: Formato
+  valor: (a: ArticuloParaHoja) => ValorCelda
+}
+
+/** Lo que mide cada columna de estado: lo que su cabecera y un poco más, por la flecha del filtro. */
+const ANCHO_DEL_ESTADO: Record<Condicion, number> = {
+  nuevo: 9,
+  usado: 9,
+  reacondicionado: 18,
+  averiado: 11,
+  sin_indicar: 12,
+}
+
+/**
+ * Cuántas hay de un estado, para la celda: **en blanco si no hay ninguna**.
+ *
+ * Con sesenta artículos, casi todos tienen todo en un solo estado —los ocho
+ * teclados, nuevos— y cuatro columnas de ceros esconden las dos o tres cifras
+ * que hay que mirar: lo averiado, lo que sigue sin estado. Es lo que ya hacen
+ * «Entrada» y «Salida» en los movimientos, donde una celda vacía es «ninguna».
+ * Y de paso el filtro de «Averiadas» por «no vacías» es la lista de lo que hay
+ * que reparar, y una suma de la columna da lo mismo con ceros que sin ellos.
+ *
+ * «Existencias» sí lleva su cero: un artículo agotado es justo lo que se busca
+ * en esa columna, y es la que pinta la fila.
+ *
+ * Un blanco vale entonces por «ninguna» y también por «no hay dato» (un
+ * retirado): se distinguen por la columna «Situación». Lo que no es cero se
+ * enseña tal cual, también si fuera negativo: una cifra que no cuadra tiene que
+ * verse, no esconderse.
+ */
+function cifraDeEstado(n: number | undefined): number | null {
+  return !n ? null : n
+}
+
+const SEGUIMIENTOS_CONOCIDOS = new Set<string>(Object.keys(SEGUIMIENTO_LABEL))
+
+/**
+ * «Por cantidad» o «Por número de serie», con las palabras de las pantallas. En
+ * blanco cuando no se sabe —un retirado, un servidor sin estados— o cuando la
+ * base dice algo que la aplicación no entiende: la hoja no escribe lo que no
+ * entiende.
+ */
+function comoSeCuenta(a: Pick<ArticuloParaHoja, 'estados'>): string | null {
+  const s = a.estados?.seguimiento
+  return s && SEGUIMIENTOS_CONOCIDOS.has(s) ? SEGUIMIENTO_LABEL[s] : null
+}
+
+/**
+ * Las columnas de «Existencias», en el orden en que se leen.
+ *
+ * **Con estados** (el servidor tiene `stock_levels_por_estado`) detrás de
+ * «Existencias» van las cinco cifras —nuevas, usadas, reacondicionadas,
+ * averiadas, sin estado—, que suman las existencias, y detrás de «Tipo de
+ * equipo», «Cómo se cuenta». **Sin estados** la hoja es la de siempre, salvo el
+ * nombre de «Situación», que antes era «Estado».
+ */
+function columnasDeExistencias(conEstados: boolean): ColumnaDeExistencias[] {
+  const porEstado = conEstados
+    ? ESTADOS_EN_ORDEN.map(
+        (c): ColumnaDeExistencias => ({
+          cabecera: ESTADO_EN_PLURAL[c],
+          ancho: ANCHO_DEL_ESTADO[c],
+          formato: 'entero',
+          valor: (a) => cifraDeEstado(a.estados?.[c]),
+        }),
+      )
+    : []
+
+  return [
+    { cabecera: 'Artículo', ancho: 40, valor: (a) => a.nombre },
+    { cabecera: 'Unidad', ancho: 9, valor: (a) => a.unidad },
+    { cabecera: 'Existencias', ancho: 12, formato: 'entero', valor: (a) => a.existencias },
+    ...porEstado,
+    { cabecera: 'Mínimo', ancho: 9, formato: 'entero', valor: (a) => a.minimo },
+    { cabecera: 'Bajo mínimo', ancho: 13, valor: (a) => (estaBajoMinimo(a) ? 'Sí' : 'No') },
+    { cabecera: 'Tipo de equipo', ancho: 20, valor: (a) => a.tipoDeEquipo },
+    ...(conEstados ? [{ cabecera: 'Cómo se cuenta', ancho: 20, valor: comoSeCuenta }] : []),
+    { cabecera: 'Situación', ancho: 11, valor: (a) => (a.activo ? 'Activo' : 'Retirado') },
+    { cabecera: 'Retirado el', ancho: 12, formato: 'fecha', valor: (a) => serieDelDia(a.retiradoEl) },
+    { cabecera: 'Motivo de la retirada', ancho: 46, formato: 'textoAjustado', valor: (a) => a.motivoDeRetirada },
+  ]
+}
 
 /**
  * La misma regla que la vista `stock_levels` (`below_threshold`): solo alerta
@@ -220,8 +356,16 @@ export function tinteDelArticulo(a: ArticuloParaHoja): Tinte | undefined {
   return undefined
 }
 
-export function hojaDeExistencias(articulos: ArticuloParaHoja[]): HojaNueva {
-  const filas: ValorCelda[][] = [COL_EXISTENCIAS]
+/**
+ * La hoja «Existencias». `conEstados` es si **el servidor sabe de estados**, no
+ * si algún artículo los tiene: con él la hoja lleva las columnas de estado y
+ * «Cómo se cuenta» —en blanco para el retirado que la vista no trae—, y sin él
+ * no las lleva, ni vacías. Una hoja con cinco columnas en blanco diría «ninguna»
+ * donde en realidad no se sabe.
+ */
+export function hojaDeExistencias(articulos: ArticuloParaHoja[], conEstados = false): HojaNueva {
+  const columnas = columnasDeExistencias(conEstados)
+  const filas: ValorCelda[][] = [columnas.map((c) => c.cabecera)]
   const tintes: Array<Tinte | undefined> = []
 
   // Los vivos primero, por nombre, que es como se recorre el almacén; los
@@ -233,25 +377,15 @@ export function hojaDeExistencias(articulos: ArticuloParaHoja[]): HojaNueva {
   )
 
   for (const a of ordenados) {
-    filas.push([
-      a.nombre,
-      a.unidad,
-      a.existencias,
-      a.minimo,
-      estaBajoMinimo(a) ? 'Sí' : 'No',
-      a.tipoDeEquipo,
-      a.activo ? 'Activo' : 'Retirado',
-      serieDelDia(a.retiradoEl),
-      a.motivoDeRetirada,
-    ])
+    filas.push(columnas.map((c) => c.valor(a)))
     tintes.push(tinteDelArticulo(a))
   }
 
   return {
     nombre: 'Existencias',
     filas,
-    anchos: [40, 9, 12, 9, 13, 20, 11, 12, 46],
-    formatos: formatos({ 2: 'entero', 3: 'entero', 7: 'fecha', 8: 'textoAjustado' }),
+    anchos: columnas.map((c) => c.ancho),
+    formatos: columnas.map((c) => c.formato),
     tintes,
     caracter: 'app',
   }
@@ -355,11 +489,17 @@ export function hojaDeUnidadesConSerie(unidades: UnidadParaHoja[]): HojaNueva {
  * pantalla. El de uno retirado no está en esa vista y se suma de sus
  * movimientos —que es, por definición, lo que es el saldo—. Un vivo que la
  * vista no trajera (una lectura vieja) cae a lo mismo.
+ *
+ * Las cifras por estado vienen de `stock_levels_por_estado`, que solo trae los
+ * vivos: un retirado no las tiene (`null`), igual que todos con un servidor que
+ * no sabe de estados. Se copian solo las seis columnas que la hoja usa, para que
+ * el artículo no arrastre una fila entera de la base.
  */
 export function articulosParaHoja(
-  d: Pick<DatosDelAlmacen, 'articulos' | 'niveles' | 'movimientos' | 'tipos'>,
+  d: Pick<DatosDelAlmacen, 'articulos' | 'niveles' | 'estados' | 'movimientos' | 'tipos'>,
 ): ArticuloParaHoja[] {
   const nivel = new Map(d.niveles.map((n) => [n.stock_item_id, n.on_hand]))
+  const porEstado = new Map((d.estados ?? []).map((e) => [e.stock_item_id, e]))
   const suma = new Map<string, number>()
   for (const m of d.movimientos) suma.set(m.stock_item_id, (suma.get(m.stock_item_id) ?? 0) + m.qty)
   const tipos = new Map(d.tipos.map((t) => [t.id, t]))
@@ -368,10 +508,21 @@ export function articulosParaHoja(
     // Siguiendo las fusiones: un artículo enlazado a un tipo que luego se
     // fundió en otro tiene que salir con el nombre del tipo vivo.
     const tipo = a.asset_type_id ? tipos.get(a.asset_type_id) : undefined
+    const e = porEstado.get(a.id)
     return {
       nombre: a.name,
       unidad: a.unit,
       existencias: nivel.get(a.id) ?? suma.get(a.id) ?? 0,
+      estados: e
+        ? {
+            seguimiento: e.seguimiento,
+            nuevo: e.nuevo,
+            usado: e.usado,
+            reacondicionado: e.reacondicionado,
+            averiado: e.averiado,
+            sin_indicar: e.sin_indicar,
+          }
+        : null,
       minimo: a.min_threshold,
       tipoDeEquipo: tipo ? tipoVivo(tipo, tipos).name : null,
       activo: a.active,
@@ -525,8 +676,25 @@ async function cargarPerfiles(): Promise<Descarga<FilaPerfil>> {
   )
 }
 
+/**
+ * Las existencias por estado, o `null` si el servidor todavía no sabe de ellas.
+ *
+ * Un servidor sin la migración del estado por cantidad no tiene la vista
+ * `stock_levels_por_estado` —o no tiene alguna de sus columnas—, y eso no puede
+ * impedir sacar el almacén: se exporta como siempre, sin las columnas de estado.
+ * Es lo que se hace con la vista de las unidades, y con su misma regla: se mira
+ * lo que el error **dice**. Un permiso denegado o un plazo agotado no se
+ * disfrazan de «falta la migración» —saldría un Excel sin estados, en silencio,
+ * justo cuando el servidor sí los tiene y no ha podido darlos— y paran la
+ * exportación con su propio mensaje, como cualquier otra lectura.
+ */
+function estadosSiLosHay(d: Descarga<FilaNivelPorEstado>): FilaNivelPorEstado[] | null {
+  if (d.error && FALTA_ALGO_DE_LA_VISTA.test(`${d.error.message} ${d.error.code ?? ''}`)) return null
+  return exigir('las existencias por estado', d)
+}
+
 export async function cargarDatosDelAlmacen(): Promise<DatosDelAlmacen> {
-  const [articulosD, nivelesD, tiposD, movimientosD, incidenciasD, salasD, zonasD, edificiosD, perfilesD, unidadesD] =
+  const [articulosD, nivelesD, estadosD, tiposD, movimientosD, incidenciasD, salasD, zonasD, edificiosD, perfilesD, unidadesD] =
     await Promise.all([
       descargaEntera<FilaArticulo>((d, h) =>
         supabase
@@ -551,6 +719,16 @@ export async function cargarDatosDelAlmacen(): Promise<DatosDelAlmacen> {
       ),
       descargaEntera<FilaNivel>((d, h) =>
         supabase.from('stock_levels').select('stock_item_id, on_hand').order('stock_item_id').range(d, h).abortSignal(plazo()),
+      ),
+      // Cuántas hay de cada estado, de la vista `stock_levels_por_estado`: una
+      // fila por artículo activo. Solo se piden las columnas que la hoja usa.
+      descargaEntera<FilaNivelPorEstado>((d, h) =>
+        supabase
+          .from('stock_levels_por_estado')
+          .select('stock_item_id, seguimiento, nuevo, usado, reacondicionado, averiado, sin_indicar')
+          .order('stock_item_id')
+          .range(d, h)
+          .abortSignal(plazo()),
       ),
       descargaEntera<TipoConocido>((d, h) =>
         supabase.from('asset_types').select('id, name, merged_into, aliases').order('id').range(d, h).abortSignal(plazo()),
@@ -610,6 +788,7 @@ export async function cargarDatosDelAlmacen(): Promise<DatosDelAlmacen> {
   return {
     articulos: exigir('el catálogo del almacén', articulosD),
     niveles: exigir('las existencias', nivelesD),
+    estados: estadosSiLosHay(estadosD),
     tipos: exigir('el catálogo de equipos', tiposD),
     movimientos: exigir('los movimientos de almacén', movimientosD),
     incidencias: exigir('los partes', incidenciasD),
@@ -626,10 +805,10 @@ export async function cargarDatosDelAlmacen(): Promise<DatosDelAlmacen> {
  * cifras de la cabecera. Es lo que se le da a `<ExportarConVistaPrevia>`, que
  * enseña las hojas antes de descargar y saca de ellas el Excel y el PDF.
  *
- * El PDF es **el inventario del almacén**: lo que hay hoy —existencias y
- * unidades con número de serie—. Los movimientos van en el Excel siempre y en
- * el PDF solo si se marcan, porque el historial de un año son decenas de
- * páginas que no se piden cuando se pide un inventario.
+ * El PDF es **el inventario del almacén**: lo que hay hoy —existencias, con
+ * cuántas hay de cada estado, y unidades con número de serie—. Los movimientos
+ * van en el Excel siempre y en el PDF solo si se marcan, porque el historial de
+ * un año son decenas de páginas que no se piden cuando se pide un inventario.
  */
 export async function prepararExportacionDelAlmacen(): Promise<Exportacion> {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -639,18 +818,48 @@ export async function prepararExportacionDelAlmacen(): Promise<Exportacion> {
   return exportacionDelAlmacen(datos)
 }
 
+/**
+ * Las columnas de «Existencias» que van al papel: las que sirven para decidir
+ * qué pedir —cuántas hay, de qué estado, si están por debajo del mínimo— y si el
+ * artículo sigue en el catálogo. La unidad y el tipo de equipo se quedan en el
+ * Excel, que lleva todas las columnas: son lo que menos pesa a la hora de
+ * decidir, y con las cinco de estado no cabría todo en un A4.
+ *
+ * Por el nombre de la cabecera, como pide `pdf.columnas`, y sin estados las
+ * mismas menos las cinco: una cabecera que no esté en la hoja se ignora, y el
+ * papel sale sin ella en vez de no salir.
+ */
+function columnasDelPdfDeExistencias(conEstados: boolean): string[] {
+  return [
+    'Artículo',
+    'Existencias',
+    ...(conEstados ? ESTADOS_EN_ORDEN.map((c) => ESTADO_EN_PLURAL[c]) : []),
+    'Mínimo',
+    'Bajo mínimo',
+    'Situación',
+  ]
+}
+
 /** La exportación a partir de lo leído. Aparte para poder probarla sin red. */
 export function exportacionDelAlmacen(d: DatosDelAlmacen): Exportacion {
   const articulos = articulosParaHoja(d)
   const unidades = unidadesParaHoja(d)
+  // El servidor sabe de estados si ha dado la lista, aunque venga vacía.
+  const conEstados = d.estados != null
   const activos = articulos.filter((a) => a.activo)
   const bajoMinimo = activos.filter(estaBajoMinimo).length
+  // Las averiadas de todo lo que se cuenta, por cantidad o por número de serie:
+  // las que no se pueden llevar a un aula. Solo las de los artículos vivos, que
+  // son los que cuentan; un retirado no tiene cifras, y un servidor sin estados
+  // no tiene ninguna que sumar.
+  const averiadas = activos.reduce((suma, a) => suma + (a.estados?.averiado ?? 0), 0)
   // Las que están en el almacén: las instaladas ya no se cuentan ahí y las de
   // baja tampoco, aunque sigan en la hoja.
   const enElAlmacen = unidades.filter((u) => u.situacion === 'disponible').length
   const resumen = [
     `${activos.length} ${activos.length === 1 ? 'artículo' : 'artículos'}`,
     bajoMinimo > 0 ? `${bajoMinimo} bajo mínimo` : null,
+    averiadas > 0 ? cuantasEnEstado('averiado', averiadas) : null,
     `${enElAlmacen} ${enElAlmacen === 1 ? 'unidad' : 'unidades'} con n.º de serie en el almacén`,
   ]
     .filter(Boolean)
@@ -660,7 +869,7 @@ export function exportacionDelAlmacen(d: DatosDelAlmacen): Exportacion {
     resumen,
     nombreBase: 'Almacén',
     hojas: [
-      { hoja: hojaDeExistencias(articulos), pdf: { columnas: ['Artículo', 'Unidad', 'Existencias', 'Mínimo', 'Bajo mínimo', 'Tipo de equipo', 'Estado'] } },
+      { hoja: hojaDeExistencias(articulos, conEstados), pdf: { columnas: columnasDelPdfDeExistencias(conEstados) } },
       { hoja: hojaDeMovimientos(movimientosParaHoja(d)), pdf: { incluir: false } },
       { hoja: hojaDeUnidadesConSerie(unidades) },
     ],
