@@ -589,6 +589,66 @@ async function salasFueraDeLaLista(faltan: string[]): Promise<FilaSala[]> {
 
 // ── La foto de hoy ───────────────────────────────────────────────────────────
 
+/**
+ * ¿Dice este error que a la consulta le falta la vista, o una columna de ella?
+ *
+ * PostgREST lo cuenta de varias maneras según la versión y según qué falte:
+ * «Could not find the table 'public.stock_unit_list' in the schema cache»
+ * (`PGRST205`), `relation "…" does not exist` (`42P01`) y `column … does not
+ * exist` (`42703`). Se mira lo que **dicen** y no el nombre de la vista: así un
+ * permiso denegado o un plazo agotado no pasan por «falta la migración».
+ */
+const FALTA_ALGO_DE_LA_VISTA = /does not exist|schema cache|PGRST20[45]|42P01|42703/i
+
+/**
+ * Los ordenadores de repuesto que hay ahora en el almacén.
+ *
+ * Son las unidades disponibles de la vista `stock_unit_list` **que son
+ * ordenadores**. El almacén guarda como unidad cualquier aparato con número de
+ * serie —un proyector, un teclado—, y contar `stock_units` a secas metería en
+ * los «ordenadores de repuesto» de un informe firmado todo lo que tiene número.
+ *
+ * Un servidor sin la migración de octubre no tiene la vista, o le falta la
+ * columna: entonces se cuenta como se contaba, las disponibles de la tabla, que
+ * antes de esa migración eran todas ordenadores. Y uno sin la de septiembre no
+ * tiene ni la tabla: cero, y a seguir, que esto no puede tumbar el informe. Lo
+ * mismo si la lectura falla por otra cosa (un permiso, un plazo): una cifra
+ * secundaria no se lleva por delante el informe entero.
+ *
+ * **Que la vista falte no siempre llega como un error.** La consulta es un
+ * `HEAD` —se pide la cuenta, no las filas— y la respuesta 404 de un `HEAD` no
+ * lleva cuerpo: el cliente convierte un «404 sin cuerpo» en un 204 sin error y
+ * sin cifra (es un apaño suyo, comprobado en la versión instalada). Fiarse solo
+ * de `error` contaba cero justo en los servidores donde hay que caer a la
+ * tabla. Una cuenta que se hizo trae siempre número, aunque sea cero; sin
+ * número, no se hizo.
+ */
+export async function ordenadoresDeRepuesto(): Promise<number> {
+  const head = { count: 'exact' as const, head: true }
+  try {
+    const vista = await supabase
+      .from('stock_unit_list')
+      .select('*', head)
+      .eq('status', 'disponible')
+      .eq('es_ordenador', true)
+      // Uno averiado está en la estantería pero no responde a nada: no es
+      // capacidad de respuesta hasta que alguien lo repare y lo diga.
+      .neq('condicion', 'averiado')
+      .abortSignal(señalConTope(TOPE_CONSULTA_MS))
+    if (!vista.error && vista.count !== null) return vista.count
+    if (vista.error && !FALTA_ALGO_DE_LA_VISTA.test(`${vista.error.message} ${vista.error.code ?? ''}`)) return 0
+
+    const tabla = await supabase
+      .from('stock_units')
+      .select('*', head)
+      .eq('status', 'disponible')
+      .abortSignal(señalConTope(TOPE_CONSULTA_MS))
+    return tabla.error ? 0 : (tabla.count ?? 0)
+  } catch {
+    return 0
+  }
+}
+
 async function situacion(salas: FilaSala[]): Promise<Situacion> {
   const hace7dias = new Date(Date.now() - 7 * 86_400_000).toISOString()
   const hace180dias = new Date(Date.now() - 180 * 86_400_000).toISOString()
@@ -631,11 +691,7 @@ async function situacion(salas: FilaSala[]): Promise<Situacion> {
         .eq('below_threshold', true)
         .abortSignal(señal),
     ),
-    // Los PCs de repuesto: un servidor sin la migración de septiembre no tiene
-    // la tabla, y eso no puede tumbar el informe. Cero, y a seguir.
-    cuantas('los ordenadores de repuesto', (señal) =>
-      supabase.from('stock_units').select('*', head).eq('status', 'disponible').abortSignal(señal),
-    ).catch(() => 0),
+    ordenadoresDeRepuesto(),
   ])
 
   return {

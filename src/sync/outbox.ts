@@ -34,6 +34,7 @@ const TABLE: Record<OutboxEntry['entity'], string> = {
   asset: 'assets',
   asset_removal: 'asset_removals',
   room_inventory: 'room_inventories',
+  stock_unit_install: 'stock_unit_installs',
 }
 
 /** Orden de subida: una revisión debe existir antes que sus checks. */
@@ -60,6 +61,9 @@ const ORDER: Record<OutboxEntry['entity'], number> = {
   // todavía no ha subido chocaría contra su clave ajena.
   asset_removal: 10,
   attachment: 11,
+  // Detrás de la retirada y de todo lo demás del equipo: la instalación puede
+  // pedir la retirada del aparato al que sustituye, y ese tiene que estar arriba.
+  stock_unit_install: 12,
 }
 
 export type SyncState = 'inactivo' | 'sincronizando' | 'sin-conexion' | 'error'
@@ -168,6 +172,12 @@ const IGNORE_DUPLICATES = new Set<OutboxEntry['entity']>([
   'asset_event',
   'asset_removal',
   'room_inventory',
+  /*
+   * Y la instalación de una unidad, por lo mismo que un levantamiento: es una
+   * petición que se hace una vez. Reenviarla tras una respuesta perdida tiene
+   * que ser no hacer nada; pisarla sería pedir un UPDATE que no existe.
+   */
+  'stock_unit_install',
   'incident',
   /*
    * Y el cierre de una incidencia, por lo mismo que un movimiento de almacén: es

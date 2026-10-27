@@ -125,7 +125,8 @@ export interface ArticuloVolcado {
 }
 
 /**
- * Un ordenador de repuesto: una unidad del almacén con número de serie.
+ * Una unidad del almacén con número de serie: un ordenador de repuesto, o
+ * —desde que cualquier artículo puede tener unidades— un proyector, un teclado.
  *
  * No es un artículo —el artículo cuenta, esto nombra— ni un equipo de sala —no
  * está en ninguna, todavía—. Cuando se instala, la aplicación crea el equipo en
@@ -144,6 +145,18 @@ export interface UnidadVolcada {
   sala: string | null
   /** Fecha ISO (`2026-09-08`) de la instalación o de la baja, si la hubo. */
   desde: string | null
+  /**
+   * `true` si la unidad no es un ordenador y vive solo en la aplicación.
+   *
+   * La hoja «PCs STOCK» es una hoja de ordenadores: un proyector con número de
+   * serie no tiene sitio en ella, y si la pasada lo añadiera al final cada vez
+   * que el almacén apuntase uno, la hoja de la gente acabaría siendo el listado
+   * de todo el almacén. No se **añade**; eso es todo. Si alguien lo teclea en la
+   * hoja, se cruza por su número de serie como cualquier otra y se mantiene al
+   * día. Sin el dato —un servidor sin la vista, el espejo de un libro— no se
+   * sabe, y se trata como lo que eran todas hasta ahora: un ordenador.
+   */
+  soloEnLaApp?: boolean
 }
 
 // -----------------------------------------------------------------------------

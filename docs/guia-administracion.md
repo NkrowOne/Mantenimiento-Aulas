@@ -709,7 +709,7 @@ en las revisiones, porque sigue estando ahí.
 | Destino | Qué hace al autorizarse |
 |---|---|
 | **Dar de baja** | El aparato se ha muerto. Sale del inventario, conserva la sala en la que estuvo, y la baja queda en su histórico |
-| **Devolver al almacén** | Está bien y vuelve a la estantería. Sale del inventario, se queda sin sala y **suma una unidad al almacén** |
+| **Devolver al almacén** | Está bien y vuelve a la estantería. Sale del inventario, se queda sin sala y **suma una unidad al almacén**; si tiene número de serie, vuelve además como unidad con estado «Usado» |
 
 La segunda es la que faltaba: con un solo botón de «retirar», cada equipo que
 volvía al almacén era una unidad que el sistema perdía — el aula dejaba de
@@ -963,7 +963,21 @@ group by kind;
 
 ## 4. Almacén
 
-Desde la pestaña **Almacén**, con `+` y `−` por artículo.
+La pestaña **Almacén** es una lista: una fila por artículo con su nombre y
+cuántos hay —en rojo si está bajo mínimo— y, si tiene unidades con número de
+serie, cómo están («3 con n.º de serie · 2 nuevas · 1 usada»).
+
+- **Los que solo se cuentan** (cables, teclados…) llevan el `−` en la fila, y el
+  `+` para quien puede meter material (supervisor y administrador).
+- **Tocar la fila abre su hoja**, desde abajo: la cantidad con el `−` y el `+`
+  grandes y «Varias de golpe…» para sacar o meter una caja entera, sus unidades
+  con número de serie y, para el administrador, **Ajustes del artículo** (tipo de
+  equipo, mínimo, nombre y retirarlo).
+- **El buscador encuentra artículos y números de serie.** Con tres caracteres de
+  la pegatina salen las unidades que coinciden, encima de la lista; tocar una abre
+  su ficha.
+- **Filtros** arriba: Todo, Bajo mínimo, Con n.º de serie y Sin existencias, cada
+  uno con su cuenta.
 
 El inventario del almacén se exporta desde la misma pestaña, con **Ver y
 exportar**: vista previa, Excel y PDF (apartado «Exportar: vista previa, Excel
@@ -1124,7 +1138,8 @@ where source = 'Almacén' order by id;
 ### Umbrales de aviso
 
 Ningún artículo avisa por defecto: **no se puede estar por debajo de un mínimo
-que nadie ha fijado**. Actívalos donde importe:
+que nadie ha fijado**. Se fija en la hoja del artículo, **Ajustes del artículo →
+Avisar cuando queden** (administrador), o en lote con SQL:
 
 ```sql
 update stock_items set min_threshold = 5
@@ -1133,33 +1148,81 @@ where name in ('Lámpara proyector NP44', 'Cable HDMI fibra 15 m');
 
 Los artículos por debajo salen en rojo y en el panel.
 
-### PCs de repuesto — los ordenadores por número de serie
+### Unidades con número de serie, y su estado
 
-Al final de la pestaña **Almacén** está la lista de ordenadores de repuesto:
-los tiny que esperan en el almacén, uno por número de serie. El almacén de
-arriba cuenta —«quedan 7 Ordenador Tiny M70Q»— y esta lista nombra: cuál es
-cada uno y dónde está. Es la misma lista que la hoja `PCs STOCK <año>` del
-Excel: lo que se da de alta aquí sale en la hoja al sincronizar, y lo que se
-teclea en la hoja entra aquí (la pasada lo pregunta antes).
+El almacén **cuenta** —«quedan 8 teclados»— y las unidades **nombran**: cada
+aparato guardado, con su número de serie y su estado. Empezaron siendo los
+ordenadores de repuesto (la hoja `PCs STOCK` del Excel) y ahora valen para
+**cualquier artículo**: proyectores, pantallas, switches, teclados…
 
-- **Nuevo PC** (supervisor): artículo, marca, modelo, número de serie y
-  observaciones. Si el número de serie ya es de un equipo instalado en un aula,
-  la unidad nace ya como «instalada» apuntando a él.
-- **Instalar en un aula** (cualquiera del personal): elige edificio y sala. La
-  aplicación crea el equipo en el aula con ese número de serie, retira el
-  ordenador que hubiera del mismo tipo (queda como sustitución en su
-  historial), descuenta una unidad del artículo del almacén y deja la unidad
-  como «Instalado en 2.1 C · 08/09/2026». Todo en una sola operación: no puede
-  quedar un ordenador en dos sitios.
-- **Dar de baja** (administrador): para el que no va a instalarse. Pide un
-  **motivo de al menos diez caracteres**, que queda en las observaciones de la
-  unidad. Un ordenador instalado en un aula no se da de baja desde aquí: se
-  retira desde el aula, con su destino.
-- Si un equipo que vino de aquí se retira después desde el aula con destino
-  «almacén», la unidad vuelve sola a «disponible»; con destino «baja», a
-  «baja».
+**El estado** es cómo está la unidad, y se cambia con un toque en su ficha:
 
-Los ordenadores disponibles salen en el informe como capacidad de respuesta.
+| Estado | Cuándo |
+|---|---|
+| **Nuevo** | Sin estrenar, en su caja |
+| **Usado** | Ha estado instalado y funciona |
+| **Reacondicionado** | Reparado o con la imagen rehecha, listo para instalar |
+| **Averiado** | No funciona: no se instala hasta repararlo (si se elige, la aplicación avisa) |
+
+Las que había antes de esto salen como **Sin indicar** hasta que alguien elija.
+El estado lo cambia cualquiera del personal —es quien tiene el aparato
+delante—, igual que las observaciones.
+
+**La situación** es otra cosa: dónde está —en el almacén, instalada en un aula,
+de baja—, y la deciden las acciones de abajo.
+
+**Añadir unidades** (supervisor): en la hoja del artículo, **Añadir unidades con
+número de serie**. Se escribe el número, se elige el estado y se guarda; el
+formulario se queda abierto, con el número vacío y lo demás igual, para la
+siguiente. Así se apunta una caja de seis tecleando seis números.
+
+La casilla **Entra ahora en el almacén** decide si la unidad suma una a las
+existencias (acaba de llegar) o es una de las que el almacén ya contaba y por fin
+se numera. Viene marcada con lo probable —si todas las contadas ya tienen número,
+la nueva entra— y dice debajo, con las cifras, qué va a pasar. Una que entra nueva
+queda como compra; una usada, como ajuste.
+
+**En la ficha de una unidad:**
+
+- **Instalar en un aula** (cualquiera del personal, con conexión): se busca el aula
+  tecleando («1.7 H», «criminología») y, si ya tiene equipos de ese tipo, se
+  pregunta **si sustituye a alguno** y a dónde va el que se quita (almacén o baja).
+  La aplicación crea el equipo en el aula con su número de serie, marca y modelo,
+  descuenta la unidad del almacén y deja el alta en el histórico. El que se
+  sustituye se **pide retirar**: un supervisor lo retira en el acto; un técnico deja
+  la petición en «Retiradas por autorizar».
+- **Corregir datos** (supervisor): número de serie, marca, modelo y el artículo al
+  que pertenece.
+- **Dar de baja** (administrador): para la que no se va a instalar nunca. Pide un
+  motivo de al menos diez caracteres. Una instalada no se da de baja desde aquí: se
+  retira desde el aula.
+
+**Desde el aula, sin cobertura.** Al añadir un equipo en la revisión («Añadir
+equipo» → **Del almacén**), si el artículo tiene unidades con número de serie, se
+elige **cuál** —con buscador si son muchas, y su estado al lado— o «Una sin número
+de serie». Con la unidad elegida se pregunta lo mismo: si sustituye a uno de los
+que hay. El equipo aparece en la sala con su número de serie en el acto, y la
+instalación sube con la cola en cuanto hay red: el servidor crea el equipo (o
+reutiliza el que ya tenía ese número de serie si la unidad vuelve de otra aula),
+descuenta el almacén y deja la unidad instalada. Si para entonces otra persona ya
+la había instalado, la cola lo dice en rojo.
+
+**Cuando un equipo vuelve al almacén.** Al autorizar una retirada con destino
+«Devolver al almacén» (o al darlo de baja al almacén desde Equipos), si el equipo
+tiene número de serie **vuelve como unidad**, con estado **Usado**, en el artículo
+que recibe la unidad. Si ya era una unidad, vuelve a «En almacén» y pasa a Usado si
+era nueva.
+
+**Unidades sin artículo.** Las que no casan con ningún artículo del almacén —un
+nombre del Excel que no coincide, o de un artículo retirado— salen al final de la
+lista, en naranja. Se asignan a su artículo en «Corregir datos»; hasta entonces,
+instalarlas no descuenta nada.
+
+**En el Excel de SharePoint** solo van los ordenadores, como hasta ahora: la hoja
+`PCs STOCK` recibe las unidades de tipo ordenador. Las demás viven en la
+aplicación y salen en la exportación del almacén (hoja «Unidades con n.º de
+serie», con su estado). En el informe, «ordenadores de repuesto» cuenta solo los
+ordenadores disponibles.
 
 ## 4b. El Excel de SharePoint
 

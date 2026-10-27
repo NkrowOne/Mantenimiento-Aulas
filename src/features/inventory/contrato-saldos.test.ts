@@ -103,10 +103,15 @@ describe('contrato de los saldos del almacén', () => {
 
   it('lo que la aplicación lee de la vista está entre sus columnas', () => {
     const columnas = new Set(columnasDeStockLevels(nueva))
-    for (const fichero of ['src/features/inventory/StockPage.tsx', 'src/domain/types.ts']) {
+    // La hoja de cada artículo lee la misma fila con su propio nombre.
+    for (const [fichero, nombre] of [
+      ['src/features/inventory/StockPage.tsx', 'StockLevel'],
+      ['src/features/inventory/HojaDelArticulo.tsx', 'ArticuloDeLaLista'],
+      ['src/domain/types.ts', 'StockLevel'],
+    ] as const) {
       const src = readFileSync(path.join(RAIZ, fichero), 'utf8')
-      const i = src.indexOf('interface StockLevel {')
-      expect(i, `${fichero} declara StockLevel`).toBeGreaterThanOrEqual(0)
+      const i = src.indexOf(`interface ${nombre} {`)
+      expect(i, `${fichero} declara ${nombre}`).toBeGreaterThanOrEqual(0)
       const cuerpo = src.slice(i, src.indexOf('}', i))
       for (const m of cuerpo.matchAll(/^\s+([a-z_]+):/gm)) {
         expect(columnas.has(m[1] ?? ''), `${fichero}: ${m[1]} no sale de stock_levels`).toBe(true)

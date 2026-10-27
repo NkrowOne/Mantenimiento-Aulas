@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   type FilaApertura,
   type FilaCierre,
@@ -8,6 +8,7 @@ import {
   type FilasDelPeriodo,
   contadores,
   materiales,
+  ordenadoresDeRepuesto,
   porEdificio,
   porVisita,
   repartoDelTrabajo,
@@ -377,5 +378,125 @@ describe('las listas de identificadores que viajan en la URL', () => {
 
   it('un tamaño de trozo imposible se rechaza en vez de colgarse', () => {
     expect(() => trozos(ids(3), 0)).toThrow()
+  })
+})
+
+/*
+ * Los «ordenadores de repuesto» de la foto de hoy.
+ *
+ * El almacén guarda ya como unidad cualquier aparato con número de serie, y el
+ * informe cuenta ordenadores: solo los de la vista `stock_unit_list` que lo son.
+ * Un servidor sin la migración no tiene la vista y se cuenta como siempre.
+ *
+ * Aquí el `fetch` hace de servidor y el cliente de Supabase es el de verdad, a
+ * propósito: lo que importa es cómo se lee lo que **contesta** un servidor al
+ * que le falta la vista, y eso es cosa del cliente. La consulta es un `HEAD`
+ * (se pide la cuenta, no las filas), y un `HEAD` 404 no lleva cuerpo.
+ */
+describe('los ordenadores de repuesto del informe', () => {
+  type Peticion = { metodo: string; tabla: string; consulta: string }
+  let peticiones: Peticion[] = []
+
+  /** Lo que contesta el servidor, por tabla; lo que no esté aquí, que no existe. */
+  function servidor(respuestas: Record<string, () => Response>): void {
+    peticiones = []
+    vi.stubGlobal('fetch', (entrada: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(entrada))
+      const tabla = /\/rest\/v1\/(.+)$/.exec(url.pathname)?.[1] ?? '(desconocida)'
+      peticiones.push({ metodo: init?.method ?? 'GET', tabla, consulta: decodeURIComponent(url.search) })
+      return Promise.resolve(respuestas[tabla]?.() ?? sinCuerpo(404))
+    })
+  }
+
+  // Una cuenta hecha: `content-range` como lo escribe PostgREST. Con filas, `0-2/3`; sin ninguna, `*` y el cero.
+  const cuenta = (n: number) => (): Response =>
+    new Response(null, { status: 200, headers: { 'content-range': n === 0 ? '*/0' : `0-${n - 1}/${n}` } })
+
+  /** Un `HEAD` que falla: sin cuerpo, como todo `HEAD`. */
+  const sinCuerpo = (status: number): Response => new Response(null, { status })
+
+  /** Un fallo con su explicación, como lo dice PostgREST a un `GET`. */
+  const fallo = (status: number, code: string, message: string) => (): Response =>
+    new Response(JSON.stringify({ code, message, details: null, hint: null }), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    })
+
+  const aLaVista = (): Peticion[] => peticiones.filter((p) => p.tabla === 'stock_unit_list')
+  const aLaTabla = (): Peticion[] => peticiones.filter((p) => p.tabla === 'stock_units')
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('cuenta los disponibles de la vista que son ordenadores, y solo esos', async () => {
+    servidor({ stock_unit_list: cuenta(3) })
+
+    await expect(ordenadoresDeRepuesto()).resolves.toBe(3)
+
+    expect(peticiones).toHaveLength(1)
+    expect(peticiones[0]).toMatchObject({ metodo: 'HEAD', tabla: 'stock_unit_list' })
+    expect(peticiones[0]!.consulta).toContain('status=eq.disponible')
+    expect(peticiones[0]!.consulta).toContain('es_ordenador=eq.true')
+  })
+
+  it('cero ordenadores es un cero, no una vista que falte: no cae a la tabla', async () => {
+    // Una cuenta de cero trae su número, y es el caso en que una comprobación
+    // «¿hay cifra?» hecha con `!count` caería a la tabla y contaría lo que no es.
+    servidor({ stock_unit_list: cuenta(0), stock_units: cuenta(7) })
+
+    await expect(ordenadoresDeRepuesto()).resolves.toBe(0)
+
+    expect(aLaTabla()).toEqual([])
+  })
+
+  it('sin la vista cuenta los disponibles de la tabla, como se contaba', async () => {
+    // Lo que contesta un servidor sin la migración a un `HEAD`: 404 y ni una
+    // palabra. El cliente lo deja pasar como un 204 sin error y sin cifra; si
+    // solo se mirara el error, el informe diría «0 ordenadores» donde hay siete.
+    servidor({ stock_units: cuenta(7) })
+
+    await expect(ordenadoresDeRepuesto()).resolves.toBe(7)
+
+    expect(aLaVista()).toHaveLength(1)
+    expect(aLaTabla()).toHaveLength(1)
+    expect(aLaTabla()[0]!.consulta).toContain('status=eq.disponible')
+    // De la tabla de antes no se sabe qué es cada una: no se pregunta por ello.
+    expect(aLaTabla()[0]!.consulta).not.toContain('es_ordenador')
+  })
+
+  it('sin la vista y con el error en el cuerpo (PGRST205), igual', async () => {
+    servidor({
+      stock_unit_list: fallo(404, 'PGRST205', "Could not find the table 'public.stock_unit_list' in the schema cache"),
+      stock_units: cuenta(7),
+    })
+
+    await expect(ordenadoresDeRepuesto()).resolves.toBe(7)
+  })
+
+  it('con la vista sin la columna, también', async () => {
+    servidor({
+      stock_unit_list: fallo(400, '42703', 'column stock_unit_list.es_ordenador does not exist'),
+      stock_units: cuenta(7),
+    })
+
+    await expect(ordenadoresDeRepuesto()).resolves.toBe(7)
+  })
+
+  it('sin la vista ni la tabla, cero y a seguir: no tumba el informe', async () => {
+    servidor({})
+
+    await expect(ordenadoresDeRepuesto()).resolves.toBe(0)
+    expect(peticiones.map((p) => p.tabla)).toEqual(['stock_unit_list', 'stock_units'])
+  })
+
+  it('otro fallo de la vista no es «falta la migración»: cero, y no se cuenta la tabla', async () => {
+    servidor({
+      stock_unit_list: fallo(403, '42501', 'permission denied for view stock_unit_list'),
+      stock_units: cuenta(7),
+    })
+
+    await expect(ordenadoresDeRepuesto()).resolves.toBe(0)
+    expect(aLaTabla()).toEqual([])
   })
 })

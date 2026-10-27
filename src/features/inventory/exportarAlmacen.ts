@@ -1,5 +1,5 @@
 /**
- * El almacén en un Excel: existencias, movimientos y ordenadores de repuesto.
+ * El almacén en un Excel: existencias, movimientos y unidades con número de serie.
  *
  * Es para quien necesita el almacén fuera de la aplicación —un pedido a
  * compras, la revisión de fin de curso, un cruce con la bolsa— y no quiere
@@ -17,8 +17,11 @@
  *  - **Movimientos de Almacén**: qué pasó, con el saldo detrás. Es la hoja de
  *    la sincronización tal cual (`hojaDeMovimientos`), así que los dos libros
  *    dicen lo mismo del mismo movimiento.
- *  - **PCs de repuesto**: cuáles son, por número de serie, y dónde está cada
- *    uno.
+ *  - **Unidades con n.º de serie**: cuáles son, por número de serie, de
+ *    cualquier artículo —un ordenador, un proyector, un teclado—, cómo está
+ *    cada una (nueva, usada, averiada…) y dónde: en el almacén, instalada en un
+ *    aula o de baja. El almacén cuenta y esto nombra; no tienen por qué cuadrar,
+ *    y no es un error: son las que nadie ha apuntado todavía.
  *
  * La carga es lo único que toca la red; todo lo demás son funciones puras que
  * reciben las filas tal como las devuelve la base. Es la separación que permite
@@ -41,6 +44,8 @@ import type { TipoConocido } from '@/domain/equipos'
 import { hojaDeMovimientos } from '@/domain/hojasNuevas'
 import type { MovimientoParaHoja } from '@/domain/hojasNuevas'
 import type { Formato, HojaNueva, Tinte } from '@/domain/libro'
+import { CONDICION_LABEL, SITUACION_LABEL } from '@/domain/unidades'
+import type { Condicion, SituacionDeUnidad } from '@/domain/unidades'
 import { fechaAExcel } from '@/domain/valores'
 import type { ValorCelda } from '@/domain/xlsx'
 import type { Exportacion } from '@/domain/vistaPrevia'
@@ -105,13 +110,22 @@ export interface FilaPerfil {
   full_name: string | null
 }
 
+/**
+ * Una unidad tal como la devuelve la base. `item_name` y `condicion` solo los
+ * trae la vista `stock_unit_list`: faltan en un servidor sin la migración del
+ * 27 de octubre, que lee la tabla de siempre.
+ */
 export interface FilaUnidad {
+  /** Lo que decía la hoja o el alta, tal cual: «Ordenador Tiny». */
   articulo: string
+  /** El nombre del artículo del almacén al que pertenece, si se pudo casar. */
+  item_name?: string | null
   brand: string | null
   model: string | null
   serial: string
   notes: string | null
   status: string
+  condicion?: string | null
   room_id: string | null
   installed_at: string | null
   retired_at: string | null
@@ -244,40 +258,62 @@ export function hojaDeExistencias(articulos: ArticuloParaHoja[]): HojaNueva {
 }
 
 // -----------------------------------------------------------------------------
-// Ordenadores de repuesto
+// Unidades con número de serie
 // -----------------------------------------------------------------------------
 
 export interface UnidadParaHoja {
+  /** El artículo del almacén, con su nombre; si no se pudo casar, lo que apuntó quien la dio de alta. */
   articulo: string
   marca: string | null
   modelo: string | null
   serial: string
-  estado: 'disponible' | 'instalado' | 'baja'
-  /** Dónde está, si está instalado: `2.1 C (Edificio H)`. */
+  /** Cómo está —nueva, usada, averiada…—: lo dice quien la tiene delante. */
+  condicion: Condicion
+  /** Dónde está —en el almacén, instalada, de baja—: lo decide lo que se hace con ella. */
+  situacion: SituacionDeUnidad
+  /** Dónde está, si está instalada: `2.1 C (Edificio H)`. */
   aula: string | null
   /** Día de Madrid de la instalación o de la baja, si la hubo. */
   desde: string | null
   observaciones: string | null
 }
 
-const COL_PCS = ['Artículo', 'Marca', 'Modelo', 'N.º de serie', 'Situación', 'Aula', 'Desde', 'Observaciones']
-
-const SITUACION: Record<UnidadParaHoja['estado'], string> = {
-  disponible: 'Disponible',
-  instalado: 'Instalado',
-  baja: 'Baja',
-}
+// «Estado» es la condición y «Situación» es dónde está: son dos cosas, y se leen
+// como dos columnas. Los mismos nombres que las pantallas (`unidades.ts`).
+const COL_UNIDADES = [
+  'Artículo',
+  'Marca',
+  'Modelo',
+  'N.º de serie',
+  'Estado',
+  'Situación',
+  'Aula',
+  'Desde',
+  'Observaciones',
+]
 
 /** En qué orden se leen: primero lo que se puede usar, al final lo que ya no está. */
-const ORDEN_DE_SITUACION: Record<UnidadParaHoja['estado'], number> = { disponible: 0, instalado: 1, baja: 2 }
+const ORDEN_DE_SITUACION: Record<SituacionDeUnidad, number> = { disponible: 0, instalado: 1, baja: 2 }
 
-export function hojaDePcsDeRepuesto(unidades: UnidadParaHoja[]): HojaNueva {
-  const filas: ValorCelda[][] = [COL_PCS]
+/**
+ * Lo que dice el color de cada fila: una unidad de baja se apaga —se queda en
+ * la lista porque es un registro, pero ya no cuenta—, y una averiada se pinta en
+ * ámbar: es la que no se debe llevar a un aula y conviene ver a la primera.
+ * Una de baja que además esté averiada es una de baja.
+ */
+export function tinteDeLaUnidad(u: Pick<UnidadParaHoja, 'condicion' | 'situacion'>): Tinte | undefined {
+  if (u.situacion === 'baja') return 'apagado'
+  if (u.condicion === 'averiado') return 'aviso'
+  return undefined
+}
+
+export function hojaDeUnidadesConSerie(unidades: UnidadParaHoja[]): HojaNueva {
+  const filas: ValorCelda[][] = [COL_UNIDADES]
   const tintes: Array<Tinte | undefined> = []
 
   const ordenadas = [...unidades].sort(
     (a, b) =>
-      ORDEN_DE_SITUACION[a.estado] - ORDEN_DE_SITUACION[b.estado] ||
+      ORDEN_DE_SITUACION[a.situacion] - ORDEN_DE_SITUACION[b.situacion] ||
       a.articulo.localeCompare(b.articulo, 'es', { numeric: true }) ||
       (a.modelo ?? '').localeCompare(b.modelo ?? '', 'es', { numeric: true }) ||
       a.serial.localeCompare(b.serial, 'es', { numeric: true }),
@@ -289,21 +325,20 @@ export function hojaDePcsDeRepuesto(unidades: UnidadParaHoja[]): HojaNueva {
       u.marca,
       u.modelo,
       u.serial,
-      SITUACION[u.estado],
+      CONDICION_LABEL[u.condicion],
+      SITUACION_LABEL[u.situacion],
       u.aula,
       serieDelDia(u.desde),
       u.observaciones,
     ])
-    // Lo dado de baja se queda en la lista —es un registro— pero apagado, igual
-    // que el equipo retirado en el inventario por sala.
-    tintes.push(u.estado === 'baja' ? 'apagado' : undefined)
+    tintes.push(tinteDeLaUnidad(u))
   }
 
   return {
-    nombre: 'PCs de repuesto',
+    nombre: 'Unidades con n.º de serie',
     filas,
-    anchos: [30, 16, 22, 24, 13, 24, 11, 46],
-    formatos: formatos({ 6: 'fecha', 7: 'textoAjustado' }),
+    anchos: [30, 16, 22, 24, 16, 13, 24, 11, 46],
+    formatos: formatos({ 7: 'fecha', 8: 'textoAjustado' }),
     tintes,
     caracter: 'app',
   }
@@ -385,24 +420,32 @@ export function movimientosParaHoja(
   })
 }
 
+const CONDICIONES_CONOCIDAS = new Set<string>(Object.keys(CONDICION_LABEL))
+
 export function unidadesParaHoja(d: Pick<DatosDelAlmacen, 'unidades' | 'salas' | 'zonas' | 'edificios'>): UnidadParaHoja[] {
   const sala = new Map(d.salas.map((s) => [s.id, s]))
   const zona = new Map(d.zonas.map((z) => [z.id, z]))
   const edificio = new Map(d.edificios.map((e) => [e.id, e.name]))
 
   return d.unidades.map((u) => {
-    // Un estado que la aplicación no conoce se lee como «disponible», que es
-    // lo que hace la sincronización: la columna solo admite los tres.
-    const estado = u.status === 'instalado' || u.status === 'baja' ? u.status : 'disponible'
-    const s = estado === 'instalado' && u.room_id ? sala.get(u.room_id) : undefined
+    // Una situación que la aplicación no conoce se lee como «en el almacén», que
+    // es lo que hace la sincronización: la columna solo admite las tres.
+    const situacion: SituacionDeUnidad = u.status === 'instalado' || u.status === 'baja' ? u.status : 'disponible'
+    const s = situacion === 'instalado' && u.room_id ? sala.get(u.room_id) : undefined
     const donde = s ? edificio.get(zona.get(s.zone_id)?.building_id ?? '') : undefined
-    const cuando = estado === 'instalado' ? u.installed_at : estado === 'baja' ? u.retired_at : null
+    const cuando = situacion === 'instalado' ? u.installed_at : situacion === 'baja' ? u.retired_at : null
     return {
-      articulo: u.articulo,
+      // El nombre del artículo del almacén, no lo que apuntó quien la dio de
+      // alta: así todas las unidades de un mismo artículo salen juntas. Sin
+      // artículo casado —o con un servidor que no lo dice— queda lo apuntado.
+      articulo: u.item_name?.trim() || u.articulo,
       marca: u.brand,
       modelo: u.model,
       serial: u.serial,
-      estado,
+      // Sin estado —un servidor sin la vista, o una unidad que nadie ha mirado—
+      // es «sin indicar», no «nuevo»: nadie lo ha dicho.
+      condicion: u.condicion && CONDICIONES_CONOCIDAS.has(u.condicion) ? (u.condicion as Condicion) : 'sin_indicar',
+      situacion,
       aula: s ? (donde ? `${s.code} (${donde})` : s.code) : null,
       desde: cuando ? diaEnMadrid(new Date(cuando)) : null,
       observaciones: u.notes,
@@ -426,6 +469,18 @@ export function hojasDelAlmacen(d: DatosDelAlmacen): HojaNueva[] {
  */
 const PLAZO_MS = 60_000
 const plazo = (): AbortSignal => señalConTope(PLAZO_MS)
+
+/**
+ * ¿Dice este error que a la consulta le falta la vista, o una columna de ella?
+ *
+ * PostgREST lo cuenta de varias maneras según la versión y según qué falte:
+ * «Could not find the table 'public.stock_unit_list' in the schema cache»
+ * (`PGRST205`), `relation "…" does not exist` (`42P01`) y `column … does not
+ * exist` (`42703`). Se mira lo que **dicen** y no el nombre de la vista: así un
+ * permiso denegado o un plazo agotado no pasan por «falta la migración» y paran
+ * la exportación con su propio mensaje.
+ */
+const FALTA_ALGO_DE_LA_VISTA = /does not exist|schema cache|PGRST20[45]|42P01|42703/i
 
 /** Lo leído, o el motivo —dicho con palabras— por el que no se puede exportar. */
 function exigir<T>(que: string, d: Descarga<T>): T[] {
@@ -521,18 +576,35 @@ export async function cargarDatosDelAlmacen(): Promise<DatosDelAlmacen> {
         supabase.from('buildings').select('id, name').order('id').range(d, h).abortSignal(plazo()),
       ),
       cargarPerfiles(),
-      // Un servidor sin la migración de septiembre no tiene `stock_units`, y
-      // eso no puede impedir sacar el resto: la hoja sale con solo la cabecera.
+      // Las unidades salen de la vista `stock_unit_list`, que trae el nombre de
+      // su artículo y su estado. Un servidor sin la migración del 27 de octubre
+      // no la tiene, o no tiene alguna de sus columnas: se vuelve a pedir la
+      // tabla de siempre, sin estado, y todas salen «sin indicar». Y uno sin la
+      // de septiembre no tiene ni `stock_units`, y eso no puede impedir sacar el
+      // resto: la hoja sale con solo la cabecera.
       descargaEntera<FilaUnidad>((d, h) =>
         supabase
-          .from('stock_units')
-          .select('articulo, brand, model, serial, notes, status, room_id, installed_at, retired_at')
+          .from('stock_unit_list')
+          .select('articulo, item_name, brand, model, serial, notes, status, condicion, room_id, installed_at, retired_at')
           .order('id')
           .range(d, h)
           .abortSignal(plazo()),
-      ).then((r): Descarga<FilaUnidad> =>
-        r.error && /stock_units/.test(r.error.message) ? { data: [], error: null, completa: true } : r,
-      ),
+      )
+        .then((r) =>
+          r.error && FALTA_ALGO_DE_LA_VISTA.test(`${r.error.message} ${r.error.code ?? ''}`)
+            ? descargaEntera<FilaUnidad>((d, h) =>
+                supabase
+                  .from('stock_units')
+                  .select('articulo, brand, model, serial, notes, status, room_id, installed_at, retired_at')
+                  .order('id')
+                  .range(d, h)
+                  .abortSignal(plazo()),
+              )
+            : r,
+        )
+        .then((r): Descarga<FilaUnidad> =>
+          r.error && /stock_units/.test(r.error.message) ? { data: [], error: null, completa: true } : r,
+        ),
     ])
 
   return {
@@ -545,7 +617,7 @@ export async function cargarDatosDelAlmacen(): Promise<DatosDelAlmacen> {
     zonas: exigir('las plantas', zonasD),
     edificios: exigir('los edificios', edificiosD),
     perfiles: exigir('los usuarios', perfilesD),
-    unidades: exigir('los ordenadores de repuesto', unidadesD),
+    unidades: exigir('las unidades del almacén', unidadesD),
   }
 }
 
@@ -554,10 +626,10 @@ export async function cargarDatosDelAlmacen(): Promise<DatosDelAlmacen> {
  * cifras de la cabecera. Es lo que se le da a `<ExportarConVistaPrevia>`, que
  * enseña las hojas antes de descargar y saca de ellas el Excel y el PDF.
  *
- * El PDF es **el inventario del almacén**: lo que hay hoy —existencias y PCs de
- * repuesto—. Los movimientos van en el Excel siempre y en el PDF solo si se
- * marcan, porque el historial de un año son decenas de páginas que no se
- * piden cuando se pide un inventario.
+ * El PDF es **el inventario del almacén**: lo que hay hoy —existencias y
+ * unidades con número de serie—. Los movimientos van en el Excel siempre y en
+ * el PDF solo si se marcan, porque el historial de un año son decenas de
+ * páginas que no se piden cuando se pide un inventario.
  */
 export async function prepararExportacionDelAlmacen(): Promise<Exportacion> {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -573,11 +645,13 @@ export function exportacionDelAlmacen(d: DatosDelAlmacen): Exportacion {
   const unidades = unidadesParaHoja(d)
   const activos = articulos.filter((a) => a.activo)
   const bajoMinimo = activos.filter(estaBajoMinimo).length
-  const disponibles = unidades.filter((u) => u.estado === 'disponible').length
+  // Las que están en el almacén: las instaladas ya no se cuentan ahí y las de
+  // baja tampoco, aunque sigan en la hoja.
+  const enElAlmacen = unidades.filter((u) => u.situacion === 'disponible').length
   const resumen = [
     `${activos.length} ${activos.length === 1 ? 'artículo' : 'artículos'}`,
     bajoMinimo > 0 ? `${bajoMinimo} bajo mínimo` : null,
-    `${disponibles} ${disponibles === 1 ? 'PC de repuesto disponible' : 'PCs de repuesto disponibles'}`,
+    `${enElAlmacen} ${enElAlmacen === 1 ? 'unidad' : 'unidades'} con n.º de serie en el almacén`,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -588,7 +662,7 @@ export function exportacionDelAlmacen(d: DatosDelAlmacen): Exportacion {
     hojas: [
       { hoja: hojaDeExistencias(articulos), pdf: { columnas: ['Artículo', 'Unidad', 'Existencias', 'Mínimo', 'Bajo mínimo', 'Tipo de equipo', 'Estado'] } },
       { hoja: hojaDeMovimientos(movimientosParaHoja(d)), pdf: { incluir: false } },
-      { hoja: hojaDePcsDeRepuesto(unidades) },
+      { hoja: hojaDeUnidadesConSerie(unidades) },
     ],
   }
 }
