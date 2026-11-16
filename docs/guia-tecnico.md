@@ -337,6 +337,19 @@ pantalla con red.
 > («I260916_0003»). Ese es el del libro y no se toca; el de EasyVista va al
 > lado, con la palabra delante, y se busca igual desde el buscador.
 
+**Para pasar el día a EasyVista está «Hoy · para EasyVista»**, el segundo
+botón de arriba en la pestaña de Incidencias. Enseña solo lo de hoy —lo que se
+ha abierto hoy y lo que se ha cerrado hoy, aunque viniera de antes—, cada cosa
+con su estado, su sala, sus horas y lo que se hizo. Arriba, tres cifras:
+abiertas hoy, cerradas hoy y cuántas faltan por pasar. Lo que no tiene código
+va primero, en «Falta pasarlas a EasyVista»: pulsa **«Copiar todo»**, pega en
+EasyVista y apunta el código que te dé con «Poner el código de EasyVista»; al
+guardarlo, la incidencia baja a «Ya en EasyVista». Si solo quieres un trozo,
+tienes «Copiar descripción» y «Copiar solución», y «Copiar el parte entero» se
+lleva el día de una vez. Con **«Día anterior»** ves el de ayer, para el lunes
+que toca pasar el viernes. Lo que has hecho sin cobertura también sale,
+marcado «sin subir».
+
 > Apuntar el material es lo que hace que el informe sepa dónde se va el
 > almacén. No hace falta cerrar la avería para apuntarlo: si has cambiado una
 > pieza y sigues esperando otra, apúntalo igual desde la pestaña de
