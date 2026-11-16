@@ -61,7 +61,7 @@ export function BuscadorGlobal({ onPick }: Props): React.ReactElement {
   }, [indice, query])
 
   return (
-    <div className="border-b border-line bg-surface px-4 py-3">
+    <div className="mt-2">
       <label className="block">
         <span className="sr-only">Buscar un aula en todos los edificios</span>
         <input
@@ -70,12 +70,12 @@ export function BuscadorGlobal({ onPick }: Props): React.ReactElement {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Buscar aula en todo el campus"
           enterKeyHint="search"
-          className="h-touch w-full rounded-ctl border border-line bg-ground px-3"
+          className="h-touch w-full rounded-ctl border border-line bg-surface px-3"
         />
       </label>
 
       {query.trim() && (
-        <ul className="mt-2 divide-y divide-line-soft">
+        <ul className="card mt-2 divide-y divide-line-soft overflow-hidden">
           {resultados.map(({ room, zone, building }) => {
             const days = daysSince(room.last_inspection_at)
             return (
@@ -83,7 +83,7 @@ export function BuscadorGlobal({ onPick }: Props): React.ReactElement {
                 <button
                   type="button"
                   onClick={() => onPick(building!, room)}
-                  className="flex w-full items-center gap-3 py-2.5 text-left transition-colors duration-100 active:bg-raised"
+                  className="fila flex w-full items-center gap-3 px-3.5 py-2.5 text-left"
                 >
                   <span className="min-w-0 flex-1">
                     <span className="block font-mono font-semibold tabular">
@@ -103,7 +103,7 @@ export function BuscadorGlobal({ onPick }: Props): React.ReactElement {
           })}
 
           {resultados.length === 0 && (
-            <li className="py-3 text-sm text-muted">Ningún aula coincide.</li>
+            <li className="px-3.5 py-3 text-sm text-muted">Ningún aula coincide.</li>
           )}
         </ul>
       )}

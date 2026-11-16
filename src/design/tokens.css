@@ -1,8 +1,12 @@
 /*
  * Sistema de diseño.
  *
- * Petróleo frío sobre gris verdoso en claro —el prototipo aprobado, intacto—.
- * En oscuro, grafito neutro: ni negro puro ni tinte de color.
+ * Petróleo sobre un gris casi blanco en claro; en oscuro, grafito neutro: ni
+ * negro puro ni tinte de color. El petróleo es el mismo de siempre —es la marca,
+ * y es el color del icono que ya está en la pantalla de inicio de cada iPad—;
+ * lo que cambió en el rediseño es todo lo que lo rodea: fondos más limpios,
+ * esquinas más redondas y sombras más suaves, que es lo que hace que una
+ * herramienta de trabajo deje de parecer un formulario.
  *
  * LA DECISIÓN QUE ORDENA TODO LO DEMÁS: cada estado tiene **dos** colores, no
  * uno.
@@ -43,25 +47,31 @@
  * vez de uno. Sigue sin haber un solo color saturado en la estructura.
  */
 :root {
-  /* Cromo: el fondo de la aplicación, frío. */
-  --ground: 233 237 238;
-  --raised: 224 230 231;
-  --sunken: 216 224 225;
-  --line: 199 211 213;
-  --line-soft: 219 227 228;
+  /*
+   * Cromo: el fondo de la aplicación. Más claro y más neutro que antes: con el
+   * gris verdoso de 233, una pantalla entera se leía apagada, como vista a
+   * través de un cristal. A 243 el fondo deja de notarse y lo que se ve son
+   * las tarjetas.
+   */
+  --ground: 243 245 247;
+  --raised: 234 238 241;
+  --sunken: 225 230 234;
+  --line: 211 218 224;
+  --line-soft: 228 233 237;
 
-  /* Papel: el plano del contenido, un punto cálido y claramente por encima. */
-  --surface: 252 252 251;
+  /* Papel: el plano del contenido. Blanco: es lo que más se despega del cromo
+     sin pedir ni borde grueso ni sombra grande. */
+  --surface: 255 255 255;
 
-  --ink: 16 24 25;
-  --ink-2: 65 83 87;
-  --muted: 88 108 113;
+  --ink: 15 23 30;
+  --ink-2: 60 74 86;
+  --muted: 88 102 114;
 
   --accent: 4 106 120;
   --accent-fill: 4 106 120;
   --accent-ink: 251 252 252;
   --mark: 0 140 158;
-  --accent-tint: 223 239 241;
+  --accent-tint: 224 241 243;
 
   --ok: 19 122 71;
   --ok-fill: 19 122 71;
@@ -82,33 +92,47 @@
   --na-tint: 231 236 237;
 
   /*
-   * Radios. El prototipo los quería casi planos (3px); se suben porque las
-   * teclas pedían suavizarse, sin llegar a la píldora: esto sigue siendo un
-   * parte de trabajo, no una app de consumo.
+   * Radios.
+   *
+   * Empezaron casi planos (3px), subieron a 8 y aquí llegan a donde está hoy
+   * cualquier aplicación que se usa con el dedo: 12 en lo que se pulsa y 16 en
+   * lo que contiene. No es moda. Una esquina redonda dice «esto es una pieza,
+   * y acaba aquí», y con veinte piezas en pantalla eso es lo que permite
+   * contarlas de un vistazo. La tarjeta lleva MÁS radio que la tecla que tiene
+   * dentro, que es lo que hace que una quepa en la otra sin que las curvas se
+   * peleen.
    */
-  --r-ctl: 8px;
-  --r-card: 6px;
-  --r-tag: 4px;
-
-  --lift: 0 1px 1px rgb(16 24 25 / 0.05), 0 18px 44px -26px rgb(16 24 25 / 0.4);
+  --r-ctl: 12px;
+  --r-card: 16px;
+  --r-tag: 7px;
 
   /*
-   * El brillo de una tecla.
-   *
-   * Se apaga en **22px fijos**, no en un porcentaje del alto. La diferencia
-   * importa: en porcentaje, un botón alto se lleva un degradado de arriba abajo
-   * por toda la cara y deja de parecer una tecla para parecer una rampa de
-   * color. En píxeles es siempre lo mismo, que es lo que pasa de verdad: la luz
-   * pega en el bisel de arriba, y el bisel mide lo que mide independientemente
-   * de lo grande que sea el botón.
-   *
-   * `--edge` es lo que le da canto: una línea de luz arriba y una sombra
-   * abajo, por dentro. Es el detalle que separa una tecla de un rectángulo
-   * pintado, y ninguno de los dos se nota por separado.
+   * La sombra de una tarjeta. Dos capas cortas en vez de una larga y oscura: la
+   * primera dibuja el canto, la segunda la levanta un milímetro. La anterior
+   * (44px de desenfoque al 40%) se leía como un objeto flotando, y aquí nada
+   * flota: las tarjetas están apoyadas.
    */
-  --sheen: linear-gradient(180deg, rgb(255 255 255 / 0.22), rgb(255 255 255 / 0) 22px);
-  --edge: inset 0 1px 0 rgb(255 255 255 / 0.3), inset 0 -1px 0 rgb(0 0 0 / 0.1);
-  --edge-quiet: inset 0 1px 0 rgb(255 255 255 / 0.6);
+  --lift: 0 1px 2px rgb(15 23 30 / 0.05), 0 4px 14px -6px rgb(15 23 30 / 0.1);
+  /* Lo que sí flota: hojas, menús y el panel de sincronización. */
+  --float: 0 2px 6px rgb(15 23 30 / 0.06), 0 18px 48px -12px rgb(15 23 30 / 0.28);
+
+  /*
+   * El canto de una tecla.
+   *
+   * Las teclas llevaban un brillo —un degradado blanco en los 22px de arriba— y
+   * un bisel por dentro. Daba oficio, pero también daba años: con el brillo,
+   * cada botón era un objeto con su propia luz, y una pantalla con doce botones
+   * eran doce focos. Ahora la tecla es plana y lo que la separa del fondo es una
+   * sombra corta por FUERA, como la de la tarjeta: un solo idioma para todo lo
+   * que está apoyado.
+   *
+   * `--sheen` se queda declarado y vacío a propósito: lo leen `.key` y dos
+   * componentes más, y quitar la variable los dejaría con un `background-image`
+   * inválido en vez de con ninguno.
+   */
+  --sheen: none;
+  --edge: 0 1px 2px rgb(15 23 30 / 0.14);
+  --edge-quiet: 0 1px 2px rgb(15 23 30 / 0.05);
 
   /*
    * Curvas. Las de serie de CSS son demasiado flojas: les falta el golpe que
@@ -139,14 +163,14 @@
      * sobre grafito, dos superficies a ocho puntos de distancia son la misma
      * superficie. La tarjeta sube y se templa; el fondo baja y se enfría.
      */
-    --ground: 18 20 22;
-    --raised: 40 44 47;
-    --sunken: 13 15 16;
-    --line: 55 60 63;
-    --line-soft: 38 42 45;
+    --ground: 16 18 20;
+    --raised: 41 45 49;
+    --sunken: 11 13 14;
+    --line: 55 60 65;
+    --line-soft: 38 42 46;
 
-    /* Papel en oscuro: grafito con un punto de calidez, no gris azulado. */
-    --surface: 32 33 34;
+    /* Papel en oscuro: grafito, claramente por encima del fondo. */
+    --surface: 28 31 34;
 
     --ink: 226 231 232;
     --ink-2: 156 166 169;
@@ -176,22 +200,28 @@
     --na: 139 154 161;
     --na-tint: 30 34 37;
 
-    --lift: 0 1px 1px rgb(0 0 0 / 0.5), 0 18px 44px -26px rgb(0 0 0 / 0.9);
+    --lift: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px -6px rgb(0 0 0 / 0.6);
+    --float: 0 2px 6px rgb(0 0 0 / 0.5), 0 18px 48px -12px rgb(0 0 0 / 0.9);
 
-    --sheen: linear-gradient(180deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0) 22px);
-    --edge: inset 0 1px 0 rgb(255 255 255 / 0.1), inset 0 -1px 0 rgb(0 0 0 / 0.18);
-    --edge-quiet: inset 0 1px 0 rgb(255 255 255 / 0.05);
+    --sheen: none;
+    --edge: 0 1px 2px rgb(0 0 0 / 0.5);
+    --edge-quiet: 0 1px 2px rgb(0 0 0 / 0.3);
   }
 }
 
-/* El interruptor del usuario gana sobre la preferencia del sistema. */
+/*
+ * El interruptor del usuario gana sobre la preferencia del sistema. Lo mueve
+ * `lib/tema.ts` desde «Más», y dice exactamente lo mismo que el bloque de
+ * arriba: antes los dos diferían en un par de puntos y nadie sabía cuál de los
+ * dos oscuros estaba mirando.
+ */
 :root[data-theme='dark'] {
-  --ground: 20 22 24;
-  --surface: 28 31 33;
-  --raised: 37 42 44;
-  --sunken: 16 18 19;
-  --line: 52 57 60;
-  --line-soft: 38 42 45;
+  --ground: 16 18 20;
+  --surface: 28 31 34;
+  --raised: 41 45 49;
+  --sunken: 11 13 14;
+  --line: 55 60 65;
+  --line-soft: 38 42 46;
 
   --ink: 226 231 232;
   --ink-2: 156 166 169;
@@ -221,9 +251,10 @@
   --na: 139 154 161;
   --na-tint: 30 34 37;
 
-  --lift: 0 1px 1px rgb(0 0 0 / 0.5), 0 18px 44px -26px rgb(0 0 0 / 0.9);
+  --lift: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px -6px rgb(0 0 0 / 0.6);
+  --float: 0 2px 6px rgb(0 0 0 / 0.5), 0 18px 48px -12px rgb(0 0 0 / 0.9);
 
-  --sheen: linear-gradient(180deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0) 22px);
-  --edge: inset 0 1px 0 rgb(255 255 255 / 0.1), inset 0 -1px 0 rgb(0 0 0 / 0.18);
-  --edge-quiet: inset 0 1px 0 rgb(255 255 255 / 0.05);
+  --sheen: none;
+  --edge: 0 1px 2px rgb(0 0 0 / 0.5);
+  --edge-quiet: 0 1px 2px rgb(0 0 0 / 0.3);
 }

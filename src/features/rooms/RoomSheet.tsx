@@ -85,6 +85,8 @@ import {
   type IncidentKind,
   type Room,
 } from '@/domain/types'
+import { BotonVolver } from '@/components/BotonVolver'
+import { Icono } from '@/components/Icono'
 
 interface TimelineRow {
   at: string
@@ -572,13 +574,7 @@ export function RoomSheet({
           teléfono. El QR codifica el identificador interno, no el nombre, así que
           renombrar la sala no invalida las etiquetas ya atornilladas.
         */}
-        <button
-          type="button"
-          onClick={onBack}
-          className="-ml-2 mb-2 mt-2 inline-flex min-h-11 items-center px-2 font-mono text-[0.6875rem] uppercase tracking-[0.14em] text-accent"
-        >
-          ← Volver
-        </button>
+        <BotonVolver onClick={onBack} className="mb-2 mt-1" />
 
         {room.short_ref ? (
           <DoorPlate
@@ -597,7 +593,7 @@ export function RoomSheet({
             dispositivo aún no ha descargado entera, sin decir de qué aula habla.
           */
           <div className="card p-4">
-            <p className="font-mono text-[0.625rem] font-bold uppercase tracking-[0.17em] text-muted">
+            <p className="eyebrow">
               {buildingName} · {zoneName}
             </p>
             <h1 className="mt-1 truncate text-[1.6rem] font-bold leading-[1.2] tracking-tight">
@@ -609,104 +605,21 @@ export function RoomSheet({
           </div>
         )}
 
-        {/*
-          Las dos hojas que se imprimen desde aquí, en una fila discreta y fuera
-          del bloque de la placa.
-
-          Estaban dentro, y con `room.short_ref` nulo —una sala que todavía no ha
-          recibido matrícula, o que este dispositivo aún no ha descargado— la
-          sección entera no se pinta: el único acceso a las placas del edificio
-          desaparecía justo en la sala que hace falta etiquetar, y meter ahí el
-          inventario habría atado una hoja que no tiene nada que ver con las
-          placas a que ESTA sala tenga una.
-
-          En `key-quiet` y con la letra pequeña a propósito: son papeleo de
-          oficina, y la ficha se abre para revisar. Compitiendo con «Revisar
-          esta sala» —que está debajo, en acento y a ancho completo— convertirían
-          la pantalla de trabajo en un menú de descargas.
-        */}
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
           <button
             type="button"
-            onClick={onImprimir}
-            className="key key-quiet min-h-11 px-3 text-sm"
+            onClick={onRevisar}
+            className="key key-accent flex min-h-touch flex-1 items-center justify-center gap-2 px-4"
           >
-            Imprimir las placas del edificio
-          </button>
-          {onInventario && (
-            <button
-              type="button"
-              onClick={onInventario}
-              className="key key-quiet min-h-11 px-3 text-sm"
-            >
-              Inventario en PDF
-            </button>
-          )}
-        </div>
-
-        {/*
-          El índice, y de qué está hecho.
-          Un número solo invita a discutirlo; un número con su recuento al lado
-          se puede comprobar. Y con la base recién arrancada dice honestamente
-          que no sabe lo suficiente, en vez de sacar un 100 de la nada — que se
-          leería como «va perfecta» cuando significa «no sé nada de ella».
-        */}
-        {fiabilidad && (
-          <div className="card mt-4 flex items-center gap-4 p-4">
-            <span
-              className={`font-mono text-3xl font-bold tabular ${
-                !fiabilidad.hay_datos
-                  ? 'text-muted'
-                  : fiabilidad.score >= 75
-                    ? 'text-ok'
-                    : fiabilidad.score >= 45
-                      ? 'text-warn'
-                      : 'text-crit'
-              }`}
-            >
-              {fiabilidad.hay_datos ? fiabilidad.score : '—'}
-            </span>
-            <div className="min-w-0 text-sm">
-              <p className="font-medium">Índice de fiabilidad</p>
-              <p className="text-muted">
-                {fiabilidad.hay_datos
-                  ? `${fiabilidad.incidencias} incidencias · ${fiabilidad.observaciones} observaciones · ${fiabilidad.revisiones} revisiones en el último año`
-                  : 'Datos insuficientes todavía: hacen falta unas cuantas revisiones más para que este número signifique algo.'}
-              </p>
-              {fiabilidad.hay_datos && fiabilidad.solicitudes > 0 && (
-                <p className="mt-1 text-xs text-muted">
-                  {fiabilidad.solicitudes} solicitudes, que no penalizan: pedir trabajo no es un
-                  fallo de la sala.
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {(reincidencias ?? []).map((r) => (
-          <div key={r.item} className="card mt-3 border-warn/30 bg-warn-tint p-4 text-sm">
-            <p className="font-medium text-warn">Reincidencia detectada: {r.item}</p>
-            <p className="mt-1">
-              {r.veces} sustituciones en esta sala desde {fechaCorta(r.desde)}. Poner la pieza otra
-              vez no resuelve la causa: conviene revisar canalización, rosetas o longitud del
-              tirado.
-            </p>
-            <p className="mt-1 text-xs text-muted">
-              Basado en {r.veces} incidencias con consumo de ese artículo, la última el{' '}
-              {fechaCorta(r.hasta)}.
-            </p>
-          </div>
-        ))}
-
-        <div className="mt-4 flex gap-2">
-          <button type="button" onClick={onRevisar} className="key key-accent min-h-11 flex-1 px-3 text-sm">
+            <Icono nombre="revisar" lado={20} />
             Revisar esta sala
           </button>
           <button
             type="button"
             onClick={() => (abierto ? cerrarFormulario() : setAbierto(true))}
-            className="key key-quiet min-h-11 flex-1 px-3 text-sm"
+            className="key key-quiet flex min-h-touch flex-1 items-center justify-center gap-2 px-4"
           >
+            {!abierto && <Icono nombre="incidencias" lado={20} className="text-accent" />}
             {/* Dice qué abre, no «registrar algo». Los dos tipos que quedan
                 caben en el propio botón, y con ellos delante nadie usa este
                 formulario para apuntar una nota de seguimiento. */}
@@ -930,6 +843,105 @@ export function RoomSheet({
             </p>
           </form>
         )}
+
+        {/*
+          Lo que sigue —el índice, las reincidencias y las dos hojas que se
+          imprimen— estaba ENCIMA de «Revisar esta sala». La ficha se abre para
+          revisar: es el botón que se pulsa nueve de cada diez veces, y quedaba
+          debajo de tres bloques de consulta y de dos botones de papeleo, a
+          media pantalla en un iPad y fuera de ella en un teléfono. Ahora el
+          botón va pegado a la placa y esto va después, que es cuando se lee.
+        */}
+        {/*
+          Las dos hojas que se imprimen desde aquí, en una fila discreta y fuera
+          del bloque de la placa.
+
+          Estaban dentro, y con `room.short_ref` nulo —una sala que todavía no ha
+          recibido matrícula, o que este dispositivo aún no ha descargado— la
+          sección entera no se pinta: el único acceso a las placas del edificio
+          desaparecía justo en la sala que hace falta etiquetar, y meter ahí el
+          inventario habría atado una hoja que no tiene nada que ver con las
+          placas a que ESTA sala tenga una.
+
+          En `key-quiet` y con la letra pequeña a propósito: son papeleo de
+          oficina, y la ficha se abre para revisar. Compitiendo con «Revisar
+          esta sala» —que está debajo, en acento y a ancho completo— convertirían
+          la pantalla de trabajo en un menú de descargas.
+        */}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onImprimir}
+            className="key key-quiet inline-flex min-h-11 items-center gap-1.5 px-3 text-sm"
+          >
+            <Icono nombre="etiqueta" lado={18} className="text-accent" />
+            Imprimir las placas del edificio
+          </button>
+          {onInventario && (
+            <button
+              type="button"
+              onClick={onInventario}
+              className="key key-quiet inline-flex min-h-11 items-center gap-1.5 px-3 text-sm"
+            >
+              <Icono nombre="lista" lado={18} className="text-accent" />
+              Inventario en PDF
+            </button>
+          )}
+        </div>
+
+        {/*
+          El índice, y de qué está hecho.
+          Un número solo invita a discutirlo; un número con su recuento al lado
+          se puede comprobar. Y con la base recién arrancada dice honestamente
+          que no sabe lo suficiente, en vez de sacar un 100 de la nada — que se
+          leería como «va perfecta» cuando significa «no sé nada de ella».
+        */}
+        {fiabilidad && (
+          <div className="card mt-4 flex items-center gap-4 p-4">
+            <span
+              className={`font-mono text-3xl font-bold tabular ${
+                !fiabilidad.hay_datos
+                  ? 'text-muted'
+                  : fiabilidad.score >= 75
+                    ? 'text-ok'
+                    : fiabilidad.score >= 45
+                      ? 'text-warn'
+                      : 'text-crit'
+              }`}
+            >
+              {fiabilidad.hay_datos ? fiabilidad.score : '—'}
+            </span>
+            <div className="min-w-0 text-sm">
+              <p className="font-medium">Índice de fiabilidad</p>
+              <p className="text-muted">
+                {fiabilidad.hay_datos
+                  ? `${fiabilidad.incidencias} incidencias · ${fiabilidad.observaciones} observaciones · ${fiabilidad.revisiones} revisiones en el último año`
+                  : 'Datos insuficientes todavía: hacen falta unas cuantas revisiones más para que este número signifique algo.'}
+              </p>
+              {fiabilidad.hay_datos && fiabilidad.solicitudes > 0 && (
+                <p className="mt-1 text-xs text-muted">
+                  {fiabilidad.solicitudes} solicitudes, que no penalizan: pedir trabajo no es un
+                  fallo de la sala.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {(reincidencias ?? []).map((r) => (
+          <div key={r.item} className="card mt-3 border-warn/30 bg-warn-tint p-4 text-sm">
+            <p className="font-medium text-warn">Reincidencia detectada: {r.item}</p>
+            <p className="mt-1">
+              {r.veces} sustituciones en esta sala desde {fechaCorta(r.desde)}. Poner la pieza otra
+              vez no resuelve la causa: conviene revisar canalización, rosetas o longitud del
+              tirado.
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              Basado en {r.veces} incidencias con consumo de ese artículo, la última el{' '}
+              {fechaCorta(r.hasta)}.
+            </p>
+          </div>
+        ))}
 
         {/*
           Lo que está roto en esta sala, y el sitio donde se da por arreglado.

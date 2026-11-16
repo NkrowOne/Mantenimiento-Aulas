@@ -16,6 +16,24 @@ import { chromium, type ConsoleMessage } from 'playwright'
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
+import { existsSync } from 'node:fs'
+
+/**
+ * Con qué Chromium se abre.
+ *
+ * La ruta estaba escrita a mano —la de la compilación 1194 de Playwright— y
+ * dejó de existir en cuanto la imagen trajo otra: el guion moría antes de abrir
+ * nada, con un «executable doesn't exist» que no menciona la causa. Ahora manda
+ * `CHROMIUM_PATH` si está puesta; si no, la ruta de siempre mientras exista; y
+ * si tampoco, la que Playwright tenga instalada, que es lo que habría que
+ * haberle dejado decidir desde el principio.
+ */
+function navegador(): { executablePath?: string } {
+  const pedida = process.env['CHROMIUM_PATH']
+  if (pedida) return { executablePath: pedida }
+  const deSiempre = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'
+  return existsSync(deSiempre) ? { executablePath: deSiempre } : {}
+}
 
 const PORT = 4178
 const ROOT = 'dist'
@@ -54,8 +72,7 @@ const problems: string[] = []
 async function main(): Promise<void> {
   await new Promise<void>((r) => server.listen(PORT, r))
 
-  const browser = await chromium.launch({ executablePath:
-      process.env['CHROMIUM_PATH'] ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' })
+  const browser = await chromium.launch(navegador())
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
 
   page.on('console', (msg: ConsoleMessage) => {

@@ -21,6 +21,7 @@ import { DoorPlate } from '@/components/DoorPlate'
 import { displayRoomCode } from '@/domain/normalize'
 import { sortRooms } from './orden'
 import type { Building } from '@/domain/types'
+import { BotonVolver } from '@/components/BotonVolver'
 
 interface Props {
   building: Building
@@ -49,17 +50,11 @@ export function PlateSheet({ building, onBack }: Props): React.ReactElement {
   return (
     <div className="mx-auto max-w-5xl p-4">
       <div className="solo-pantalla">
-        <button
-          type="button"
-          onClick={onBack}
-          className="-ml-2 mb-1 inline-flex min-h-11 items-center px-2 font-mono text-[0.6875rem] uppercase tracking-[0.14em] text-accent"
-        >
-          ← Volver
-        </button>
+        <BotonVolver onClick={onBack} className="mb-1" />
 
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold">Placas de {building.name}</h1>
+            <h1 className="text-2xl font-bold tracking-tight">Placas de {building.name}</h1>
             <p className="mt-1 text-sm text-muted">
               {listas.length} salas. Cada placa lleva su código: al escanearlo, la revisión se abre
               directamente en esa sala.

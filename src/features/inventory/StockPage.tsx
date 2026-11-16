@@ -305,7 +305,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
   return (
     <div className="mx-auto max-w-4xl p-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Almacén</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Almacén</h1>
         {esAdmin && (
           <button
             type="button"

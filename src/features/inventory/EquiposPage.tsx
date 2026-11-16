@@ -70,7 +70,7 @@ export function EquiposPage({ role }: { role: Role }): React.ReactElement {
 
   return (
     <div className="mx-auto max-w-4xl p-4">
-      <h1 className="text-xl font-semibold">Equipos</h1>
+      <h1 className="text-2xl font-bold tracking-tight">Equipos</h1>
       <div className="scroll-x -mx-1 mt-3 flex gap-2 px-1 pb-1">
         {pestanas.map((p) => (
           <button

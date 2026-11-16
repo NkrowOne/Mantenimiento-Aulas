@@ -1,9 +1,8 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { FilaConAcciones } from '@/components/FilaConAcciones'
-import { Marco } from '@/components/Marco'
-import { InsigniaAveria, detalleDeAverias } from '@/components/InsigniaAveria'
-import { HojaDeAcciones, type AccionDeHoja } from '@/components/HojaDeAcciones'
+import { Arranque } from '@/components/Arranque'
+import { Esqueleto } from '@/components/Esqueleto'
+import { Marco, subirArriba } from '@/components/Marco'
 import { SyncChip } from '@/components/SyncChip'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { LockScreen } from '@/features/auth/LockScreen'
@@ -13,7 +12,6 @@ import { LockScreen } from '@/features/auth/LockScreen'
 const Diagnostico = lazy(() =>
   import('@/features/admin/Diagnostico').then((m) => ({ default: m.Diagnostico })),
 )
-import { PendientesEnLaBarra } from '@/features/admin/PendientesEnLaBarra'
 import { InspectionPage } from '@/features/inspection/InspectionPage'
 import type { Correccion } from '@/features/inspection/useInspection'
 import { RoomListPage } from '@/features/rooms/RoomListPage'
@@ -21,7 +19,6 @@ import { RoomListPage } from '@/features/rooms/RoomListPage'
    formulario, no arrastra ninguna dependencia gorda y se abre con el dedo ya
    apoyado en la fila. Un `Suspense` ahí significaría medio segundo de nada justo
    después de un gesto que acaba de vibrar para confirmar que se ha entendido. */
-import { HojaDeMaestro } from '@/features/rooms/HojaDeMaestro'
 /* La ficha de la sala tampoco: desde que todas las entradas pasan por ella —la
    fila de la lista, el buscador, el QR de la puerta y el enlace de la pegatina—
    es la primera pantalla de cualquier camino, o sea la más tocada del día, y se
@@ -29,8 +26,7 @@ import { HojaDeMaestro } from '@/features/rooms/HojaDeMaestro'
    después del gesto. Lo que arrastra es un formulario y el codificador de QR de
    la placa, que es minúsculo y no tiene dependencias. */
 import { RoomSheet } from '@/features/rooms/RoomSheet'
-import { BuscadorGlobal } from '@/features/rooms/BuscadorGlobal'
-import { averiasPorEdificio, averiasPorSala } from '@/features/rooms/averias'
+import { EdificiosPage } from '@/features/rooms/EdificiosPage'
 import {
   nextRoom,
   ROOM_ORDER_LABELS,
@@ -48,7 +44,10 @@ import { PARAM_SALA, salaDeLaUrl, salaDeTextoQR } from '@/lib/enlace-sala'
 import { nivelar } from '@/lib/historial'
 import { pedirInstalar, useSePuedeInstalar } from '@/lib/instalar'
 import type { SealedSession } from '@/auth/pin'
-import { OVERDUE_INSPECTION_DAYS, type Building, type Role, type Room } from '@/domain/types'
+import type { Building, Role, Room } from '@/domain/types'
+import { HojaDeMas } from '@/features/shell/HojaDeMas'
+import { BarraDePestanas, MarcaDeLaApp, MenuLateral } from '@/features/shell/Navegacion'
+import { EN_MAS, RANK, etiquetaDe, puedeVer, type Tab } from '@/features/shell/secciones'
 
 /*
  * Todo lo que no es llegar a un aula y revisarla se carga aparte.
@@ -67,12 +66,30 @@ import { OVERDUE_INSPECTION_DAYS, type Building, type Role, type Room } from '@/
 const DashboardPage = lazy(() =>
   import('@/features/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
 )
-const IncidentsPage = lazy(() =>
-  import('@/features/incidents/IncidentsPage').then((m) => ({ default: m.IncidentsPage })),
-)
-const StockPage = lazy(() =>
-  import('@/features/inventory/StockPage').then((m) => ({ default: m.StockPage })),
-)
+/*
+ * Las tres pestañas de la barra, además, se piden POR ADELANTADO.
+ *
+ * Diferidas tal cual, la primera vez que se pulsaba «Incidencias» había que
+ * esperar a que bajara su trozo: poco con wifi, un par de segundos con la
+ * cobertura de un pasillo, y siempre justo después de pulsar, que es cuando
+ * más se nota. Son las tres pantallas que se abren todos los días, así que en
+ * cuanto la aplicación ha arrancado y el navegador no tiene nada mejor que
+ * hacer se le pide que las vaya trayendo (`precalentar`, más abajo). Cuando
+ * llega el dedo ya están.
+ *
+ * El importador va en una constante porque lo usan los dos: `lazy()` para
+ * pintar y `precalentar` para adelantarse. El navegador no baja dos veces el
+ * mismo módulo; la segunda llamada devuelve la promesa de la primera.
+ */
+const traerIncidencias = (): Promise<typeof import('@/features/incidents/IncidentsPage')> =>
+  import('@/features/incidents/IncidentsPage')
+const traerAlmacen = (): Promise<typeof import('@/features/inventory/StockPage')> =>
+  import('@/features/inventory/StockPage')
+const traerHistorial = (): Promise<typeof import('@/features/history/HistorialPage')> =>
+  import('@/features/history/HistorialPage')
+
+const IncidentsPage = lazy(() => traerIncidencias().then((m) => ({ default: m.IncidentsPage })))
+const StockPage = lazy(() => traerAlmacen().then((m) => ({ default: m.StockPage })))
 /* El inventario entero, con la ficha de cada equipo. Se abre desde un
    despacho y no en la ronda, así que no entra en la carga inicial. */
 const EquiposPage = lazy(() =>
@@ -96,9 +113,38 @@ const PlateSheet = lazy(() =>
 const HojaDeInventario = lazy(() =>
   import('@/features/inventory/HojaDeInventario').then((m) => ({ default: m.HojaDeInventario })),
 )
-const HistorialPage = lazy(() =>
-  import('@/features/history/HistorialPage').then((m) => ({ default: m.HistorialPage })),
-)
+const HistorialPage = lazy(() => traerHistorial().then((m) => ({ default: m.HistorialPage })))
+
+/**
+ * Trae las pestañas de la barra cuando el navegador está ocioso.
+ *
+ * `requestIdleCallback` y no un `setTimeout`: lo primero es que la pantalla en
+ * la que se ha aterrizado responda, y esto solo debe correr cuando ya lo hace.
+ * Safari no lo tuvo hasta hace poco, así que ahí se espera un par de segundos,
+ * que es peor medida pero la misma intención.
+ *
+ * No se hace con «ahorro de datos» activado: quien lo ha puesto ha dicho que no
+ * quiere que se baje nada que no haya pedido. Y un fallo se calla —es un
+ * adelanto, no una carga—: si no hay red, la pestaña se pedirá al pulsarla,
+ * como antes.
+ */
+function precalentar(): () => void {
+  const conexion = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection
+  if (conexion?.saveData) return () => {}
+
+  const traer = (): void => {
+    for (const pedir of [traerIncidencias, traerAlmacen, traerHistorial]) {
+      void pedir().catch(() => {})
+    }
+  }
+
+  if (typeof window.requestIdleCallback === 'function') {
+    const id = window.requestIdleCallback(traer, { timeout: 5000 })
+    return () => window.cancelIdleCallback(id)
+  }
+  const id = window.setTimeout(traer, 2500)
+  return () => window.clearTimeout(id)
+}
 const Actividad = lazy(() =>
   import('@/features/admin/Actividad').then((m) => ({ default: m.Actividad })),
 )
@@ -109,17 +155,6 @@ const ReportsPage = lazy(() =>
 const EscanerQR = lazy(() =>
   import('@/features/rooms/EscanerQR').then((m) => ({ default: m.EscanerQR })),
 )
-
-type Tab =
-  | 'revisar'
-  | 'panel'
-  | 'incidencias'
-  | 'almacen'
-  | 'equipos'
-  | 'historial'
-  | 'actividad'
-  | 'informes'
-  | 'datos'
 
 /*
  * Toda sala se abre por su ficha, venga el toque de donde venga.
@@ -214,83 +249,6 @@ type RoomView =
    */
   | { name: 'inventario'; building: Building; room?: Room; volverA: 'salas' | 'ficha' }
 
-const TABS: Array<{ id: Tab; label: string; minRole: Role }> = [
-  { id: 'revisar', label: 'Revisar', minRole: 'tecnico' },
-  { id: 'panel', label: 'Panel', minRole: 'tecnico' },
-  { id: 'incidencias', label: 'Incidencias', minRole: 'tecnico' },
-  { id: 'almacen', label: 'Almacén', minRole: 'tecnico' },
-  /* La abre cualquiera —buscar un número de serie es trabajo de pasillo— y
-     cambiar la ficha es de supervisor: lo decide la base, no esta lista. */
-  { id: 'equipos', label: 'Equipos', minRole: 'tecnico' },
-  { id: 'historial', label: 'Historial', minRole: 'tecnico' },
-  /* Quién cambió qué y cuándo. Vivía solo dentro de Datos, así que la
-     trazabilidad era cosa del administrador; la necesita quien trabaja en las
-     aulas. Lo que el técnico no debe leer —los cambios de usuarios— lo
-     filtra la base, no esta lista. */
-  { id: 'actividad', label: 'Actividad', minRole: 'tecnico' },
-  /* Informes es de administrador, no de supervisor. Un informe es un documento
-     que se firma y se archiva, y lleva dentro el reparto del trabajo con
-     nombres; además, emitirlo con IA hace pasar la clave del despliegue por el
-     navegador de quien lo pide. Las tres cosas apuntan al mismo sitio. */
-  { id: 'informes', label: 'Informes', minRole: 'admin' },
-  { id: 'datos', label: 'Datos', minRole: 'admin' },
-]
-
-const RANK: Record<Role, number> = { tecnico: 0, supervisor: 1, admin: 2 }
-
-/**
- * ¿Puede este rol abrir esta pestaña?
- *
- * Existe porque el filtro de `TABS` alimentaba ÚNICAMENTE la barra de abajo, y
- * una barra sin botón no es una puerta cerrada: a «Datos» se llegaba desde la
- * tarjeta ámbar del Panel —que es de técnico— y la aplicación montaba el panel
- * de administración entero para quien no puede tocar nada de lo que hay dentro.
- * El técnico veía el alta de edificios, el `⋯` de cada edificio con «Dar de baja»
- * y la papelera con sus nombres y sus recuentos —que `archived_buildings` le
- * sirve de verdad, porque es `security_invoker` sobre unas tablas que su rol sí
- * lee— y solo descubría el problema al pulsar, leyendo un `confirm()` que promete
- * que el edificio desaparecerá de todos los iPads y recibiendo después «Solo un
- * administrador puede tocar la nomenclatura». No hay escalada de privilegios
- * —los RPC fallan cerrados con 42501— pero enseñar acciones que no existen para
- * quien las mira es enseñarle a desconfiar de todos los botones.
- *
- * La misma función decide las tres cosas: qué pestañas se pintan, qué pestaña se
- * puede abrir y qué se monta debajo. Tres reglas separadas volverían a
- * discrepar.
- */
-function puedeVer(tab: Tab, role: Role): boolean {
-  const t = TABS.find((x) => x.id === tab)
-  return t !== undefined && RANK[role] >= RANK[t.minRole]
-}
-
-function etiquetaDe(tab: Tab): string {
-  return TABS.find((x) => x.id === tab)?.label ?? tab
-}
-
-/*
- * La barra de abajo: cuatro pestañas y «Más», para los tres roles.
- *
- * Con las siete pestañas la barra medía 468 px en un móvil de 390: «Informes»
- * salía cortada, «Datos» ni salía y nada decía que se pudiera deslizar. Y las
- * cinco del técnico cabían en 390 px JUSTOS, a una letra de desbordar. Las
- * cuatro de aquí son las del trabajo de pie —la ronda, las averías, el
- * material y lo hecho—; el panel y las pantallas de administración van detrás
- * de «Más», con instalar la aplicación y cerrar sesión, que hasta ahora ocupaba
- * la cabecera de todas las pantallas para alguien que no cierra sesión casi
- * nunca. Así la barra tiene la misma forma en todos los aparatos y nunca se
- * desborda.
- */
-const EN_LA_BARRA: Tab[] = ['revisar', 'incidencias', 'almacen', 'historial']
-const EN_MAS: Tab[] = ['panel', 'equipos', 'actividad', 'informes', 'datos']
-/** La segunda línea de cada entrada de «Más»: qué hay detrás, en una frase. */
-const QUE_HAY_EN: Partial<Record<Tab, string>> = {
-  panel: 'Cómo va la ronda: retrasos, averías abiertas y lo que va a dar guerra.',
-  equipos: 'Todo el inventario: ficha de cada equipo, vida útil, entradas y salidas, y Excel.',
-  actividad: 'Quién cambió qué y cuándo: salas, equipos, incidencias y catálogo.',
-  informes: 'Se arman con los datos del periodo que elijas y quedan archivados.',
-  datos: 'Por decidir, maestro, Excel, importación, actividad y usuarios.',
-}
-
 /**
  * A dónde lleva «Volver» desde esta vista. `null` en la raíz.
  *
@@ -375,54 +333,6 @@ function esOrdenDeSalas(valor: unknown): valor is RoomOrder {
   return typeof valor === 'string' && Object.hasOwn(ROOM_ORDER_LABELS, valor)
 }
 
-/**
- * Por qué la lista está vacía.
- *
- * «Sin datos. Conéctate una vez para descargarlos.» era la respuesta a las tres
- * situaciones a la vez: sin red, servidor vacío y servidor que no deja leer. Las
- * tres piden cosas distintas de quien lo lee, y la tercera —RLS devolviendo cero
- * filas sin error— es justo la que se pasa semanas sin diagnosticar, porque
- * desde el iPad se ve idéntica a «aún no me he conectado».
- */
-function SinDatos({
-  diagnostico,
-  onReintentar,
-}: {
-  diagnostico: ResultadoPull | null
-  onReintentar: () => void
-}): React.ReactElement {
-  return (
-    <div className="card p-4">
-      {diagnostico?.error ? (
-        <>
-          <p className="text-sm font-medium text-crit">No se han podido descargar los datos.</p>
-          <p className="mt-2 text-sm text-muted">{diagnostico.error}</p>
-          {diagnostico.fallos.length > 0 && (
-            <ul className="mt-2 space-y-1 font-mono text-xs text-muted">
-              {diagnostico.fallos.map((f) => (
-                <li key={f.tabla}>
-                  {f.tabla}: {f.code ? `[${f.code}] ` : ''}
-                  {f.mensaje}
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      ) : (
-        <p className="text-sm text-muted">
-          Sin datos todavía. Conéctate una vez para descargarlos.
-        </p>
-      )}
-      <button type="button" onClick={onReintentar} className="key key-quiet mt-3 min-h-11 px-3 text-sm">
-        Reintentar descarga
-      </button>
-      <Suspense fallback={<p className="mt-2 text-sm text-muted">Cargando el diagnóstico…</p>}>
-            <Diagnostico />
-          </Suspense>
-    </div>
-  )
-}
-
 export function App(): React.ReactElement {
   const [unlocked, setUnlocked] = useState(false)
   const [sealed, setSealed] = useState<SealedSession | null | undefined>(undefined)
@@ -463,83 +373,21 @@ export function App(): React.ReactElement {
      antigüedad sigue a un toque, para el día que se persigue el retraso. */
   const [roomOrder, setRoomOrder] = useState<RoomOrder>(ROOM_ORDER_POR_DEFECTO)
   const [escaneando, setEscaneando] = useState(false)
-  /** La hoja de «Más»: el panel, la administración, instalar, cerrar sesión. */
-  const [masAbierto, setMasAbierto] = useState(false)
+  /**
+   * La hoja de «Más», y con qué cara: entera —secciones y cuenta— desde la
+   * barra de abajo, o solo la cuenta desde el menú lateral, donde las secciones
+   * ya están a la vista.
+   */
+  const [masAbierto, setMasAbierto] = useState<'mas' | 'cuenta' | null>(null)
   const instalable = useSePuedeInstalar()
   const [avisoQR, setAvisoQR] = useState<string | null>(null)
-  /*
-   * El edificio cuyas acciones están abiertas.
-   *
-   * No entra en `RoomView`: la vista se guarda en `db.meta['ultima-vista']` para
-   * poder devolver al técnico donde estaba, y restaurar una hoja abierta al
-   * recargar la reabriría sobre un edificio que quizá acaba de archivarse. Lo que
-   * merece sobrevivir a una recarga es dónde estás, no qué menú tenías
-   * desplegado.
-   *
-   * La confirmación de lo que hizo el servidor ya no se guarda aquí: se lee
-   * dentro de la propia hoja, que es fija y está a la altura del pulgar, y no se
-   * va hasta que se pulsa «Entendido». Pintada arriba de esta lista se quedaba
-   * fuera de la pantalla —son veintitrés edificios y quien acaba de actuar sobre
-   * el número veinte está a ochocientos píxeles de la cabecera, que no es
-   * `sticky`— y de paso empujaba la lista ochenta y cinco píxeles hacia abajo
-   * bajo el dedo, porque WebKit no ancla el scroll.
-   */
-  const [hojaEdificio, setHojaEdificio] = useState<Building | null>(null)
   // Hasta que se intenta rehidratar no se pinta la lista de edificios: si no,
   // se vería un parpadeo desde la raíz hasta donde estabas.
   const [restaurado, setRestaurado] = useState(false)
 
-  const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [])
-
   /* Cuánto trabajo hay sin subir. Solo se usa para no dejar cerrar sesión a
      ciegas encima de una cola llena. */
   const sinSubir = useLiveQuery(async () => (await pendingSummary()).total, [], 0)
-
-  /*
-   * Cuántas salas tiene cada edificio y cuántas van con retraso.
-   *
-   * La lista de edificios eran veintitrés filas con un código y un nombre: la
-   * misma altura, el mismo peso y ni un dato. Monótona, sí, pero sobre todo
-   * MUDA — hay que entrar en cada una para saber cuál toca, que es justo lo que
-   * la lista debería ahorrar.
-   *
-   * Con el recuento y el retraso, cada fila dice algo distinto y la vista se
-   * ordena sola ante los ojos. La variedad sale de los datos, que es la única
-   * que no cansa a la tercera semana.
-   *
-   * Se calcula en local, de una sola pasada sobre las tres tablas, y lo
-   * recalcula Dexie cuando cambian.
-   */
-  const porEdificio = useLiveQuery(async () => {
-    const [zones, rooms, incidencias] = await Promise.all([
-      db.zones.toArray(),
-      db.rooms.toArray(),
-      db.incidents.toArray(),
-    ])
-    const edificioDeZona = new Map(zones.map((z) => [z.id, z.building_id]))
-
-    const acc = new Map<string, { total: number; pendientes: number; averias: number }>()
-    const limite = Date.now() - OVERDUE_INSPECTION_DAYS * 86_400_000
-    // Las averías vivas por edificio, con la misma regla que el servidor
-    // (`room_overview.open_incidents`): ni resueltas, ni borradores, ni
-    // observaciones. El triángulo del edificio es la suma de sus salas.
-    const averias = averiasPorEdificio(averiasPorSala(incidencias), rooms, edificioDeZona)
-
-    for (const r of rooms) {
-      const edificio = edificioDeZona.get(r.zone_id)
-      if (!edificio) continue
-      const fila = acc.get(edificio) ?? {
-        total: 0,
-        pendientes: 0,
-        averias: averias.get(edificio) ?? 0,
-      }
-      fila.total++
-      const revisada = r.last_inspection_at ? new Date(r.last_inspection_at).getTime() : 0
-      if (revisada < limite) fila.pendientes++
-      acc.set(edificio, fila)
-    }
-    return acc
-  }, [])
 
   /*
    * La sala que hay delante, si la hay.
@@ -581,26 +429,6 @@ export function App(): React.ReactElement {
       zones: new Map(zones.map((z) => [z.id, z])),
     }
   }, [buildingId])
-
-  /*
-   * Las plantas y las salas del edificio cuya hoja está abierta.
-   *
-   * Acotado por el edificio pulsado, así que no corre mientras no haya hoja: la
-   * lista de edificios se repinta con cada descarga, y leer las 276 salas para
-   * un menú que nadie ha abierto sería pagar el precio en la pantalla que más se
-   * mira. Lo necesita la hoja para dos cosas: contar lo que se lleva por delante
-   * una baja y detectar un choque de código sin ir al servidor.
-   */
-  const contextoDeHoja = useLiveQuery(async () => {
-    const id = hojaEdificio?.id
-    if (!id) return null
-    const zonas = await db.zones.where('building_id').equals(id).toArray()
-    const salas = await db.rooms
-      .where('zone_id')
-      .anyOf(zonas.map((z) => z.id))
-      .toArray()
-    return { zonas, salas }
-  }, [hojaEdificio?.id])
 
   /*
    * La pantalla fantasma.
@@ -965,6 +793,7 @@ export function App(): React.ReactElement {
     // Y los de la bajada, que no existían: lo que escribe este dispositivo subía
     // en segundos, pero lo que escribían los demás no llegaba hasta recargar.
     const stopPull = startPull(setDiagnostico)
+    const soltarPrecalentado = precalentar()
     const onActivity = (): void => void touch()
     window.addEventListener('pointerdown', onActivity)
     document.addEventListener('visibilitychange', onActivity)
@@ -972,6 +801,7 @@ export function App(): React.ReactElement {
     return () => {
       stop()
       stopPull()
+      soltarPrecalentado()
       window.removeEventListener('pointerdown', onActivity)
       document.removeEventListener('visibilitychange', onActivity)
     }
@@ -995,7 +825,11 @@ export function App(): React.ReactElement {
     )
   }
 
-  if (sealed === undefined) return <div className="p-8 text-muted">Cargando…</div>
+  /* Lo que tarda Dexie en decir si hay sesión guardada: unos milisegundos. Se
+     pinta el mismo arranque que deja puesto `index.html`, así que entre el HTML
+     y el candado no hay ningún fotograma distinto: ni pantalla en blanco ni un
+     «Cargando…» que no da tiempo a leer. */
+  if (sealed === undefined) return <Arranque />
 
   if (!unlocked) {
     return (
@@ -1018,11 +852,7 @@ export function App(): React.ReactElement {
     )
   }
 
-  // Por `puedeVer` y no por `RANK` a mano: la barra, la reconducción y el render
-  // deciden con la misma línea, que es lo que impide que vuelvan a discrepar.
-  const enLaBarra = EN_LA_BARRA.filter((t) => puedeVer(t, role))
-  const enMas = EN_MAS.filter((t) => puedeVer(t, role))
-  /** La pestaña abierta cuando es una de las de «Más»: la barra la señala ahí. */
+  /** La pestaña abierta cuando es una de las de «Más»: la cabecera la nombra. */
   const abiertaEnMas = EN_MAS.find((t) => t === tab)
   const inspecting = tab === 'revisar' && view.name === 'revision'
 
@@ -1038,181 +868,119 @@ export function App(): React.ReactElement {
     }
   }
 
-  const accionesDeMas: AccionDeHoja[] = [
-    ...enMas.map(
-      (t): AccionDeHoja => ({
-        id: t,
-        etiqueta: etiquetaDe(t),
-        descripcion: t === tab ? 'Es la pantalla abierta.' : QUE_HAY_EN[t],
-        alElegir: () => {
-          setMasAbierto(false)
-          setTab(t)
-        },
-      }),
-    ),
-    /* Solo mientras Chrome lo ofrezca: en iOS no existe y aquí no sale nada;
-       la guía cuenta el camino de Safari. */
-    ...(instalable
-      ? [
-          {
-            id: 'instalar',
-            etiqueta: 'Instalar en este móvil',
-            descripcion:
-              'Un icono en la pantalla de inicio y sin la barra del navegador. Es la misma ' +
-              'aplicación, con lo mismo dentro.',
-            alElegir: () => {
-              setMasAbierto(false)
-              // Desde el toque, sin esperar a nada: el navegador solo enseña
-              // el aviso de instalar en respuesta a un gesto.
-              void pedirInstalar()
-            },
-          } satisfies AccionDeHoja,
-        ]
-      : []),
-    {
-      id: 'salir',
-      etiqueta: 'Cerrar sesión',
-      descripcion: 'Pide confirmación. Después hay que volver a teclear el PIN.',
-      alElegir: () => {
-        setMasAbierto(false)
-        cerrarSesion()
-      },
-    },
-  ]
+  /** El nombre de pila, para el saludo: «Ana Ruiz» → «Ana». */
+  const nombre = sealed?.hint.fullName ?? ''
+  const nombreDePila = nombre.trim().split(/\s+/)[0] ?? ''
+
+  /*
+   * Cambiar de sección. Una sola función para la barra, el menú lateral y la
+   * hoja de «Más»: las tres hacen lo mismo y, además, devuelven el contenido
+   * arriba. Sin eso, quien bajaba hasta el final de Incidencias y pasaba a
+   * Almacén aterrizaba a media lista de una pantalla que no había visto nunca,
+   * porque lo que desplaza es el marco y el marco no se desmonta.
+   */
+  const irA = (t: Tab): void => {
+    setMasAbierto(null)
+    if (t !== tab) subirArriba()
+    setTab(t)
+  }
 
   return (
     <Marco
+      lateral={
+        <MenuLateral
+          tab={tab}
+          role={role}
+          onTab={irA}
+          nombre={nombre}
+          onCuenta={() => setMasAbierto('cuenta')}
+        />
+      }
       cabecera={
         <>
           {/* Sin `backdrop-blur`: obliga a WebKit a recapturar y desenfocar el fondo
               en cada frame de desplazamiento —de lo más caro que se puede poner encima
               de lo que desplaza en un iPad— y aquí ni se veía: `--ground` es un color
-              sólido y el 95% dejaba pasar un 5% de nada. Tampoco es `sticky`: es el
-              primer hijo del marco, y el contenido desplaza por debajo de ella. */}
+              sólido. Tampoco es `sticky`: es el primer hijo del marco, y el contenido
+              desplaza por debajo de ella. */}
           {/* `solo-pantalla`: dentro de esta cabecera se imprimen dos hojas —las
               placas y el inventario—, y sin esto el PDF que se firma y se archiva
-              salía encabezado por «Aulas · admin» y un botón de «Cerrar sesión».
-              Chrome además repite los elementos fijos en cada página. */}
-          <header className="solo-pantalla flex-none border-b border-line bg-ground">
-            <div className="flex items-center justify-between gap-2 px-4 py-2">
-              {/* El rol, a la vista. Es lo que decide qué pestañas hay, así que
-                  esconderlo convierte «no tengo el botón» en un misterio: quien es
-                  admin y se ve como técnico lo detecta aquí, de un vistazo.
-                  «Cerrar sesión» ya no está aquí: vive en «Más», abajo. Ocupaba
-                  la cabecera de todas las pantallas para algo que se hace al
-                  acabar el turno. */}
-              <span className="eyebrow truncate">
-                Aulas · {role}
-                {/* Y la pantalla, cuando es una de las de «Más»: la barra solo
-                    enciende «Más», y el Panel no tiene título propio. */}
-                {abiertaEnMas && ` · ${etiquetaDe(abiertaEnMas)}`}
+              salía encabezado por «Aulas · admin». Chrome además repite los
+              elementos fijos en cada página. */}
+          <header className="solo-pantalla flex-none bg-ground">
+            <div className="marco-ancho mx-auto flex h-14 w-full max-w-6xl items-center gap-2.5 px-4">
+              {/* La marca, solo donde no hay menú lateral: allí ya encabeza el
+                  menú, y dos veces en la misma pantalla es una de más. */}
+              <span className="flex items-center gap-2.5 lg:hidden">
+                <MarcaDeLaApp lado={30} />
+                <span className="font-semibold tracking-tight">Aulas</span>
               </span>
-              <div className="flex shrink-0 items-center gap-2">
+              {/* Y la pantalla, cuando es una de las de «Más»: la barra solo
+                  enciende «Más», y el Panel no tiene título propio. En ancho se
+                  nombra siempre, porque ahí es lo único que hay en la cabecera. */}
+              <span
+                className={`truncate text-sm font-medium text-muted ${
+                  abiertaEnMas ? '' : 'hidden lg:inline'
+                }`}
+              >
+                <span className="lg:hidden">· </span>
+                {etiquetaDe(tab)}
+              </span>
+
+              <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                {/* El rol, a la vista. Es lo que decide qué pestañas hay, así que
+                    esconderlo convierte «no tengo el botón» en un misterio: quien es
+                    admin y se ve como técnico lo detecta aquí, de un vistazo. En
+                    ancho lo dice la cuenta, al pie del menú lateral.
+                    «Cerrar sesión» no está aquí: vive en «Más». Ocupaba la
+                    cabecera de todas las pantallas para algo que se hace al
+                    acabar el turno. */}
+                <span className="chip capitalize lg:hidden">{role}</span>
                 <SyncChip />
               </div>
             </div>
           </header>
         </>
       }
-      /*
-       * La navegación se queda abajo: es donde llega el pulgar sin recolocar la
-       * mano, y respeta la zona de gestos del iPhone. No es `fixed`: es el
-       * último hijo del marco, y por eso el teclado de iOS no la puede dejar
-       * flotando a media pantalla — lo cuenta `components/Marco.tsx`.
-       *
-       * Se oculta durante la revisión, que tiene su propia barra de acción en
-       * esa misma posición: con las dos, los botones de guardar quedaban debajo
-       * y no se podían pulsar.
-       */
       pie={
-        /*
-         * El aviso de versión nueva va justo encima de la barra, en la columna.
-         * No sale en la revisión: la barra de acción vive en ese mismo sitio y
-         * su «Actualizar» caía justo donde está «Guardar y siguiente sala», así
-         * que el pulgar recargaba la aplicación en mitad de un aula. Reaparece
-         * al volver a la lista, que es cuando recargar no cuesta nada.
-         */
+        /* Durante una revisión la barra de pestañas se va, por lo de siempre:
+           el pulgar que busca «Guardar» no debe encontrar «Almacén». El menú
+           lateral, en cambio, se queda: está al otro lado de la pantalla y no
+           compite con la barra de guardar, y quitarlo movería todo el contenido
+           250 px a la izquierda al entrar en un aula. */
         !inspecting && (
           <>
             <UpdatePrompt enFlujo />
-            <nav
-              /* Y la barra tampoco va al papel: es navegación, y en una hoja impresa
-                 es una fila de palabras que no se pueden pulsar cruzada por encima del
-                 inventario. */
-              className="solo-pantalla flex-none border-t border-line bg-surface"
-              style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
-            >
-              {/* Cinco de a 78 px en un móvil de 390, medidas en Chromium: caben con
-                  «Incidencias» y con «Más» llevando la flecha y el contador. `scroll-x`
-                  se queda de red por si el sistema agranda la letra: antes que
-                  pisarse, las pestañas se deslizan. */}
-              <ul className="scroll-x flex">
-                {enLaBarra.map((t) => (
-                  <li key={t} className="flex-1">
-                    <button
-                      type="button"
-                      onClick={() => setTab(t)}
-                      aria-current={tab === t ? 'page' : undefined}
-                      className={`flex h-touch w-full items-center justify-center whitespace-nowrap px-1.5 text-xs font-medium ${
-                        tab === t ? 'border-t-2 border-accent -mt-px text-accent' : 'text-muted'
-                      }`}
-                    >
-                      {etiquetaDe(t)}
-                    </button>
-                  </li>
-                ))}
-                <li className="flex-1">
-                  {/* Encendida como las demás cuando la pantalla abierta es una de
-                      las suyas; cuál, lo dice la cabecera. La flecha dice que es un
-                      menú. Siempre «Más» y no el nombre de la sección: «Informes»
-                      con la flecha y el contador ya no cabe en los 78 px. */}
-                  <button
-                    type="button"
-                    onClick={() => setMasAbierto(true)}
-                    aria-haspopup="dialog"
-                    aria-expanded={masAbierto}
-                    aria-current={abiertaEnMas ? 'page' : undefined}
-                    className={`flex h-touch w-full items-center justify-center whitespace-nowrap px-1.5 text-xs font-medium ${
-                      abiertaEnMas ? 'border-t-2 border-accent -mt-px text-accent' : 'text-muted'
-                    }`}
-                  >
-                    Más
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 12 12"
-                      fill="none"
-                      aria-hidden="true"
-                      className="ml-0.5 shrink-0"
-                    >
-                      <path
-                        d="M3 4.5 6 7.5 9 4.5"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                    {/* El contador de Datos, en la pestaña por la que se llega a
-                        Datos. Solo a quien puede abrirla: las siete cuentas no
-                        se le piden a un técnico. */}
-                    {puedeVer('datos', role) && <PendientesEnLaBarra />}
-                  </button>
-                </li>
-              </ul>
-            </nav>
+            <BarraDePestanas
+              tab={tab}
+              role={role}
+              onTab={irA}
+              masAbierto={masAbierto !== null}
+              onMas={() => setMasAbierto('mas')}
+            />
           </>
         )
       }
       capas={
         <>
           {masAbierto && (
-            <HojaDeAcciones
-              titulo="Más"
-              subtitulo={`Aulas · ${role}`}
-              acciones={accionesDeMas}
-              etiquetaDeCierre="Cerrar"
-              onCerrar={() => setMasAbierto(false)}
+            <HojaDeMas
+              tab={tab}
+              role={role}
+              nombre={nombre}
+              email={sealed?.hint.email ?? ''}
+              soloCuenta={masAbierto === 'cuenta'}
+              instalable={instalable}
+              onTab={irA}
+              onInstalar={() => {
+                setMasAbierto(null)
+                void pedirInstalar()
+              }}
+              onSalir={() => {
+                setMasAbierto(null)
+                cerrarSesion()
+              }}
+              onCerrar={() => setMasAbierto(null)}
             />
           )}
           {escaneando && (
@@ -1235,194 +1003,62 @@ export function App(): React.ReactElement {
           )}
         </>
       }
-    >
-      {escaneoFallido && (
-        <div className="solo-pantalla border-b border-line bg-warn-tint px-4 py-3">
-          <p className="text-sm text-warn">
-            Has escaneado una placa, pero esa sala no está descargada en este dispositivo todavía.
-            Sincroniza y vuelve a escanear.
-          </p>
-          <button
-            type="button"
-            onClick={() => setEscaneoFallido(null)}
-            className="key key-quiet mt-2 min-h-11 px-3 text-sm"
-          >
-            Entendido
-          </button>
-        </div>
-      )}
-
-      {/* `solo-pantalla`, como la barra de versión nueva: son diagnósticos de la
-          aplicación, y la hoja de inventario los sacaba impresos en la cabecera
-          de la primera página de un papel que se archiva. */}
-      {rolError && (
-        <div className="solo-pantalla border-b border-line px-4 py-3">
-          <p className="text-sm text-crit">{rolError}</p>
-          <Suspense fallback={<p className="mt-2 text-sm text-muted">Cargando el diagnóstico…</p>}>
-            <Diagnostico />
-          </Suspense>
-        </div>
-      )}
-
-      {tab === 'revisar' && view.name === 'edificios' && (
+      /* Cada pantalla entra con su animación (ver `.pantalla` en index.css).
+         La clave es la sección y la vista, NO la sala: «Guardar y siguiente
+         sala» pasa de un aula a otra dentro de la misma pantalla, y con la sala
+         en la clave el formulario se desmontaría y volvería a montarse entre
+         una y otra. */
+      claveDePantalla={tab === 'revisar' ? `revisar-${view.name}` : tab}
+      avisos={
         <>
-          {/*
-            Escanear va ANTES del buscador y de la lista, y ocupa el ancho
-            entero, porque es el camino corto: el técnico ya está delante de la
-            puerta. Buscar y bajar por los edificios siguen debajo para cuando no
-            hay pegatina —o no hay cámara—, que es lo que impide que esto se
-            convierta en un callejón.
-          */}
-          <div className="border-b border-line bg-surface px-4 pt-3">
-            <button
-              type="button"
-              onClick={() => {
-                setAvisoQR(null)
-                setEscaneando(true)
-              }}
-              className="key key-accent flex min-h-touch w-full items-center justify-center gap-2 px-4 text-sm"
-            >
-              {/* El icono es el marco de una mirilla: cuatro esquinas y un
-                  punto. Se lee como «apunta» sin necesidad de leerlo. */}
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-                <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" />
-              </svg>
-              Escanear el QR del aula
-            </button>
-            {avisoQR && <p className="pt-2 text-sm text-crit">{avisoQR}</p>}
-          </div>
-
-          {/* A la ficha, como la fila de la lista y el QR. Se vuelve aquí, a la
-              pantalla de edificios, que es donde está el buscador. */}
-          <BuscadorGlobal
-            onPick={(building, room) =>
-              setView({ name: 'ficha', building, room, volverA: 'edificios' })
-            }
-          />
-
-        {/* Misma regla que la lista de salas: el contenido va sobre papel. */}
-        <ul className="divide-y divide-line-soft border-b border-line bg-surface">
-          {(buildings ?? []).map((b) => {
-            const cuenta = porEdificio?.get(b.id)
-            const total = cuenta?.total ?? 0
-            const pendientes = cuenta?.pendientes ?? 0
-            const hechas = total - pendientes
-
-            return (
-              <li key={b.id}>
-                <FilaConAcciones
-                  esAdmin={role === 'admin'}
-                  etiqueta={`Acciones del edificio ${b.code}`}
-                  alAbrir={() => setHojaEdificio(b)}
-                >
-                  {(manejadores) => (
-                    <button
-                      type="button"
-                      onClick={() => setView({ name: 'salas', building: b })}
-                      {...manejadores}
-                      /* `sin-lupa` solo para el administrador, que es el único con
-                         pulsación larga: mantener pulsado el nombre del edificio
-                         levantaba la lupa de iOS y su menú «Copiar» encima de la
-                         hoja recién abierta. Al técnico no se le quita nada. */
-                      className={`flex w-full flex-1 items-center gap-3.5 px-4 py-3.5 text-left transition-colors duration-100 active:bg-raised ${
-                        role === 'admin' ? 'sin-lupa' : ''
-                      }`}
-                    >
-                      {/*
-                        El código, en una chapa.
-                        Suelto competía con el nombre a la misma altura y el ojo no
-                        sabía cuál de los dos era la entrada. Metido en su recuadro
-                        monoespaciado se lee como lo que es: una matrícula.
-                      */}
-                      <span className="w-12 shrink-0 rounded-tag bg-raised py-1 text-center font-mono text-xs font-semibold text-accent">
-                        {b.code}
-                      </span>
-
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium">{b.name}</span>
-                        {total > 0 && (
-                          <span className="mt-1 flex items-center gap-2">
-                            {/*
-                              El avance del edificio, recto y sin animar.
-                              Es una medida, no una barra de carga: animarla obligaría
-                              a esperar para poder leerla, y aquí se lee de pasada.
-                            */}
-                            <span
-                              aria-hidden
-                              className="h-1 w-16 shrink-0 overflow-hidden rounded-full bg-line"
-                            >
-                              <span
-                                className={`block h-full ${pendientes === 0 ? 'bg-ok' : 'bg-warn'}`}
-                                style={{ width: `${total ? (hechas / total) * 100 : 0}%` }}
-                              />
-                            </span>
-                            <span className="truncate text-xs text-muted">
-                              {pendientes === 0
-                                ? `${total} salas al día`
-                                : `${pendientes} de ${total} por revisar`}
-                            </span>
-                          </span>
-                        )}
-                      </span>
-
-                      {/* El triángulo del edificio: cuántas averías vivas hay
-                          puertas adentro, sumando todas sus salas. */}
-                      <InsigniaAveria
-                        n={cuenta?.averias ?? 0}
-                        detalle={detalleDeAverias(cuenta?.averias ?? 0)}
-                      />
-
-                      {b.needs_review && (
-                        <span className="shrink-0 rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
-                          Sin identificar
-                        </span>
-                      )}
-                    </button>
-                  )}
-                </FilaConAcciones>
-              </li>
-            )
-          })}
-          {buildings?.length === 0 && (
-            <li className="p-4">
-              <SinDatos
-                diagnostico={diagnostico}
-                onReintentar={() => void pullMaster().then(setDiagnostico)}
-              />
-            </li>
+          {escaneoFallido && (
+            <div className="solo-pantalla border-b border-line bg-warn-tint px-4 py-3">
+              <p className="text-sm text-warn">
+                Has escaneado una placa, pero esa sala no está descargada en este dispositivo todavía.
+                Sincroniza y vuelve a escanear.
+              </p>
+              <button
+                type="button"
+                onClick={() => setEscaneoFallido(null)}
+                className="key key-quiet mt-2 min-h-11 px-3 text-sm"
+              >
+                Entendido
+              </button>
+            </div>
           )}
-        </ul>
 
-        {/*
-          La hoja espera a que Dexie conteste con las plantas y las salas del
-          edificio —un viaje de milisegundos, y la vibración del gesto ya ha
-          confirmado que se ha entendido—. Sin esperar, el desplegable de plantas
-          del alta se pintaría vacío y «Añadir una sala» empezaría pidiendo
-          escribir una planta que ya existe.
-        */}
-        {hojaEdificio && contextoDeHoja && (
-          <HojaDeMaestro
-            objeto={{
-              tipo: 'edificio',
-              edificio: hojaEdificio,
-              salas: contextoDeHoja.salas.length,
-            }}
-            zonas={contextoDeHoja.zonas}
-            salasDelEdificio={contextoDeHoja.salas}
-            edificios={buildings ?? []}
-            onCerrar={() => setHojaEdificio(null)}
-            /* La frase ya se ha leído dentro de la hoja: aquí solo queda
-               cerrarla. */
-            onHecho={() => setHojaEdificio(null)}
-          />
-        )}
+          {/* `solo-pantalla`, como la barra de versión nueva: son diagnósticos de la
+              aplicación, y la hoja de inventario los sacaba impresos en la cabecera
+              de la primera página de un papel que se archiva. */}
+          {rolError && (
+            <div className="solo-pantalla border-b border-line px-4 py-3">
+              <p className="text-sm text-crit">{rolError}</p>
+              <Suspense fallback={<p className="mt-2 text-sm text-muted">Cargando el diagnóstico…</p>}>
+                <Diagnostico />
+              </Suspense>
+            </div>
+          )}
         </>
+      }
+    >
+      {tab === 'revisar' && view.name === 'edificios' && (
+        <EdificiosPage
+          role={role}
+          nombre={nombreDePila}
+          diagnostico={diagnostico}
+          onReintentar={() => void pullMaster().then(setDiagnostico)}
+          onEscanear={() => {
+            setAvisoQR(null)
+            setEscaneando(true)
+          }}
+          avisoQR={avisoQR}
+          onEdificio={(building) => setView({ name: 'salas', building })}
+          /* A la ficha, como la fila de la lista y el QR. Se vuelve aquí, a la
+             pantalla de edificios, que es donde está el buscador. */
+          onSala={(building, room) =>
+            setView({ name: 'ficha', building, room, volverA: 'edificios' })
+          }
+        />
       )}
 
       {tab === 'revisar' && view.name === 'salas' && (
@@ -1551,7 +1187,7 @@ export function App(): React.ReactElement {
       )}
 
       {tab === 'revisar' && view.name === 'placas' && (
-        <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
+        <Suspense fallback={<Esqueleto />}>
           <PlateSheet
             building={view.building}
             /* A la ficha si se abrió desde una, y si no a la lista: `atras`. */
@@ -1561,7 +1197,7 @@ export function App(): React.ReactElement {
       )}
 
       {tab === 'revisar' && view.name === 'inventario' && (
-        <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
+        <Suspense fallback={<Esqueleto />}>
           <HojaDeInventario
             /* La planta viaja con la sala: la calcula App —es quien tiene el
                `zone_id` resuelto contra el espejo— y sin ella la cabecera de la
@@ -1588,7 +1224,7 @@ export function App(): React.ReactElement {
       )}
 
       {tab !== 'revisar' && (
-        <Suspense fallback={<p className="p-6 text-muted">Cargando…</p>}>
+        <Suspense fallback={<Esqueleto />}>
           {tab === 'panel' && (
             <DashboardPage
               ir={{

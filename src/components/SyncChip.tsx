@@ -147,13 +147,14 @@ export function SyncChip(): React.ReactElement {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex min-h-11 min-w-11 items-center justify-center gap-2 px-2 py-1.5 text-xs font-medium text-ink-2"
+        className="flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-full px-3 text-xs font-medium text-ink-2 transition-colors duration-100 hover:bg-raised active:bg-raised"
         aria-expanded={open}
         aria-controls="panel-sync"
         aria-label={label ?? 'Estado de sincronización'}
       >
-        {/* Cuadrado, no círculo: un piloto de panel, no un punto de notificación. */}
-        <span aria-hidden className={`h-2 w-2 rounded-[1px] ring-1 ring-line ${lamp}`} />
+        {/* El piloto. Apagado es un punto gris que no pide nada; encendido lleva
+            color y su frase al lado, que es lo que se lee. */}
+        <span aria-hidden className={`h-2.5 w-2.5 rounded-full ${lamp}`} />
         {label}
       </button>
 
@@ -170,7 +171,7 @@ export function SyncChip(): React.ReactElement {
         // desplazando, así que se recortaba texto sin más.
         <div
           id="panel-sync"
-          className="card absolute right-0 z-20 mt-2 w-[min(18rem,calc(100vw-2rem))] origin-top-right p-4 text-sm"
+          className="card absolute right-0 z-20 mt-2 w-[min(19rem,calc(100vw-2rem))] origin-top-right p-4 text-sm shadow-float"
           style={{ animation: 'pop 150ms var(--ease-out)' }}
         >
           {/*

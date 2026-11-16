@@ -16,6 +16,24 @@ import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { webcrypto } from 'node:crypto'
 import { extname, join, normalize } from 'node:path'
+import { existsSync } from 'node:fs'
+
+/**
+ * Con qué Chromium se abre.
+ *
+ * La ruta estaba escrita a mano —la de la compilación 1194 de Playwright— y
+ * dejó de existir en cuanto la imagen trajo otra: el guion moría antes de abrir
+ * nada, con un «executable doesn't exist» que no menciona la causa. Ahora manda
+ * `CHROMIUM_PATH` si está puesta; si no, la ruta de siempre mientras exista; y
+ * si tampoco, la que Playwright tenga instalada, que es lo que habría que
+ * haberle dejado decidir desde el principio.
+ */
+function navegador(): { executablePath?: string } {
+  const pedida = process.env['CHROMIUM_PATH']
+  if (pedida) return { executablePath: pedida }
+  const deSiempre = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'
+  return existsSync(deSiempre) ? { executablePath: deSiempre } : {}
+}
 
 const PORT = 4179
 const ROOT = 'dist'
@@ -108,9 +126,7 @@ const INVENTORY = [
 
 async function main(): Promise<void> {
   await new Promise<void>((r) => server.listen(PORT, r))
-  const browser = await chromium.launch({
-    executablePath: process.env['CHROMIUM_PATH'] ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-  })
+  const browser = await chromium.launch(navegador())
   const page = await browser.newPage({ viewport: { width: 414, height: 900 }, deviceScaleFactor: 2 })
 
   await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' })
@@ -356,7 +372,7 @@ async function main(): Promise<void> {
   await shot('siguiente-sala')
 
   // Y la sala terminada tiene que haber bajado en la lista.
-  await page.getByRole('button', { name: '← Volver' }).click()
+  await page.getByRole('button', { name: 'Volver' }).click()
   await page.waitForTimeout(600)
   const primera = await page.locator('ul li button').first().innerText()
   if (primera.includes('Criminología')) {
@@ -540,7 +556,12 @@ async function main(): Promise<void> {
     return json([])
   })
 
-  await page.locator('nav').getByRole('button', { name: 'Panel' }).click()
+  // El Panel está detrás de «Más» desde que la barra de abajo son cuatro
+  // pestañas: se abre la hoja y se elige ahí. `/Más/` y no `'Más'` porque el
+  // nombre accesible del botón lleva también el contador de Datos.
+  await page.locator('nav').getByRole('button', { name: /Más/ }).click()
+  await page.waitForTimeout(400)
+  await page.getByRole('dialog').getByRole('button', { name: /^Panel/ }).click()
   await page.waitForTimeout(1500)
   await page.screenshot({ path: 'dist/preview-panel.png', fullPage: true })
   console.log('  dist/preview-panel.png')

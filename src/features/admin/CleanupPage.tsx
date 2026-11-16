@@ -119,7 +119,10 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
           activa —ya no hace falta el `-mb-px` que la solapaba con la regla
           de una fila única: en la cuadrícula cada chip lleva la suya suelta—,
           y con la palabra, el recuento y el color, no solo con la línea. */}
-      <nav aria-label="Secciones de Datos" className="border-b border-line pb-3">
+      {/* Con el rediseño cada chip es una pieza con cuerpo, y la activa va
+          teñida: la raya inferior de dos píxeles se perdía a medio brazo, igual
+          que la de la barra de pestañas. */}
+      <nav aria-label="Secciones de Datos" className="pt-1">
         <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {SECCIONES.map((s) => {
             const activa = s.id === seccion
@@ -131,8 +134,10 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
                   aria-current={activa ? 'page' : undefined}
                   onClick={() => abrir(s.id)}
                   title={s.texto}
-                  className={`flex min-h-11 w-full items-center justify-center gap-1.5 border-b-2 px-3 text-sm ${
-                    activa ? 'border-accent font-semibold text-accent' : 'border-transparent text-muted'
+                  className={`flex min-h-11 w-full items-center justify-center gap-1.5 rounded-ctl border px-3 text-sm transition-colors duration-100 ${
+                    activa
+                      ? 'border-transparent bg-accent-tint font-semibold text-accent'
+                      : 'border-line-soft bg-surface font-medium text-ink-2 active:bg-raised'
                   }`}
                 >
                   {s.titulo}
@@ -145,7 +150,7 @@ export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
       </nav>
 
       <div className="mt-4 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h1 className="text-xl font-semibold tracking-tight">{actual.titulo}</h1>
+        <h1 className="text-2xl font-bold tracking-tight">{actual.titulo}</h1>
         <p className="text-sm text-muted">{actual.texto}</p>
       </div>
 

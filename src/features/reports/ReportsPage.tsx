@@ -372,7 +372,7 @@ export function ReportsPage(): React.ReactElement {
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-4">
       <header>
-        <h1 className="text-xl font-semibold">Informes</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Informes</h1>
         <p className="mt-1 text-sm text-muted">
           El informe se arma aquí mismo con los datos del periodo que elijas, y sale listo para
           imprimir o guardar como PDF. Queda archivado, y un informe emitido no se regenera: se

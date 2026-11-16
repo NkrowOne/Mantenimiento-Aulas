@@ -50,15 +50,43 @@ export function subirArriba(): void {
 }
 
 interface Props {
+  /**
+   * El menú lateral de las pantallas anchas. Se pinta a la izquierda de todo lo
+   * demás, a la altura entera de la pantalla; en estrecho se esconde él solo
+   * (`hidden lg:flex`) y la navegación es la barra del `pie`.
+   */
+  lateral?: React.ReactNode
   cabecera: React.ReactNode
   /** La barra de pestañas, o nada cuando la pantalla trae la suya. */
   pie: React.ReactNode
   /** Capas `fixed` que van por encima de todo: el escáner, el aviso de versión. */
   capas?: React.ReactNode
+  /**
+   * Qué pantalla es la que se está viendo. Cuando cambia, el contenido se
+   * vuelve a montar dentro de un envoltorio nuevo y entra con la animación de
+   * `.pantalla`. Quien la pasa decide qué cuenta como «otra pantalla».
+   */
+  claveDePantalla?: string
+  /**
+   * Avisos de la aplicación que van encima de la pantalla y NO son parte de
+   * ella: el de un escaneo que no sirvió, el del rol que no se pudo leer. Van
+   * fuera del envoltorio con clave, así que no se desmontan ni vuelven a
+   * entrar animados cada vez que se cambia de pantalla —y el diagnóstico que
+   * alguien haya desplegado dentro de uno sigue desplegado—.
+   */
+  avisos?: React.ReactNode
   children: React.ReactNode
 }
 
-export function Marco({ cabecera, pie, capas, children }: Props): React.ReactElement {
+export function Marco({
+  lateral,
+  cabecera,
+  pie,
+  capas,
+  claveDePantalla,
+  avisos,
+  children,
+}: Props): React.ReactElement {
   const [ranura, setRanura] = useState<HTMLDivElement | null>(null)
 
   // Antes de pintar: con un fotograma de documento desplazable debajo de una
@@ -69,7 +97,16 @@ export function Marco({ cabecera, pie, capas, children }: Props): React.ReactEle
   }, [])
 
   return (
-    <div className="marco-columna flex h-full flex-col">
+    /*
+     * Una fila con dos piezas: el menú lateral —que en estrecho no existe— y la
+     * columna de siempre. La columna lleva `min-w-0` por lo mismo que el
+     * `<main>` lleva `min-h-0`: un hijo de flex no encoge por debajo de su
+     * contenido, y una tabla ancha dentro empujaría la columna fuera de la
+     * pantalla en vez de desplazar dentro de su carril.
+     */
+    <div className="marco-fila flex h-full">
+      {lateral}
+    <div className="marco-columna flex h-full min-w-0 flex-1 flex-col">
       {cabecera}
       {/*
        * `min-h-0`: un hijo de flex no encoge por debajo de su contenido sin
@@ -80,10 +117,30 @@ export function Marco({ cabecera, pie, capas, children }: Props): React.ReactEle
        * mismo que ya pedía `html` cuando el que desplazaba era él.
        */}
       <main id={ID_CONTENIDO} className="marco-contenido min-h-0 flex-1 overflow-y-auto overscroll-y-none">
-        <RanuraDelPie.Provider value={ranura}>{children}</RanuraDelPie.Provider>
+        <RanuraDelPie.Provider value={ranura}>
+          {/*
+           * El ancho máximo es para las pantallas grandes: en un monitor, una
+           * lista estirada a 1.600 px deja el nombre a la izquierda y su dato a
+           * medio metro. Centrado a 72rem se lee como en un iPad apaisado, que
+           * es para lo que están pensadas las pantallas. En un teléfono no
+           * hace nada.
+           *
+           * La animación de entrada mueve el envoltorio con `transform`, y un
+           * `transform` convierte a su elemento en el bloque contenedor de lo
+           * `fixed` que tenga dentro —las hojas se anclarían a él y no a la
+           * pantalla—. No pasa nada porque dura 160ms y no deja nada puesto al
+           * terminar: ninguna hoja se abre en el primer sexto de segundo de
+           * una pantalla.
+           */}
+          {avisos && <div className="marco-ancho mx-auto w-full max-w-6xl">{avisos}</div>}
+          <div key={claveDePantalla} className="marco-ancho pantalla mx-auto w-full max-w-6xl">
+            {children}
+          </div>
+        </RanuraDelPie.Provider>
       </main>
       <div ref={setRanura} className="flex-none empty:hidden" />
       {pie}
+    </div>
       {capas}
     </div>
   )

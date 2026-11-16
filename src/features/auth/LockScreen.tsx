@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { MAX_PIN_LENGTH, MIN_PIN_LENGTH, validatePin } from '@/auth/pin'
 import { enrollDevice, unlockWithPin } from '@/auth/session'
 import type { SealedSession } from '@/auth/pin'
+import { MarcaDeLaApp } from '@/features/shell/Navegacion'
 
 interface Props {
   sealed: SealedSession | null
@@ -88,18 +89,31 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
   }
 
   return (
-    <div className="flex min-h-dvh flex-col justify-center px-6 py-12">
+    <div className="pantalla flex min-h-dvh flex-col justify-center px-5 py-10">
+      {/*
+        Una tarjeta centrada con la marca encima.
+        Antes era un formulario suelto sobre el fondo, sin nada que dijera qué
+        aplicación era salvo una línea en versalitas. Es la primera pantalla que
+        ve cualquiera —y la única que ve quien todavía no ha entrado—: la marca
+        dice dónde se está, y la tarjeta separa «esto es lo que tienes que
+        rellenar» del resto de la pantalla.
+      */}
       <div className="mx-auto w-full max-w-sm">
-        <p className="eyebrow">Mantenimiento de aulas</p>
-        <h1 className="mt-1 text-2xl font-semibold">
-          {enrolling ? 'Dar de alta este dispositivo' : `Hola, ${sealed.hint.fullName}`}
-        </h1>
-        <p className="mt-2 text-sm text-muted">
-          {enrolling ? 'Solo hace falta una vez por dispositivo.' : 'Introduce tu PIN.'}
-        </p>
+        <div className="mb-6 flex flex-col items-center text-center">
+          <MarcaDeLaApp lado={64} />
+          <p className="eyebrow mt-4">Mantenimiento de aulas</p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight">
+            {enrolling ? 'Dar de alta este dispositivo' : `Hola, ${sealed.hint.fullName}`}
+          </h1>
+          <p className="mt-1.5 text-sm text-muted">
+            {enrolling ? 'Solo hace falta una vez por dispositivo.' : 'Introduce tu PIN.'}
+          </p>
+        </div>
+
+        <div className="card p-5">
 
         <form
-          className="mt-8 flex flex-col gap-4"
+          className="flex flex-col gap-4"
           onSubmit={(e) => {
             e.preventDefault()
             void submit()
@@ -115,7 +129,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
                   autoComplete="username"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="h-touch rounded-ctl border border-line bg-surface px-3"
+                  className="h-touch rounded-ctl border border-line bg-ground px-3"
                   required
                 />
               </label>
@@ -127,7 +141,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
                   autoComplete="one-time-code"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
-                  className="h-touch rounded-ctl border border-line bg-surface px-3 font-mono"
+                  className="h-touch rounded-ctl border border-line bg-ground px-3 font-mono"
                   required
                 />
               </label>
@@ -172,7 +186,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
               maxLength={MAX_PIN_LENGTH}
               value={pin}
               onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-              className="h-touch rounded-ctl border border-line bg-surface px-3 text-center font-mono text-2xl tracking-[0.5em]"
+              className="h-touch rounded-ctl border border-line bg-ground px-3 text-center font-mono text-2xl tracking-[0.5em]"
               required
               autoFocus={!enrolling}
             />
@@ -199,7 +213,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
             className={
               sesionRechazada
                 ? 'key key-accent mt-4 h-touch w-full'
-                : 'mt-6 w-full text-center text-sm text-muted underline underline-offset-4'
+                : 'mt-5 min-h-11 w-full text-center text-sm text-muted underline underline-offset-4'
             }
           >
             Dar de alta de nuevo con un código
@@ -216,11 +230,12 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
               setError(null)
               setPin('')
             }}
-            className="mt-6 w-full text-center text-sm text-muted underline underline-offset-4"
+            className="mt-3 min-h-11 w-full text-center text-sm text-muted underline underline-offset-4"
           >
             Volver al PIN
           </button>
         )}
+        </div>
       </div>
     </div>
   )

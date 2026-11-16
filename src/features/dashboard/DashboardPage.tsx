@@ -1,4 +1,8 @@
-import ReactECharts from 'echarts-for-react'
+/* El envoltorio de React, en su variante `core`: la normal importa ECharts
+   entero por su cuenta. A esta se le pasa el nuestro, que solo lleva barras y
+   líneas (ver `design/echarts.ts`). */
+import ReactEChartsCore from 'echarts-for-react/lib/core'
+import { echarts } from '@/design/echarts'
 import { StatTile } from '@/components/StatTile'
 import { baseOption, barSeries, lineSeries } from '@/design/charts'
 import { LAMP_ALERT_THRESHOLD } from '@/domain/types'
@@ -180,7 +184,8 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
         <div className="card p-4">
           <h3 className="mb-1 font-semibold">Incidencias por edificio</h3>
           <p className="mb-3 text-xs text-muted">Histórico</p>
-          <ReactECharts
+          <ReactEChartsCore
+            echarts={echarts}
             style={{ height: 260 }}
             option={{
               ...baseOption(),
@@ -199,7 +204,8 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
         <div className="card p-4">
           <h3 className="mb-1 font-semibold">Incidencias abiertas por mes</h3>
           <p className="mb-3 text-xs text-muted">Últimos 12 meses</p>
-          <ReactECharts
+          <ReactEChartsCore
+            echarts={echarts}
             style={{ height: 260 }}
             option={{
               ...baseOption(),

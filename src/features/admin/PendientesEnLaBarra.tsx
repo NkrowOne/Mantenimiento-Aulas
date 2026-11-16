@@ -13,7 +13,12 @@ import { CLAVE_PENDIENTES, contarPendientes, totalPendientes } from './pendiente
  * de caché que la cabecera de Datos: cada decisión que se toma allí lo
  * actualiza aquí, y cada cinco minutos se vuelve a contar por si decidió otro.
  */
-export function PendientesEnLaBarra(): React.ReactElement | null {
+export function PendientesEnLaBarra({
+  className = 'ml-1.5',
+}: {
+  /** Dónde se coloca: pegado a un texto (por defecto) o flotando sobre un icono. */
+  className?: string
+}): React.ReactElement | null {
   const { data } = useQuery({
     queryKey: CLAVE_PENDIENTES,
     queryFn: contarPendientes,
@@ -26,7 +31,7 @@ export function PendientesEnLaBarra(): React.ReactElement | null {
   return (
     <span
       aria-label={`${n} ${n === 1 ? 'cosa por decidir' : 'cosas por decidir'}`}
-      className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-tag bg-warn-tint px-1.5 py-px font-mono text-[0.625rem] font-semibold text-warn tabular"
+      className={`inline-flex h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-warn-fill px-1 text-[0.625rem] font-bold leading-none text-warn-ink tabular ${className}`}
     >
       {n > 99 ? '99+' : n}
     </span>

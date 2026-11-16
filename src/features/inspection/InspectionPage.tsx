@@ -14,6 +14,7 @@ import { displayRoomCode } from '@/domain/normalize'
 import { fechaLegible } from '@/domain/historial'
 import { TiraDeFotos } from '@/components/Fotos'
 import { useInspection, type Correccion } from './useInspection'
+import { Esqueleto } from '@/components/Esqueleto'
 
 interface Props {
   room: Room
@@ -88,7 +89,7 @@ export function InspectionPage({
     ) ?? 0
 
   if (!draft) {
-    return <p className="p-6 text-muted">Preparando…</p>
+    return <Esqueleto filas={6} />
   }
 
   const missing = rows.filter((row) => !draft.checks.get(row.key))
@@ -319,7 +320,7 @@ export function InspectionPage({
       <div
         ref={filas}
         tabIndex={-1}
-        className="section-tail divide-y divide-line-soft border-y border-line bg-surface px-4 outline-none"
+        className="section-tail divide-y divide-line-soft border-y border-line-soft bg-surface px-4 outline-none lg:mx-4 lg:rounded-card lg:border-x"
       >
         {rows.map((row) => {
           const key = row.key

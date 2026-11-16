@@ -207,7 +207,7 @@ export function HistorialPage(): React.ReactElement {
   return (
     <div className="mx-auto max-w-4xl p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <h1 className="text-xl font-semibold">Historial</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Historial</h1>
         {activos > 0 && (
           <button type="button" onClick={limpiar} className="text-sm text-accent underline-offset-4 hover:underline">
             Quitar filtros

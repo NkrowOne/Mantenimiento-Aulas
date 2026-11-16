@@ -369,7 +369,7 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
   return (
     <div className="mx-auto max-w-4xl p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <h1 className="text-xl font-semibold">Incidencias</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Incidencias</h1>
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"

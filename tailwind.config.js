@@ -63,6 +63,8 @@ export default {
       },
       boxShadow: {
         lift: 'var(--lift)',
+        // Lo que flota por encima de la pantalla: hojas, menús, paneles.
+        float: 'var(--float)',
       },
       spacing: {
         // Objetivo táctil: se toca con el pulgar, de pie, en un aula.

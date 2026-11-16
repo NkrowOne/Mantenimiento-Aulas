@@ -86,6 +86,7 @@ import {
 } from '@/domain/nomenclatura'
 import { AVISO_SIN_RED, aplicarOperacion, type OperacionDeMaestro } from './maestro'
 import type { RoomKind, Zone } from '@/domain/types'
+import { BotonVolver } from '@/components/BotonVolver'
 
 /** Lo mínimo de un edificio para poder nombrarlo y renombrarlo. `Building` encaja. */
 export interface EdificioDeMaestro {
@@ -406,16 +407,13 @@ export function HojaDeMaestro({
   /* Sin menú detrás no hay nada a lo que volver: se entró directo, tanto desde
      «+ Sala» de la cabecera como al pulsar sobre una planta. */
   const volver = sinMenu ? null : (
-    <button
-      type="button"
+    <BotonVolver
+      texto="Acciones"
       onClick={() => {
         setFallo(null)
         setPaso('menu')
       }}
-      className="-ml-2 min-h-11 px-2 text-sm text-accent"
-    >
-      ← Acciones
-    </button>
+    />
   )
 
   // ---------------------------------------------------------------------------

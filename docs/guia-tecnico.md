@@ -26,14 +26,30 @@ el PIN se comprueba en el propio dispositivo.
 **No hace falta instalar nada.** Es una página web: guárdala en favoritos y
 listo. Si prefieres tenerla como una aplicación más —icono en la pantalla de
 inicio y sin la barra del navegador—, en Android abre **Más → Instalar en este
-móvil**; en el iPhone y el iPad es **Compartir → Añadir a pantalla de inicio**.
+aparato**; en el iPhone y el iPad es **Compartir → Añadir a pantalla de inicio**.
 Es la misma aplicación, con lo mismo dentro.
 
 ### Las pestañas y el botón atrás
 
-Abajo hay cuatro pestañas —**Revisar**, **Incidencias**, **Almacén** e
-**Historial**— y **Más**, que guarda el panel, instalar la aplicación y cerrar
-sesión (administración ve ahí también Informes y Datos).
+Abajo hay cuatro pestañas, cada una con su dibujo —**Revisar**,
+**Incidencias**, **Almacén** e **Historial**— y **Más**, que guarda lo demás
+en tres bloques: *Consultar* (Panel, Equipos y Actividad), *Administrar*
+(Informes y Datos, solo para administración) y *Este aparato* (el tema,
+instalar la aplicación y cerrar sesión).
+
+En un iPad apaisado o en un ordenador no hay barra abajo: todas las secciones
+están a la vista en un menú a la izquierda, y tu cuenta —con el tema y cerrar
+sesión— al pie de ese menú.
+
+**Revisar** se abre con el resumen del campus: cuántas salas van al día,
+cuántas tocan y cuántas averías hay abiertas. Debajo, escanear el QR de la
+puerta, buscar un aula por su nombre y la lista de edificios.
+
+### Claro u oscuro
+
+En **Más → Tema** eliges *Claro*, *Oscuro* o *Automático* (lo que diga el
+aparato). El oscuro va bien en un aula con el proyector encendido: la pantalla
+no deslumbra. Se queda guardado en ese dispositivo.
 
 El botón atrás del móvil —o el gesto desde el borde— hace lo que esperas:
 cierra lo que tengas abierto encima (un menú, la ficha de una revisión, una
@@ -59,7 +75,8 @@ dirección de la aplicación y tu email.
 **No, nunca.** Tecleas el PIN una vez y la sesión se queda. Puedes cerrar la
 pestaña, apagar el iPad, volver al día siguiente: sigues dentro.
 
-La única forma de salir es **Más → Cerrar sesión**, abajo a la derecha. Te
+La única forma de salir es **Más → Cerrar sesión**, abajo a la derecha (en
+pantalla grande, pulsando tu nombre al pie del menú). Te
 pedirá confirmación, porque después hay que volver a teclear el PIN.
 
 **Ciérrala cuando dejes de usar el dispositivo** —al acabar el turno, o si se
