@@ -18,8 +18,8 @@
  * inferior es lo cómodo.
  */
 
-import { useId } from 'react'
 import { Icono } from '@/components/Icono'
+import { MARCA_FONDO, MARCA_TRAZO } from '@/design/marca'
 import { PendientesEnLaBarra } from '@/features/admin/PendientesEnLaBarra'
 import type { Role } from '@/domain/types'
 import {
@@ -192,8 +192,8 @@ export function MenuLateral({
       aria-label="Secciones"
       className="solo-pantalla hidden w-60 flex-none flex-col border-r border-line-soft bg-surface lg:flex"
     >
-      {/* La marca. La placa de puerta del icono, dibujada con los mismos
-          trazos: es lo que hay en la pantalla de inicio del iPad. */}
+      {/* La marca: el logotipo, el mismo que hay en la pantalla de inicio del
+          iPad. */}
       <div className="flex items-center gap-3 px-5 pb-4 pt-5">
         <MarcaDeLaApp />
         <div className="min-w-0 leading-tight">
@@ -262,47 +262,28 @@ export function MenuLateral({
 }
 
 /**
- * La marca: una placa de puerta con la A y la esquina de QR, como el icono.
+ * La marca: el logotipo de la casa, el mismo del icono de la aplicación.
  *
  * Va dibujada y no como `<img src="/favicon.svg">` porque una imagen es una
- * petición más, y esta se pinta en la cabecera de la primera pantalla.
+ * petición más, y esta se pinta en la cabecera de la primera pantalla. El trazo
+ * vive en `design/marca.ts`.
+ *
+ * Es un fondo liso con un trazo encima: sin degradados ni `id`, que era lo que
+ * obligaba a la marca anterior a pedir un identificador distinto por copia —se
+ * pinta dos veces a la vez, en la cabecera y en el menú lateral, y una de las
+ * dos está siempre oculta—.
  */
 export function MarcaDeLaApp({ lado = 36 }: { lado?: number }): React.ReactElement {
-  /*
-   * El degradado necesita un `id`, y tiene que ser distinto en cada copia. La
-   * marca se pinta dos veces a la vez —en la cabecera y en el menú lateral— y
-   * una de las dos está siempre oculta según el ancho. Con el mismo `id`,
-   * `url(#…)` resuelve al PRIMERO del documento, y un degradado definido dentro
-   * de un elemento con `display: none` no pinta: la marca visible salía sin
-   * fondo, una placa blanca sobre gris claro.
-   */
-  const id = useId()
   return (
     <svg
       width={lado}
       height={lado}
       viewBox="0 0 512 512"
       aria-hidden="true"
-      className="shrink-0 rounded-[28%]"
+      className="shrink-0 rounded-[24%]"
     >
-      <defs>
-        <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#053640" />
-          <stop offset="1" stopColor="#077A8A" />
-        </linearGradient>
-      </defs>
-      <rect width="512" height="512" fill={`url(#${id})`} />
-      <rect x="72" y="104" width="368" height="304" rx="44" fill="#FBFCFC" />
-      <path
-        d="M148 344 212 168 276 344M172 286h80"
-        fill="none"
-        stroke="#046A78"
-        strokeWidth="42"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <rect x="318" y="266" width="86" height="86" rx="16" fill="none" stroke="#14343B" strokeWidth="18" />
-      <rect x="348" y="296" width="26" height="26" rx="6" fill="#14343B" />
+      <rect width="512" height="512" fill={MARCA_FONDO} />
+      <path fill="#fff" d={MARCA_TRAZO} />
     </svg>
   )
 }

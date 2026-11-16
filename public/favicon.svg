@@ -1,36 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <!--
-    El icono es una placa de puerta, que es el objeto de la aplicación: la letra
-    grande del edificio y la esquina de QR de las placas impresas. Todo dibujado
-    a trazo, sin fuentes: un icono no puede depender de qué tipografías tenga la
-    máquina que lo renderiza.
+    El logotipo de la casa: doce gotas blancas sobre azul marino, en cuatro
+    grupos de tres girados noventa grados.
+
+    Va dibujado por geometría, no calcado. Las doce gotas son la MISMA gota
+    —una cabeza redonda de radio 23,8, una punta de radio 4,1 y 145,5 entre
+    centros— colocada tres veces con un paso de 39 y girada cuatro. Reconstruido
+    así pesa un kilobyte, se ve nítido a cualquier tamaño y coincide con la
+    imagen original salvo en el píxel de suavizado del borde. Un calco
+    automático daba el mismo dibujo en nueve kilobytes de curvas.
+
+    Sin fuentes ni imágenes dentro: un icono no puede depender de lo que tenga
+    instalado la máquina que lo pinta.
+
+    Si se cambia, `npx tsx scripts/genera-iconos.ts` rehace los PNG, y el mismo
+    trazo está en `src/design/marca.ts` (la marca dentro de la aplicación) y en
+    `index.html` (el primer fotograma).
   -->
-  <defs>
-    <linearGradient id="fondo" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#053640"/>
-      <stop offset="1" stop-color="#077A8A"/>
-    </linearGradient>
-  </defs>
 
   <!-- Fondo a sangre: iOS y las máscaras maskable recortan ellos. -->
-  <rect width="512" height="512" fill="url(#fondo)"/>
+  <rect width="512" height="512" fill="#0D3C68"/>
 
   <!-- El contenido va agrupado: la variante maskable lo encoge SOLO a él,
        dejando el fondo a sangre, para sobrevivir al recorte circular. -->
   <g id="contenido">
-    <!-- La placa. -->
-    <rect x="72" y="104" width="368" height="304" rx="44" fill="#FBFCFC"/>
-    <rect x="72" y="104" width="368" height="304" rx="44" fill="none" stroke="#0B4650" stroke-opacity=".14" stroke-width="4"/>
-
-    <!-- La A del edificio, a trazo grueso. -->
-    <path d="M 148 344 L 212 168 L 276 344 M 172 286 L 252 286"
-          fill="none" stroke="#046A78" stroke-width="42"
-          stroke-linecap="round" stroke-linejoin="round"/>
-
-    <!-- La esquina de QR de la placa impresa: el patrón de posición. -->
-    <g fill="none">
-      <rect x="318" y="266" width="86" height="86" rx="16" stroke="#14343B" stroke-width="18"/>
-      <rect x="348" y="296" width="26" height="26" rx="6" fill="#14343B"/>
-    </g>
+    <path fill="#fff" d="M269.5 35.6L356.6 150.4A4.1 4.1 0 0 1 350.9 156.1L236.1 69A23.8 23.8 0 1 1 269.5 35.6ZM230.5 74.6L317.6 189.4A4.1 4.1 0 0 1 311.9 195.1L197.1 108A23.8 23.8 0 1 1 230.5 74.6ZM191.5 113.6L278.6 228.4A4.1 4.1 0 0 1 272.9 234.1L158.1 147A23.8 23.8 0 1 1 191.5 113.6ZM476.4 269.5L361.6 356.6A4.1 4.1 0 0 1 355.9 350.9L443 236.1A23.8 23.8 0 1 1 476.4 269.5ZM437.4 230.5L322.6 317.6A4.1 4.1 0 0 1 316.9 311.9L404 197.1A23.8 23.8 0 1 1 437.4 230.5ZM398.4 191.5L283.6 278.6A4.1 4.1 0 0 1 277.9 272.9L365 158.1A23.8 23.8 0 1 1 398.4 191.5ZM242.5 476.4L155.4 361.6A4.1 4.1 0 0 1 161.1 355.9L275.9 443A23.8 23.8 0 1 1 242.5 476.4ZM281.5 437.4L194.4 322.6A4.1 4.1 0 0 1 200.1 316.9L314.9 404A23.8 23.8 0 1 1 281.5 437.4ZM320.5 398.4L233.4 283.6A4.1 4.1 0 0 1 239.1 277.9L353.9 365A23.8 23.8 0 1 1 320.5 398.4ZM35.6 242.5L150.4 155.4A4.1 4.1 0 0 1 156.1 161.1L69 275.9A23.8 23.8 0 1 1 35.6 242.5ZM74.6 281.5L189.4 194.4A4.1 4.1 0 0 1 195.1 200.1L108 314.9A23.8 23.8 0 1 1 74.6 281.5ZM113.6 320.5L228.4 233.4A4.1 4.1 0 0 1 234.1 239.1L147 353.9A23.8 23.8 0 1 1 113.6 320.5Z"/>
   </g>
 </svg>
