@@ -451,6 +451,27 @@
   }
 
   /* Etiqueta en versalitas: la usan las cabeceras de sección y los eyebrows. */
+  /*
+   * «Más información»: la explicación larga de una sección, plegada.
+   *
+   * El triángulo del navegador se quita —cada uno lo pinta de una forma y en
+   * Safari se descoloca— y se pone un ángulo propio que gira al abrir. La
+   * línea mide 44 px de alto aunque el texto sea pequeño: es un botón.
+   */
+  .mas-informacion > summary {
+    @apply inline-flex min-h-11 cursor-pointer select-none list-none items-center gap-1.5 text-sm font-medium text-accent;
+  }
+  .mas-informacion > summary::-webkit-details-marker {
+    display: none;
+  }
+  .mas-informacion > summary::after {
+    content: '';
+    @apply h-1.5 w-1.5 -translate-y-px rotate-45 border-b-[1.5px] border-r-[1.5px] border-current transition-transform duration-150;
+  }
+  .mas-informacion[open] > summary::after {
+    @apply translate-y-px -rotate-[135deg];
+  }
+
   .eyebrow {
     @apply text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-muted;
   }

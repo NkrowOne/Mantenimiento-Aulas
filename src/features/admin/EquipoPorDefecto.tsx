@@ -184,7 +184,8 @@ export function EquipoPorDefecto(): React.ReactElement {
     <Seccion
       id="sec-defecto"
       titulo="Equipamiento por defecto"
-      texto="Lo que se le pone a una sala nueva nada más crearla. Lo declarado para un edificio manda sobre lo global. Aplicarlo a las salas que ya existen es aparte y dice cuántos equipos crearía antes de hacerlo."
+      texto="El equipamiento que recibe una sala nueva al crearla."
+      detalle="Lo definido para un edificio tiene prioridad sobre lo general. Aplicarlo a las salas que ya existen es una acción aparte, y antes de hacerlo indica cuántos equipos crearía."
     >
       <ul className="divide-y divide-line-soft rounded-card border border-line bg-surface">
         {ordenados.map((d) => (

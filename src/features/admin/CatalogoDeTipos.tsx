@@ -74,7 +74,8 @@ export function CatalogoDeTipos(): React.ReactElement {
     <Seccion
       id="sec-catalogo-tipos"
       titulo="Tipos de equipo"
-      texto="Cómo se llama cada cosa del inventario. Cambiar un nombre lo cambia en todas las salas, y el de antes se queda de alias: el Excel y quien lo busque así lo siguen encontrando."
+      texto="Los nombres de los tipos de equipo del inventario."
+      detalle="Cambiar un nombre lo cambia en todas las salas. El anterior se conserva como alias: el Excel y el buscador lo siguen reconociendo."
       acciones={
         (tipos?.length ?? 0) > 8 ? (
           <input

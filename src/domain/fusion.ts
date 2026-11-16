@@ -352,7 +352,7 @@ export function fusionarCelda(c: Celda): Decision {
       return {
         tipo: 'hacia_el_excel',
         valor: c.base,
-        motivo: `primera pasada: la aplicación lo cambió el ${diaDe(c.cambioEnLaApp)}, después del corte del ${c.corte}: manda la aplicación`,
+        motivo: `primera pasada: la aplicación lo cambió el ${diaDe(c.cambioEnLaApp)}, después del corte del ${c.corte}: prevalece la aplicación`,
       }
     }
     if (c.referencia === 'excel') {

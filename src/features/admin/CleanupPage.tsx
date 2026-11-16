@@ -384,7 +384,8 @@ function EdificiosSinIdentificar(): React.ReactElement {
     <Seccion
       id="sec-edificios-sin-identificar"
       titulo="Edificios sin identificar"
-      texto="Códigos que aparecen en el histórico de incidencias y no en la hoja de estado del Excel. Fusionarlo con el edificio bueno mueve sus salas e incidencias; confirmarlo lo deja como edificio propio."
+      texto="Códigos de edificio que aparecen en el histórico de incidencias y no en el Excel."
+      detalle="«Fusionar» con el edificio correcto traslada sus salas e incidencias. «Confirmar» lo deja como edificio propio."
       pendientes={lista.length}
     >
       {isPending && <Cargando />}
@@ -587,7 +588,8 @@ function Cuarentena(): React.ReactElement {
     <Seccion
       id="sec-cuarentena"
       titulo="Cuarentena"
-      texto="Lo que la importación o el Excel no pudieron interpretar, con su texto original. Nada de esto ha entrado en la base. Dar una fila por revisada solo la quita de aquí: lo que haya que corregir se corrige en el maestro, en el Excel o en las incidencias sin sala."
+      texto="Filas que la importación o el Excel no pudieron interpretar. No han entrado en la base de datos."
+      detalle="Se muestran con su texto original. Marcar una fila como revisada solo la quita de esta lista: la corrección se hace en el maestro, en el Excel o en «Incidencias sin sala»."
       pendientes={quarantine?.total ?? 0}
     >
       {isPending && <Cargando texto="Leyendo la cuarentena…" />}

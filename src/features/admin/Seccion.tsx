@@ -9,10 +9,13 @@ import type { ReactNode } from 'react'
  * confirmación de «guardado» tres. Ninguna estaba mal sola, y todas juntas se
  * leían como doce pantallas pegadas, que es exactamente lo que eran.
  *
- * Aquí viven las cinco formas que se repiten, y solo esas:
+ * Aquí viven las seis formas que se repiten, y solo esas:
  *
- *  - `Seccion`: el título con su recuento de pendientes, la frase de qué es y
- *    dónde va lo que se hace aquí, y un hueco para las acciones de arriba.
+ *  - `Seccion`: el título con su recuento de pendientes, UNA frase de qué es,
+ *    el resto de la explicación detrás de «Más información», y un hueco para
+ *    las acciones de arriba.
+ *  - `MasInformacion`: ese desplegable, para usarlo también dentro de una
+ *    sección.
  *  - `EstadoVacio`: «no hay nada que hacer», dicho como una buena noticia y no
  *    como una lista vacía. Es el estado normal de la mayoría de bandejas.
  *  - `Cargando` y `FalloDeCarga`: una sola forma de esperar y una sola de
@@ -45,18 +48,52 @@ export function Contador({ n, tono = 'aviso', que = 'pendientes' }: { n: number;
   )
 }
 
+/**
+ * La explicación larga, plegada.
+ *
+ * Cada sección abría con un párrafo de tres o cuatro frases: qué es, por qué
+ * existe, qué hace cada botón y qué no se pierde. Todo cierto y todo útil la
+ * primera vez; la vigésima, es un muro que hay que saltar para llegar a la
+ * lista. Con doce secciones, eran doce muros.
+ *
+ * Ahora cada una dice en una frase qué es, y lo demás —el porqué, los avisos de
+ * «esto no borra nada»— sigue ahí, a un toque. No se ha quitado ninguna
+ * advertencia: se ha movido.
+ *
+ * Es un `<details>` del navegador y no un estado de React: se abre con el
+ * teclado, lo anuncia VoiceOver y la búsqueda en la página de Safari lo
+ * despliega sola si lo que se busca está dentro.
+ */
+export function MasInformacion({
+  children,
+  className = '',
+}: {
+  children: ReactNode
+  className?: string
+}): React.ReactElement {
+  return (
+    <details className={`mas-informacion ${className}`}>
+      <summary>Más información</summary>
+      <div className="max-w-prose pb-1 text-sm leading-relaxed text-muted">{children}</div>
+    </details>
+  )
+}
+
 export function Seccion({
   id,
   titulo,
   texto,
+  detalle,
   pendientes,
   acciones,
   children,
 }: {
   id: string
   titulo: string
-  /** Qué es esto y qué pasa con lo que se decide aquí. Una o dos frases. */
+  /** Qué es esto, en una frase. */
   texto?: ReactNode
+  /** El resto: por qué existe, qué hace cada botón, qué no se pierde. Va plegado. */
+  detalle?: ReactNode
   /** Cuántas cosas esperan decisión. Cero no se pinta: el vacío ya lo dice el cuerpo. */
   pendientes?: number
   /** Lo que se hace sobre la sección entera: «Validar los 12», un filtro. */
@@ -72,6 +109,7 @@ export function Seccion({
             {pendientes !== undefined && pendientes > 0 && <Contador n={pendientes} />}
           </h2>
           {texto && <p className="mt-1 max-w-prose text-sm leading-relaxed text-muted">{texto}</p>}
+          {detalle && <MasInformacion>{detalle}</MasInformacion>}
         </div>
         {/* `max-w-full` y sin `shrink-0`: con él, tres filtros en fila —los de
             Actividad— medían más que un teléfono y el último se salía por la

@@ -38,6 +38,9 @@ import {
  * El id nace aquí, con la pulsación: si la respuesta se pierde y se vuelve a
  * pulsar, la base reconoce el mismo id y no crea otro.
  */
+/** Los campos que se ven sin abrir «Más datos»: los dos números del aparato. */
+const A_LA_VISTA: readonly string[] = ['serial', 'inventory_tag']
+
 /** Lo que distingue a un aparato de su vecino de lote: se vacía entre uno y otro. */
 const DE_CADA_APARATO = ['label', 'serial', 'inventory_tag', 'hostname', 'mac_address', 'ip_address'] as const
 
@@ -131,6 +134,52 @@ export function EntradaDeEquipo({
     },
   })
 
+  const [masDatos, setMasDatos] = useState(false)
+  /* Los campos que no están a la vista: cuántos llevan algo, y si alguno tiene
+     un error —en cuyo caso se enseñan, porque un error que no se ve no se
+     puede corregir—. */
+  const ocultos = CAMPOS_DE_FICHA.filter(
+    (c) => !A_LA_VISTA.includes(c.clave) && (c.grupo !== 'ordenador' || conOrdenador),
+  )
+  const rellenados = ocultos.filter((c) => borrador[c.clave].trim() !== '').length
+  const abierto = masDatos || ocultos.some((c) => problemas[c.clave] !== undefined)
+
+  const pintarCampo = (c: (typeof CAMPOS_DE_FICHA)[number]): React.ReactElement => (
+    <label key={c.clave} className={`block text-sm ${c.tipo === 'largo' ? 'sm:col-span-2' : ''}`}>
+      <span className="text-muted">
+        {c.clave === 'label' ? 'Nombre en el aula (si no, el del tipo)' : c.etiqueta}
+      </span>
+      {c.tipo === 'largo' ? (
+        <textarea
+          value={borrador[c.clave]}
+          onChange={(e) => setBorrador((b) => ({ ...b, [c.clave]: e.target.value }))}
+          rows={2}
+          className="mt-1 w-full rounded-ctl border border-line bg-surface px-3 py-2 text-base"
+        />
+      ) : (
+        <input
+          value={borrador[c.clave]}
+          onChange={(e) => setBorrador((b) => ({ ...b, [c.clave]: e.target.value }))}
+          type={c.tipo === 'fecha' ? 'date' : 'text'}
+          inputMode={c.tipo === 'precio' || c.tipo === 'ip' ? 'decimal' : undefined}
+          placeholder={c.pista}
+          autoCapitalize={c.codigo ? 'characters' : undefined}
+          autoCorrect={c.codigo ? 'off' : undefined}
+          spellCheck={c.codigo ? false : undefined}
+          aria-invalid={problemas[c.clave] !== undefined}
+          className={`mt-1 h-11 w-full rounded-ctl border bg-surface px-3 text-base ${
+            problemas[c.clave] ? 'border-crit' : 'border-line'
+          } ${c.codigo ? 'font-mono uppercase' : ''}`}
+        />
+      )}
+      {problemas[c.clave] && (
+        <span role="alert" className="mt-1 block text-xs text-crit">
+          {problemas[c.clave]}
+        </span>
+      )}
+    </label>
+  )
+
   return (
     <form
       className="card mt-4 p-4"
@@ -200,48 +249,52 @@ export function EntradaDeEquipo({
         </label>
       </div>
 
-      {grupos.map((g) => (
-        <fieldset key={g} className="mt-4">
-          <legend className="eyebrow">{GRUPO_LABEL[g]}</legend>
-          <div className="mt-2 grid gap-3 sm:grid-cols-2">
-            {CAMPOS_DE_FICHA.filter((c) => c.grupo === g).map((c) => (
-              <label key={c.clave} className={`block text-sm ${c.tipo === 'largo' ? 'sm:col-span-2' : ''}`}>
-                <span className="text-muted">
-                  {c.clave === 'label' ? 'Nombre en el aula (si no, el del tipo)' : c.etiqueta}
-                </span>
-                {c.tipo === 'largo' ? (
-                  <textarea
-                    value={borrador[c.clave]}
-                    onChange={(e) => setBorrador((b) => ({ ...b, [c.clave]: e.target.value }))}
-                    rows={2}
-                    className="mt-1 w-full rounded-ctl border border-line bg-surface px-3 py-2 text-base"
-                  />
-                ) : (
-                  <input
-                    value={borrador[c.clave]}
-                    onChange={(e) => setBorrador((b) => ({ ...b, [c.clave]: e.target.value }))}
-                    type={c.tipo === 'fecha' ? 'date' : 'text'}
-                    inputMode={c.tipo === 'precio' || c.tipo === 'ip' ? 'decimal' : undefined}
-                    placeholder={c.pista}
-                    autoCapitalize={c.codigo ? 'characters' : undefined}
-                    autoCorrect={c.codigo ? 'off' : undefined}
-                    spellCheck={c.codigo ? false : undefined}
-                    aria-invalid={problemas[c.clave] !== undefined}
-                    className={`mt-1 h-11 w-full rounded-ctl border bg-surface px-3 text-base ${
-                      problemas[c.clave] ? 'border-crit' : 'border-line'
-                    } ${c.codigo ? 'font-mono uppercase' : ''}`}
-                  />
-                )}
-                {problemas[c.clave] && (
-                  <span role="alert" className="mt-1 block text-xs text-crit">
-                    {problemas[c.clave]}
-                  </span>
-                )}
-              </label>
-            ))}
-          </div>
-        </fieldset>
-      ))}
+      {/*
+        Lo que identifica al aparato, a la vista; lo demás, detrás de un botón.
+
+        El formulario enseñaba de golpe todos los campos de la ficha —hasta
+        veinte: identidad, compra, vida útil, y los de un ordenador— aunque su
+        propia introducción dice que solo hacen falta el tipo y la sala. Para
+        llegar a «Registrar la entrada» había que pasar por quince campos
+        vacíos, y en un teléfono eso son tres pantallas.
+
+        Se quedan arriba los dos números que distinguen a un aparato de otro
+        —el de serie y el de inventario—, que es lo que se tiene delante al
+        desembalarlo. El resto no se pierde: se abre con «Más datos», y el botón
+        dice cuántos hay rellenados para que no se queden olvidados dentro. Si
+        alguno de los ocultos tiene un error, se abre solo.
+      */}
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        {CAMPOS_DE_FICHA.filter((c) => A_LA_VISTA.includes(c.clave)).map(pintarCampo)}
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setMasDatos((v) => !v)}
+        aria-expanded={abierto}
+        className="key key-quiet mt-3 flex min-h-11 w-full items-center justify-between gap-3 px-3 text-sm sm:w-auto"
+      >
+        {abierto ? 'Ocultar el resto de datos' : 'Más datos'}{' '}
+        <span className="font-normal text-muted">
+          {rellenados > 0
+            ? `${rellenados} rellenado${rellenados === 1 ? '' : 's'}`
+            : 'marca, modelo, compra, vida útil…'}
+        </span>
+      </button>
+
+      {abierto &&
+        grupos.map((g) => {
+          const campos = CAMPOS_DE_FICHA.filter(
+            (c) => c.grupo === g && !A_LA_VISTA.includes(c.clave),
+          )
+          if (campos.length === 0) return null
+          return (
+            <fieldset key={g} className="mt-4">
+              <legend className="eyebrow">{GRUPO_LABEL[g]}</legend>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">{campos.map(pintarCampo)}</div>
+            </fieldset>
+          )
+        })}
 
       <label className="mt-4 block text-sm">
         <span className="text-muted">Nota de la entrada (opcional)</span>

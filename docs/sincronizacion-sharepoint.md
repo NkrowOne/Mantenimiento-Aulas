@@ -233,7 +233,7 @@ apuesta:
 |---|---|---|
 | = antepasado | = antepasado | Nada. Es la inmensa mayoría de las celdas |
 | **cambió** | = antepasado | Manda la app → se escribe en el Excel |
-| = antepasado | **cambió** | **Manda el Excel** → se escribe en la base |
+| = antepasado | **cambió** | **Prevalece el Excel** → se escribe en la base |
 | **cambió** | **cambió**, y a cosas distintas | **Conflicto**: no se toca ninguno de los dos, va a cuarentena y se avisa en las dos partes |
 | **cambió** | **cambió**, a lo mismo | Nada que hacer, ya coinciden |
 
@@ -263,13 +263,13 @@ puede cambiar y la pasada se recalcula al momento:
 
 | Elección | Primera pasada y choques |
 |---|---|
-| **Que decida una persona** (por defecto) | Primera pasada: manda la app. Choque: no se toca ninguno de los dos lados y sale aquí y en la hoja `Sincronización` |
-| **Manda el Excel** | Lo que dice la hoja entra en la base |
-| **Manda la aplicación** | Lo que dice la aplicación se escribe en la hoja |
+| **Decidir a mano** (por defecto) | Primera pasada: manda la app. Choque: no se toca ninguno de los dos lados y sale aquí y en la hoja `Sincronización` |
+| **Prevalece el Excel** | Lo que dice la hoja entra en la base |
+| **Prevalece la aplicación** | Lo que dice la aplicación se escribe en la hoja |
 
 Y solo esos dos casos. Lo que la fusión **sí** sabe decidir no cambia con la
 elección: si solo un lado se movió desde la última pasada, gana ese lado.
-Elegir «manda el Excel» no puede revertir en la base una avería que un técnico
+Elegir «prevalece el Excel» no puede revertir en la base una avería que un técnico
 cerró ayer en el aula y que la hoja no ha visto todavía. Tampoco cambian de
 dueño las columnas que lo tienen fijo —los m², la fecha de revisión anterior,
 las fórmulas— ni la regla del hueco: el vacío nunca gana. Cada celda decidida
@@ -802,7 +802,7 @@ y que el código respeta desde entonces:
   con su texto y no mueve nada.
 - **`Stock Disponible` cuadra el almacén cuando manda el Excel.** La celda
   sigue siendo una fórmula y no se escribe jamás; pero si la persona eligió
-  «manda el Excel», su valor viaja como `articulo.disponible` y la base pone el
+  «prevalece el Excel», su valor viaja como `articulo.disponible` y la base pone el
   saldo a ese número con un `ajuste` que dice de dónde sale, el último de la
   pasada. Un disponible negativo no entra: el almacén no baja de cero, y el
   aviso dice que se revise «Total Comprado».
@@ -832,7 +832,7 @@ y que el código respeta desde entonces:
 - **Un edificio que el maestro no conoce no viaja a la base** (`noALaBase`, en
   `sincronizarEstado`). La hoja escribe «ED. S - SÓCRATES» y el maestro tiene
   «EDIFICIO S»: la fila cruza por matrícula, pero la celda no coincide y con
-  «manda el Excel» se mandaba aula por aula a `sync_mover_sala`, que solo sabe
+  «prevalece el Excel» se mandaba aula por aula a `sync_mover_sala`, que solo sabe
   mover a un edificio que existe. Eran 23 apuntes de cuarentena idénticos por
   pasada. Ahora se retiene esa celda —y la de la planta con ella, porque la
   planta se crea dentro del edificio en el que la sala está HOY— y se emite un
@@ -853,7 +853,7 @@ y que el código respeta desde entonces:
   (`movimientos.ts`): el material que el catálogo no reconoce ya no sale como
   «artículo desconocido», porque la base descarta el parte antiguo antes de
   mirar si el nombre cruza y no apunta nada.
-- **Con «manda el Excel», el libro muda salas de edificio** (`laMudaElLibro`):
+- **Con «prevalece el Excel», el libro muda salas de edificio** (`laMudaElLibro`):
   si la celda del edificio ya no dice lo que decía en la última pasada, la
   fila se queda y la celda viaja a la base, donde `sync_mover_sala` mueve la
   sala llevándose su planta —y la crea en el edificio de destino si no la

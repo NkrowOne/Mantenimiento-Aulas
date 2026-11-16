@@ -119,7 +119,8 @@ export function AssetTypeTray(): React.ReactElement {
     <Seccion
       id="sec-tipos"
       titulo="Tipos de equipo sin validar"
-      texto="Creados desde un aula. Se están usando ya; esto solo ordena el catálogo. Confirmar lo da por bueno; corregir el nombre deja el viejo de alias; marcar varios permite agruparlos en uno."
+      texto="Tipos de equipo creados desde un aula, pendientes de validar."
+      detalle="Ya se están usando; validarlos solo ordena el catálogo. «Confirmar» lo da por bueno. Corregir el nombre conserva el anterior como alias. Marcar varios permite agruparlos en uno."
       pendientes={lista.length}
     >
       {!pending && <Cargando texto="Cargando el catálogo…" />}

@@ -98,7 +98,8 @@ export function RetiradasPendientes(): React.ReactElement {
     <Seccion
       id="sec-retiradas"
       titulo="Retiradas por autorizar"
-      texto="Equipos que alguien quiere sacar de una sala. Hasta que se autoricen siguen ahí y siguen contando en las revisiones. Autorizar retira el equipo, lo apunta en el historial de la sala y, si vuelve al almacén, suma su unidad."
+      texto="Solicitudes para retirar un equipo de una sala."
+      detalle="Hasta que se autoricen, el equipo sigue en la sala y cuenta en las revisiones. Al autorizar, se retira, queda registrado en el historial de la sala y, si vuelve al almacén, se suma su unidad."
       pendientes={filas.length}
     >
       {isPending && <Cargando />}

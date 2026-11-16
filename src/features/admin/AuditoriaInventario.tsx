@@ -222,7 +222,8 @@ export function AuditoriaInventario(): React.ReactElement {
     <Seccion
       id="sec-auditoria"
       titulo="Duplicados y cifras del inventario"
-      texto="Dos filas que parecen el mismo aparato: misma sala, mismo tipo y mismo nombre base. Nacen cuando un dispositivo con el espejo atrasado vuelve a apuntar un equipo que ya existía. Fusionar no borra nada: el duplicado queda retirado, su serie y su modelo viajan al que se queda, y sus revisiones e incidencias se conservan."
+      texto="Equipos que parecen estar dos veces: misma sala, mismo tipo y mismo nombre."
+      detalle="Aparecen cuando un dispositivo con datos atrasados vuelve a registrar un equipo que ya existía. Fusionar no borra nada: el duplicado queda retirado, su número de serie y su modelo pasan al que se conserva, y sus revisiones e incidencias se mantienen."
       pendientes={pares?.length ?? 0}
     >
       {isPending && <Cargando texto="Buscando pares sospechosos…" />}

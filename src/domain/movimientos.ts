@@ -122,8 +122,8 @@ export function movimientosPrevistos(e: EntradaDeMovimientos): MovimientoPrevist
           cantidad: Math.abs(diferencia),
           nota:
             diferencia > 0
-              ? `la hoja dice ${dice} disponibles y el almacén tiene ${art.saldo}: manda el Excel, entran ${diferencia} como ajuste`
-              : `la hoja dice ${dice} disponibles y el almacén tiene ${art.saldo}: manda el Excel, salen ${-diferencia} como ajuste`,
+              ? `la hoja dice ${dice} disponibles y el almacén tiene ${art.saldo}: prevalece el Excel, entran ${diferencia} como ajuste`
+              : `la hoja dice ${dice} disponibles y el almacén tiene ${art.saldo}: prevalece el Excel, salen ${-diferencia} como ajuste`,
         })
         continue
       }

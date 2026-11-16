@@ -540,7 +540,7 @@ export function hojaDeLeeme(opciones: { cuando: string; anyo: number }): HojaNue
   entradas.push(
     [
       deEsteAnyo.bolsa,
-      `Un artículo por fila. «Total Comprado» se escribe a mano: lo que había al arrancar más lo comprado después. Los meses los escribe la aplicación sumando los partes. «Total Instalado» y «Stock Disponible» son fórmulas. La última columna es el otro nombre (alias) del artículo: de ahí salen los alias, no la reescribas. Si al sincronizar se elige «Manda el Excel», la aplicación ajusta su almacén al «Stock Disponible» de esta hoja. Un artículo retirado del almacén en la aplicación sale de esta hoja en la siguiente sincronización (el parte dice qué llevaba su fila); para volver a llevarlo, se restaura en Datos → Almacén.`,
+      `Un artículo por fila. «Total Comprado» se escribe a mano: lo que había al arrancar más lo comprado después. Los meses los escribe la aplicación sumando los partes. «Total Instalado» y «Stock Disponible» son fórmulas. La última columna es el otro nombre (alias) del artículo: de ahí salen los alias, no la reescribas. Si al sincronizar se elige «Prevalece el Excel», la aplicación ajusta su almacén al «Stock Disponible» de esta hoja. Un artículo retirado del almacén en la aplicación sale de esta hoja en la siguiente sincronización (el parte dice qué llevaba su fila); para volver a llevarlo, se restaura en Datos → Almacén.`,
     ],
     [
       deEsteAnyo.pcs,
@@ -568,7 +568,7 @@ export function hojaDeLeeme(opciones: { cuando: string; anyo: number }): HojaNue
     ],
     [
       'Hacer el libro de hoy',
-      'En la aplicación, Datos → Excel, la tarjeta «El libro para SharePoint» dice cuánto ha cambiado la aplicación desde el último libro. «Hacer el libro de hoy» lo pone al día con la base y lo deja listo para descargar, siempre con «Manda la aplicación»: la copia salió de la aplicación y no trae nada del Excel que pueda mandar. Para que mande el Excel hay que subir el libro de SharePoint de nuevo. Lo que la pasada preguntaría se deja como está y se dice cuántas cosas fueron.',
+      'En la aplicación, Datos → Excel, la tarjeta «El libro para SharePoint» dice cuánto ha cambiado la aplicación desde el último libro. «Hacer el libro de hoy» lo pone al día con la base y lo deja listo para descargar, siempre con «Prevalece la aplicación»: la copia salió de la aplicación y no trae nada del Excel que pueda prevalecer. Para que prevalezca el Excel hay que subir el libro de SharePoint de nuevo. Lo que la pasada preguntaría se deja como está y se dice cuántas cosas fueron.',
     ],
     [
       'Cambios…',

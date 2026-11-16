@@ -61,6 +61,8 @@ sesión— al pie de ese menú.
 - **Buscar con el edificio delante.** En el buscador del inicio puedes teclear
   el aviso tal como llega: `h 1.12`, `crai sala 3`. Pulsa «Ir» en el teclado y
   se abre el primer resultado. Al volver del aula, la búsqueda sigue ahí.
+  El buscador del **Historial** entiende lo mismo: «H 1.7» trae lo de esa aula
+  y «H» a secas, lo del edificio entero.
 - **Volver al sitio.** Al volver de un aula a la lista, la lista está donde la
   dejaste, no arriba del todo. Lo mismo al cambiar de pestaña y volver, y los
   filtros y búsquedas de cada pestaña se conservan mientras la aplicación siga

@@ -79,6 +79,12 @@ asigna la suya con dos toques. Cada asignación deja además ese texto como
 **alias** de la sala, así que la próxima importación —y el buscador— lo
 resuelven solos, y cierra su fila de cuarentena con autor.
 
+Cuando el texto ya dice qué sala es —«1.7 H», con un edificio y una sala que
+el maestro conoce—, el grupo llega con el edificio y la sala **propuestos**:
+solo queda comprobarlos y pulsar «Asignar». Si el edificio se reconoce y la
+sala no, se propone solo el edificio. Un código de edificio que el maestro no
+conoce («BC», «TM») no se adivina nunca: se elige a mano.
+
 Aquí caen también los partes que entran desde el Excel de SharePoint cuando,
 al sincronizar, se contesta «no es de ninguna sala»: llegan con el texto de
 aula que llevaba la fila y se colocan igual. Lo normal es contestarlo en la
@@ -898,8 +904,10 @@ de compra: hasta que se rellene, salen «sin datos», que es verdad.
 ### Entradas, traslados y bajas desde la ficha
 
 - **Registrar entrada** (arriba de la lista): un equipo nuevo que llega y se
-  instala. Solo el tipo y la sala son obligatorios; lo demás se puede rellenar
-  ya —con la factura delante— o después. Entra **validado** y deja su evento de
+  instala. Solo el tipo y la sala son obligatorios. A la vista quedan además el
+  número de serie y el de inventario; el resto —marca, modelo, compra, vida
+  útil, datos de ordenador— está detrás de **Más datos** y se puede rellenar ya
+  —con la factura delante— o después. Entra **validado** y deja su evento de
   alta en el histórico de la sala. El nombre en el aula, si no se escribe, es
   el del tipo («Proyector», y si ya hay uno, «Proyector 2»).
 - **Trasladar a otra sala**: el equipo cambia de sala, toma el siguiente nombre
@@ -1361,21 +1369,21 @@ aplicación sabe. El diseño entero está en
 [`sincronizacion-sharepoint.md`](sincronizacion-sharepoint.md); esto es lo que
 hay que saber para usarlo.
 
-**1 · Quién manda.** Antes de subir el libro se elige qué pasa cuando una celda
+**1 · Prioridad.** Antes de subir el libro se elige qué pasa cuando una celda
 es distinta en los dos lados y no se puede saber quién la cambió —la primera
 vez que se sincroniza un libro, y cuando la misma celda cambió en el Excel y en
 la aplicación—:
 
-- **Que decida una persona**: sale como choque y no se toca ninguno de los dos
+- **Decidir a mano**: sale como choque y no se toca ninguno de los dos
   lados. Es lo de siempre.
-- **Manda el Excel**: lo que dice la hoja entra en la aplicación. Para cuando
+- **Prevalece el Excel**: lo que dice la hoja entra en la aplicación. Para cuando
   se acaba de corregir el Excel a mano y es el inventario bueno. Con esta
   opción, además, el almacén de la aplicación **se cuadra con «Stock
   Disponible»** de la bolsa: la diferencia entre lo que la hoja calcula y lo
   que suma la base entra como un movimiento de ajuste con su nota, al final de
   la pasada, detrás de compras y salidas. Un disponible negativo no se cuadra
   —el almacén no baja de cero— y se avisa para revisar «Total Comprado».
-- **Manda la aplicación**: lo que dice la aplicación se escribe en la hoja.
+- **Prevalece la aplicación**: lo que dice la aplicación se escribe en la hoja.
   Para cuando el Excel lleva meses sin tocarse.
 
 Si solo cambió un lado, gana ese lado se elija lo que se elija: elegir «manda
@@ -1394,7 +1402,7 @@ mismo. Un parte cuya aula dice «Varias aulas», «Almacén» o «Sin aula» ent
 sin sala y no se pregunta: es un parte de regularización.
 
 **1c · El corte: desde un día manda la aplicación en lo que ella cambió.**
-Debajo de «quién manda» hay una fecha. Es para el caso más corriente: el libro
+Debajo de «Prioridad» hay una fecha (la fecha de corte). Es para el caso más corriente: el libro
 es el inventario de partida y lo trabajado en la aplicación desde la última
 sincronización —revisiones, partes cerrados, equipos instalados— tiene que
 quedarse aunque choque con la hoja. Con la fecha puesta (la pantalla recuerda
@@ -1442,9 +1450,9 @@ servidor sabe. Tampoco lo hace si después de esa copia ha habido otra
 sincronización desde otro aparato, o si el servidor no sabe decir cuál fue la
 última: aplicar la copia vieja devolvería la base a la foto de antes.
 **El libro de hoy se hace siempre con
-«Manda la aplicación»**, se haya elegido lo que se haya elegido arriba: la copia
+«Prevalece la aplicación»**, se haya elegido lo que se haya elegido arriba: la copia
 salió de la aplicación y no trae nada del Excel que pueda mandar. Si se ha
-elegido «Manda el Excel», la tarjeta no ofrece hacerlo y pide subir el libro de
+elegido «Prevalece el Excel», la tarjeta no ofrece hacerlo y pide subir el libro de
 SharePoint de nuevo por el selector, que es el único sitio de donde puede venir
 una corrección hecha en la hoja. Si el servidor conoce una salida posterior
 —alguien sincronizó después desde otro sitio— lo avisa antes de que lo subas; y
