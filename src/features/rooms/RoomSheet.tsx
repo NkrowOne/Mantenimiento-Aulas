@@ -199,6 +199,13 @@ interface Props {
    * toques para repetir un dato que esta pantalla ya tiene.
    */
   onHistorial?: () => void
+  /**
+   * Abrir la ficha con el formulario de incidencia ya desplegado y este tipo
+   * elegido. Lo trae quien viene de «Nueva incidencia o solicitud» en el
+   * inicio: allí ya dijo qué quería abrir, y hacerle pulsar otra vez el botón
+   * de esta pantalla sería preguntárselo dos veces.
+   */
+  abrirCon?: IncidentKind
 }
 
 /**
@@ -228,11 +235,12 @@ export function RoomSheet({
   onImprimir,
   onInventario,
   onHistorial,
+  abrirCon,
 }: Props): React.ReactElement {
   const qc = useQueryClient()
   const ayudaCodigoId = useId()
-  const [abierto, setAbierto] = useState(false)
-  const [kind, setKind] = useState<IncidentKind>('incidencia')
+  const [abierto, setAbierto] = useState(abrirCon !== undefined)
+  const [kind, setKind] = useState<IncidentKind>(abrirCon ?? 'incidencia')
   const [texto, setTexto] = useState('')
   const [codigo, setCodigo] = useState('')
   /** Se enseña al intentar guardar, no mientras se teclea. */
@@ -656,17 +664,9 @@ export function RoomSheet({
 
             {/* Los dos tipos, a la vista y sin desplegable: son dos y se elige
                 uno de pie. Un `select` aquí serían dos toques y una lista. */}
-            <div className="mt-2 flex gap-2">
+            <div role="group" aria-label="Tipo" className="segmento mt-2 grid w-full grid-cols-2">
               {TIPOS_REGISTRABLES.map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  aria-pressed={kind === k}
-                  onClick={() => setKind(k)}
-                  className={`key min-h-11 flex-1 px-2 text-xs ${
-                    kind === k ? 'key-accent' : 'key-quiet'
-                  }`}
-                >
+                <button key={k} type="button" aria-pressed={kind === k} onClick={() => setKind(k)}>
                   {INCIDENT_KIND_LABELS[k]}
                 </button>
               ))}
@@ -679,7 +679,7 @@ export function RoomSheet({
               /* El formulario se abre con un toque en «Incidencia o
                  solicitud» y lo siguiente es escribir: el cursor ya está. */
               autoFocus
-              placeholder="¿Qué ocurre? Opcional — se puede rellenar luego."
+              placeholder="Descripción. Opcional: se puede completar después."
               className="mt-3 w-full rounded-ctl border border-line bg-surface p-3 text-base"
             />
 
@@ -706,7 +706,7 @@ export function RoomSheet({
               <span aria-hidden className="text-lg leading-none">
                 +
               </span>
-              {guardandoFoto ? 'Procesando la foto…' : 'Añadir foto de lo que pasa (opcional)'}
+              {guardandoFoto ? 'Procesando la foto…' : 'Añadir foto (opcional)'}
             </button>
             {fotoError && <p className="mt-2 text-sm text-crit">{fotoError}</p>}
 
@@ -866,7 +866,7 @@ export function RoomSheet({
         */}
         <section aria-labelledby="sec-averias" className="mt-8">
           <div className="section-head">
-            <h2 id="sec-averias" className="eyebrow">Averías abiertas</h2>
+            <h2 id="sec-averias" className="eyebrow">Incidencias abiertas</h2>
             {abiertas.length > 0 && (
               <span className="font-mono text-xs text-crit">{abiertas.length}</span>
             )}
@@ -966,7 +966,7 @@ export function RoomSheet({
 
             {abiertas.length === 0 && (
               <li className="py-2 text-sm text-muted">
-                Nada abierto en esta sala ahora mismo.
+                No hay incidencias abiertas en esta sala.
               </li>
             )}
           </ul>

@@ -641,11 +641,11 @@ async function main(): Promise<void> {
   await shot('incidencias-con-borradores')
 
   // El parte de hoy: lo que se pasa a EasyVista al acabar la jornada.
-  await page.getByRole('button', { name: 'Hoy · para EasyVista' }).click()
+  await page.getByRole('button', { name: 'Parte diario' }).click()
   await page.waitForTimeout(1200)
   await shot('incidencias-parte-de-hoy')
   // Y la segunda sección, que queda por debajo del primer pantallazo.
-  await page.getByRole('heading', { name: /Ya en EasyVista/ }).scrollIntoViewIfNeeded()
+  await page.getByRole('heading', { name: /Registradas en EasyVista/ }).scrollIntoViewIfNeeded()
   await page.waitForTimeout(300)
   await shot('incidencias-parte-de-hoy-pasadas')
   await page.emulateMedia({ colorScheme: 'dark' })

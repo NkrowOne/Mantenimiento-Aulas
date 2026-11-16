@@ -504,7 +504,7 @@ ve un `admin`. Hay dos sitios y no es una duplicación:
 - **`Datos → Salas y edificios`** — el panel: la lista completa, el alta de
   edificios y la **papelera**. Cada fila —edificio, planta y sala— tiene su botón
   de acciones `⋯`.
-- **La lista de «Revisar»** — manteniendo pulsada la fila del edificio, la de la
+- **La lista de edificios, en «Inicio»** — manteniendo pulsada la fila del edificio, la de la
   sala o la cabecera de la planta, o pulsando su `⋯`. Ahí está lo mismo menos el
   alta de edificios y la papelera.
 
@@ -534,7 +534,7 @@ puerta; revisar sí, y revisar sigue funcionando sin red.
 equipamiento por defecto de su edificio. La planta se escribe tal cual —`1ª
 PLANTA`— y si ya existe se reutiliza: «1ª Planta» y «1ª PLANTA» no crean dos. Se
 añade desde las acciones del **edificio**: el `⋯` de su fila en el panel, o el
-botón `+ Sala` de la cabecera de su lista en «Revisar». Ahí no vale mantener
+botón `+ Sala` de la cabecera de su lista en «Inicio». Ahí no vale mantener
 pulsada una fila, porque la sala que se va a crear todavía no tiene ninguna.
 
 Los edificios se dan de alta solo desde el panel. El código es el sufijo con el
@@ -647,7 +647,7 @@ Para lo que no cabe en la pantalla, SQL directo. **Renombrar ya no está aquí**
 hacerlo con un `update` a mano se salta lo que hace la aplicación —dejar el
 código viejo de alias— y a partir de ahí las incidencias importadas de esa sala
 caen en cuarentena sin que nadie relacione una cosa con la otra. Usa la hoja de
-la sala, en el panel o en «Revisar».
+la sala, en el panel o en «Inicio».
 
 ```sql
 -- Corregir el equipamiento: es lo que decide qué comprobaciones aparecen
@@ -1563,7 +1563,7 @@ Tres cosas que deciden si funcionan o no:
 Y para leerlas hay dos caminos, los dos válidos:
 
 - **La cámara del móvil**, sin abrir nada antes. El QR es una URL.
-- **«Escanear el QR del aula»**, arriba de la pantalla de Revisar, para cuando
+- **El lector de QR**, en Inicio, a la derecha del buscador, para cuando
   ya se está dentro de la aplicación. Lleva linterna, que en un pasillo a
   oscuras es la diferencia entre leer y no leer.
 

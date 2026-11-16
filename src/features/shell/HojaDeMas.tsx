@@ -138,7 +138,7 @@ export function HojaDeMas({
         })}
 
       <section className="mt-4">
-        <h2 className="eyebrow px-1 pb-1.5">Este aparato</h2>
+        <h2 className="eyebrow px-1 pb-1.5">Este dispositivo</h2>
         <div className="overflow-hidden rounded-card border border-line-soft">
           {/* En dos renglones: el nombre y para qué sirve arriba, el selector
               debajo y a todo el ancho. En una sola fila, en un teléfono, las
@@ -147,7 +147,7 @@ export function HojaDeMas({
           <div className="px-3 py-3">
             <p className="font-medium">Tema</p>
             <p className="text-xs leading-snug text-muted">
-              El oscuro va bien en un aula con el proyector encendido.
+              El tema oscuro evita deslumbrar en un aula con el proyector encendido.
             </p>
             <div role="group" aria-label="Tema" className="segmento mt-2.5 flex w-full">
               {TEMAS.map((t) => (
@@ -178,10 +178,10 @@ export function HojaDeMas({
                 <Icono nombre="instalar" lado={20} />
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block font-medium">Instalar en este aparato</span>
+                <span className="block font-medium">Instalar en este dispositivo</span>
                 <span className="mt-0.5 block text-xs leading-snug text-muted">
-                  Un icono en la pantalla de inicio y sin la barra del navegador. Es la misma
-                  aplicación, con lo mismo dentro.
+                  Añade un icono a la pantalla de inicio y abre la aplicación sin la barra del
+                  navegador. Los datos son los mismos.
                 </span>
               </span>
             </button>
@@ -200,7 +200,7 @@ export function HojaDeMas({
         <span className="min-w-0 flex-1">
           <span className="block font-medium">Cerrar sesión</span>
           <span className="mt-0.5 block text-xs leading-snug text-muted">
-            Pide confirmación. Después hay que volver a teclear el PIN.
+            Se pedirá confirmación. Para volver a entrar hará falta el PIN.
           </span>
         </span>
       </button>

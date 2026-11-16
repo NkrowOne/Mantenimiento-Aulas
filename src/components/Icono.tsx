@@ -23,6 +23,12 @@
 
 const TRAZOS = {
   // Navegación principal.
+  inicio: (
+    <>
+      <path d="M4 11.5 12 4.5l8 7" />
+      <path d="M6 10v8.5a1 1 0 0 0 1 1h3.25v-5.5h3.5v5.5H17a1 1 0 0 0 1-1V10" />
+    </>
+  ),
   revisar: (
     <>
       <rect x="5" y="4.5" width="14" height="16" rx="2.5" />
