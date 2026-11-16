@@ -596,6 +596,14 @@ versión nueva», pulsarla la instala ya; «Ahora no» solo la aplaza hasta que
 guardes el iPad. Y en la lámpara de estado tienes **Buscar versión nueva** para
 comprobarlo cuando quieras.
 
+Al pulsar **Actualizar** el botón pasa a decir «Actualizando…» y en unos
+segundos la aplicación se recarga ya con la versión nueva, en el mismo sitio en
+el que estabas. Si dice «Sin conexión con el servidor», no ha cambiado nada:
+busca cobertura y pulsa «Reintentar». Si alguna vez no cambia de versión,
+cierra la aplicación del todo y ábrela otra vez; y si tampoco, haz una captura
+del panel de la lámpara —debajo de la versión dice cómo acabó el último
+intento— y pásala.
+
 **¿Y si pierdo el iPad?**
 Avisa a administración cuanto antes para dar de baja el dispositivo. Si habías
 cerrado sesión, sin tu PIN no se puede entrar; si lo perdiste con la sesión
