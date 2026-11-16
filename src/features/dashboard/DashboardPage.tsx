@@ -83,6 +83,9 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
      * recorra por secciones en vez de leerse entera de arriba abajo.
      */
     <div className="mx-auto max-w-5xl space-y-8 p-4">
+      {/* Su título, como las demás pantallas: el Panel era la única que
+          empezaba directamente por una sección, sin decir dónde se estaba. */}
+      <h1 className="-mb-3 text-2xl font-bold tracking-tight">Panel</h1>
       <section aria-labelledby="sec-situacion">
         <div className="section-head">
           <h2 id="sec-situacion" className="eyebrow">
@@ -174,55 +177,13 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
         </section>
       )}
 
-      <section aria-labelledby="sec-graficos">
-        <div className="section-head">
-          <h2 id="sec-graficos" className="eyebrow">
-            Evolución
-          </h2>
-        </div>
-        <div className="grid gap-4 lg:grid-cols-2">
-        <div className="card p-4">
-          <h3 className="mb-1 font-semibold">Incidencias por edificio</h3>
-          <p className="mb-3 text-xs text-muted">Histórico</p>
-          <ReactEChartsCore
-            echarts={echarts}
-            style={{ height: 260 }}
-            option={{
-              ...baseOption(),
-              xAxis: {
-                ...(baseOption()['xAxis'] as object),
-                type: 'category',
-                data: (byBuilding ?? []).map((r) => r.code),
-              },
-              yAxis: { ...(baseOption()['yAxis'] as object), type: 'value' },
-              series: [barSeries('Incidencias', (byBuilding ?? []).map((r) => r.total), 0)],
-            }}
-            notMerge
-          />
-        </div>
-
-        <div className="card p-4">
-          <h3 className="mb-1 font-semibold">Incidencias abiertas por mes</h3>
-          <p className="mb-3 text-xs text-muted">Últimos 12 meses</p>
-          <ReactEChartsCore
-            echarts={echarts}
-            style={{ height: 260 }}
-            option={{
-              ...baseOption(),
-              xAxis: {
-                ...(baseOption()['xAxis'] as object),
-                type: 'category',
-                data: (byMonth ?? []).map((r) => r.month),
-              },
-              yAxis: { ...(baseOption()['yAxis'] as object), type: 'value' },
-              series: [lineSeries('Aperturas', (byMonth ?? []).map((r) => r.total), 1)],
-            }}
-            notMerge
-          />
-        </div>
-        </div>
-      </section>
-
+      {/*
+        Las alertas, antes que los gráficos.
+        Estaban al final, debajo de dos gráficos de una pantalla de alto cada
+        uno: lo que pide hacer algo —una lámpara al cinco por ciento, una
+        incidencia que lleva tres semanas— había que ir a buscarlo, y lo que
+        solo se mira —cómo fue el año— estaba delante.
+      */}
       <section id="sec-lamparas" className="scroll-mt-4">
         <div className="section-head">
           <h2 className="eyebrow">Alertas</h2>
@@ -288,6 +249,55 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
             </li>
           ))}
         </ul>
+        </div>
+      </section>
+
+      <section aria-labelledby="sec-graficos">
+        <div className="section-head">
+          <h2 id="sec-graficos" className="eyebrow">
+            Evolución
+          </h2>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="card p-4">
+          <h3 className="mb-1 font-semibold">Incidencias por edificio</h3>
+          <p className="mb-3 text-xs text-muted">Histórico</p>
+          <ReactEChartsCore
+            echarts={echarts}
+            style={{ height: 260 }}
+            option={{
+              ...baseOption(),
+              xAxis: {
+                ...(baseOption()['xAxis'] as object),
+                type: 'category',
+                data: (byBuilding ?? []).map((r) => r.code),
+              },
+              yAxis: { ...(baseOption()['yAxis'] as object), type: 'value' },
+              series: [barSeries('Incidencias', (byBuilding ?? []).map((r) => r.total), 0)],
+            }}
+            notMerge
+          />
+        </div>
+
+        <div className="card p-4">
+          <h3 className="mb-1 font-semibold">Incidencias abiertas por mes</h3>
+          <p className="mb-3 text-xs text-muted">Últimos 12 meses</p>
+          <ReactEChartsCore
+            echarts={echarts}
+            style={{ height: 260 }}
+            option={{
+              ...baseOption(),
+              xAxis: {
+                ...(baseOption()['xAxis'] as object),
+                type: 'category',
+                data: (byMonth ?? []).map((r) => r.month),
+              },
+              yAxis: { ...(baseOption()['yAxis'] as object), type: 'value' },
+              series: [lineSeries('Aperturas', (byMonth ?? []).map((r) => r.total), 1)],
+            }}
+            notMerge
+          />
+        </div>
         </div>
       </section>
     </div>

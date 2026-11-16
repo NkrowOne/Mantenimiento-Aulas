@@ -25,7 +25,7 @@ export type Tema = 'sistema' | 'claro' | 'oscuro'
 const CLAVE = 'aulas-tema'
 
 /** El color de la barra del sistema en cada tema: el de los `meta` de `index.html`. */
-const BARRA = { claro: '#046A78', oscuro: '#101214' } as const
+const BARRA = { claro: '#046A78', oscuro: '#0A0C0E' } as const
 
 const oyentes = new Set<() => void>()
 

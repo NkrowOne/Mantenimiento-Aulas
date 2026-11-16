@@ -328,8 +328,8 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
 
   return (
     <div className="mx-auto max-w-4xl p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold tracking-tight">Almacén</h1>
+      <div className="flex items-center justify-between gap-2">
+        <h1 className="min-w-0 truncate text-2xl font-bold tracking-tight">Almacén</h1>
         {/* El Excel y el PDF están al final de la lista, debajo de todos los
             artículos: este botón baja hasta ahí sin tener que recorrerla. */}
         <button
@@ -339,10 +339,16 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
               .getElementById('exportar-almacen')
               ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
           }
-          className="key-ghost ml-auto inline-flex min-h-11 shrink-0 items-center gap-1.5 px-2.5 text-sm"
+          /* En un teléfono estrecho, solo el icono. Con el texto, la cabecera
+             medía 380 px —título, este botón y «Nuevo artículo»— y en un
+             Android de 360 o un iPhone SE de 375 el último botón se salía por
+             la derecha y toda la pantalla se podía arrastrar de lado. */
+          aria-label="Exportar a Excel y PDF"
+          title="Exportar a Excel y PDF"
+          className="key-ghost ml-auto inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 px-2.5 text-sm"
         >
           <Icono nombre="instalar" lado={18} />
-          Excel y PDF
+          <span className="hidden min-[430px]:inline">Excel y PDF</span>
         </button>
         {esAdmin && (
           <button
@@ -490,7 +496,10 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
       )}
 
       {filas.length > 0 && (
-        <ul className="mt-3 divide-y divide-line-soft">
+        /* En tarjeta, como el resto de las listas: iba suelta sobre el fondo,
+           con los filetes de borde a borde del texto y sin nada que dijera
+           dónde empezaba y dónde acababa. */
+        <ul className="card mt-3 divide-y divide-line-soft overflow-hidden">
           {filas.map((l) => (
             <FilaDeArticulo
               key={l.stock_item_id}
@@ -510,7 +519,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
         <button
           type="button"
           onClick={() => setAbierta({ articulo: null })}
-          className="mt-2 flex min-h-14 w-full items-center gap-3 border-t border-line-soft py-2 text-left"
+          className="card fila mt-2 flex min-h-14 w-full items-center gap-3 px-4 py-2 text-left"
         >
           <span className="min-w-0 flex-1">
             <span className="block text-[0.9375rem] font-medium">Unidades sin artículo</span>
@@ -647,7 +656,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
             type="button"
             onClick={() => setVerRetirados((v) => !v)}
             aria-expanded={verRetirados}
-            className="min-h-11 text-sm text-accent underline-offset-4 hover:underline"
+            className="key-ghost -ml-2.5 inline-flex min-h-11 items-center px-2.5 text-sm"
           >
             {verRetirados ? 'Ocultar los artículos retirados' : 'Ver los artículos retirados'}
           </button>
@@ -767,12 +776,12 @@ function FilaDeArticulo({
   const soloAveriadas = porCantidad && l.on_hand > 0 && deCual === null
 
   return (
-    <li className="flex items-center gap-2">
+    <li className="flex items-center gap-2 pr-3">
       <button
         type="button"
         onClick={onAbrir}
         aria-haspopup="dialog"
-        className="flex min-h-14 min-w-0 flex-1 items-center gap-3 py-2 text-left"
+        className="fila flex min-h-14 min-w-0 flex-1 items-center gap-3 py-2 pl-4 text-left"
       >
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[0.9375rem] font-medium">{l.name}</span>

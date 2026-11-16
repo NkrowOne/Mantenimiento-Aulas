@@ -26,6 +26,7 @@ export function CodigoEasyVista({
   codigo,
   className = 'mt-2',
   claseAlEditar,
+  corto = false,
 }: {
   incidentId: string
   /** El que tiene ahora, o nulo. */
@@ -47,6 +48,13 @@ export function CodigoEasyVista({
    * de «Resolver».
    */
   claseAlEditar?: string
+  /**
+   * La etiqueta corta, «EasyVista», para una fila de TRES acciones. En un
+   * teléfono cada botón mide ahí unos cien píxeles, y «Código EasyVista» no
+   * cabe en uno sin partirse. Qué hace lo sigue diciendo el `aria-label`, y la
+   * línea de datos de encima enseña el código cuando lo hay.
+   */
+  corto?: boolean
 }): React.ReactElement {
   const qc = useQueryClient()
   const ayudaId = useId()
@@ -89,7 +97,13 @@ export function CodigoEasyVista({
           guardar.reset()
           setEditando(true)
         }}
-        aria-label={codigo ? `Cambiar el código de EasyVista, ahora ${codigo}` : undefined}
+        aria-label={
+          codigo
+            ? `Cambiar el código de EasyVista, ahora ${codigo}`
+            : corto
+              ? 'Añadir el código de EasyVista'
+              : undefined
+        }
         className={`key key-quiet min-h-11 px-3 text-xs ${className}`}
       >
         {/*
@@ -101,7 +115,7 @@ export function CodigoEasyVista({
           el botón no añadía nada y le daba a la tecla el ancho de media
           pantalla, que es lo que descuadraba la barra de acciones.
         */}
-        {codigo ? 'Cambiar código' : 'Código EasyVista'}
+        {corto ? 'EasyVista' : codigo ? 'Cambiar código' : 'Código EasyVista'}
       </button>
     )
   }

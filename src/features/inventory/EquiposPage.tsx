@@ -208,7 +208,10 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
             />
           )}
 
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          {/* Los cuatro filtros, de dos en dos también en un teléfono. Apilados
+              eran cuatro desplegables a todo el ancho, uno debajo de otro: media
+              pantalla antes de llegar al primer equipo. */}
+          <div className="mt-4 grid grid-cols-2 gap-2">
             <input
               type="search"
               value={filtro.consulta}
@@ -221,13 +224,13 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
               autoCorrect="off"
               autoComplete="off"
               spellCheck={false}
-              className="h-11 rounded-ctl border border-line bg-surface px-3 text-base sm:col-span-2"
+              className="col-span-2 h-11 rounded-ctl border border-line bg-surface px-3 text-base"
             />
             <select
               value={filtro.tipo}
               onChange={(e) => poner('tipo', e.target.value)}
               aria-label="Tipo de equipo"
-              className="h-11 rounded-ctl border border-line bg-surface px-2 text-base"
+              className="h-11 min-w-0 rounded-ctl border border-line bg-surface px-2 text-base"
             >
               <option value="">Todos los tipos</option>
               {tiposConEquipos.map(([id, nombre]) => (
@@ -240,7 +243,7 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
               value={filtro.edificio}
               onChange={(e) => poner('edificio', e.target.value)}
               aria-label="Edificio"
-              className="h-11 rounded-ctl border border-line bg-surface px-2 text-base"
+              className="h-11 min-w-0 rounded-ctl border border-line bg-surface px-2 text-base"
             >
               <option value="">Todos los edificios</option>
               {(maestro?.edificios ?? []).map((b) => (
@@ -253,7 +256,7 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
               value={filtro.estado}
               onChange={(e) => poner('estado', e.target.value as FiltroDeEquipos['estado'])}
               aria-label="Estado"
-              className="h-11 rounded-ctl border border-line bg-surface px-2 text-base"
+              className="h-11 min-w-0 rounded-ctl border border-line bg-surface px-2 text-base"
             >
               <option value="activos">En las aulas (instalados y averiados)</option>
               <option value="instalado">Solo instalados</option>
@@ -265,7 +268,7 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
               value={filtro.vida}
               onChange={(e) => poner('vida', e.target.value as FiltroDeEquipos['vida'])}
               aria-label="Vida útil"
-              className="h-11 rounded-ctl border border-line bg-surface px-2 text-base"
+              className="h-11 min-w-0 rounded-ctl border border-line bg-surface px-2 text-base"
             >
               <option value="todas">Cualquier vida útil</option>
               <option value="obsoleto">Obsoletos</option>
