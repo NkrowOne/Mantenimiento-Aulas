@@ -46,7 +46,7 @@ import { nivelar } from '@/lib/historial'
 import { ID_CONTENIDO } from '@/lib/viewport'
 import { pedirInstalar, useSePuedeInstalar } from '@/lib/instalar'
 import type { SealedSession } from '@/auth/pin'
-import type { Building, Role, Room } from '@/domain/types'
+import type { Building, IncidentKind, Role, Room } from '@/domain/types'
 import type { Seccion as SeccionDeDatos } from '@/features/admin/CleanupPage'
 import { HojaDeMas } from '@/features/shell/HojaDeMas'
 import { BarraDePestanas, MarcaDeLaApp, MenuLateral } from '@/features/shell/Navegacion'
@@ -229,7 +229,18 @@ type RoomView =
    * quien consultaba la ficha a media corrección aterrizaba en una revisión
    * vacía de la misma sala, con la corrección perdida por el camino.
    */
-  | { name: 'ficha'; building: Building; room: Room; volverA: OrigenDeFicha }
+  | {
+      name: 'ficha'
+      building: Building
+      room: Room
+      volverA: OrigenDeFicha
+      /**
+       * Abrir la ficha con el formulario de incidencia ya desplegado y con este
+       * tipo puesto. Es como llega quien pulsa «Nueva incidencia o solicitud»
+       * en el inicio: ya ha dicho qué quiere abrir y dónde.
+       */
+      registrar?: IncidentKind
+    }
   | {
       name: 'ficha'
       building: Building
@@ -954,9 +965,7 @@ export function App(): React.ReactElement {
     }
   }
 
-  /** El nombre de pila, para el saludo: «Ana Ruiz» → «Ana». */
   const nombre = sealed?.hint.fullName ?? ''
-  const nombreDePila = nombre.trim().split(/\s+/)[0] ?? ''
 
   /*
    * Cambiar de sección. Una sola función para la barra, el menú lateral y la
@@ -1157,7 +1166,6 @@ export function App(): React.ReactElement {
       {tab === 'revisar' && view.name === 'edificios' && (
         <EdificiosPage
           role={role}
-          nombre={nombreDePila}
           diagnostico={diagnostico}
           onReintentar={() => void pullMaster().then(setDiagnostico)}
           onEscanear={() => {
@@ -1170,6 +1178,10 @@ export function App(): React.ReactElement {
           /* Directo al formulario, que es donde estaba. Se abre «desde la
              ficha» y con origen en esta pantalla para que tanto «Volver» como
              «Guardar» acaben devolviendo aquí. */
+          onIncidencias={() => setTab('incidencias')}
+          onNuevaIncidencia={(building, room, tipo) =>
+            setView({ name: 'ficha', building, room, volverA: 'edificios', registrar: tipo })
+          }
           onContinuar={(building, room) =>
             setView({ name: 'revision', building, room, desdeFicha: true, origen: 'edificios' })
           }
@@ -1291,7 +1303,13 @@ export function App(): React.ReactElement {
 
       {tab === 'revisar' && view.name === 'ficha' && (
         <RoomSheet
+          /* Con la sala en la clave: la ficha guarda dentro el formulario de
+             incidencia, y sin esto pasar de un aula a otra sin salir de la
+             pantalla —el buscador, un QR— arrastraría lo tecleado en la
+             anterior. */
+          key={view.room.id}
           room={view.room}
+          abrirCon={view.volverA !== 'revision' ? view.registrar : undefined}
           buildingName={view.building.name}
           zoneName={zoneName}
           userId={userId}

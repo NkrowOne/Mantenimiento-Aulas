@@ -25,6 +25,7 @@ export function CodigoEasyVista({
   incidentId,
   codigo,
   className = 'mt-2',
+  claseAlEditar,
 }: {
   incidentId: string
   /** El que tiene ahora, o nulo. */
@@ -38,6 +39,14 @@ export function CodigoEasyVista({
    * abajo que sus compañeros.
    */
   className?: string
+  /**
+   * Las clases del formulario, cuando no pueden ser las del botón. En una fila
+   * de acciones el botón reparte el ancho con su vecino (`flex-1`), pero el
+   * formulario que lo sustituye al pulsarlo tiene que ocupar la fila entera
+   * (`basis-full`): con las mismas clases quedaría medio campo de texto al lado
+   * de «Resolver».
+   */
+  claseAlEditar?: string
 }): React.ReactElement {
   const qc = useQueryClient()
   const ayudaId = useId()
@@ -92,14 +101,14 @@ export function CodigoEasyVista({
           el botón no añadía nada y le daba a la tecla el ancho de media
           pantalla, que es lo que descuadraba la barra de acciones.
         */}
-        {codigo ? 'EasyVista · cambiar' : 'Poner el código de EasyVista'}
+        {codigo ? 'Cambiar código' : 'Código EasyVista'}
       </button>
     )
   }
 
   return (
     <form
-      className={`w-full rounded-ctl border border-line bg-raised p-3 ${className}`}
+      className={`w-full rounded-ctl border border-line bg-raised p-3 ${claseAlEditar ?? className}`}
       onSubmit={(e) => {
         e.preventDefault()
         setTocado(true)

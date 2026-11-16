@@ -335,7 +335,7 @@ export function ParteDeHoy({
           [
             ['Abiertas hoy', resumen.abiertas, 'text-crit'],
             ['Cerradas hoy', resumen.cerradas, 'text-ok'],
-            ['Por pasar a EasyVista', resumen.porPasar, resumen.porPasar > 0 ? 'text-warn' : 'text-ok'],
+            ['Sin registrar en EasyVista', resumen.porPasar, resumen.porPasar > 0 ? 'text-warn' : 'text-ok'],
           ] as const
         ).map(([nombre, cifra, color]) => (
           <div key={nombre} className="card flex flex-col-reverse px-2 py-3">
@@ -382,10 +382,10 @@ export function ParteDeHoy({
 
       {porPasar.length > 0 && (
         <section className="mt-5">
-          <h2 className="eyebrow">Falta pasarlas a EasyVista · {porPasar.length}</h2>
+          <h2 className="eyebrow">Pendientes de EasyVista · {porPasar.length}</h2>
           <p className="mt-1 text-xs text-muted">
-            Copia, pega en EasyVista y apunta aquí el código que te dé. Al guardarlo, la
-            incidencia baja a «Ya en EasyVista».
+            Copia el texto, pégalo en EasyVista y anota aquí el código asignado. Al guardarlo, la
+            incidencia pasa a «Registradas en EasyVista».
           </p>
           <ul className="mt-2 space-y-3">{porPasar.map(fila)}</ul>
         </section>
@@ -393,17 +393,17 @@ export function ParteDeHoy({
 
       {filas.length > 0 && porPasar.length === 0 && (
         <p className="mt-5 rounded-ctl bg-ok-tint px-3 py-2 text-sm text-ok">
-          Todo lo de {esHoy ? 'hoy' : 'ese día'} tiene ya su código de EasyVista.
+          Todas las incidencias de {esHoy ? 'hoy' : 'ese día'} tienen su código de EasyVista.
         </p>
       )}
 
       {pasadas.length > 0 && (
         <section className="mt-6">
-          <h2 className="eyebrow">Ya en EasyVista · {pasadas.length}</h2>
+          <h2 className="eyebrow">Registradas en EasyVista · {pasadas.length}</h2>
           {/* Siguen aquí porque una abierta que ya tiene ticket puede haberse
               cerrado después: el estado dice si toca cerrarla también allí. */}
           <p className="mt-1 text-xs text-muted">
-            Mira el estado: si pone «Resuelta», recuerda cerrarla también en EasyVista.
+            Comprueba el estado: si figura como «Resuelta», hay que cerrarla también en EasyVista.
           </p>
           <ul className="mt-2 space-y-3">{pasadas.map(fila)}</ul>
         </section>

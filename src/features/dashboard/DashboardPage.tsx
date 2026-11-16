@@ -96,22 +96,22 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
             detail={`${pct}% de ${s.roomsTotal}`}
             tone={pct >= 25 ? 'ok' : 'aviso'}
             onClick={ir.revisar}
-            accion={pct >= 100 ? 'Ver la ronda' : 'Seguir la ronda'}
+            accion={pct >= 100 ? 'Ver la ronda' : 'Continuar la ronda'}
           />
           <StatTile
             label="Incidencias abiertas"
             value={s.openIncidents}
-            detail={s.staleIncidents > 0 ? `${s.staleIncidents} estancadas` : undefined}
+            detail={s.staleIncidents > 0 ? `${s.staleIncidents} con más de 7 días` : undefined}
             tone={s.staleIncidents > 0 ? 'critico' : s.openIncidents > 0 ? 'aviso' : 'ok'}
             onClick={ir.incidencias}
-            accion={s.openIncidents > 0 ? 'Atenderlas' : 'Ver el histórico'}
+            accion={s.openIncidents > 0 ? 'Ver incidencias' : 'Ver el histórico'}
           />
           <StatTile
             label="Salas con problemas"
             value={s.roomsWithProblems}
             tone={s.roomsWithProblems > 0 ? 'aviso' : 'ok'}
             onClick={ir.incidencias}
-            accion={s.roomsWithProblems > 0 ? 'Ver cuáles' : 'Ver incidencias'}
+            accion={s.roomsWithProblems > 0 ? 'Ver detalle' : 'Ver incidencias'}
           />
           {/*
             Esta no cambia de pestaña: la lista de lámparas está más abajo, en
@@ -130,7 +130,7 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
                       ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
                 : undefined
             }
-            accion={s.lampAlerts > 0 ? 'Cuáles y cuánto' : undefined}
+            accion={s.lampAlerts > 0 ? 'Ver detalle' : undefined}
           />
         </div>
       </section>
@@ -166,10 +166,10 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
       */}
       {s.roomsUninventoried > 0 && (
         <section className="card p-4">
-          <h2 className="font-semibold">Inventario por levantar</h2>
+          <h2 className="font-semibold">Inventario pendiente de verificar</h2>
           <p className="mt-1 text-sm text-muted">
-            {s.roomsUninventoried} de {s.roomsTotal} salas sin que nadie haya confirmado qué hay
-            dentro. Se resuelve desde la ficha de la sala, en «Equipos de la sala».
+            {s.roomsUninventoried} de {s.roomsTotal} salas sin inventario confirmado. Se verifica
+            desde la ficha de la sala, en «Equipos de la sala».
           </p>
         </section>
       )}
@@ -177,7 +177,7 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
       <section aria-labelledby="sec-graficos">
         <div className="section-head">
           <h2 id="sec-graficos" className="eyebrow">
-            Cómo viene el año
+            Evolución
           </h2>
         </div>
         <div className="grid gap-4 lg:grid-cols-2">
@@ -225,10 +225,10 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
 
       <section id="sec-lamparas" className="scroll-mt-4">
         <div className="section-head">
-          <h2 className="eyebrow">Lo que va a dar guerra</h2>
+          <h2 className="eyebrow">Alertas</h2>
         </div>
         <div className="card p-4">
-        <h3 className="font-semibold">Lámparas que van a fundirse</h3>
+        <h3 className="font-semibold">Lámparas próximas a agotarse</h3>
         <p className="mb-3 text-xs text-muted">
           Por debajo del {LAMP_ALERT_THRESHOLD * 100} % de vida restante
         </p>
@@ -268,7 +268,7 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
         </div>
 
         <div className="card mt-4 p-4">
-        <h3 className="font-semibold">Incidencias estancadas</h3>
+        <h3 className="font-semibold">Incidencias sin resolver</h3>
         <p className="mb-3 text-xs text-muted">Más de 7 días abiertas</p>
 
         {stale?.length === 0 && <p className="text-sm text-muted">Ninguna estancada.</p>}

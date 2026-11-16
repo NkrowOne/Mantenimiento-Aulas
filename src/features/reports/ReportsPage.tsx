@@ -374,9 +374,9 @@ export function ReportsPage(): React.ReactElement {
       <header>
         <h1 className="text-2xl font-bold tracking-tight">Informes</h1>
         <p className="mt-1 text-sm text-muted">
-          El informe se arma aquí mismo con los datos del periodo que elijas, y sale listo para
-          imprimir o guardar como PDF. Queda archivado, y un informe emitido no se regenera: se
-          emite otro y los dos quedan.
+          El informe se genera con los datos del periodo elegido, listo para imprimir o guardar
+          como PDF, y queda archivado. Un informe emitido no se modifica: se emite uno nuevo y se
+          conservan los dos.
         </p>
       </header>
 
@@ -386,16 +386,22 @@ export function ReportsPage(): React.ReactElement {
         {/* ── Periodo ── */}
         <div className="mt-3">
           <span className="eyebrow">Periodo</span>
-          <div className="mt-2 flex flex-wrap gap-2">
+          {/*
+            En rejilla de dos columnas, y no en teclas que saltan de línea.
+            Sueltas, los seis periodos caían en tres filas de anchos distintos
+            —dos, tres y uno— y había que leerlos todos para dar con uno. En dos
+            columnas el propio sitio los ordena: a la izquierda lo que está en
+            curso, a la derecha lo pasado; una fila para la semana, otra para el
+            mes, y la última para lo que se sale de eso. El orden de `PRESETS`
+            ya era este; lo que faltaba era que se viera.
+          */}
+          <div role="group" aria-label="Periodo" className="opciones mt-2">
             {PRESETS.map((p) => (
               <button
                 key={p.id}
                 type="button"
                 onClick={() => setPreset(p.id)}
                 aria-pressed={preset === p.id}
-                className={`key min-h-11 px-3 text-sm ${
-                  preset === p.id ? 'key-accent' : 'key-quiet'
-                }`}
               >
                 {p.etiqueta}
               </button>
@@ -404,9 +410,6 @@ export function ReportsPage(): React.ReactElement {
               type="button"
               onClick={() => setPreset('medida')}
               aria-pressed={preset === 'medida'}
-              className={`key min-h-11 px-3 text-sm ${
-                preset === 'medida' ? 'key-accent' : 'key-quiet'
-              }`}
             >
               Otras fechas
             </button>
@@ -460,10 +463,13 @@ export function ReportsPage(): React.ReactElement {
           type="button"
           onClick={() => setAjustes((v) => !v)}
           aria-expanded={ajustes}
-          className="key key-quiet mt-4 min-h-11 px-3 text-sm"
+          /* A todo el ancho en un teléfono, como el botón de generar que tiene
+             debajo: dos botones de anchos distintos, uno encima del otro y los
+             dos pegados a la izquierda, eran otro escalón en la misma tarjeta. */
+          className="key key-quiet mt-4 flex min-h-11 w-full flex-wrap items-center justify-between gap-x-3 gap-y-0.5 px-3 py-2 text-left text-sm sm:w-auto sm:justify-start"
         >
-          {ajustes ? 'Ocultar los ajustes' : 'Ajustar qué lleva'}
-          <span className="ml-2 text-muted">
+          {ajustes ? 'Ocultar las opciones' : 'Contenido del informe'}
+          <span className="text-muted">
             {secciones.length} de {ofrecidas.length} secciones
             {conIA ? ' · con IA' : ' · sin IA'}
           </span>
@@ -546,16 +552,13 @@ export function ReportsPage(): React.ReactElement {
 
               <div className="mt-4">
                 <span className="text-sm text-muted">Escrito para</span>
-                <div className="mt-1 flex flex-wrap gap-2">
+                <div role="group" aria-label="Escrito para" className="segmento mt-1 grid w-full grid-cols-2">
                   {AUDIENCIAS.map((a) => (
                     <button
                       key={a.clave}
                       type="button"
                       onClick={() => elegirAudiencia(a.clave)}
                       aria-pressed={audiencia === a.clave}
-                      className={`key min-h-11 px-3 text-sm ${
-                        audiencia === a.clave ? 'key-accent' : 'key-quiet'
-                      }`}
                       title={a.detalle}
                     >
                       {a.etiqueta}
@@ -626,14 +629,14 @@ export function ReportsPage(): React.ReactElement {
           </div>
         )}
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
+        <div className="mt-3 flex flex-wrap items-center gap-3">
           <button
             type="button"
             disabled={impedimento !== null || generar.isPending}
             onClick={() => generar.mutate()}
-            className="key key-accent min-h-11 px-4 text-sm"
+            className="key key-accent min-h-touch w-full px-4 sm:w-auto sm:min-w-40"
           >
-            {generar.isPending ? 'Generando…' : 'Generar'}
+            {generar.isPending ? 'Generando…' : 'Generar informe'}
           </button>
           {/* El motivo, a la vista: un botón apagado sin explicación deja a quien
               lo mira buscando qué le falta. */}

@@ -234,21 +234,23 @@ export function UsersPage({ yo }: { yo: string | null }): React.ReactElement {
                   aria-label={`Rol de ${p.full_name}`}
                   className="mt-2.5 flex flex-wrap gap-2"
                 >
-                  {ROLES.map((r) => (
-                    <button
-                      key={r.value}
-                      type="button"
-                      aria-pressed={p.role === r.value}
-                      title={r.que}
-                      disabled={cambiar.isPending || (ultimoAdmin && r.value !== 'admin')}
-                      onClick={() => cambiar.mutate({ id: p.id, patch: { role: r.value } })}
-                      className={`key min-h-11 px-3 text-xs ${
-                        p.role === r.value ? 'key-accent' : 'key-quiet text-muted'
-                      }`}
-                    >
-                      {r.label}
-                    </button>
-                  ))}
+                  {/* Los tres roles, en un selector: son una sola elección, y
+                      como teclas sueltas se confundían con los botones de
+                      acción que van a su lado. */}
+                  <div className="segmento">
+                    {ROLES.map((r) => (
+                      <button
+                        key={r.value}
+                        type="button"
+                        aria-pressed={p.role === r.value}
+                        title={r.que}
+                        disabled={cambiar.isPending || (ultimoAdmin && r.value !== 'admin')}
+                        onClick={() => cambiar.mutate({ id: p.id, patch: { role: r.value } })}
+                      >
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
 
                   {/* Solo a quien está de alta: un código para alguien de baja
                       es una llave que no debería existir, y el servidor lo

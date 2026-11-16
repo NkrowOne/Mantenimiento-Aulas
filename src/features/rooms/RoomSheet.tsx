@@ -199,6 +199,13 @@ interface Props {
    * toques para repetir un dato que esta pantalla ya tiene.
    */
   onHistorial?: () => void
+  /**
+   * Abrir la ficha con el formulario de incidencia ya desplegado y este tipo
+   * elegido. Lo trae quien viene de «Nueva incidencia o solicitud» en el
+   * inicio: allí ya dijo qué quería abrir, y hacerle pulsar otra vez el botón
+   * de esta pantalla sería preguntárselo dos veces.
+   */
+  abrirCon?: IncidentKind
 }
 
 /**
@@ -228,11 +235,12 @@ export function RoomSheet({
   onImprimir,
   onInventario,
   onHistorial,
+  abrirCon,
 }: Props): React.ReactElement {
   const qc = useQueryClient()
   const ayudaCodigoId = useId()
-  const [abierto, setAbierto] = useState(false)
-  const [kind, setKind] = useState<IncidentKind>('incidencia')
+  const [abierto, setAbierto] = useState(abrirCon !== undefined)
+  const [kind, setKind] = useState<IncidentKind>(abrirCon ?? 'incidencia')
   const [texto, setTexto] = useState('')
   const [codigo, setCodigo] = useState('')
   /** Se enseña al intentar guardar, no mientras se teclea. */
@@ -656,17 +664,9 @@ export function RoomSheet({
 
             {/* Los dos tipos, a la vista y sin desplegable: son dos y se elige
                 uno de pie. Un `select` aquí serían dos toques y una lista. */}
-            <div className="mt-2 flex gap-2">
+            <div role="group" aria-label="Tipo" className="segmento mt-2 grid w-full grid-cols-2">
               {TIPOS_REGISTRABLES.map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  aria-pressed={kind === k}
-                  onClick={() => setKind(k)}
-                  className={`key min-h-11 flex-1 px-2 text-xs ${
-                    kind === k ? 'key-accent' : 'key-quiet'
-                  }`}
-                >
+                <button key={k} type="button" aria-pressed={kind === k} onClick={() => setKind(k)}>
                   {INCIDENT_KIND_LABELS[k]}
                 </button>
               ))}
@@ -679,7 +679,7 @@ export function RoomSheet({
               /* El formulario se abre con un toque en «Incidencia o
                  solicitud» y lo siguiente es escribir: el cursor ya está. */
               autoFocus
-              placeholder="¿Qué ocurre? Opcional — se puede rellenar luego."
+              placeholder="Descripción. Opcional: se puede completar después."
               className="mt-3 w-full rounded-ctl border border-line bg-surface p-3 text-base"
             />
 
@@ -706,7 +706,7 @@ export function RoomSheet({
               <span aria-hidden className="text-lg leading-none">
                 +
               </span>
-              {guardandoFoto ? 'Procesando la foto…' : 'Añadir foto de lo que pasa (opcional)'}
+              {guardandoFoto ? 'Procesando la foto…' : 'Añadir foto (opcional)'}
             </button>
             {fotoError && <p className="mt-2 text-sm text-crit">{fotoError}</p>}
 
@@ -866,10 +866,9 @@ export function RoomSheet({
         */}
         <section aria-labelledby="sec-averias" className="mt-8">
           <div className="section-head">
-            <h2 id="sec-averias" className="eyebrow">Averías abiertas</h2>
-            {abiertas.length > 0 && (
-              <span className="font-mono text-xs text-crit">{abiertas.length}</span>
-            )}
+            <h2 id="sec-averias" className="eyebrow">
+              Incidencias abiertas{abiertas.length > 0 ? ` · ${abiertas.length}` : ''}
+            </h2>
           </div>
 
           {resuelto && (
@@ -878,7 +877,21 @@ export function RoomSheet({
             </p>
           )}
 
-          <ul className="divide-y divide-line">
+          {/*
+            Cada incidencia, una tarjeta con dos partes.
+
+            Era una fila sin caja: el texto a la izquierda, «Resolver» flotando
+            a la derecha a media altura, y debajo —pegado a la izquierda y de
+            otro ancho— el botón del código de EasyVista. Tres piezas sueltas,
+            y con dos incidencias no se veía dónde acababa una y empezaba la
+            otra.
+
+            Ahora arriba va lo que se LEE —la gravedad en un punto de color,
+            qué pasa, desde cuándo y quién lo abrió— y abajo, separado por un
+            filete, lo que se HACE: dos botones del mismo ancho y a la misma
+            altura. A la derecha el principal, que es donde cae el pulgar.
+          */}
+          <ul className="space-y-2">
             {abiertas.map((i) => {
               const equipo = equipoDeIncidencia(i, nombreDeEquipo)
               const dias = Math.floor(
@@ -886,25 +899,37 @@ export function RoomSheet({
               )
 
               return (
-                <li key={i.id} className="py-3">
-                  <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
-                    <div className="min-w-0 flex-1 basis-48 text-sm">
-                      <p className="font-medium">
+                <li key={i.id} className="card overflow-hidden">
+                  <div className="flex items-start gap-3 px-4 pb-3 pt-3.5">
+                    <span
+                      aria-hidden
+                      className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${
+                        i.kind === 'solicitud'
+                          ? 'bg-accent'
+                          : i.severity === 'alta'
+                            ? 'bg-crit'
+                            : i.severity === 'media'
+                              ? 'bg-warn'
+                              : 'bg-na'
+                      }`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium leading-snug">
                         {/* El aparato delante y en acento: es la respuesta a
                             «¿cuál de las tres?» sin leer la frase entera. */}
                         {equipo && <span className="text-accent">{equipo} · </span>}
-                        {i.title ?? '(sin describir)'}
+                        {i.title ?? 'Sin descripción'}
                       </p>
-                      <p className="mt-0.5 text-xs text-muted">
+                      <p className="mt-1 text-xs leading-relaxed text-muted">
                         {i.kind !== 'incidencia' && <>{INCIDENT_KIND_LABELS[i.kind]} · </>}
                         {i.external_ref && <span className="font-mono">{i.external_ref} · </span>}
                         {i.easyvista_ref && (
                           <span className="font-mono">EasyVista {i.easyvista_ref} · </span>
                         )}
-                        abierta hace{' '}
+                        Abierta hace{' '}
                         {/* El mismo umbral que usa la pestaña de Incidencias y
-                            el panel: una avería estancada se ve igual en las
-                            tres pantallas o no significa nada. */}
+                            el panel: una incidencia estancada se ve igual en
+                            las tres pantallas o no significa nada. */}
                         <span
                           className={dias > STALE_INCIDENT_DAYS ? 'font-semibold text-crit' : ''}
                         >
@@ -915,7 +940,7 @@ export function RoomSheet({
                         )}
                       </p>
                       {i.description && (
-                        <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-muted">
+                        <p className="mt-1.5 line-clamp-3 text-sm leading-relaxed text-ink-2">
                           {i.description}
                         </p>
                       )}
@@ -925,48 +950,61 @@ export function RoomSheet({
                       {resolviendo !== i.id && (
                         <Tira entityType="incident" fotos={fotosPorIncidencia.get(i.id) ?? []} />
                       )}
-                      <CodigoEasyVista incidentId={i.id} codigo={i.easyvista_ref ?? null} />
                     </div>
+                  </div>
 
+                  {/* Las acciones. Dos botones iguales; al pulsar el del código,
+                      su formulario ocupa la fila entera y «Resolver» baja. */}
+                  <div className="flex flex-wrap gap-2 border-t border-line-soft bg-ground px-4 py-3">
+                    <CodigoEasyVista
+                      incidentId={i.id}
+                      codigo={i.easyvista_ref ?? null}
+                      className="flex-1 !text-sm"
+                      claseAlEditar="basis-full"
+                    />
                     <button
                       type="button"
                       aria-expanded={resolviendo === i.id}
                       onClick={() => setResolviendo((a) => (a === i.id ? null : i.id))}
-                      className="key key-accent ml-auto min-h-11 shrink-0 px-3 text-xs"
+                      className={`key min-h-11 flex-1 px-3 text-sm ${
+                        resolviendo === i.id ? 'key-quiet' : 'key-accent'
+                      }`}
                     >
                       {resolviendo === i.id ? 'Cancelar' : 'Resolver'}
                     </button>
                   </div>
 
                   {resolviendo === i.id && (
-                    <ResolverIncidencia
-                      incidencia={i}
-                      equipo={equipo}
-                      conMaterial={recienAbierta === i.id}
-                      onCerrada={() => {
-                        setResolviendo(null)
-                        setRecienAbierta(null)
-                        setResuelto(
-                          'Resuelta. Sube en cuanto haya cobertura y queda en el historial de la sala.',
-                        )
-                        // El historial y el índice los calcula el servidor, así
-                        // que no se piden aquí: hasta que el cierre suba
-                        // contestarían lo de antes. Los vuelve a pedir
-                        // `useCierresEnCola` cuando sube de verdad.
-                      }}
-                      onCancelar={() => {
-                        setResolviendo(null)
-                        setRecienAbierta(null)
-                      }}
-                    />
+                    <div className="border-t border-line-soft px-4 pb-4">
+                      <ResolverIncidencia
+                        incidencia={i}
+                        equipo={equipo}
+                        conMaterial={recienAbierta === i.id}
+                        onCerrada={() => {
+                          setResolviendo(null)
+                          setRecienAbierta(null)
+                          setResuelto(
+                            'Resuelta. Sube en cuanto haya cobertura y queda en el historial de la sala.',
+                          )
+                          // El historial y el índice los calcula el servidor, así
+                          // que no se piden aquí: hasta que el cierre suba
+                          // contestarían lo de antes. Los vuelve a pedir
+                          // `useCierresEnCola` cuando sube de verdad.
+                        }}
+                        onCancelar={() => {
+                          setResolviendo(null)
+                          setRecienAbierta(null)
+                        }}
+                      />
+                    </div>
                   )}
                 </li>
               )
             })}
 
             {abiertas.length === 0 && (
-              <li className="py-2 text-sm text-muted">
-                Nada abierto en esta sala ahora mismo.
+              <li className="card px-4 py-3.5 text-sm text-muted">
+                No hay incidencias abiertas en esta sala.
               </li>
             )}
           </ul>
@@ -975,15 +1013,16 @@ export function RoomSheet({
               diferencia entre «ya está» y «ya está aquí». */}
           {esperandoSubir > 0 && (
             <p className="mt-2 text-xs text-muted">
-              {cuantos(esperandoSubir, 'avería resuelta', 'averías resueltas')} esperando cobertura
-              para subir.
+              {cuantos(esperandoSubir, 'incidencia resuelta', 'incidencias resueltas')} pendiente
+              {esperandoSubir === 1 ? '' : 's'} de subir, a la espera de cobertura.
             </p>
           )}
         </section>
 
         {/*
-          Lo que sigue —el índice, las reincidencias y las dos hojas que se
-          imprimen— estaba ENCIMA de «Revisar esta sala». La ficha se abre para
+          Lo que sigue —el índice y las reincidencias— estaba ENCIMA de
+          «Revisar esta sala», junto a las dos hojas que se imprimen (que ahora
+          cierran la ficha, en «Documentos»). La ficha se abre para
           revisar: es el botón que se pulsa nueve de cada diez veces, y quedaba
           debajo de tres bloques de consulta y de dos botones de papeleo, a
           media pantalla en un iPad y fuera de ella en un teléfono. Ahora el
@@ -991,43 +1030,6 @@ export function RoomSheet({
           las averías abiertas, que son lo otro que pide algo a quien abre la
           ficha: «Resolver» no puede quedar por debajo de un índice—.
         */}
-        {/*
-          Las dos hojas que se imprimen desde aquí, en una fila discreta y fuera
-          del bloque de la placa.
-
-          Estaban dentro, y con `room.short_ref` nulo —una sala que todavía no ha
-          recibido matrícula, o que este dispositivo aún no ha descargado— la
-          sección entera no se pinta: el único acceso a las placas del edificio
-          desaparecía justo en la sala que hace falta etiquetar, y meter ahí el
-          inventario habría atado una hoja que no tiene nada que ver con las
-          placas a que ESTA sala tenga una.
-
-          En `key-quiet` y con la letra pequeña a propósito: son papeleo de
-          oficina, y la ficha se abre para revisar. Compitiendo con «Revisar
-          esta sala» —que está debajo, en acento y a ancho completo— convertirían
-          la pantalla de trabajo en un menú de descargas.
-        */}
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={onImprimir}
-            className="key key-quiet inline-flex min-h-11 items-center gap-1.5 px-3 text-sm"
-          >
-            <Icono nombre="etiqueta" lado={18} className="text-accent" />
-            Imprimir las placas del edificio
-          </button>
-          {onInventario && (
-            <button
-              type="button"
-              onClick={onInventario}
-              className="key key-quiet inline-flex min-h-11 items-center gap-1.5 px-3 text-sm"
-            >
-              <Icono nombre="lista" lado={18} className="text-accent" />
-              Inventario en PDF
-            </button>
-          )}
-        </div>
-
         {/*
           El índice, y de qué está hecho.
           Un número solo invita a discutirlo; un número con su recuento al lado
@@ -1084,26 +1086,28 @@ export function RoomSheet({
 
         <section aria-labelledby="sec-inv" className="mt-8">
           <div className="section-head">
-            <h2 id="sec-inv" className="eyebrow">Inventario instalado</h2>
+            <h2 id="sec-inv" className="eyebrow">
+              Equipamiento instalado{equipos && equipos.length > 0 ? ` · ${equipos.length}` : ''}
+            </h2>
           </div>
-          <ul className="divide-y divide-line">
+          <ul className="card divide-y divide-line-soft overflow-hidden">
             {(equipos ?? []).map((a) => (
-              <li key={a.id} className="flex items-center gap-3 py-2 text-sm">
-                <span className="flex-1">
-                  {a.label || a.tipo}
-                  <span className="block font-mono text-xs text-muted">
+              <li key={a.id} className="flex items-center gap-3 px-4 py-3">
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium">{a.label || a.tipo}</span>
+                  <span className="mt-0.5 block truncate font-mono text-xs text-muted">
                     {[a.model, a.serial].filter(Boolean).join(' · ') || 'Sin modelo ni serie'}
                   </span>
                 </span>
                 {a.status !== 'instalado' && (
-                  <span className="rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
-                    {a.status}
-                  </span>
+                  <span className="chip chip-warn capitalize">{a.status}</span>
                 )}
               </li>
             ))}
             {equipos?.length === 0 && (
-              <li className="py-2 text-sm text-muted">Sin equipos registrados en esta sala.</li>
+              <li className="px-4 py-3.5 text-sm text-muted">
+                No hay equipos registrados en esta sala.
+              </li>
             )}
           </ul>
         </section>
@@ -1120,30 +1124,32 @@ export function RoomSheet({
         <RevisionesAnteriores roomId={room.id} onCorregir={onCorregir} />
 
         <section aria-labelledby="sec-hist" className="mt-8">
-          <div className="section-head">
-            <h2 id="sec-hist" className="eyebrow">Historial</h2>
+          {/* El título a la izquierda y «Ver todo» a la derecha, como las
+              incidencias del inicio: la misma cabecera para la misma cosa. */}
+          <div className="mb-2 flex items-baseline justify-between gap-3">
+            <h2 id="sec-hist" className="eyebrow">Historial reciente</h2>
+            {onHistorial && (
+              <button
+                type="button"
+                onClick={onHistorial}
+                className="key-ghost -my-2 -mr-2 inline-flex min-h-11 items-center gap-1 px-2 text-sm"
+              >
+                Ver todo
+                <Icono nombre="derecha" lado={14} />
+              </button>
+            )}
           </div>
-          {onHistorial && (
-            <button
-              type="button"
-              onClick={onHistorial}
-              className="key-ghost -ml-2.5 inline-flex min-h-11 items-center gap-1.5 px-2.5 text-sm"
-            >
-              <Icono nombre="historial" lado={18} />
-              Ver todo el historial de esta sala
-            </button>
-          )}
           {historialFalla && (
-            <p className="mt-2 text-sm text-muted">
-              El historial necesita conexión; lo demás de esta ficha funciona sin ella.
+            <p className="card px-4 py-3.5 text-sm text-muted">
+              El historial necesita conexión. El resto de la ficha funciona sin ella.
             </p>
           )}
-          <ul className="mt-2 space-y-3">
+          <ul className={historialFalla ? 'hidden' : 'card space-y-3.5 p-4'}>
             {(historial ?? []).map((h, i) => (
               <li key={`${h.at}-${i}`} className="flex gap-3">
                 <span
                   aria-hidden
-                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-[1px] ${MARCA[h.kind].punto}`}
+                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${MARCA[h.kind].punto}`}
                 />
                 <div className="min-w-0 flex-1 text-sm">
                   <p>
@@ -1186,7 +1192,67 @@ export function RoomSheet({
               </li>
             ))}
             {historial?.length === 0 && (
-              <li className="text-sm text-muted">Todavía no hay nada registrado en esta sala.</li>
+              <li className="text-sm text-muted">Todavía no hay actividad registrada en esta sala.</li>
+            )}
+          </ul>
+        </section>
+
+        {/*
+          Los documentos, al final y en una lista.
+
+          Eran dos botones sueltos de anchos distintos —«Imprimir las placas del
+          edificio» e «Inventario en PDF»— colgando entre las incidencias y el
+          inventario, sin título y sin nada que los agrupase. Son papeleo de
+          oficina: no tienen que estar a media ficha, que se abre para revisar y
+          para resolver. Van al final, con su título, en filas del mismo ancho y
+          con su icono, igual que las de «Más».
+
+          Siguen fuera del bloque de la placa: con `room.short_ref` nulo la
+          placa no se pinta, y el acceso a las placas del edificio no puede
+          desaparecer justo en la sala que hace falta etiquetar.
+        */}
+        <section aria-labelledby="sec-docs" className="mt-8">
+          <div className="section-head">
+            <h2 id="sec-docs" className="eyebrow">Documentos</h2>
+          </div>
+          <ul className="card divide-y divide-line-soft overflow-hidden">
+            <li>
+              <button
+                type="button"
+                onClick={onImprimir}
+                className="fila flex min-h-touch w-full items-center gap-3 px-4 py-2.5 text-left"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] bg-accent-tint text-accent">
+                  <Icono nombre="etiqueta" lado={20} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium">Placas de puerta</span>
+                  <span className="mt-0.5 block text-xs leading-snug text-muted">
+                    Las de todo el edificio, para imprimir.
+                  </span>
+                </span>
+                <Icono nombre="derecha" lado={16} className="text-muted" />
+              </button>
+            </li>
+            {onInventario && (
+              <li>
+                <button
+                  type="button"
+                  onClick={onInventario}
+                  className="fila flex min-h-touch w-full items-center gap-3 px-4 py-2.5 text-left"
+                >
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] bg-accent-tint text-accent">
+                    <Icono nombre="lista" lado={20} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium">Inventario de la sala</span>
+                    <span className="mt-0.5 block text-xs leading-snug text-muted">
+                      Hoja en PDF con los equipos instalados.
+                    </span>
+                  </span>
+                  <Icono nombre="derecha" lado={16} className="text-muted" />
+                </button>
+              </li>
             )}
           </ul>
         </section>

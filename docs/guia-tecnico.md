@@ -26,24 +26,35 @@ el PIN se comprueba en el propio dispositivo.
 **No hace falta instalar nada.** Es una página web: guárdala en favoritos y
 listo. Si prefieres tenerla como una aplicación más —icono en la pantalla de
 inicio y sin la barra del navegador—, en Android abre **Más → Instalar en este
-aparato**; en el iPhone y el iPad es **Compartir → Añadir a pantalla de inicio**.
+dispositivo**; en el iPhone y el iPad es **Compartir → Añadir a pantalla de inicio**.
 Es la misma aplicación, con lo mismo dentro.
 
 ### Las pestañas y el botón atrás
 
-Abajo hay cuatro pestañas, cada una con su dibujo —**Revisar**,
+Abajo hay cuatro pestañas, cada una con su dibujo —**Inicio**,
 **Incidencias**, **Almacén** e **Historial**— y **Más**, que guarda lo demás
-en tres bloques: *Consultar* (Panel, Equipos y Actividad), *Administrar*
-(Informes y Datos, solo para administración) y *Este aparato* (el tema,
+en tres bloques: *Consulta* (Panel, Equipos y Actividad), *Administración*
+(Informes y Datos, solo para administración) y *Este dispositivo* (el tema,
 instalar la aplicación y cerrar sesión).
 
 En un iPad apaisado o en un ordenador no hay barra abajo: todas las secciones
 están a la vista en un menú a la izquierda, y tu cuenta —con el tema y cerrar
 sesión— al pie de ese menú.
 
-**Revisar** se abre con el resumen del campus: cuántas salas van al día,
-cuántas tocan y cuántas averías hay abiertas. Debajo, escanear el QR de la
-puerta, buscar un aula por su nombre y la lista de edificios.
+**Inicio** es la pantalla principal, y va por este orden:
+
+1. **Nueva incidencia o solicitud.** Eliges el tipo, el edificio y la sala, y
+   se abre el formulario de esa aula ya listo para escribir. No hace falta
+   buscar antes el aula.
+2. **Buscar aula**, con el lector de QR al lado (el botón pequeño de la
+   derecha).
+3. **Incidencias abiertas**: las más urgentes primero —las que impiden dar
+   clase, y dentro de cada gravedad las que más tiempo llevan—. Tocar una abre
+   su aula, que es donde se resuelve; **Ver todas** lleva a la pestaña
+   Incidencias.
+4. **Revisiones en curso**, si dejaste alguna sin cerrar.
+5. **Ronda de revisión**: cuántas salas están revisadas y cuántas quedan.
+6. **Edificios**, para entrar a la lista de salas de cada uno.
 
 ### Atajos que ahorran toques
 
@@ -55,8 +66,8 @@ puerta, buscar un aula por su nombre y la lista de edificios.
   filtros y búsquedas de cada pestaña se conservan mientras la aplicación siga
   abierta.
 - **Tocar la pestaña en la que ya estás** te lleva a su inicio: desde la ficha
-  de un aula, un toque en **Revisar** devuelve a la lista de edificios.
-- **Revisiones a medias.** Si dejaste un aula sin cerrar, aparece arriba en el
+  de un aula, un toque en **Inicio** devuelve a la pantalla principal.
+- **Revisiones en curso.** Si dejaste un aula sin cerrar, aparece en el
   inicio: un toque y sigues donde estabas.
 - **Con teclado**, la tecla `/` lleva al buscador de la pantalla, e «Intro»
   guarda en los formularios.
@@ -70,7 +81,7 @@ no deslumbra. Se queda guardado en ese dispositivo.
 El botón atrás del móvil —o el gesto desde el borde— hace lo que esperas:
 cierra lo que tengas abierto encima (un menú, la ficha de una revisión, una
 foto, la cámara) o vuelve a la pantalla anterior, igual que el botón «Volver».
-Desde otra pestaña vuelve a Revisar. Solo en la lista de edificios, sin nada
+Desde otra pestaña vuelve a Inicio. Solo en la lista de edificios, sin nada
 abierto, sale de la aplicación.
 
 ### Que el navegador recuerde el PIN
@@ -104,8 +115,8 @@ entra sin PIN.
 En el marco de la puerta hay una pegatina con un código. **Apúntale con la
 cámara y se abre la ficha de esa aula**: cuándo se revisó, qué queda abierto y
 el botón **«Revisar esta sala»** para empezar. Vale la cámara normal del móvil
-—sin abrir nada antes— y también el botón **«Escanear el QR del aula»** que hay
-arriba del todo si ya estás dentro de la aplicación.
+—sin abrir nada antes— y también el botón del lector que hay en Inicio, a la
+derecha del buscador, si ya estás dentro de la aplicación.
 
 Es el camino corto: te ahorra elegir el edificio y buscar la sala en la lista.
 Si no hay pegatina, o la cámara no va, sigue estando el de siempre: el buscador
@@ -190,7 +201,7 @@ corrección»** la tira y no cambia nada.
      las que llevan más tiempo sin revisar, sin agrupar por planta. Es el orden
      del día que persigues el retraso en vez de vaciar un edificio.
    - La franja **naranja** a la izquierda marca las que tocan.
-   - La etiqueta **«A medias»** significa que dejaste una revisión sin terminar
+   - La etiqueta **«En curso»** significa que dejaste una revisión sin terminar
      **y dijiste que querías guardarla**. Ya no aparece por haberte asomado a un
      aula: si sales sin contestar nada, no queda rastro.
    - El **triángulo rojo** junto al código dice que esa sala tiene incidencias
@@ -334,7 +345,7 @@ se queda como está.
 
 ### Cuando arreglas algo: ciérralo ahí mismo
 
-En la ficha del aula, encima del inventario, está **«Averías abiertas»**: lo que
+En la ficha del aula, encima del inventario, está **«Incidencias abiertas»**: lo que
 esa sala tiene roto ahora mismo. Cada línea empieza por el aparato —Proyector,
 Pantalla 2, Red— para que en una sala con tres averías se vea de un vistazo cuál
 es cuál.
@@ -369,8 +380,8 @@ botón de cerrar no espera a ninguno de los dos.
 avería ya lo tenía, sale puesto; si te lo acaban de dar, lo escribes ahí y
 viaja con el cierre, también sin cobertura. Y si llega días después, con la
 avería ya resuelta, no pasa nada: en la pestaña de Incidencias cada fila tiene
-el botón **«Poner el código de EasyVista»** —o «EasyVista I260916_0042 ·
-cambiar» si ya lo tiene—, que funciona igual en las abiertas y en las
+el botón **«Código EasyVista»** —o «Cambiar código» si ya lo tiene—, que
+funciona igual en las abiertas y en las
 resueltas. Eso sí necesita cobertura: se teclea mirando EasyVista, que es una
 pantalla con red.
 
@@ -378,14 +389,14 @@ pantalla con red.
 > («I260916_0003»). Ese es el del libro y no se toca; el de EasyVista va al
 > lado, con la palabra delante, y se busca igual desde el buscador.
 
-**Para pasar el día a EasyVista está «Hoy · para EasyVista»**, el segundo
+**Para pasar el día a EasyVista está «Parte diario»**, el segundo
 botón de arriba en la pestaña de Incidencias. Enseña solo lo de hoy —lo que se
 ha abierto hoy y lo que se ha cerrado hoy, aunque viniera de antes—, cada cosa
 con su estado, su sala, sus horas y lo que se hizo. Arriba, tres cifras:
 abiertas hoy, cerradas hoy y cuántas faltan por pasar. Lo que no tiene código
-va primero, en «Falta pasarlas a EasyVista»: pulsa **«Copiar todo»**, pega en
-EasyVista y apunta el código que te dé con «Poner el código de EasyVista»; al
-guardarlo, la incidencia baja a «Ya en EasyVista». Si solo quieres un trozo,
+va primero, en «Pendientes de EasyVista»: pulsa **«Copiar todo»**, pega en
+EasyVista y apunta el código que te dé con «Código EasyVista»; al
+guardarlo, la incidencia pasa a «Registradas en EasyVista». Si solo quieres un trozo,
 tienes «Copiar descripción» y «Copiar solución», y «Copiar el parte entero» se
 lleva el día de una vez. Con **«Día anterior»** ves el de ayer, para el lunes
 que toca pasar el viernes. Lo que has hecho sin cobertura también sale,
@@ -436,14 +447,14 @@ No hay que acordarse de guardar. Cada cosa que tocas se guarda al instante en el
 dispositivo, y **además se sube al servidor en cuanto hay red**.
 
 Si te quedas sin batería, se te cae el móvil o cierras sin querer, la revisión
-sigue ahí. Aparecerá como «A medias» en la lista.
+sigue ahí. Aparecerá como «En curso» en la lista, y en Inicio.
 
 ### Al salir, tú decides qué pasa con lo empezado
 
 Si sales de una revisión con **algo contestado**, la aplicación pregunta antes de
 dejarte marchar:
 
-- **Guardar para la próxima vez** — la sala queda «A medias» y al volver a entrar
+- **Guardar y continuar más tarde** — la sala queda «En curso» y al volver a entrar
   sigue donde lo dejaste. Es lo de siempre.
 - **Descartar lo revisado** — se tira lo contestado en esa sala y deja de
   aparecer a medias. Para el aula que estaba ocupada, o para cuando te has metido
@@ -595,7 +606,7 @@ de aquel día, y la anterior se queda guardada y legible. Lo que no se puede es
 **reescribirla**: eso es lo que hace que el histórico valga como registro.
 
 **¿Cómo cierro una incidencia?**
-Desde la ficha del aula, en «Averías abiertas» —o desde la pestaña
+Desde la ficha del aula, en «Incidencias abiertas» —o desde la pestaña
 Incidencias—, pulsando **«Resolver»** en la que has arreglado. Hay que escribir
 qué has hecho; la foto y el material son opcionales. Lo que no se puede es
 cerrarla sin decir nada: sin esa frase, la próxima avería de esa aula empieza a

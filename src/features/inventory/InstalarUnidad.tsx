@@ -178,16 +178,13 @@ export function InstalarUnidad({
           {sustituye && sustituye !== 'no' && (
             <div className="mt-2">
               <p className="text-xs text-muted">El que se quita va a…</p>
-              <div className="mt-1 flex gap-1 rounded-ctl border border-line bg-surface p-1">
+              <div className="segmento mt-1 grid w-full grid-cols-2">
                 {(['almacen', 'baja'] as const).map((d) => (
                   <button
                     key={d}
                     type="button"
                     aria-pressed={destino === d}
                     onClick={() => setDestino(d)}
-                    className={`min-h-11 flex-1 rounded-ctl px-2 text-sm font-semibold ${
-                      destino === d ? 'key key-accent' : 'text-muted'
-                    }`}
                   >
                     {d === 'almacen' ? 'Vuelve al almacén' : 'Baja definitiva'}
                   </button>

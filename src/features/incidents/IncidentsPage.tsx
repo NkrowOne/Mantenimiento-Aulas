@@ -116,7 +116,7 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
           {(
             [
               ['pendientes', 'Pendientes'],
-              ['hoy', 'Hoy · para EasyVista'],
+              ['hoy', 'Parte diario'],
             ] as const
           ).map(([id, nombre]) => (
             <button

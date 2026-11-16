@@ -38,7 +38,13 @@ export const TABS: Array<{
   icono: NombreDeIcono
   grupo: Grupo
 }> = [
-  { id: 'revisar', label: 'Revisar', minRole: 'tecnico', icono: 'revisar', grupo: 'trabajo' },
+  /* Se llamaba «Revisar», cuando aquí solo se elegía un aula para revisarla. Desde
+     que es la pantalla de inicio —abrir una incidencia, las incidencias
+     abiertas, buscar un aula y la ronda— el nombre decía solo una de las cuatro
+     cosas. El identificador interno sigue siendo `revisar`: lo guarda cada
+     dispositivo en `ultima-vista`, y cambiarlo devolvería a todo el mundo a la
+     raíz en la primera carga. */
+  { id: 'revisar', label: 'Inicio', minRole: 'tecnico', icono: 'inicio', grupo: 'trabajo' },
   { id: 'panel', label: 'Panel', minRole: 'tecnico', icono: 'panel', grupo: 'consulta' },
   {
     id: 'incidencias',
@@ -120,9 +126,9 @@ export function iconoDe(tab: Tab): NombreDeIcono {
 
 /** Los grupos, en el orden en que se pintan, con el título que llevan. */
 export const GRUPOS: Array<{ id: Grupo; titulo: string }> = [
-  { id: 'trabajo', titulo: 'En las aulas' },
-  { id: 'consulta', titulo: 'Consultar' },
-  { id: 'administracion', titulo: 'Administrar' },
+  { id: 'trabajo', titulo: 'Operación' },
+  { id: 'consulta', titulo: 'Consulta' },
+  { id: 'administracion', titulo: 'Administración' },
 ]
 
 /** Las secciones de un grupo que este rol puede abrir, en el orden de `TABS`. */
@@ -147,9 +153,9 @@ export const EN_LA_BARRA: Tab[] = ['revisar', 'incidencias', 'almacen', 'histori
 export const EN_MAS: Tab[] = ['panel', 'equipos', 'actividad', 'informes', 'datos']
 /** La segunda línea de cada entrada de «Más»: qué hay detrás, en una frase. */
 export const QUE_HAY_EN: Partial<Record<Tab, string>> = {
-  panel: 'Cómo va la ronda: retrasos, averías abiertas y lo que va a dar guerra.',
-  equipos: 'Todo el inventario: ficha de cada equipo, vida útil, entradas y salidas, y Excel.',
-  actividad: 'Quién cambió qué y cuándo: salas, equipos, incidencias y catálogo.',
-  informes: 'Se arman con los datos del periodo que elijas y quedan archivados.',
-  datos: 'Por decidir, maestro, Excel, importación, actividad y usuarios.',
+  panel: 'Estado de la ronda, incidencias abiertas y alertas.',
+  equipos: 'Inventario completo: ficha de cada equipo, vida útil, movimientos y exportación.',
+  actividad: 'Registro de cambios en salas, equipos, incidencias y catálogo.',
+  informes: 'Informes por periodo, con archivo de los emitidos.',
+  datos: 'Pendientes de decisión, maestro de salas, Excel, importación y usuarios.',
 }

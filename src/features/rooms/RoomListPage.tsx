@@ -160,7 +160,7 @@ export function RoomListPage({
             {rooms && (
               <p className="text-sm text-muted">
                 {cuantos(rooms.length, 'sala', 'salas')}
-                {pendientes > 0 ? ` · ${pendientes} por revisar` : rooms.length > 0 ? ' · todas al día' : ''}
+                {pendientes > 0 ? ` · ${pendientes} pendientes` : rooms.length > 0 ? ' · todas revisadas' : ''}
               </p>
             )}
           </div>
@@ -300,7 +300,16 @@ export function RoomListPage({
         el contenido, y lo que queda debajo es mesa— en vez de como un campo gris
         continuo del alto de la pantalla.
       */}
-      <ul className="border-y border-line-soft bg-surface lg:mx-4 lg:rounded-card lg:border-x">
+      {/*
+        Con margen y esquinas, como las tarjetas del inicio.
+        Iba de borde a borde del teléfono mientras su cabecera —y todo lo demás
+        de la aplicación— dejaba dieciséis píxeles a cada lado: el contenido
+        cambiaba de ancho a media pantalla. `overflow-clip` y no `hidden` para
+        recortar las esquinas: `hidden` convierte la lista en un contenedor de
+        desplazamiento, y las cabeceras de planta dejarían de quedarse pegadas
+        arriba al bajar.
+      */}
+      <ul className="mx-4 overflow-clip rounded-card border border-line-soft bg-surface shadow-lift">
         {visible.map((room, i) => {
           const days = daysSince(room.last_inspection_at)
           const overdue = days === null || days > OVERDUE_INSPECTION_DAYS
@@ -346,16 +355,16 @@ export function RoomListPage({
                         salas: (rooms ?? []).filter((r) => r.zone_id === zonaDeLaFila.id).length,
                       })
                     }
-                    className="sticky top-0 z-[1] border-b border-line-soft bg-ground"
+                    className="sticky top-0 z-[1] border-b border-line-soft bg-raised"
                   >
                     {(manejadores) => (
-                      <p {...manejadores} className="eyebrow sin-lupa flex-1 px-4 pb-2 pt-4">
+                      <p {...manejadores} className="eyebrow sin-lupa flex-1 px-4 py-2.5">
                         {zona}
                       </p>
                     )}
                   </FilaConAcciones>
                 ) : (
-                  <p className="eyebrow sticky top-0 z-[1] border-b border-line-soft bg-ground px-4 pb-2 pt-4">
+                  <p className="eyebrow sticky top-0 z-[1] border-b border-line-soft bg-raised px-4 py-2.5">
                     {zona}
                   </p>
                 ))}
@@ -419,7 +428,7 @@ export function RoomListPage({
                     </span>
 
                     <span className="flex shrink-0 flex-col items-end gap-1">
-                      {hasDraft && <span className="chip chip-accent">A medias</span>}
+                      {hasDraft && <span className="chip chip-accent">En curso</span>}
                       {/*
                         Sin inventariar, en gris. Es información para elegir por
                         dónde seguir cuando ya se está en el edificio, no un aviso:

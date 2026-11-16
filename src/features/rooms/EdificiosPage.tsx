@@ -23,11 +23,18 @@ import { Icono } from '@/components/Icono'
 import { InsigniaAveria, detalleDeAverias } from '@/components/InsigniaAveria'
 import { db } from '@/db/dexie'
 import { displayRoomCode } from '@/domain/normalize'
-import { OVERDUE_INSPECTION_DAYS, type Building, type Role, type Room } from '@/domain/types'
-import { cuantos } from '@/lib/plural'
+import {
+  OVERDUE_INSPECTION_DAYS,
+  type Building,
+  type Incident,
+  type IncidentKind,
+  type Role,
+  type Room,
+} from '@/domain/types'
 import type { ResultadoPull } from '@/sync/pull'
 import { BuscadorGlobal } from './BuscadorGlobal'
 import { HojaDeMaestro } from './HojaDeMaestro'
+import { NuevaIncidencia } from './NuevaIncidencia'
 import { averiasPorEdificio, averiasPorSala } from './averias'
 
 /* El diagnóstico del servidor va en diferido: solo se abre cuando algo falla,
@@ -39,8 +46,6 @@ const Diagnostico = lazy(() =>
 
 interface Props {
   role: Role
-  /** El nombre de pila de quien ha entrado, para el saludo. Vacío si no se sabe. */
-  nombre: string
   diagnostico: ResultadoPull | null
   onReintentar: () => void
   onEscanear: () => void
@@ -48,6 +53,10 @@ interface Props {
   avisoQR: string | null
   onEdificio: (building: Building) => void
   onSala: (building: Building, room: Room) => void
+  /** Ir a la pestaña Incidencias, con la lista entera. */
+  onIncidencias: () => void
+  /** Abrir el formulario de incidencia de esta sala, con el tipo ya elegido. */
+  onNuevaIncidencia: (building: Building, room: Room, tipo: IncidentKind) => void
   /** Seguir con una revisión que se dejó a medias: abre su formulario tal cual. */
   onContinuar: (building: Building, room: Room) => void
   /** Lo tecleado en el buscador del campus, que sobrevive a abrir una ficha. */
@@ -146,24 +155,67 @@ function Anillo({ pct, alDia }: { pct: number; alDia: boolean }): React.ReactEle
   )
 }
 
-/** «Buenos días», según la hora del aparato. */
-function saludo(): string {
-  const h = new Date().getHours()
-  if (h < 6) return 'Buenas noches'
-  if (h < 13) return 'Buenos días'
-  if (h < 21) return 'Buenas tardes'
-  return 'Buenas noches'
+/** «lunes, 16 de noviembre», en el idioma y la zona del dispositivo. */
+function hoyEnPalabras(): string {
+  const fecha = new Date().toLocaleDateString('es-ES', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  })
+  // Solo la primera letra: el `capitalize` de CSS pone mayúscula a CADA palabra
+  // y deja «Lunes, 16 De Noviembre».
+  return fecha.charAt(0).toUpperCase() + fecha.slice(1)
+}
+
+/** Cuántas incidencias se enseñan en el inicio. Las demás, en su pestaña. */
+const INCIDENCIAS_EN_EL_INICIO = 5
+
+type Gravedad = 'alta' | 'media' | 'baja' | 'solicitud'
+
+/**
+ * La gravedad con la que se ordena y se pinta una fila. Una solicitud va
+ * aparte y al final: es trabajo que se pide, no algo que esté roto, y su
+ * «gravedad» en la base es un valor por defecto que no eligió nadie.
+ */
+function gravedadDe(i: Pick<Incident, 'kind' | 'severity'>): Gravedad {
+  return i.kind === 'solicitud' ? 'solicitud' : i.severity
+}
+
+const ORDEN_DE_GRAVEDAD: Record<Gravedad, number> = { alta: 0, media: 1, baja: 2, solicitud: 3 }
+
+/* Las mismas palabras que se eligen en el aula al marcar una falla. */
+const ETIQUETA_DE_GRAVEDAD: Record<Gravedad, string> = {
+  alta: 'Impide la clase',
+  media: 'Molesta',
+  baja: 'Leve',
+  solicitud: 'Solicitud',
+}
+
+const PUNTO_DE_GRAVEDAD: Record<Gravedad, string> = {
+  alta: 'bg-crit',
+  media: 'bg-warn',
+  baja: 'bg-na',
+  solicitud: 'bg-accent',
+}
+
+/** «hoy», «ayer», «hace 14 días»: cuánto lleva abierta. */
+function haceCuanto(iso: string): string {
+  const dias = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
+  if (dias <= 0) return 'hoy'
+  if (dias === 1) return 'ayer'
+  return `hace ${dias} días`
 }
 
 export function EdificiosPage({
   role,
-  nombre,
   diagnostico,
   onReintentar,
   onEscanear,
   avisoQR,
   onEdificio,
   onSala,
+  onIncidencias,
+  onNuevaIncidencia,
   onContinuar,
   busqueda,
   onBusqueda,
@@ -280,6 +332,39 @@ export function EdificiosPage({
   }, [])
 
   /*
+   * Las incidencias abiertas, de lo que hay en el dispositivo, con su aula.
+   *
+   * La misma regla que el triángulo de cada edificio (`esAveriaViva`): ni
+   * resueltas, ni borradores, ni observaciones. Aquí se añaden las que no
+   * tienen aula —que el triángulo no puede contar, porque no son de ningún
+   * edificio— para que el número de arriba sea el de la pestaña Incidencias.
+   *
+   * El orden es el de atenderlas: primero la gravedad, y a igual gravedad la
+   * que más lleva esperando.
+   */
+  const abiertas = useLiveQuery(async () => {
+    const todas = (await db.incidents.toArray()).filter(
+      (i) => i.state !== 'resuelta' && i.state !== 'borrador' && i.kind !== 'observacion',
+    )
+    todas.sort(
+      (a, b) =>
+        ORDEN_DE_GRAVEDAD[gravedadDe(a)] - ORDEN_DE_GRAVEDAD[gravedadDe(b)] ||
+        a.opened_at.localeCompare(b.opened_at),
+    )
+    const filas = []
+    for (const incidencia of todas.slice(0, INCIDENCIAS_EN_EL_INICIO)) {
+      const room = incidencia.room_id ? await db.rooms.get(incidencia.room_id) : undefined
+      const zone = room ? await db.zones.get(room.zone_id) : undefined
+      const building = zone ? await db.buildings.get(zone.building_id) : undefined
+      filas.push({ incidencia, room, building })
+    }
+    return { total: todas.length, filas }
+  }, [])
+
+  /* La hoja de «Nueva incidencia o solicitud». */
+  const [nueva, setNueva] = useState(false)
+
+  /*
    * El campus entero, sumando los edificios. Sale del mismo mapa que las filas
    * de abajo, así que el resumen y la lista no pueden decir cosas distintas.
    */
@@ -294,54 +379,138 @@ export function EdificiosPage({
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pb-8 pt-3 lg:max-w-5xl">
-      <header className="pb-4">
-        <p className="text-sm text-muted">
-          {saludo()}
-          {nombre && `, ${nombre}`}
-        </p>
-        <h1 className="mt-0.5 text-2xl font-bold tracking-tight">¿Qué aula toca?</h1>
+      <header className="pb-3">
+        {/* La fecha encima del título: es lo que se apunta en un parte, y decía
+            «Buenos días». Un saludo no es un dato. */}
+        <p className="text-sm text-muted">{hoyEnPalabras()}</p>
+        <h1 className="mt-0.5 text-2xl font-bold tracking-tight">Inicio</h1>
       </header>
 
       {/*
-        El resumen del campus. Solo cuando hay salas: con la base vacía un anillo
-        al 0% sería una cifra falsa, y lo que hay que leer ahí es el aviso de
-        «sin datos» de más abajo.
+        Lo primero, abrir una incidencia.
+
+        Es lo que más veces se viene a hacer con prisa —alguien avisa por el
+        pasillo— y costaba encontrar el aula, entrar en su ficha y dar ahí con
+        el botón. Desde aquí se elige el tipo, el edificio y la sala, y se llega
+        al formulario ya abierto.
       */}
-      {campus.total > 0 && (
-        <section aria-label="Cómo va la ronda" className="card flex items-center gap-4 p-4">
-          <Anillo pct={pct} alDia={campus.pendientes === 0} />
-          <div className="min-w-0 flex-1">
-            <p className="font-semibold leading-snug">
-              {campus.pendientes === 0
-                ? 'Todo el campus al día'
-                : `${alDia} de ${campus.total} salas al día`}
-            </p>
-            <p className="mt-0.5 text-sm leading-snug text-muted">
-              Revisadas en los últimos {OVERDUE_INSPECTION_DAYS} días.
-            </p>
-            <div className="mt-2.5 flex flex-wrap gap-1.5">
-              {campus.pendientes > 0 && (
-                <span className="chip chip-warn">
-                  {campus.pendientes} por revisar
-                </span>
-              )}
-              {campus.averias > 0 && (
-                <span className="chip chip-crit">
-                  {cuantos(campus.averias, 'avería abierta', 'averías abiertas')}
-                </span>
-              )}
-              {campus.pendientes === 0 && campus.averias === 0 && (
-                <span className="chip chip-ok">Sin averías abiertas</span>
-              )}
-            </div>
+      <button
+        type="button"
+        onClick={() => setNueva(true)}
+        className="key key-accent flex min-h-touch w-full items-center justify-center gap-2.5 px-4"
+      >
+        <Icono nombre="anadir" />
+        Nueva incidencia o solicitud
+      </button>
+
+      {/*
+        Buscar un aula, y a su lado el lector de QR.
+
+        El lector era el botón más grande de la pantalla, por encima de todo.
+        Pero todavía no hay placas con QR en las puertas: ocupaba el sitio
+        principal una función que hoy casi nadie puede usar. Pasa a ser un botón
+        al lado del buscador —que es como se llega hoy a un aula— y cuando las
+        placas estén puestas seguirá estando a un toque.
+      */}
+      <BuscadorGlobal
+        onPick={onSala}
+        query={busqueda}
+        onQueryChange={onBusqueda}
+        accion={
+          <button
+            type="button"
+            onClick={onEscanear}
+            aria-label="Escanear el código QR de un aula"
+            title="Escanear el código QR de un aula"
+            className="key key-quiet flex h-touch w-touch shrink-0 items-center justify-center text-accent"
+          >
+            <Icono nombre="qr" />
+          </button>
+        }
+      />
+      {avisoQR && (
+        <p role="alert" className="pt-2 text-sm text-crit">
+          {avisoQR}
+        </p>
+      )}
+
+      {/*
+        Las incidencias abiertas, antes que la ronda.
+
+        Una incidencia abierta es trabajo que alguien está esperando; la ronda
+        es trabajo que se hace cuando no hay otro. El inicio las ponía al revés:
+        primero el avance de la ronda, y las incidencias en otra pestaña. Aquí
+        salen las más urgentes —las que impiden dar clase, y dentro de cada
+        gravedad las que más llevan abiertas— con el aula delante, y tocar una
+        abre su aula, que es donde se resuelve.
+
+        Salen de lo que ya hay en el dispositivo, así que se ven sin cobertura.
+      */}
+      {abiertas && abiertas.total > 0 && (
+        <section aria-labelledby="inicio-incidencias" className="mt-6">
+          <div className="mb-2 flex items-baseline justify-between gap-3">
+            <h2 id="inicio-incidencias" className="eyebrow">
+              Incidencias abiertas · {abiertas.total}
+            </h2>
+            <button
+              type="button"
+              onClick={onIncidencias}
+              className="key-ghost -mr-2 -my-2 inline-flex min-h-11 items-center gap-1 px-2 text-sm"
+            >
+              Ver todas
+              <Icono nombre="derecha" lado={14} />
+            </button>
           </div>
+          <ul className="card overflow-hidden">
+            {abiertas.filas.map(({ incidencia: i, building, room }) => (
+              <li key={i.id} className="border-t border-line-soft first:border-t-0">
+                <button
+                  type="button"
+                  onClick={() => (building && room ? onSala(building, room) : onIncidencias())}
+                  className="fila flex w-full items-start gap-3 px-4 py-3 text-left"
+                >
+                  {/* La gravedad, en un punto de color: rojo si impide la
+                      clase, ámbar si molesta, gris si es leve o una solicitud.
+                      Con palabras va debajo, para quien no distingue el color. */}
+                  <span
+                    aria-hidden
+                    className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${PUNTO_DE_GRAVEDAD[gravedadDe(i)]}`}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium leading-snug">
+                      {i.title?.trim() || 'Sin descripción'}
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-muted">
+                      {building && room ? (
+                        <>
+                          <span className="font-mono font-semibold text-ink-2">
+                            {building.code} {displayRoomCode(room.code)}
+                          </span>
+                          {' · '}
+                        </>
+                      ) : (
+                        'Sin aula · '
+                      )}
+                      {ETIQUETA_DE_GRAVEDAD[gravedadDe(i)]} · {haceCuanto(i.opened_at)}
+                    </span>
+                  </span>
+                  <Icono nombre="derecha" lado={16} className="mt-1 text-muted" />
+                </button>
+              </li>
+            ))}
+          </ul>
+          {abiertas.total > abiertas.filas.length && (
+            <p className="px-1 pt-2 text-xs text-muted">
+              Se muestran las {abiertas.filas.length} más urgentes de {abiertas.total}.
+            </p>
+          )}
         </section>
       )}
 
       {(aMedias?.length ?? 0) > 0 && (
-        <section aria-label="Revisiones a medias" className="card mt-3 overflow-hidden">
+        <section aria-label="Revisiones en curso" className="card mt-6 overflow-hidden">
           <h2 className="eyebrow px-4 pt-3">
-            {aMedias!.length === 1 ? 'Una revisión a medias' : 'Revisiones a medias'}
+            {aMedias!.length === 1 ? 'Revisión en curso' : 'Revisiones en curso'}
           </h2>
           <ul className="mt-1">
             {aMedias!.map(({ building, room }) => (
@@ -358,7 +527,7 @@ export function EdificiosPage({
                     </span>
                     <span className="block truncate text-xs text-muted">{building.name}</span>
                   </span>
-                  <span className="chip chip-accent">Seguir</span>
+                  <span className="chip chip-accent">Continuar</span>
                   <Icono nombre="derecha" lado={16} className="text-muted" />
                 </button>
               </li>
@@ -367,34 +536,37 @@ export function EdificiosPage({
         </section>
       )}
 
-      {/*
-        Escanear va ANTES del buscador y de la lista, y ocupa el ancho entero,
-        porque es el camino corto: el técnico ya está delante de la puerta.
-        Buscar y bajar por los edificios siguen debajo para cuando no hay
-        pegatina —o no hay cámara—, que es lo que impide que esto se convierta
-        en un callejón.
-      */}
-      <div className="mt-3">
-        <button
-          type="button"
-          onClick={onEscanear}
-          className="key key-accent flex min-h-touch w-full items-center justify-center gap-2.5 px-4"
-        >
-          {/* El icono es el marco de una mirilla: cuatro esquinas y un punto.
-              Se lee como «apunta» sin necesidad de leerlo. */}
-          <Icono nombre="qr" />
-          Escanear el QR del aula
-        </button>
-        {avisoQR && (
-          <p role="alert" className="pt-2 text-sm text-crit">
-            {avisoQR}
-          </p>
-        )}
+      <div className="section-head mt-6">
+        <h2 className="eyebrow">Ronda de revisión</h2>
       </div>
-
-      {/* A la ficha, como la fila de la lista y el QR. Se vuelve aquí, a la
-          pantalla de edificios, que es donde está el buscador. */}
-      <BuscadorGlobal onPick={onSala} query={busqueda} onQueryChange={onBusqueda} />
+      {/*
+        El resumen del campus. Solo cuando hay salas: con la base vacía un anillo
+        al 0% sería una cifra falsa, y lo que hay que leer ahí es el aviso de
+        «sin datos» de más abajo.
+      */}
+      {campus.total > 0 && (
+        <section aria-label="Estado de la ronda" className="card flex items-center gap-4 p-4">
+          <Anillo pct={pct} alDia={campus.pendientes === 0} />
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold leading-snug">
+              {campus.pendientes === 0
+                ? 'Todas las salas revisadas'
+                : `${alDia} de ${campus.total} salas revisadas`}
+            </p>
+            <p className="mt-0.5 text-sm leading-snug text-muted">
+              En los últimos {OVERDUE_INSPECTION_DAYS} días.
+            </p>
+            <div className="mt-2.5 flex flex-wrap gap-1.5">
+              {campus.pendientes > 0 && (
+                <span className="chip chip-warn">
+                  {campus.pendientes} pendientes de revisión
+                </span>
+              )}
+              {campus.pendientes === 0 && <span className="chip chip-ok">Ronda al día</span>}
+            </div>
+          </div>
+        </section>
+      )}
 
       <div className="section-head mt-6">
         <h2 className="eyebrow">
@@ -494,8 +666,8 @@ export function EdificiosPage({
                           </span>
                           <span className="truncate text-xs text-muted">
                             {pendientes === 0
-                              ? `${total} salas al día`
-                              : `${pendientes} de ${total} por revisar`}
+                              ? `${total} salas revisadas`
+                              : `${pendientes} de ${total} pendientes`}
                           </span>
                         </span>
                       )}
@@ -528,6 +700,16 @@ export function EdificiosPage({
         del alta se pintaría vacío y «Añadir una sala» empezaría pidiendo
         escribir una planta que ya existe.
       */}
+      {nueva && (
+        <NuevaIncidencia
+          onCerrar={() => setNueva(false)}
+          onElegida={(building, room, tipo) => {
+            setNueva(false)
+            onNuevaIncidencia(building, room, tipo)
+          }}
+        />
+      )}
+
       {hojaEdificio && contextoDeHoja && (
         <HojaDeMaestro
           objeto={{

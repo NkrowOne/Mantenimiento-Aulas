@@ -536,7 +536,7 @@ function DarDeBaja({
 
   return (
     <div className="mt-2">
-      <fieldset className="flex flex-wrap gap-2">
+      <fieldset className="segmento grid w-full grid-cols-2">
         <legend className="sr-only">A dónde va</legend>
         {(['baja', 'almacen'] as const).map((d) => (
           <button
@@ -544,7 +544,6 @@ function DarDeBaja({
             type="button"
             aria-pressed={destino === d}
             onClick={() => setDestino(d)}
-            className={`key min-h-11 px-3 text-sm ${destino === d ? 'key-accent' : 'key-quiet text-muted'}`}
           >
             {DESTINO_LABEL[d]}
           </button>

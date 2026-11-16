@@ -188,18 +188,18 @@ export function InspectionPage({
           acciones={[
             {
               id: 'guardar',
-              etiqueta: 'Guardar para la próxima vez',
+              etiqueta: 'Guardar y continuar más tarde',
               descripcion: corrigiendo
                 ? 'La corrección se queda empezada y la ficha ofrece continuarla al volver.'
-                : 'La sala queda «A medias» en la lista y al volver a entrar sigue donde lo dejaste.',
+                : 'La sala queda «En curso» en la lista y al volver a entrar se continúa donde se dejó.',
               alElegir: onBack,
             },
             {
               id: 'descartar',
               etiqueta: corrigiendo ? 'Descartar la corrección' : 'Descartar lo revisado',
               descripcion: corrigiendo
-                ? 'Se tira lo corregido. La revisión original no se toca: sigue siendo la que cuenta.'
-                : `Se tira lo contestado en esta sala (${cuantos(draft.checks.size, 'respuesta', 'respuestas')}) y la sala deja de aparecer a medias. Lo que hayas cambiado en el inventario se queda: eso no es parte de la revisión.`,
+                ? 'Se descarta lo corregido. La revisión original no cambia: sigue siendo la válida.'
+                : `Se descarta lo contestado en esta sala (${cuantos(draft.checks.size, 'respuesta', 'respuestas')}) y la sala deja de aparecer en curso. Los cambios del inventario se conservan: no forman parte de la revisión.`,
               tono: 'critico',
               alElegir: () => void descartarBorrador().then(onBack),
             },
@@ -409,7 +409,7 @@ export function InspectionPage({
                         ? 'Procesando la foto…'
                         : photoCount > 0
                           ? `${photoCount} foto${photoCount === 1 ? '' : 's'} · añadir otra`
-                          : 'Añadir foto de la avería'}
+                          : 'Añadir foto de la incidencia'}
                     </button>
                   </div>
                   )}
@@ -634,7 +634,7 @@ export function InspectionPage({
             <button
               type="button"
               onClick={() => void complete({ restoOk: true }).then(() => onDone(true))}
-              className="key key-ok flex h-touch w-full items-center justify-center gap-2"
+              className="key key-ok flex h-touch w-full items-center justify-center gap-2 px-2 leading-tight"
             >
               <span aria-hidden className="text-lg">✓</span>
               Todo correcto y siguiente sala
@@ -653,7 +653,10 @@ export function InspectionPage({
                 type="button"
                 disabled={missing.length > 0}
                 onClick={() => void complete().then(() => onDone(true))}
-                className="key key-accent h-touch flex-[2]"
+                /* `leading-tight` y dos renglones si hace falta: en un teléfono
+                   estrecho, o con la letra del sistema agrandada, el texto
+                   llenaba el botón de borde a borde. */
+                className="key key-accent h-touch flex-[2] px-2 leading-tight"
               >
                 Guardar y siguiente sala
               </button>

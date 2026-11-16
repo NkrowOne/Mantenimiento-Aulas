@@ -35,12 +35,15 @@ interface Props {
    */
   query: string
   onQueryChange: (query: string) => void
+  /** Un botón a la derecha del campo, a su misma altura: el lector de QR. */
+  accion?: React.ReactNode
 }
 
 export function BuscadorGlobal({
   onPick,
   query,
   onQueryChange: setQuery,
+  accion,
 }: Props): React.ReactElement {
 
   const indice = useLiveQuery(async () => {
@@ -104,13 +107,14 @@ export function BuscadorGlobal({
         if (primero?.building) onPick(primero.building, primero.room)
       }}
     >
-      <label className="block">
+      <div className="flex items-center gap-2">
+      <label className="block min-w-0 flex-1">
         <span className="sr-only">Buscar un aula en todos los edificios</span>
         <input
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Buscar aula: «h 1.12», «crai sala 3»…"
+          placeholder="Buscar aula: «h 1.12»"
           enterKeyHint="go"
           autoCapitalize="none"
           autoCorrect="off"
@@ -118,6 +122,8 @@ export function BuscadorGlobal({
           className="h-touch w-full rounded-ctl border border-line bg-surface px-3"
         />
       </label>
+      {accion}
+      </div>
 
       {query.trim() && (
         <ul className="card mt-2 divide-y divide-line-soft overflow-hidden">
