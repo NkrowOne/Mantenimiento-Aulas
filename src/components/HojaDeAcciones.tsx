@@ -126,6 +126,158 @@ export function HojaDeAcciones({
   // «Cancelar». Al desmontarse sale, la haya cerrado quien la haya cerrado.
   useEffect(() => entrar(() => cerrar.current()), [])
 
+  /*
+   * Tirar de la hoja hacia abajo la cierra.
+   *
+   * La hoja lleva arriba un asa —la rayita gris—, y un asa se agarra: es el
+   * gesto que cualquiera hace en un teléfono para quitar de en medio algo que ha
+   * subido desde abajo. Estuvo pintada sin que detrás hubiera nada, y eso es
+   * peor que no ponerla: se tiraba, la hoja no se movía, y había que bajar a
+   * buscar «Cerrar» al final de una hoja que no cabe en la pantalla.
+   *
+   * CUÁNDO es arrastrar y cuándo es desplazar. La hoja desplaza su propio
+   * contenido cuando no cabe, y el mismo dedo hace las dos cosas. Se arrastra
+   * solo si el gesto empieza con la hoja ARRIBA DEL TODO y va hacia abajo: con
+   * el contenido desplazado, tirar hacia abajo es volver a subirlo, como en
+   * cualquier lista. Tampoco si empieza en un campo —ahí se está colocando el
+   * cursor—, ni si va más de lado que hacia abajo, que es deslizar un carril.
+   *
+   * CUÁNDO se cierra al soltar. Si se ha bajado un trozo de verdad —un tercio
+   * de la hoja, o 140 px— o si ha sido un tirón rápido. Si no, vuelve a su
+   * sitio: un roce al desplazar no puede cerrarla.
+   *
+   * Y cuando la hoja NO se deja cerrar tocando fuera (`cierrePorFondo` a falso:
+   * hay algo tecleado dentro), tampoco se cierra tirando. Se mueve un poco,
+   * con resistencia, y vuelve: dice «te he entendido, pero aquí hay algo sin
+   * guardar», que es mejor que no responder y mucho mejor que tirar lo escrito.
+   *
+   * Con oyentes nativos y no con los de React: `touchmove` tiene que poder
+   * llamar a `preventDefault()` para que el navegador no desplace a la vez, y
+   * React los registra pasivos. El `transform` se escribe directo en el nodo,
+   * sin estado: son sesenta escrituras por segundo siguiendo un dedo.
+   *
+   * Solo en estrecho, que es donde la hoja está anclada abajo. Centrada en una
+   * pantalla ancha es un cuadro, y un cuadro no se arrastra.
+   */
+  const velo = useRef<HTMLDivElement>(null)
+  const seDejaCerrar = useRef(cierrePorFondo)
+  seDejaCerrar.current = cierrePorFondo
+
+  useEffect(() => {
+    const hoja = panel.current
+    if (!hoja) return
+
+    let x0 = 0
+    let y0 = 0
+    let dy = 0
+    /* Por dónde iba el dedo en el último décimo de segundo. La velocidad que
+       cuenta es la del FINAL del gesto: quien apoya el dedo, se lo piensa y da
+       el tirón ha ido despacio de media y rápido al soltar, y es un tirón. */
+    let rastro: Array<{ y: number; t: number }> = []
+    let pendiente = false
+    let arrastrando = false
+    let cierre: number | undefined
+
+    const alTocar = (e: TouchEvent): void => {
+      pendiente = false
+      if (e.touches.length !== 1 || window.matchMedia('(min-width: 640px)').matches) return
+      const en = e.target instanceof Element ? e.target : null
+      if (!en || en.closest('input, textarea, select')) return
+      // Ni la hoja ni nada de lo que lleve dentro puede estar desplazado.
+      for (let n: Element | null = en; n && hoja.contains(n); n = n.parentElement) {
+        if (n.scrollTop > 0) return
+      }
+      const dedo = e.touches[0]!
+      x0 = dedo.clientX
+      y0 = dedo.clientY
+      rastro = [{ y: y0, t: e.timeStamp }]
+      dy = 0
+      pendiente = true
+      arrastrando = false
+    }
+
+    const alMover = (e: TouchEvent): void => {
+      if (!pendiente) return
+      const dedo = e.touches[0]!
+      dy = dedo.clientY - y0
+      rastro.push({ y: dedo.clientY, t: e.timeStamp })
+      while (rastro.length > 2 && e.timeStamp - rastro[0]!.t > 100) rastro.shift()
+      if (!arrastrando) {
+        const dx = Math.abs(dedo.clientX - x0)
+        // Hacia arriba o de lado: no es esto.
+        if (dy < -6 || dx > Math.max(8, dy)) {
+          pendiente = false
+          return
+        }
+        /*
+         * Desde el primer milímetro hacia abajo se le quita el gesto al
+         * navegador, aunque la hoja no empiece a moverse hasta los 8 px.
+         *
+         * Es por Safari de iOS: si en los primeros `touchmove` no se dice que
+         * no, él empieza SU desplazamiento —con la hoja arriba del todo, el
+         * rebote elástico—, y una vez empezado ya no se puede cancelar: los
+         * `touchmove` siguientes llegan con `cancelable` a falso y el contenido
+         * rebota por dentro a la vez que la hoja baja.
+         */
+        if (dy > 0 && e.cancelable) e.preventDefault()
+        if (dy < 8) return
+        arrastrando = true
+        // La animación de entrada escribe `transform`: mientras siga puesta, el
+        // nuestro no se vería.
+        hoja.style.animation = 'none'
+        hoja.style.transition = 'none'
+      }
+      if (e.cancelable) e.preventDefault()
+      const baja = Math.max(0, dy)
+      hoja.style.transform = `translateY(${seDejaCerrar.current ? baja : baja * 0.2}px)`
+      if (velo.current && seDejaCerrar.current) {
+        velo.current.style.opacity = String(Math.max(0.25, 1 - baja / (hoja.offsetHeight || 1)))
+      }
+    }
+
+    const alSoltar = (e: TouchEvent): void => {
+      if (!pendiente) return
+      pendiente = false
+      if (!arrastrando) return
+      arrastrando = false
+
+      const primero = rastro[0]!
+      const ultimo = rastro[rastro.length - 1]!
+      const velocidad = (ultimo.y - primero.y) / Math.max(1, ultimo.t - primero.t)
+      const seCierra =
+        e.type === 'touchend' &&
+        seDejaCerrar.current &&
+        (dy > Math.min(140, hoja.offsetHeight / 3) || (velocidad > 0.5 && dy > 40))
+
+      hoja.style.transition = 'transform 220ms var(--ease-drawer)'
+      if (seCierra) {
+        hoja.style.transform = 'translateY(100%)'
+        if (velo.current) {
+          velo.current.style.transition = 'opacity 220ms var(--ease-out)'
+          velo.current.style.opacity = '0'
+        }
+        // Se desmonta cuando ha terminado de bajar, no antes: quitarla a
+        // media caída se ve como un corte.
+        cierre = window.setTimeout(() => cerrar.current(), 200)
+      } else {
+        hoja.style.transform = ''
+        if (velo.current) velo.current.style.opacity = ''
+      }
+    }
+
+    hoja.addEventListener('touchstart', alTocar, { passive: true })
+    hoja.addEventListener('touchmove', alMover, { passive: false })
+    hoja.addEventListener('touchend', alSoltar)
+    hoja.addEventListener('touchcancel', alSoltar)
+    return () => {
+      window.clearTimeout(cierre)
+      hoja.removeEventListener('touchstart', alTocar)
+      hoja.removeEventListener('touchmove', alMover)
+      hoja.removeEventListener('touchend', alSoltar)
+      hoja.removeEventListener('touchcancel', alSoltar)
+    }
+  }, [])
+
   useEffect(() => {
     const alPulsar = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
@@ -253,6 +405,7 @@ export function HojaDeAcciones({
        * aquí.
        */}
       <div
+        ref={velo}
         aria-hidden
         className={`absolute inset-0 bg-black/45 ${cierrePorFondo ? 'cursor-pointer' : ''}`}
         style={{ animation: 'funde 200ms var(--ease-out)' }}
@@ -273,10 +426,12 @@ export function HojaDeAcciones({
           paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))',
         }}
       >
-        {/* El asa. No se arrastra —la hoja se cierra con su botón, con el velo y
-            con el atrás del móvil— pero es la señal que todo el mundo lee como
-            «esto es una hoja que ha subido, y se puede bajar». Solo en estrecho:
-            centrada en una pantalla ancha ya no es una hoja, es un cuadro. */}
+        {/* El asa. Es la señal que todo el mundo lee como «esto es una hoja que
+            ha subido, y se puede bajar» —y se puede: tirar de la hoja hacia
+            abajo la cierra, lo cuenta el efecto de arriba—. No hace falta
+            acertar en la rayita: vale tirar de cualquier parte de la hoja que no
+            sea un campo. Solo en estrecho: centrada en una pantalla ancha ya no
+            es una hoja, es un cuadro. */}
         <div aria-hidden className="mx-auto mb-3 h-1 w-9 rounded-full bg-line sm:hidden" />
 
         <div className="pb-1">
