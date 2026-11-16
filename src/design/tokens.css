@@ -147,13 +147,34 @@
 /*
  * Tema oscuro. No es el claro invertido: es una paleta propia.
  *
- * El fondo sube de #0A1012 (casi negro con tinte petróleo) a #141618, un
- * grafito neutro. Suena a poco y cambia todo: sobre negro puro las superficies
- * no se separan —había diez puntos RGB entre el fondo y la tarjeta— y cualquier
- * color encima sale disparado.
+ * Es la tercera que tiene, y las dos anteriores fallaron por el mismo sitio.
+ * La primera era casi negra con tinte petróleo y las superficies no se
+ * separaban. La segunda lo arregló subiendo el fondo a un grafito gris y
+ * bajando el croma de todo —marcas pálidas, rellenos «profundos»—, y el
+ * resultado era legible pero APAGADO: una pantalla gris sobre gris con los
+ * botones en un verde azulado sucio, que es justo el aspecto de un modo oscuro
+ * de hace diez años.
  *
- * Las marcas bajan mucho de croma y los rellenos se vuelven profundos. El
- * contraste no baja: está calculado, y `npm run check:contrast` falla si
+ * Lo que hace hoy cualquier interfaz oscura bien resuelta, y lo que hace esta:
+ *
+ *   FONDO CASI NEGRO, Y NEUTRO.  #0A0C0E. No es negro puro —sobre negro puro
+ *     las sombras no existen y el texto blanco vibra— pero está muy cerca: es
+ *     lo que hace que la pantalla no ilumine un aula a oscuras, que es para lo
+ *     que alguien elige este tema.
+ *   LAS SUPERFICIES SUBEN POR PASOS CLAROS.  Fondo, tarjeta y relieve van a
+ *     unos seis puntos de claridad uno de otro. En oscuro la sombra no separa
+ *     nada, así que la profundidad la da el propio color de cada plano.
+ *   EL TEXTO, CASI BLANCO.  Subía a un gris claro que, con el fondo también
+ *     gris, daba poco contraste aparente aunque pasara la prueba.
+ *   LAS MARCAS, VIVAS.  El petróleo, el verde, el ámbar y el rojo se leen
+ *     sobre negro como luces: tienen que tener color. Pálidos no se
+ *     distinguían entre sí de un vistazo.
+ *   LOS RELLENOS, CON COLOR DE VERDAD.  Una tecla es petróleo, no gris
+ *     verdoso. Son lo bastante oscuros para llevar texto blanco con contraste
+ *     de sobra y lo bastante saturados para que se vea cuál es la acción.
+ *
+ * El contraste está calculado, no estimado: `npm run check:contrast` mide cada
+ * pareja de texto y fondo y la separación entre superficies, y falla si
  * alguien lo rompe.
  */
 @media (prefers-color-scheme: dark) {
@@ -163,49 +184,49 @@
      * sobre grafito, dos superficies a ocho puntos de distancia son la misma
      * superficie. La tarjeta sube y se templa; el fondo baja y se enfría.
      */
-    --ground: 16 18 20;
-    --raised: 41 45 49;
-    --sunken: 11 13 14;
-    --line: 55 60 65;
-    --line-soft: 38 42 46;
+    --ground: 10 12 14;
+    --raised: 32 36 41;
+    --sunken: 5 6 7;
+    --line: 48 53 59;
+    --line-soft: 33 37 42;
 
     /* Papel en oscuro: grafito, claramente por encima del fondo. */
-    --surface: 28 31 34;
+    --surface: 20 23 26;
 
-    --ink: 226 231 232;
-    --ink-2: 156 166 169;
-    --muted: 128 139 143;
+    --ink: 237 240 242;
+    --ink-2: 174 182 189;
+    --muted: 134 144 153;
 
-    --accent: 126 173 182;
-    --accent-fill: 21 79 90;
-    --accent-ink: 214 238 242;
-    --mark: 106 158 168;
-    --accent-tint: 18 38 42;
+    --accent: 86 208 224;
+    --accent-fill: 8 118 134;
+    --accent-ink: 240 252 254;
+    --mark: 64 190 206;
+    --accent-tint: 12 44 51;
 
-    --ok: 106 178 138;
-    --ok-fill: 25 71 50;
-    --ok-ink: 210 236 220;
-    --ok-tint: 22 36 28;
+    --ok: 82 208 136;
+    --ok-fill: 22 128 74;
+    --ok-ink: 240 253 245;
+    --ok-tint: 13 43 28;
 
-    --warn: 199 154 94;
-    --warn-fill: 74 54 24;
-    --warn-ink: 245 232 213;
-    --warn-tint: 38 32 25;
+    --warn: 245 184 80;
+    --warn-fill: 146 96 10;
+    --warn-ink: 255 248 235;
+    --warn-tint: 51 37 10;
 
-    --crit: 224 138 130;
-    --crit-fill: 108 42 37;
-    --crit-ink: 250 226 223;
-    --crit-tint: 42 26 24;
+    --crit: 248 113 113;
+    --crit-fill: 200 50 43;
+    --crit-ink: 255 244 243;
+    --crit-tint: 46 20 20;
 
-    --na: 139 154 161;
-    --na-tint: 30 34 37;
+    --na: 148 160 170;
+    --na-tint: 30 34 39;
 
-    --lift: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px -6px rgb(0 0 0 / 0.6);
-    --float: 0 2px 6px rgb(0 0 0 / 0.5), 0 18px 48px -12px rgb(0 0 0 / 0.9);
+    --lift: 0 1px 2px rgb(0 0 0 / 0.5);
+    --float: 0 0 0 1px rgb(255 255 255 / 0.06), 0 24px 60px -12px rgb(0 0 0 / 0.9);
 
     --sheen: none;
-    --edge: 0 1px 2px rgb(0 0 0 / 0.5);
-    --edge-quiet: 0 1px 2px rgb(0 0 0 / 0.3);
+    --edge: 0 1px 2px rgb(0 0 0 / 0.6);
+    --edge-quiet: 0 1px 2px rgb(0 0 0 / 0.4);
   }
 }
 
@@ -216,45 +237,45 @@
  * dos oscuros estaba mirando.
  */
 :root[data-theme='dark'] {
-  --ground: 16 18 20;
-  --surface: 28 31 34;
-  --raised: 41 45 49;
-  --sunken: 11 13 14;
-  --line: 55 60 65;
-  --line-soft: 38 42 46;
+  --ground: 10 12 14;
+  --surface: 20 23 26;
+  --raised: 32 36 41;
+  --sunken: 5 6 7;
+  --line: 48 53 59;
+  --line-soft: 33 37 42;
 
-  --ink: 226 231 232;
-  --ink-2: 156 166 169;
-  --muted: 128 139 143;
+  --ink: 237 240 242;
+  --ink-2: 174 182 189;
+  --muted: 134 144 153;
 
-  --accent: 126 173 182;
-  --accent-fill: 21 79 90;
-  --accent-ink: 214 238 242;
-  --mark: 106 158 168;
-  --accent-tint: 18 38 42;
+  --accent: 86 208 224;
+  --accent-fill: 8 118 134;
+  --accent-ink: 240 252 254;
+  --mark: 64 190 206;
+  --accent-tint: 12 44 51;
 
-  --ok: 106 178 138;
-  --ok-fill: 25 71 50;
-  --ok-ink: 210 236 220;
-  --ok-tint: 22 36 28;
+  --ok: 82 208 136;
+  --ok-fill: 22 128 74;
+  --ok-ink: 240 253 245;
+  --ok-tint: 13 43 28;
 
-  --warn: 199 154 94;
-  --warn-fill: 74 54 24;
-  --warn-ink: 245 232 213;
-  --warn-tint: 38 32 25;
+  --warn: 245 184 80;
+  --warn-fill: 146 96 10;
+  --warn-ink: 255 248 235;
+  --warn-tint: 51 37 10;
 
-  --crit: 224 138 130;
-  --crit-fill: 108 42 37;
-  --crit-ink: 250 226 223;
-  --crit-tint: 42 26 24;
+  --crit: 248 113 113;
+  --crit-fill: 200 50 43;
+  --crit-ink: 255 244 243;
+  --crit-tint: 46 20 20;
 
-  --na: 139 154 161;
-  --na-tint: 30 34 37;
+  --na: 148 160 170;
+  --na-tint: 30 34 39;
 
-  --lift: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px -6px rgb(0 0 0 / 0.6);
-  --float: 0 2px 6px rgb(0 0 0 / 0.5), 0 18px 48px -12px rgb(0 0 0 / 0.9);
+  --lift: 0 1px 2px rgb(0 0 0 / 0.5);
+  --float: 0 0 0 1px rgb(255 255 255 / 0.06), 0 24px 60px -12px rgb(0 0 0 / 0.9);
 
   --sheen: none;
-  --edge: 0 1px 2px rgb(0 0 0 / 0.5);
-  --edge-quiet: 0 1px 2px rgb(0 0 0 / 0.3);
+  --edge: 0 1px 2px rgb(0 0 0 / 0.6);
+  --edge-quiet: 0 1px 2px rgb(0 0 0 / 0.4);
 }
