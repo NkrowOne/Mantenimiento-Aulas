@@ -12,6 +12,7 @@
  * Y resuelve una confusión real: un código como `-2.1` leído solo se toma por
  * un sótano cualquiera. Con «Edificio H · Planta −2» delante, no hay duda.
  */
+import { BotonVolver } from '@/components/BotonVolver'
 
 interface Props {
   building: string
@@ -69,16 +70,10 @@ export function RoomPlate({
   )
 
   return (
-    <header className="border-b border-line bg-ground px-3 pb-3 pt-2">
-      <button
-        type="button"
-        onClick={onBack}
-        className="-ml-2 mb-1 inline-flex min-h-11 items-center px-2 font-mono text-[0.6875rem] uppercase tracking-[0.14em] text-accent"
-      >
-        ← Volver
-      </button>
+    <header className="px-4 pb-3 pt-1">
+      <BotonVolver onClick={onBack} className="mb-1" />
 
-      <div className="relative flex items-stretch overflow-hidden rounded-card border border-line bg-surface shadow-lift">
+      <div className="relative flex items-stretch overflow-hidden rounded-card border border-line-soft bg-surface shadow-lift">
         {/* Los dos tornillos. Detalle pequeño, pero es lo que convierte un
             rectángulo en una placa. */}
         <span

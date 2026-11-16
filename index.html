@@ -14,13 +14,71 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no"
     />
     <meta name="theme-color" content="#046A78" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#0E1216" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#101214" media="(prefers-color-scheme: dark)" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Aulas" />
     <title>Mantenimiento de Aulas</title>
+    <!--
+      El tema, ANTES de pintar nada.
+
+      Quien eligió «Oscuro» en «Más» lo tiene guardado en localStorage (lo
+      escribe src/lib/tema.ts, con esta misma clave). Si se esperase a que
+      cargue la aplicación para aplicarlo, cada arranque empezaría con un
+      fogonazo en claro: justo lo que alguien que entra en un aula a oscuras no
+      quiere. Tres líneas síncronas en la cabecera lo evitan.
+    -->
+    <script>
+      try {
+        var t = localStorage.getItem('aulas-tema')
+        if (t === 'oscuro') document.documentElement.dataset.theme = 'dark'
+        if (t === 'claro') document.documentElement.dataset.theme = 'light'
+      } catch (e) {}
+    </script>
+    <!--
+      El primer fotograma.
+
+      La hoja de estilos de verdad llega con el JavaScript, y hasta entonces la
+      página era un rectángulo blanco: medio segundo con buena cobertura, varios
+      con la de un sótano. Esto pinta el fondo del tema y centra la marca con lo
+      que cabe en un `style` en línea, así que lo primero que se ve ya es la
+      aplicación. Los dos colores son `--ground` de src/design/tokens.css, en
+      claro y en oscuro.
+    -->
+    <style>
+      html { background: #F3F5F7 }
+      @media (prefers-color-scheme: dark) { html:not([data-theme='light']) { background: #101214 } }
+      html[data-theme='dark'] { background: #101214 }
+      /* En papel, blanco pase lo que pase: de esta página se imprimen las placas
+         y el inventario, y un fondo gris —o grafito— es tóner tirado. */
+      @media print { html, html[data-theme='dark'], html:not([data-theme='light']) { background: #fff } }
+      body { margin: 0 }
+      #arranque { display: flex; min-height: 100vh; min-height: 100dvh; align-items: center; justify-content: center }
+      #arranque svg { border-radius: 28% }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <!--
+      Lo que hay dentro de #root es el arranque: React lo sustituye al montar, y
+      src/components/Arranque.tsx pinta exactamente lo mismo mientras Dexie
+      contesta, así que el relevo no se nota. Si se cambia uno, se cambia el otro.
+    -->
+    <div id="root">
+      <div id="arranque" role="status" aria-label="Cargando">
+        <svg width="72" height="72" viewBox="0 0 512 512" aria-hidden="true">
+          <defs>
+            <linearGradient id="arranque-fondo" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#053640" />
+              <stop offset="1" stop-color="#077A8A" />
+            </linearGradient>
+          </defs>
+          <rect width="512" height="512" fill="url(#arranque-fondo)" />
+          <rect x="72" y="104" width="368" height="304" rx="44" fill="#FBFCFC" />
+          <path d="M148 344 212 168 276 344M172 286h80" fill="none" stroke="#046A78" stroke-width="42" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="318" y="266" width="86" height="86" rx="16" fill="none" stroke="#14343B" stroke-width="18" />
+          <rect x="348" y="296" width="26" height="26" rx="6" fill="#14343B" />
+        </svg>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -77,6 +77,56 @@ function saludJson(construccion: Construccion): Plugin {
   }
 }
 
+/**
+ * La letra de la interfaz, pedida desde el HTML.
+ *
+ * El navegador no sabe que hace falta una fuente hasta que ha bajado el CSS, lo
+ * ha leído y ha encontrado texto que la usa: tres pasos en fila antes de pedir
+ * un fichero de 30 kB sin el cual la primera pantalla se pinta con la letra del
+ * sistema y luego SALTA a la buena, moviendo todo lo que mide texto. Con un
+ * `preload` en la cabecera la fuente baja en paralelo con el JavaScript y ya
+ * está cuando hay algo que escribir.
+ *
+ * Solo el subconjunto latino de Instrument Sans, que es el que escribe el
+ * español. La monoespaciada no: va en códigos y números de serie, nunca en el
+ * primer fotograma, y precargar de más compite por la conexión con lo que sí
+ * hace falta.
+ *
+ * El nombre lleva el hash del contenido, así que no se puede escribir a mano en
+ * `index.html`: se busca en lo que Vite ha generado.
+ */
+function precargarLaLetra(): Plugin {
+  return {
+    name: 'precargar-la-letra',
+    apply: 'build',
+    transformIndexHtml: {
+      order: 'post',
+      handler(_html, ctx) {
+        const fuente = Object.keys(ctx.bundle ?? {}).find((f) =>
+          /instrument-sans-latin-wght-normal-.*\.woff2$/.test(f),
+        )
+        if (!fuente) return []
+        return [
+          {
+            tag: 'link',
+            attrs: {
+              rel: 'preload',
+              as: 'font',
+              type: 'font/woff2',
+              href: `/${fuente}`,
+              // Las fuentes se piden siempre en modo CORS, también las del
+              // mismo origen: sin esto el `preload` baja una copia y el CSS
+              // pide otra.
+              crossorigin: '',
+            },
+            injectTo: 'head',
+          },
+        ]
+      },
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => {
   // `process.env` no basta: si las variables vienen de un `.env`, quien las lee
   // es Vite, no el proceso.
@@ -138,6 +188,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       saludJson(construccion),
+      precargarLaLetra(),
       VitePWA({
         registerType: 'prompt',
         includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
@@ -149,7 +200,7 @@ export default defineConfig(({ mode }) => {
           // El petróleo de la marca (--accent), no un azul que no sale en
           // ninguna pantalla de la aplicación.
           theme_color: '#046A78',
-          background_color: '#F6F7F9',
+          background_color: '#F3F5F7',
           display: 'standalone',
           start_url: '/',
           icons: [
@@ -267,6 +318,33 @@ export default defineConfig(({ mode }) => {
            */
           manualChunks(id: string) {
             if (/node_modules[/\\](echarts|zrender)[/\\]/.test(id)) return 'echarts'
+
+            /*
+             * Las librerías, aparte del código de la aplicación.
+             *
+             * El arranque era UN fichero de 800 kB con todo dentro: React, el
+             * cliente de Supabase, Dexie y la aplicación. Y el nombre de un
+             * fichero lleva el hash de su contenido, así que tocar una coma en
+             * una pantalla le cambiaba el nombre a los 800 kB enteros: cada
+             * versión nueva —van casi cien— hacía que cada iPad volviera a
+             * bajarse React y Supabase, que no habían cambiado, por la cobertura
+             * de un pasillo.
+             *
+             * Separadas, las librerías conservan su nombre de una versión a
+             * otra mientras no se actualicen ellas, y el service worker —que
+             * precachea por nombre con hash— no las vuelve a pedir. Una
+             * actualización corriente pasa a bajar solo el trozo de la
+             * aplicación, que es menos de un tercio del total.
+             *
+             * Tres trozos y no uno por librería: cada fichero es una petición,
+             * y lo que se gana en caché se pierde en viajes si se trocea de más.
+             * Se agrupan por lo que se actualiza junto.
+             */
+            if (/node_modules[/\\](react|react-dom|scheduler)[/\\]/.test(id)) return 'react'
+            if (/node_modules[/\\](@supabase|iceberg-js|tslib)[/\\]/.test(id)) return 'supabase'
+            if (/node_modules[/\\](dexie|dexie-react-hooks|@tanstack)[/\\]/.test(id)) {
+              return 'datos-locales'
+            }
             return undefined
           },
         },

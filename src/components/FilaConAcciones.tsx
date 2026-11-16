@@ -69,7 +69,7 @@ export function FilaConAcciones({
         onClick={alAbrir}
         aria-label={etiqueta}
         aria-haspopup="dialog"
-        className="flex min-h-11 w-touch shrink-0 items-center justify-center border-l border-line-soft text-muted transition-colors duration-100 active:bg-raised"
+        className="fila flex min-h-11 w-12 shrink-0 items-center justify-center border-l border-line-soft text-muted"
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <circle cx="12" cy="5" r="1.75" />

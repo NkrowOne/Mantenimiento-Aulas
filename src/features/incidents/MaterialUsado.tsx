@@ -52,7 +52,20 @@ import { buscarArticulos } from './buscarArticulo'
  * del cierre— y si el parte llega detrás del cierre, lo descuenta al llegar. A
  * qué fila va cada toque lo decide `material.ts`, que es donde está probado.
  */
-export function MaterialUsado({ incidentId }: { incidentId: string }): React.ReactElement {
+export function MaterialUsado({
+  incidentId,
+  enfocar = false,
+}: {
+  incidentId: string
+  /**
+   * Poner el cursor en el buscador al abrirse. Solo cuando el panel lo ha
+   * abierto un toque —«Material», «¿Has usado material?»—: ahí lo siguiente es
+   * teclear el artículo, y sin esto había que tocar el campo antes. Cuando el
+   * panel ya viene abierto con el formulario de cierre NO, porque le quitaría
+   * el cursor a «Qué se ha hecho», que es lo primero que se escribe.
+   */
+  enfocar?: boolean
+}): React.ReactElement {
   const [query, setQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
   const qc = useQueryClient()
@@ -353,6 +366,7 @@ export function MaterialUsado({ incidentId }: { incidentId: string }): React.Rea
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          autoFocus={enfocar}
           /*
            * Enter aquí no hace nada —la lista filtra según se teclea— y
            * dentro de un formulario haría lo peor que puede hacer: enviarlo.

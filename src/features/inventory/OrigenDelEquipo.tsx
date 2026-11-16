@@ -237,6 +237,23 @@ export function OrigenDelEquipo({
   const unidad = unidadesOfrecidas.find((u) => u.id === unidadElegida) ?? null
   const preguntaSustitucion = hayQueElegir && unidad !== null && mismosEnSala.length > 0
 
+  /*
+   * Si solo hay UNA cosa que elegir, ya viene elegida.
+   *
+   * Con una única unidad en la estantería y sin la opción de «otra, sin
+   * número» —que solo sale cuando hay artículo del almacén detrás—, la lista
+   * tenía una fila y aun así había que tocarla para poder confirmar: un toque
+   * para contestar una pregunta que solo tiene una respuesta. Se marca sola y
+   * se sigue pudiendo ver cuál es antes de pulsar «Añadir a la sala».
+   */
+  const unicaUnidad =
+    hayQueElegir && unidadesOfrecidas.length === 1 && !(articulos.length > 0 && Boolean(stockItemId))
+      ? unidadesOfrecidas[0]!.id
+      : null
+  useEffect(() => {
+    if (unicaUnidad !== null && unidadElegida === null) setUnidadElegida(unicaUnidad)
+  }, [unicaUnidad, unidadElegida])
+
   const listo = useMemo(() => {
     if (modo === 'almacen') {
       if (hayQueElegir && unidadElegida === null) return false

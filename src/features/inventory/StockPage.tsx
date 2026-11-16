@@ -30,6 +30,9 @@ import { prepararExportacionDelAlmacen } from './exportarAlmacen'
 import { useEstados, type MovimientoPedido } from './estadosDatos'
 import { esDuplicado, esFalloDeRed, esSinExistencias, falloAlMover, falloDeAdministracion, mensajeDe } from './fallos'
 import { useUnidades } from './unidadesDatos'
+import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
+import { subirArriba } from '@/components/Marco'
+import { Icono } from '@/components/Icono'
 
 /** Una fila de `stock_levels`. Lo que se lee de la vista está entre sus columnas: lo comprueba `contrato-saldos`. */
 interface StockLevel {
@@ -81,9 +84,15 @@ type Abierta = { articulo: string | null; unidad?: string } | null
  */
 export function StockPage({ role }: { role: Role }): React.ReactElement {
   const qc = useQueryClient()
-  const [consulta, setConsulta] = useState('')
-  const [filtro, setFiltro] = useState<Filtro>('todo')
+  /* La búsqueda y el filtro se recuerdan al cambiar de pestaña y volver. */
+  const [consulta, setConsulta] = useEstadoDeSesion('almacen.busqueda', '')
+  const [filtro, setFiltro] = useEstadoDeSesion<Filtro>('almacen.filtro', 'todo', (v) =>
+    (['todo', 'bajo', 'serie', 'averiadas', 'cero'] as unknown[]).includes(v),
+  )
   const [alta, setAlta] = useState(false)
+  /** El nombre con el que se abre el alta cuando se llega a ella desde una
+      búsqueda sin resultados: lo que se buscaba es lo que se quiere crear. */
+  const [nombreSugerido, setNombreSugerido] = useState('')
   const [abierta, setAbierta] = useState<Abierta>(null)
   const [aviso, setAviso] = useState<string | null>(null)
   const [verRetirados, setVerRetirados] = useState(false)
@@ -176,17 +185,32 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
   const [seguimientoNuevo, setSeguimientoNuevo] = useState<Seguimiento>('cantidad')
   const crear = useMutation({
     mutationFn: async (input: { name: string; unit: string; seguimiento: Seguimiento | null }) => {
-      const { error } = await supabase.from('stock_items').insert({
-        name: input.name,
-        unit: input.unit || 'ud',
-        active: true,
-        ...(input.seguimiento ? { seguimiento: input.seguimiento } : {}),
-      })
+      const { data, error } = await supabase
+        .from('stock_items')
+        .insert({
+          name: input.name,
+          unit: input.unit || 'ud',
+          active: true,
+          ...(input.seguimiento ? { seguimiento: input.seguimiento } : {}),
+        })
+        .select('id')
+        .maybeSingle()
       if (error) throw error
+      return (data?.id as string | undefined) ?? null
     },
-    onSuccess: () => {
+    onSuccess: (id) => {
       setAlta(false)
-      void qc.invalidateQueries({ queryKey: ['stock-levels'] })
+      setNombreSugerido('')
+      /*
+       * Recién creado, se abre. Un artículo nuevo nace a cero y sin mínimo, así
+       * que lo siguiente es SIEMPRE meterle existencias o ponerle el mínimo, y
+       * para eso había que buscarlo en la lista que se acababa de dejar. La hoja
+       * aparece en cuanto la lista vuelve a leerse y lo trae; si el servidor no
+       * devolviera el identificador, se queda como estaba: creado y en la lista.
+       */
+      void qc.invalidateQueries({ queryKey: ['stock-levels'] }).then(() => {
+        if (id) setAbierta({ articulo: id })
+      })
     },
   })
 
@@ -305,11 +329,28 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
   return (
     <div className="mx-auto max-w-4xl p-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Almacén</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Almacén</h1>
+        {/* El Excel y el PDF están al final de la lista, debajo de todos los
+            artículos: este botón baja hasta ahí sin tener que recorrerla. */}
+        <button
+          type="button"
+          onClick={() =>
+            document
+              .getElementById('exportar-almacen')
+              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+          className="key-ghost ml-auto inline-flex min-h-11 shrink-0 items-center gap-1.5 px-2.5 text-sm"
+        >
+          <Icono nombre="instalar" lado={18} />
+          Excel y PDF
+        </button>
         {esAdmin && (
           <button
             type="button"
-            onClick={() => setAlta((v) => !v)}
+            onClick={() => {
+              setNombreSugerido('')
+              setAlta((v) => !v)
+            }}
             className="key key-quiet min-h-11 shrink-0 px-3 text-sm"
           >
             {alta ? 'Cancelar' : 'Nuevo artículo'}
@@ -337,6 +378,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
               <span className="text-muted">Nombre</span>
               <input
                 name="nombre-del-articulo"
+                defaultValue={nombreSugerido}
                 required
                 autoFocus
                 autoComplete="off"
@@ -499,7 +541,26 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
       {!isPending && !isError && filas.length === 0 && (
         <div className="mt-6 text-sm text-muted">
           {(levels?.length ?? 0) > 0 ? (
-            <p>{porSerie.length > 0 ? 'Ningún artículo se llama así: arriba están las unidades con ese número.' : 'Ningún artículo coincide.'}</p>
+            <>
+              <p>{porSerie.length > 0 ? 'Ningún artículo se llama así: arriba están las unidades con ese número.' : 'Ningún artículo coincide.'}</p>
+              {/* La búsqueda que no encuentra nada es, muchas veces, el
+                  artículo que falta por crear. Al administrador se le ofrece
+                  crearlo con ese mismo nombre, en vez de dejarle delante de una
+                  frase sin salida y con el nombre por teclear otra vez. */}
+              {esAdmin && !alta && consulta.trim() && porSerie.length === 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNombreSugerido(consulta.trim())
+                    setAlta(true)
+                    subirArriba()
+                  }}
+                  className="key key-quiet mt-3 min-h-11 px-3 text-sm"
+                >
+                  Crear «{consulta.trim()}»
+                </button>
+              )}
+            </>
           ) : (
             <>
               <p>El almacén no tiene ningún artículo.</p>
@@ -630,6 +691,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
         Es una copia de hoy para mirar fuera de la aplicación, no la
         sincronización con SharePoint, que vive en Datos → Excel.
       */}
+      <div id="exportar-almacen" />
       <ExportarConVistaPrevia
         titulo="Inventario del almacén: Excel y PDF"
         descripcion="Las existencias con cuántas hay de cada estado (también los artículos retirados), los movimientos con su saldo y las unidades con número de serie y su estado. Se ven antes de descargar."

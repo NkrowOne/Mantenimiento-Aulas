@@ -205,7 +205,18 @@ export function MaestroSalas(): React.ReactElement {
 
       <div className="card mt-4 p-4">
         <p className="text-sm font-medium">Añadir un edificio</p>
-        <div className="mt-3 grid gap-2 sm:grid-cols-[6rem_1fr_auto]">
+        {/* Un `form`: con el nombre tecleado, «Intro» añade el edificio. Era un
+            `div` con un botón, y el teclado había que soltarlo para pulsarlo. El
+            botón sigue deshabilitado mientras falte algo, y un `submit`
+            deshabilitado no envía, así que la regla es la misma por los dos
+            caminos. */}
+        <form
+          className="mt-3 grid gap-2 sm:grid-cols-[6rem_1fr_auto]"
+          onSubmit={(e) => {
+            e.preventDefault()
+            alta.mutate({ code: codigoNuevo, name: nombreEd.trim() })
+          }}
+        >
           <label className="text-xs text-muted">
             Código
             <input
@@ -230,16 +241,15 @@ export function MaestroSalas(): React.ReactElement {
             />
           </label>
           <button
-            type="button"
+            type="submit"
             disabled={
               !codigoEd.trim() || !nombreEd.trim() || problemaEd !== null || alta.isPending
             }
-            onClick={() => alta.mutate({ code: codigoNuevo, name: nombreEd.trim() })}
             className="key key-accent mt-1 min-h-11 self-end px-3 text-sm"
           >
             Añadir
           </button>
-        </div>
+        </form>
         {problemaEd && <p className="mt-2 text-sm text-crit">{problemaEd}</p>}
         {avisoEd && <p className="mt-2 text-sm text-warn">{avisoEd}</p>}
         <p className="mt-2 text-xs text-muted">

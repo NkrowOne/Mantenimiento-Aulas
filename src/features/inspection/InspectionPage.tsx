@@ -14,6 +14,8 @@ import { displayRoomCode } from '@/domain/normalize'
 import { fechaLegible } from '@/domain/historial'
 import { TiraDeFotos } from '@/components/Fotos'
 import { useInspection, type Correccion } from './useInspection'
+import { Esqueleto } from '@/components/Esqueleto'
+import { Icono } from '@/components/Icono'
 
 interface Props {
   room: Room
@@ -88,7 +90,7 @@ export function InspectionPage({
     ) ?? 0
 
   if (!draft) {
-    return <p className="p-6 text-muted">Preparando…</p>
+    return <Esqueleto filas={6} />
   }
 
   const missing = rows.filter((row) => !draft.checks.get(row.key))
@@ -319,7 +321,7 @@ export function InspectionPage({
       <div
         ref={filas}
         tabIndex={-1}
-        className="section-tail divide-y divide-line-soft border-y border-line bg-surface px-4 outline-none"
+        className="section-tail divide-y divide-line-soft border-y border-line-soft bg-surface px-4 outline-none lg:mx-4 lg:rounded-card lg:border-x"
       >
         {rows.map((row) => {
           const key = row.key
@@ -384,6 +386,31 @@ export function InspectionPage({
                       value={check?.note ?? ''}
                       onCommit={(note) => setCheck(key, 'incidencia', { note })}
                     />
+
+                    {/*
+                      La foto, aquí, al lado de lo que se fotografía.
+
+                      El único botón de foto está al final de la pantalla, debajo
+                      de todas las comprobaciones y del inventario: se marcaba la
+                      falla del proyector arriba y había que bajar hasta el fondo
+                      para hacerle la foto —y era ahí abajo donde salía el aviso de
+                      que faltaba—. Este abre el mismo selector y guarda en el
+                      mismo sitio: las fotos son de la revisión, no de la fila,
+                      así que el recuento es el mismo en todas.
+                    */}
+                    <button
+                      type="button"
+                      onClick={() => fileInput.current?.click()}
+                      disabled={subiendoFoto}
+                      className="key key-quiet mb-3 mt-2 flex min-h-11 w-full items-center justify-center gap-2 px-3 text-sm"
+                    >
+                      <Icono nombre="camara" lado={18} className="text-accent" />
+                      {subiendoFoto
+                        ? 'Procesando la foto…'
+                        : photoCount > 0
+                          ? `${photoCount} foto${photoCount === 1 ? '' : 's'} · añadir otra`
+                          : 'Añadir foto de la avería'}
+                    </button>
                   </div>
                   )}
                 </div>
@@ -586,6 +613,31 @@ export function InspectionPage({
               className="key key-accent h-touch w-full"
             >
               Guardar la corrección
+            </button>
+          ) : draft.checks.size === 0 && rows.length > 0 ? (
+            /*
+             * El aula en la que todo va bien, en UN toque.
+             *
+             * Es el caso de casi todas las aulas de una ronda, y costaba dos:
+             * «Todo correcto» arriba y «Guardar y siguiente sala» abajo, con el
+             * pulgar cruzando la pantalla entre uno y otro. Doscientas setenta
+             * aulas son doscientos setenta viajes de pulgar para decir lo mismo
+             * las doscientas setenta veces.
+             *
+             * Solo se ofrece mientras no se ha contestado NADA: en cuanto hay
+             * una respuesta, cerrar deja de ser «todo bien» y vuelve la pareja
+             * de siempre. Y el nombre dice las dos cosas que hace, porque es un
+             * botón que guarda: nadie debe pulsarlo creyendo que solo marca. El
+             * «Todo correcto» de arriba sigue ahí para quien quiere marcarlo
+             * todo y quedarse —a apuntar una observación o hacer una foto—.
+             */
+            <button
+              type="button"
+              onClick={() => void complete({ restoOk: true }).then(() => onDone(true))}
+              className="key key-ok flex h-touch w-full items-center justify-center gap-2"
+            >
+              <span aria-hidden className="text-lg">✓</span>
+              Todo correcto y siguiente sala
             </button>
           ) : (
             <div className="flex gap-2">

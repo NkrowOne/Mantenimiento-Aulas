@@ -28,7 +28,7 @@
  *     de al lado.
  */
 
-import * as echarts from 'echarts'
+import { echarts } from '@/design/echarts'
 
 /*
  * La misma paleta validada que usa la aplicación, y en el mismo orden fijo. Los

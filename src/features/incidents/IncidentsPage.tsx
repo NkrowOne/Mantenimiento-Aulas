@@ -5,6 +5,7 @@ import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { Tira, useFotos } from '@/components/Fotos'
 import { displayRoomCode, norm } from '@/domain/normalize'
+import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
 import { cuantos } from '@/lib/plural'
 import { salasQueCasan, type SalaBuscable } from './busqueda'
 import { CodigoEasyVista } from './CodigoEasyVista'
@@ -100,12 +101,18 @@ interface Props {
  * que hiciera de parte, y no ordena ni enseña lo que el parte necesita.
  */
 export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
-  const [vista, setVista] = useState<'pendientes' | 'hoy'>('pendientes')
+  /* La vista se recuerda, como los filtros: quien está pasando el parte a
+     EasyVista y se asoma a otra pestaña vuelve al parte, no a «Pendientes». */
+  const [vista, setVista] = useEstadoDeSesion<'pendientes' | 'hoy'>(
+    'incidencias.vista',
+    'pendientes',
+    (v) => v === 'pendientes' || v === 'hoy',
+  )
 
   return (
     <>
       <div className="mx-auto max-w-4xl px-4 pt-4">
-        <div className="grid grid-cols-2 gap-1 rounded-ctl border border-line bg-raised p-1">
+        <div role="group" aria-label="Qué incidencias se ven" className="segmento grid w-full grid-cols-2">
           {(
             [
               ['pendientes', 'Pendientes'],
@@ -117,9 +124,7 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
               type="button"
               aria-pressed={vista === id}
               onClick={() => setVista(id)}
-              className={`min-h-11 rounded-ctl px-3 text-sm font-semibold ${
-                vista === id ? 'key key-accent' : 'text-muted'
-              }`}
+              className="!min-h-11"
             >
               {nombre}
             </button>
@@ -136,8 +141,10 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
 }
 
 function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
-  const [showResolved, setShowResolved] = useState(false)
-  const [query, setQuery] = useState('')
+  /* Recordados mientras la aplicación siga abierta: cambiar de pestaña y volver
+     no borra lo que se estaba buscando (ver `lib/estado-de-sesion.ts`). */
+  const [showResolved, setShowResolved] = useEstadoDeSesion('incidencias.resueltas', false)
+  const [query, setQuery] = useEstadoDeSesion('incidencias.busqueda', '')
   /* Qué incidencia tiene abierto el apunte de material. Solo una: el técnico
      está apuntando lo de una avería, no llevando la contabilidad de seis. */
   const [apuntando, setApuntando] = useState<string | null>(null)
@@ -415,7 +422,7 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
   return (
     <div className="mx-auto max-w-4xl p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <h1 className="text-xl font-semibold">Incidencias</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Incidencias</h1>
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
@@ -444,15 +451,7 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
         </p>
       )}
 
-      {/*
-        Lo sin terminar, antes que lo abierto, y solo si lo hay.
-        Un borrador es una incidencia a medio escribir: su sitio es esta
-        pantalla, no una pestaña propia en la barra de navegación. Cuando no hay
-        ninguno, este componente no dibuja absolutamente nada.
-      */}
-      <Borradores />
-
-      <label className="mt-4 block">
+      <label className="mt-3 block">
         <span className="sr-only">Buscar incidencia</span>
         <input
           type="search"
@@ -460,9 +459,24 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Buscar por descripción, referencia o sala"
           enterKeyHint="search"
+          /* Sin autocorrector: una referencia como «I261102_0031» o un «0.1»
+             no son palabras, y el iPad las «corrige». */
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           className="h-touch w-full rounded-ctl border border-line bg-surface px-3"
         />
       </label>
+
+      {/*
+        Lo sin terminar, antes que lo abierto, y solo si lo hay. Va DEBAJO del
+        buscador: con borradores, su explicación empujaba el buscador y la lista
+        media pantalla hacia abajo, y lo primero que se hace aquí es buscar.
+        Un borrador es una incidencia a medio escribir: su sitio es esta
+        pantalla, no una pestaña propia en la barra de navegación. Cuando no hay
+        ninguno, este componente no dibuja absolutamente nada.
+      */}
+      <Borradores />
 
       <ul className="mt-3 divide-y divide-line">
         {visibles.map((i) => {
@@ -644,7 +658,7 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
                 </div>
               )}
 
-              {apuntando === i.id && <MaterialUsado incidentId={i.id} />}
+              {apuntando === i.id && <MaterialUsado incidentId={i.id} enfocar />}
 
               {resolviendo === i.id && (
                 <ResolverIncidencia

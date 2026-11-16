@@ -43,6 +43,7 @@ import {
   type Visita,
 } from '@/domain/revisiones'
 import { FichaDeObservacion } from './FichaDeObservacion'
+import { BotonVolver } from '@/components/BotonVolver'
 
 /** Las filas de aquella revisión. Lo comparte la pantalla con `preparar` en la
     lista: la misma clave de caché, así que corregir reutiliza lo ya leído. */
@@ -202,14 +203,7 @@ export function FichaDeRevision({
         style={{ paddingTop: 'env(safe-area-inset-top)' }}
       >
         <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-2">
-          <button
-            ref={volver}
-            type="button"
-            onClick={onCerrar}
-            className="key key-quiet min-h-11 shrink-0 px-3 text-sm"
-          >
-            ← Volver
-          </button>
+          <BotonVolver ref={volver} onClick={onCerrar} className="shrink-0" />
           <div className="min-w-0 flex-1">
             <p className="eyebrow">Revisión</p>
             {/* Con la hora: es la pregunta que la fila del índice no contesta. */}

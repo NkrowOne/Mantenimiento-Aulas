@@ -36,6 +36,7 @@ import { norm } from '@/domain/normalize'
 import { cuantos } from '@/lib/plural'
 import type { Role } from '@/domain/types'
 import { Cargando, EstadoVacio, FalloDeCarga, Nota, Seccion, mensajeDe } from './Seccion'
+import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
 
 interface Perfil {
   id: string
@@ -66,7 +67,7 @@ interface CodigoDeAlta {
 export function UsersPage({ yo }: { yo: string | null }): React.ReactElement {
   const qc = useQueryClient()
   const [tocado, setTocado] = useState<string | null>(null)
-  const [busqueda, setBusqueda] = useState('')
+  const [busqueda, setBusqueda] = useEstadoDeSesion('usuarios.busqueda', '')
   const [verBajas, setVerBajas] = useState(false)
 
   const { data: perfiles, isPending, isError, error, refetch } = useQuery({

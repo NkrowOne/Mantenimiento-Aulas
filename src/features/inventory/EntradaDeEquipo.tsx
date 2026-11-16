@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useRef } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { v7 as uuidv7 } from 'uuid'
 import { supabase } from '@/lib/supabase'
@@ -38,21 +38,46 @@ import {
  * El id nace aquí, con la pulsación: si la respuesta se pierde y se vuelve a
  * pulsar, la base reconoce el mismo id y no crea otro.
  */
+/** Lo que distingue a un aparato de su vecino de lote: se vacía entre uno y otro. */
+const DE_CADA_APARATO = ['label', 'serial', 'inventory_tag', 'hostname', 'mac_address', 'ip_address'] as const
+
 export function EntradaDeEquipo({
   tipos,
   salas,
   edificios,
+  edificioInicial = '',
   onFin,
 }: {
   tipos: TipoElegible[]
   salas: SalaElegible[]
   edificios: EdificioElegible[]
+  /** El edificio por el que está filtrada la lista, si lo está: quien registra
+      mirando el edificio H casi siempre registra algo del H. */
+  edificioInicial?: string
   onFin: (mensaje: string | null) => void
 }): React.ReactElement {
   const qc = useQueryClient()
-  const [id] = useState(() => uuidv7())
+  const [id, setId] = useState(() => uuidv7())
   const [tipoId, setTipoId] = useState('')
-  const [buildingId, setBuildingId] = useState('')
+  const [buildingId, setBuildingId] = useState(edificioInicial)
+  /*
+   * «Registrar y otra».
+   *
+   * Los equipos llegan por lotes —seis proyectores iguales para una planta—, y
+   * cada uno era abrir el formulario, elegir el tipo, el edificio y la sala,
+   * teclear marca, modelo y los datos de la compra… y al registrar, el
+   * formulario se cerraba y había que empezar de cero para el siguiente, que
+   * solo se diferencia en el número de serie.
+   *
+   * Con este botón el formulario se queda abierto con todo lo que comparte el
+   * lote —tipo, sitio, marca, modelo, compra, vida útil y la nota— y vacía solo
+   * lo que es de CADA aparato: su nombre en el aula, su número de serie, su
+   * inventario y, en un ordenador, hostname, MAC e IP. `otra` es una referencia
+   * y no un estado porque se lee dentro del `onSuccess`, que se creó antes de
+   * que el botón la cambiara.
+   */
+  const otra = useRef(false)
+  const [registradas, setRegistradas] = useState<string | null>(null)
   const [roomId, setRoomId] = useState('')
   const [motivo, setMotivo] = useState('')
   const [borrador, setBorrador] = useState<BorradorDeFicha>(() => borradorDe({}))
@@ -87,7 +112,22 @@ export function EntradaDeEquipo({
     onSuccess: () => {
       refrescarTrasCambio(qc, [roomId])
       const sala = salas.find((s) => s.id === roomId)
-      onFin(`Entrada registrada: ${tipo?.name ?? 'equipo'} en ${sala?.etiqueta ?? 'la sala'}.`)
+      const mensaje = `Entrada registrada: ${tipo?.name ?? 'equipo'} en ${sala?.etiqueta ?? 'la sala'}.`
+      if (!otra.current) {
+        onFin(mensaje)
+        return
+      }
+      otra.current = false
+      // Otro aparato: identificador nuevo —con el mismo, el servidor lo tomaría
+      // por el que se acaba de registrar— y fuera lo que es de cada unidad.
+      setId(uuidv7())
+      setBorrador((b) => {
+        const siguiente = { ...b }
+        for (const clave of DE_CADA_APARATO) siguiente[clave] = ''
+        return siguiente
+      })
+      setTocado(false)
+      setRegistradas(mensaje)
     },
   })
 
@@ -224,9 +264,28 @@ export function EntradaDeEquipo({
         </p>
       )}
 
-      <div className="mt-4 flex gap-2">
+      {registradas && !registrar.isPending && (
+        <p role="status" className="mt-3 text-sm text-ok">
+          {registradas} Listo para el siguiente: cambia el número de serie.
+        </p>
+      )}
+
+      <div className="mt-4 flex flex-wrap gap-2">
         <button type="submit" disabled={registrar.isPending} className="key key-accent min-h-11 flex-1 px-3 text-sm">
           {registrar.isPending ? 'Registrando…' : 'Registrar la entrada'}
+        </button>
+        <button
+          type="button"
+          disabled={registrar.isPending}
+          onClick={() => {
+            setTocado(true)
+            if (faltan.length > 0 || Object.keys(problemas).length > 0) return
+            otra.current = true
+            registrar.mutate()
+          }}
+          className="key key-quiet min-h-11 flex-1 px-3 text-sm"
+        >
+          Registrar y otra
         </button>
         <button type="button" onClick={() => onFin(null)} className="key key-quiet min-h-11 px-3 text-sm">
           Cancelar

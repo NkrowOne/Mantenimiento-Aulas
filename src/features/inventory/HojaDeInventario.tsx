@@ -54,6 +54,7 @@ import { esAppInstalada, nombreDelPdf, prepararPdfDeLaHoja } from './pdf'
 import { cambiarFechaDeAlta, companerosVivos, devolverAlInventario, retiradasPorFusion, tiposVivos } from './devolver'
 import { ofrecerFichero } from '@/lib/ficheros'
 import { pullMaster } from '@/sync/pull'
+import { BotonVolver } from '@/components/BotonVolver'
 
 /**
  * El hueco: lo que se imprime donde no hay dato.
@@ -458,17 +459,11 @@ export function HojaDeInventario({
   return (
     <div ref={hojaRef} className="mx-auto max-w-5xl p-4">
       <div className="solo-pantalla">
-        <button
-          type="button"
-          onClick={onBack}
-          className="-ml-2 mb-1 inline-flex min-h-11 items-center px-2 font-mono text-[0.6875rem] uppercase tracking-[0.14em] text-accent"
-        >
-          ← Volver
-        </button>
+        <BotonVolver onClick={onBack} className="mb-1" />
 
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold">Inventario de {titulo}</h1>
+            <h1 className="text-2xl font-bold tracking-tight">Inventario de {titulo}</h1>
             {/* El recuento sale cuando hay algo que contar. Mientras carga lo
                 dice la línea de estado de abajo: dos frases a la vez para el
                 mismo momento se leen como dos cosas distintas pasando. */}

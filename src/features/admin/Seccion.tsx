@@ -38,7 +38,7 @@ export function Contador({ n, tono = 'aviso', que = 'pendientes' }: { n: number;
   return (
     <span
       title={`${n} ${que}`}
-      className={`inline-flex min-w-6 items-center justify-center rounded-tag px-2 py-0.5 font-mono text-xs font-semibold tabular ${CONTADOR[tono]}`}
+      className={`inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 text-xs font-semibold tabular ${CONTADOR[tono]}`}
     >
       {n}
     </span>
@@ -67,13 +67,16 @@ export function Seccion({
     <section aria-labelledby={id} className="section-tail">
       <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1 basis-64">
-          <h2 id={id} className="flex flex-wrap items-center gap-2 text-lg font-semibold tracking-tight">
+          <h2 id={id} className="flex flex-wrap items-center gap-2 text-xl font-bold tracking-tight">
             {titulo}
             {pendientes !== undefined && pendientes > 0 && <Contador n={pendientes} />}
           </h2>
           {texto && <p className="mt-1 max-w-prose text-sm leading-relaxed text-muted">{texto}</p>}
         </div>
-        {acciones && <div className="flex shrink-0 flex-wrap items-center gap-2">{acciones}</div>}
+        {/* `max-w-full` y sin `shrink-0`: con él, tres filtros en fila —los de
+            Actividad— medían más que un teléfono y el último se salía por la
+            derecha sin forma de alcanzarlo. Así, lo que no cabe baja de línea. */}
+        {acciones && <div className="flex max-w-full flex-wrap items-center gap-2">{acciones}</div>}
       </div>
       <div className="mt-4">{children}</div>
     </section>
@@ -86,7 +89,7 @@ export function Seccion({
  */
 export function EstadoVacio({ titulo, texto }: { titulo: string; texto?: string }): React.ReactElement {
   return (
-    <div className="rounded-ctl border border-dashed border-line px-4 py-5 text-center">
+    <div className="rounded-card border border-dashed border-line px-4 py-6 text-center">
       <p className="text-sm font-medium text-ok">
         <span aria-hidden>✓ </span>
         {titulo}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
@@ -16,6 +16,7 @@ import {
   type Nombres,
 } from '@/domain/actividad'
 import { Cargando, EstadoVacio, FalloDeCarga, Seccion } from './Seccion'
+import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
 
 /**
  * Quién cambió qué, y cuándo.
@@ -61,9 +62,9 @@ export function Actividad({
   /** Si quien mira puede leer los cambios de usuarios (supervisor o más). */
   usuarios?: boolean
 } = {}): React.ReactElement {
-  const [dias, setDias] = useState(7)
-  const [tabla, setTabla] = useState('')
-  const [persona, setPersona] = useState('')
+  const [dias, setDias] = useEstadoDeSesion('actividad.dias', 7)
+  const [tabla, setTabla] = useEstadoDeSesion('actividad.tabla', '')
+  const [persona, setPersona] = useEstadoDeSesion('actividad.persona', '')
 
   /*
    * Los nombres salen del directorio del dispositivo, no de `profiles`: a un

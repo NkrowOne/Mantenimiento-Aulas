@@ -15,12 +15,40 @@
   html {
     -webkit-text-size-adjust: 100%;
     /*
+     * Los controles del sistema —el desplegable de un `select`, el calendario
+     * de una fecha, las barras de desplazamiento— siguen al tema. Sin esto, en
+     * oscuro salía un desplegable blanco nuclear encima de una pantalla grafito.
+     * Los dos selectores de abajo son para cuando el tema lo ha elegido la
+     * persona en «Más» y no el sistema.
+     */
+    color-scheme: light dark;
+    /* Casillas, botones de opción y barras de progreso, en el color de la marca
+       y no en el azul del navegador. */
+    accent-color: rgb(var(--accent));
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--line)) transparent;
+    /*
      * Ni rebote elástico ni arrastre lateral. La aplicación se usa como una app
      * y no como una página: la barra de acción inferior tiene que quedarse
      * quieta, y el tirón horizontal accidental —fácil sujetando el iPad con una
      * mano— sacaba la pantalla de sitio en mitad de una revisión.
      */
     overscroll-behavior: none;
+  }
+
+  html[data-theme='light'] {
+    color-scheme: light;
+  }
+
+  html[data-theme='dark'] {
+    color-scheme: dark;
+  }
+
+  /* Un título de dos líneas reparte las palabras entre las dos, en vez de dejar
+     una sola colgando en la segunda. */
+  h1,
+  h2 {
+    text-wrap: balance;
   }
 
   body {
@@ -148,36 +176,29 @@
   /*
    * La tarjeta.
    *
-   * Vive en el plano del PAPEL, un punto más cálido y más claro que el cromo del
-   * fondo (ver `tokens.css`). Con una sola familia de neutro había que subir la
-   * sombra para que se despegara, y una sombra grande sobre un parte de trabajo
-   * se ve como una app de consumo. Con dos materiales se despega sola, y la
-   * sombra puede quedarse donde debe: apenas insinuada.
-   *
-   * `--edge-quiet` le añade la línea de luz superior. Es el mismo canto que
-   * llevan las teclas, y es lo que hace que las superficies de la aplicación se
-   * lean como un sistema y no como cajas de distinta procedencia.
+   * Vive en el plano del PAPEL —blanco sobre el gris casi blanco del cromo (ver
+   * `tokens.css`)— y con eso ya se despega sola. El borde es el filete suave, no
+   * el fuerte: con dieciséis píxeles de radio y una sombra corta, un borde
+   * marcado la convertía en un recuadro, y una pantalla de recuadros es una
+   * tabla. La sombra hace el trabajo de separar; el borde solo afina el canto
+   * donde la sombra no llega, que es por arriba.
    */
   .card {
-    @apply bg-surface border border-line rounded-card;
-    box-shadow:
-      var(--edge-quiet),
-      var(--lift);
+    @apply bg-surface border border-line-soft rounded-card;
+    box-shadow: var(--lift);
   }
 
   /*
    * La tecla.
    *
-   * Se llama así porque es lo que es: una tecla de un panel, no un `<button>`
-   * genérico. Tres cosas la separan de un rectángulo pintado, y ninguna se nota
-   * por separado:
+   * Sigue llamándose así, aunque ya no lleva brillo ni bisel: lo que la hace
+   * tecla es que RESPONDE.
    *
-   *  - `--sheen`, un degradado de ~4%. Superficie iluminada desde arriba, no
-   *    rampa de color.
-   *  - `--edge`, una línea de luz arriba y una sombra abajo, por dentro. Es lo
-   *    que le da canto.
    *  - Se hunde al pulsar. 120ms, porque el técnico la toca cientos de veces al
    *    día y a esa frecuencia cualquier cosa más lenta se convierte en retraso.
+   *  - Con ratón se aclara al pasar por encima (`hover`), y solo con ratón: en
+   *    táctil el `:hover` se queda pegado después del toque y deja un botón
+   *    «encendido» que nadie ha pulsado.
    *
    * El color lo pone la variante (`key-accent`, `key-ok`…), no esta clase.
    */
@@ -189,15 +210,28 @@
       transform 120ms var(--ease-out),
       background-color 120ms var(--ease-out),
       border-color 120ms var(--ease-out),
-      color 120ms var(--ease-out);
+      color 120ms var(--ease-out),
+      filter 120ms var(--ease-out);
   }
 
   .key:active:not(:disabled) {
     transform: scale(0.97);
   }
 
+  @media (hover: hover) and (pointer: fine) {
+    .key:hover:not(:disabled) {
+      filter: brightness(1.06);
+    }
+
+    .key-quiet:hover:not(:disabled) {
+      filter: none;
+      @apply bg-raised;
+    }
+  }
+
   .key:disabled {
     @apply opacity-40;
+    box-shadow: none;
   }
 
   .key-accent {
@@ -212,10 +246,143 @@
     @apply bg-crit-fill text-crit-ink;
   }
 
-  /* La tecla secundaria: mismo canto y mismo hundido, sin color propio. */
+  /* La tecla secundaria: mismo hundido, sin color propio. */
   .key-quiet {
     @apply border border-line bg-surface text-ink;
     box-shadow: var(--edge-quiet);
+  }
+
+  /*
+   * La tecla que no pesa: solo texto en el color de la marca, con el área de
+   * toque entera. Es la de «Volver», la de las acciones de una cabecera y la de
+   * cualquier cosa que se ofrece sin empujar. Tiene fondo al pulsarla —y al
+   * pasar con el ratón— porque un texto que no reacciona no parece un botón.
+   */
+  .key-ghost {
+    @apply rounded-ctl font-medium text-accent;
+    transition: background-color 120ms var(--ease-out);
+  }
+
+  .key-ghost:active:not(:disabled) {
+    @apply bg-accent-tint;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .key-ghost:hover:not(:disabled) {
+      @apply bg-accent-tint;
+    }
+  }
+
+  /*
+   * La píldora: una palabra con color que dice un estado.
+   *
+   * «A medias», «Sin inventariar», «302 días», «Abierta». Antes cada pantalla
+   * montaba la suya con cuatro utilidades y ninguna medía igual. El tono lo
+   * pone la variante; sin variante es la gris, la que informa sin avisar.
+   */
+  .chip {
+    @apply inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-raised px-2.5 py-1 text-xs font-medium leading-none text-ink-2;
+  }
+
+  .chip-accent {
+    @apply bg-accent-tint text-accent;
+  }
+
+  .chip-ok {
+    @apply bg-ok-tint text-ok;
+  }
+
+  .chip-warn {
+    @apply bg-warn-tint text-warn;
+  }
+
+  .chip-crit {
+    @apply bg-crit-tint text-crit;
+  }
+
+  /*
+   * El selector de dos o tres posiciones.
+   *
+   * Un carril hundido con la opción elegida levantada encima, como el de iOS.
+   * Sustituye a la fila de teclas sueltas, donde la elegida era «la que está
+   * pintada» y había que comparar las tres para saberlo: aquí se ve de un
+   * vistazo cuál es, porque es la única que tiene cuerpo.
+   */
+  .segmento {
+    @apply inline-flex gap-1 rounded-ctl bg-raised p-1;
+  }
+
+  .segmento > button {
+    @apply min-h-9 rounded-[9px] px-3 text-sm font-medium text-ink-2;
+    transition:
+      background-color 140ms var(--ease-out),
+      color 140ms var(--ease-out),
+      box-shadow 140ms var(--ease-out);
+  }
+
+  .segmento > button[aria-pressed='true'],
+  .segmento > button[aria-checked='true'] {
+    @apply bg-surface text-ink;
+    box-shadow: var(--edge-quiet), 0 1px 3px rgb(15 23 30 / 0.1);
+  }
+
+  /*
+   * El botón redondo de un icono suelto: volver, cerrar, los tres puntos.
+   * 44px de lado, que es el mínimo de Apple, aunque el dibujo mida 20.
+   */
+  .boton-icono {
+    @apply inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-ink-2;
+    transition: background-color 120ms var(--ease-out);
+  }
+
+  .boton-icono:active {
+    @apply bg-raised;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .boton-icono:hover {
+      @apply bg-raised;
+    }
+  }
+
+  /*
+   * La fila de una lista que se abre al tocarla.
+   *
+   * Lo único que tenían en común las listas de la aplicación era el `active:`
+   * escrito a mano en cada una, y con ratón ninguna respondía. Esto es eso
+   * mismo con nombre, más el paso del ratón.
+   */
+  .fila {
+    transition: background-color 100ms var(--ease-out);
+  }
+
+  .fila:active {
+    @apply bg-raised;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .fila:hover {
+      @apply bg-ground;
+    }
+  }
+
+  /*
+   * El hueco de lo que está cargando.
+   *
+   * Un «Cargando…» en gris arriba a la izquierda no dice ni cuánto ni qué va a
+   * salir, y cuando el contenido llega la pantalla entera pega un salto. El
+   * hueco tiene la FORMA de lo que viene —un título, unas filas— así que el ojo
+   * ya está mirando donde va a aparecer, y la espera se percibe más corta
+   * aunque dure lo mismo.
+   *
+   * El pulso es de opacidad y no un brillo que cruza: el brillo es un
+   * `background-position` animado, que repinta cada fotograma, y la opacidad la
+   * hace el compositor sin tocar el hilo principal —que es justo el que está
+   * ocupado cargando—.
+   */
+  .hueco {
+    @apply rounded-tag bg-raised;
+    animation: latido 1.4s var(--ease-in-out) infinite;
   }
 
   /* Etiqueta en versalitas: la usan las cabeceras de sección y los eyebrows. */
@@ -368,6 +535,41 @@
   }
 }
 
+@keyframes latido {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/*
+ * El cambio de pantalla.
+ *
+ * Antes era un corte seco: se pulsaba una pestaña y el contenido era otro en el
+ * fotograma siguiente, que en una pantalla de listas se lee como un parpadeo.
+ * Ahora lo nuevo entra subiendo seis píxeles mientras aparece. Es muy poco y a
+ * propósito —160ms, y solo lo que entra, no lo que sale—: lo justo para que se
+ * entienda que se ha cambiado de sitio, sin hacer esperar a nadie para tocar lo
+ * que ya está ahí. `prefers-reduced-motion` lo deja en un fundido, por la regla
+ * de arriba.
+ */
+@keyframes entra {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.pantalla {
+  animation: entra 160ms var(--ease-out);
+}
+
+/* El fondo oscuro de una hoja, que hasta ahora aparecía de golpe. */
+@keyframes funde {
+  from {
+    opacity: 0;
+  }
+}
+
 /*
  * La franja de «hay una versión nueva» entra por el borde inferior, que es donde
  * vive. Es de las poquísimas cosas de esta aplicación que se ven una vez cada
@@ -417,8 +619,26 @@
     overflow: visible !important;
   }
 
-  .marco-columna {
+  .marco-columna,
+  .marco-fila {
     display: block !important;
+  }
+
+  .marco-fila {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Y el ancho máximo que centra el contenido en una pantalla grande: en papel
+     manda el `@page`, no la pantalla desde la que se imprimió. */
+  .marco-ancho {
+    max-width: none !important;
+  }
+
+  /* Nada entra «animado» en un papel: una hoja capturada a media entrada sale
+     con el contenido a media opacidad. */
+  .pantalla {
+    animation: none !important;
   }
 
   /*
@@ -600,4 +820,26 @@
  */
 :is(input, textarea, select):is([class*='text-sm'], [class*='text-xs']) {
   font-size: 16px;
+}
+
+/*
+ * La lupa de todo campo de búsqueda.
+ *
+ * Hay nueve buscadores en la aplicación y ninguno llevaba nada que dijera «aquí
+ * se busca» salvo el texto de ejemplo, que desaparece al teclear la primera
+ * letra. Va por CSS y por el `type="search"` —no por una clase— para que el
+ * décimo buscador la lleve sin que nadie se acuerde de ponérsela.
+ *
+ * Fuera de `@layer` por lo mismo que la regla de arriba: el `padding-left`
+ * tiene que ganarle al `px-3` que ya llevan todos, y `input[type]` pesa (0,1,1)
+ * contra el (0,1,0) de la utilidad. El trazo va en un gris medio fijo porque un
+ * `background-image` no puede leer `currentColor`: #7C8A96 se ve en los dos
+ * temas, y es decoración —el campo ya tiene su etiqueta para quien no la ve—.
+ */
+input[type='search'] {
+  padding-left: 2.75rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237C8A96' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='6.5'/%3E%3Cpath d='m16 16 4.5 4.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 0.875rem center;
+  background-size: 1.125rem 1.125rem;
 }

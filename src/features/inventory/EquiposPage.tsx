@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { fechaCorta } from '@/domain/fechas'
@@ -29,6 +29,8 @@ import {
   useTiposDeEquipo,
   type FiltroDeMovimientos,
 } from './equiposDatos'
+import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
+import { Icono } from '@/components/Icono'
 
 /**
  * Equipos: el inventario entero del campus en una lista, con la ficha de cada
@@ -60,7 +62,12 @@ const POR_PAGINA = 100
 
 export function EquiposPage({ role }: { role: Role }): React.ReactElement {
   const puedeEditar = role === 'supervisor' || role === 'admin'
-  const [pestana, setPestana] = useState<Pestana>('inventario')
+  /* La pestaña y el filtro del inventario se recuerdan: el filtro se perdía
+     incluso al pasar a «Entradas y salidas» y volver, porque cada pestaña
+     desmonta a la anterior. */
+  const [pestana, setPestana] = useEstadoDeSesion<Pestana>('equipos.pestana', 'inventario', (v) =>
+    (['inventario', 'movimientos', 'vida'] as unknown[]).includes(v),
+  )
 
   const pestanas: Array<{ id: Pestana; label: string }> = [
     { id: 'inventario', label: 'Inventario' },
@@ -70,7 +77,7 @@ export function EquiposPage({ role }: { role: Role }): React.ReactElement {
 
   return (
     <div className="mx-auto max-w-4xl p-4">
-      <h1 className="text-xl font-semibold">Equipos</h1>
+      <h1 className="text-2xl font-bold tracking-tight">Equipos</h1>
       <div className="scroll-x -mx-1 mt-3 flex gap-2 px-1 pb-1">
         {pestanas.map((p) => (
           <button
@@ -100,7 +107,7 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
   const { data, isPending, isError, error, refetch } = useRegistro()
   const maestro = useMaestroDeSalas()
   const tipos = useTiposDeEquipo()
-  const [filtro, setFiltro] = useState<FiltroDeEquipos>(FILTRO_INICIAL)
+  const [filtro, setFiltro] = useEstadoDeSesion<FiltroDeEquipos>('equipos.filtro', FILTRO_INICIAL)
   const [abierto, setAbierto] = useState<string | null>(null)
   const [cuantos, setCuantos] = useState(POR_PAGINA)
   const [entrada, setEntrada] = useState(false)
@@ -108,6 +115,19 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
 
   const equipos = useMemo(() => data ?? [], [data])
   const lista = useMemo(() => ordenarEquipos(filtrarEquipos(equipos, filtro)), [equipos, filtro])
+
+  /*
+   * Si la búsqueda deja UN solo equipo, su ficha se abre sola.
+   *
+   * Es el caso de teclear un número de serie: la lista se queda en una fila y
+   * todavía había que tocarla para ver lo que se había venido a ver. Se abre
+   * una vez por equipo —al cambiar cuál es el único—, así que cerrarla a mano
+   * la deja cerrada.
+   */
+  const unico = filtro.consulta.trim() && lista.length === 1 ? lista[0]!.id : null
+  useEffect(() => {
+    if (unico) setAbierto(unico)
+  }, [unico])
   const resumen = useMemo(() => resumenDeEquipos(equipos), [equipos])
   const tiposConEquipos = useMemo(() => {
     const usados = new Map<string, string>()
@@ -157,6 +177,20 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
                 {entrada ? 'Cancelar la entrada' : 'Registrar entrada'}
               </button>
             )}
+            {/* El Excel y el PDF están al final, debajo de la lista y de su
+                paginación: este botón baja hasta ahí. */}
+            <button
+              type="button"
+              onClick={() =>
+                document
+                  .getElementById('exportar-equipos')
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }
+              className="key-ghost inline-flex min-h-11 items-center gap-1.5 px-2.5 text-sm"
+            >
+              <Icono nombre="instalar" lado={18} />
+              Excel y PDF
+            </button>
           </div>
 
           {aviso && <p className="mt-3 text-sm text-ok">{aviso}</p>}
@@ -166,6 +200,7 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
               tipos={tipos ?? []}
               salas={maestro?.salas ?? []}
               edificios={maestro?.edificios ?? []}
+              edificioInicial={filtro.edificio}
               onFin={(m) => {
                 setEntrada(false)
                 setAviso(m)
@@ -180,6 +215,12 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
               onChange={(e) => poner('consulta', e.target.value)}
               placeholder="Buscar: número de serie, inventario, modelo, aula, hostname…"
               aria-label="Buscar equipos"
+              /* Sin autocorrector ni mayúscula inicial: un número de serie como
+                 «X5LK8700123» no es una palabra, y el iPad lo «arregla». */
+              autoCapitalize="none"
+              autoCorrect="off"
+              autoComplete="off"
+              spellCheck={false}
               className="h-11 rounded-ctl border border-line bg-surface px-3 text-base sm:col-span-2"
             />
             <select
@@ -290,6 +331,7 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
             </button>
           )}
 
+          <div id="exportar-equipos" />
           <ExportarConVistaPrevia
             titulo="Inventario de equipos: Excel y PDF"
             descripcion={`Los ${lista.length} equipos de la lista${filtrado ? ' (con los filtros de arriba)' : ''}, con toda su ficha, y sus entradas y salidas. Se ven antes de descargar.`}

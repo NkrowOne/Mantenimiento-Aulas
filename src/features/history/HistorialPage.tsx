@@ -18,6 +18,7 @@ import {
   TOPE_CONSULTA_MS,
 } from '@/features/reports/informe/espera'
 import { LineaTiempo } from './LineaTiempo'
+import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
 
 /**
  * Historial.
@@ -90,13 +91,24 @@ const ATAJOS: Array<{ id: Atajo; label: string }> = [
 ]
 
 export function HistorialPage(): React.ReactElement {
-  const [familia, setFamilia] = useState<Familia | null>(null)
-  const [buildingId, setBuildingId] = useState('')
-  const [roomId, setRoomId] = useState('')
-  const [atajo, setAtajo] = useState<Atajo>('30d')
-  const [desde, setDesde] = useState('')
-  const [hasta, setHasta] = useState('')
-  const [texto, setTexto] = useState('')
+  /*
+   * Los filtros se recuerdan mientras la aplicación siga abierta. Montar «un
+   * aula, un rango de fechas» son ocho o nueve toques, y se perdían al asomarse
+   * a otra pestaña a comprobar algo.
+   */
+  const [familia, setFamilia] = useEstadoDeSesion<Familia | null>(
+    'historial.familia',
+    null,
+    (v) => v === null || (FAMILIAS as readonly unknown[]).includes(v),
+  )
+  const [buildingId, setBuildingId] = useEstadoDeSesion('historial.edificio', '')
+  const [roomId, setRoomId] = useEstadoDeSesion('historial.sala', '')
+  const [atajo, setAtajo] = useEstadoDeSesion<Atajo>('historial.atajo', '30d', (v) =>
+    ATAJOS.some((a) => a.id === v),
+  )
+  const [desde, setDesde] = useEstadoDeSesion('historial.desde', '')
+  const [hasta, setHasta] = useEstadoDeSesion('historial.hasta', '')
+  const [texto, setTexto] = useEstadoDeSesion('historial.texto', '')
   const [filtros, setFiltros] = useState(false)
 
   const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [], [])
@@ -108,6 +120,14 @@ export function HistorialPage(): React.ReactElement {
     const rooms = await db.rooms.filter((r) => zoneIds.has(r.zone_id)).toArray()
     return rooms.sort((a, b) => a.code.localeCompare(b.code, 'es', { numeric: true }))
   }, [buildingId], [])
+
+  /** Lo que hay filtrado, en palabras, para el botón que despliega los filtros. */
+  const filtrosActivos = [
+    buildings.find((b) => b.id === buildingId)?.code,
+    roomId ? displayRoomCode(salas.find((r) => r.id === roomId)?.code ?? '') : '',
+    desde || hasta ? [desde, hasta].filter(Boolean).join(' → ') : '',
+    texto.trim() ? `«${texto.trim()}»` : '',
+  ].filter(Boolean)
 
   // Las fechas escritas a mano mandan sobre el atajo: si alguien se molesta en
   // teclear un día concreto, es que quiere ese y no «los últimos 30».
@@ -207,7 +227,7 @@ export function HistorialPage(): React.ReactElement {
   return (
     <div className="mx-auto max-w-4xl p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <h1 className="text-xl font-semibold">Historial</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Historial</h1>
         {activos > 0 && (
           <button type="button" onClick={limpiar} className="text-sm text-accent underline-offset-4 hover:underline">
             Quitar filtros
@@ -249,8 +269,16 @@ export function HistorialPage(): React.ReactElement {
         aria-expanded={filtros}
         className="mt-2 flex w-full items-center justify-between rounded-ctl border border-line bg-surface px-3 py-2 text-left"
       >
-        <span className="eyebrow">Sitio, fechas y búsqueda</span>
-        <span className="text-sm text-muted">{filtros ? 'cerrar' : 'filtrar'}</span>
+        {/* Plegado, el botón dice QUÉ hay filtrado. Decía siempre «Sitio,
+            fechas y búsqueda», con un filtro puesto o sin ninguno, así que una
+            lista corta no explicaba por qué lo era —y desde que los filtros se
+            recuerdan entre visitas, eso hay que poder verlo sin desplegar—. */}
+        <span className={`min-w-0 truncate ${filtrosActivos.length ? 'text-sm font-medium' : 'eyebrow'}`}>
+          {filtrosActivos.length ? filtrosActivos.join(' · ') : 'Sitio, fechas y búsqueda'}
+        </span>
+        <span className="shrink-0 pl-3 text-sm text-muted">
+          {filtros ? 'cerrar' : filtrosActivos.length ? 'cambiar' : 'filtrar'}
+        </span>
       </button>
 
       <div className="collapse-y" data-open={filtros} inert={!filtros}>

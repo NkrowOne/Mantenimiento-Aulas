@@ -19,6 +19,7 @@
 
 import { useEffect, useId, useRef } from 'react'
 
+import { Icono, type NombreDeIcono } from '@/components/Icono'
 import { entrar } from '@/lib/historial'
 import { congelarFondo } from '@/lib/viewport'
 
@@ -28,6 +29,8 @@ export interface AccionDeHoja {
   /** Segunda línea, más pequeña: la consecuencia de elegirla. */
   descripcion?: string
   tono?: 'normal' | 'critico'
+  /** El dibujo que va delante. Opcional: las hojas de siempre no lo llevan. */
+  icono?: NombreDeIcono
   deshabilitada?: boolean
   /** Por qué no se puede. Se pinta debajo y va en `aria-describedby`. */
   motivo?: string
@@ -140,6 +143,41 @@ export function HojaDeAcciones({
        * inferior, donde activar una pestaña invisible desmonta la pantalla
        * entera con la hoja todavía abierta encima.
        */
+      /*
+       * «Intro» en un campo de la hoja pulsa su botón principal.
+       *
+       * Los formularios que viven en una hoja —añadir una sala, renombrar— no
+       * son `<form>`: son campos sueltos y un botón, así que «Intro» no hacía
+       * nada y con un teclado delante había que soltarlo para ir a por el botón.
+       * El botón se señala con `data-principal`, a mano y uno por formulario:
+       * adivinarlo por el color acabaría pulsando lo que no es el día que una
+       * hoja tenga dos teclas de acento.
+       *
+       * Solo en campos de una línea y fuera de un `<form>` de verdad, que ya
+       * sabe enviarse solo. Si el botón está deshabilitado —falta un dato—, no
+       * pasa nada, que es lo mismo que pasa al pulsarlo.
+       */
+      if (e.key === 'Enter' && !e.defaultPrevented && !e.isComposing) {
+        const campo = e.target
+        const raiz = panel.current
+        if (
+          raiz &&
+          campo instanceof HTMLInputElement &&
+          raiz.contains(campo) &&
+          !campo.form &&
+          !['checkbox', 'radio', 'file', 'button', 'submit'].includes(campo.type)
+        ) {
+          const principal = raiz.querySelector<HTMLButtonElement>(
+            'button[data-principal]:not([disabled])',
+          )
+          if (principal) {
+            e.preventDefault()
+            principal.click()
+          }
+        }
+        return
+      }
+
       if (e.key === 'Tab') {
         const raiz = panel.current
         if (!raiz) return
@@ -183,7 +221,11 @@ export function HojaDeAcciones({
        * cámara y el visor de fotos (z-50) siguen quedando por encima, que es lo
        * correcto: son pantallas completas y no un menú.
        */
-      className="fixed inset-0 z-40 flex flex-col justify-end"
+      /* En un teléfono la hoja sube desde abajo, que es donde está el pulgar.
+         En una pantalla ancha —un iPad apaisado, un portátil— una tira pegada
+         al borde inferior de lado a lado obliga a cruzar la pantalla entera para
+         leer una línea: ahí se centra y se queda en el ancho de un formulario. */
+      className="fixed inset-0 z-40 flex flex-col justify-end sm:items-center sm:justify-center sm:p-6"
     >
       {/*
        * Sin `backdrop-blur` a propósito: obliga a WebKit a recapturar y
@@ -212,14 +254,15 @@ export function HojaDeAcciones({
        */}
       <div
         aria-hidden
-        className={`absolute inset-0 bg-black/40 ${cierrePorFondo ? 'cursor-pointer' : ''}`}
+        className={`absolute inset-0 bg-black/45 ${cierrePorFondo ? 'cursor-pointer' : ''}`}
+        style={{ animation: 'funde 200ms var(--ease-out)' }}
         onClick={cierrePorFondo ? onCerrar : undefined}
       />
 
       <div
         ref={panel}
         tabIndex={-1}
-        className="card relative max-h-[85vh] overflow-y-auto overscroll-contain rounded-b-none px-4 pt-4"
+        className="relative max-h-[88vh] w-full overflow-y-auto overscroll-contain rounded-t-[1.5rem] bg-surface px-4 pt-2 shadow-float sm:max-h-[90vh] sm:max-w-lg sm:rounded-[1.5rem] sm:pt-4"
         style={{
           // La curva de los cajones de iOS, la misma que usa el aviso de versión
           // nueva. Con `prefers-reduced-motion` la base la recorta a 1ms y la
@@ -230,9 +273,15 @@ export function HojaDeAcciones({
           paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))',
         }}
       >
+        {/* El asa. No se arrastra —la hoja se cierra con su botón, con el velo y
+            con el atrás del móvil— pero es la señal que todo el mundo lee como
+            «esto es una hoja que ha subido, y se puede bajar». Solo en estrecho:
+            centrada en una pantalla ancha ya no es una hoja, es un cuadro. */}
+        <div aria-hidden className="mx-auto mb-3 h-1 w-9 rounded-full bg-line sm:hidden" />
+
         <div className="pb-1">
-          <p className="truncate text-base font-medium">{titulo}</p>
-          {subtitulo && <p className="truncate font-mono text-xs text-muted">{subtitulo}</p>}
+          <p className="truncate text-lg font-semibold tracking-tight">{titulo}</p>
+          {subtitulo && <p className="truncate text-sm text-muted">{subtitulo}</p>}
         </div>
 
         {acciones.length > 0 && (
@@ -247,20 +296,31 @@ export function HojaDeAcciones({
                     disabled={a.deshabilitada}
                     onClick={a.alElegir}
                     aria-describedby={a.motivo ? idMotivo : undefined}
-                    className={`key min-h-touch w-full px-4 py-2 text-left text-sm ${
+                    className={`key flex min-h-touch w-full items-center gap-3 px-4 py-2.5 text-left text-[0.9375rem] ${
                       critica ? 'key-crit' : 'key-quiet'
                     }`}
                   >
-                    <span className="block">{a.etiqueta}</span>
-                    {a.descripcion && (
+                    {a.icono && (
                       <span
-                        className={`mt-0.5 block text-xs font-normal ${
-                          critica ? 'text-crit-ink opacity-80' : 'text-muted'
+                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] ${
+                          critica ? 'bg-black/15' : 'bg-accent-tint text-accent'
                         }`}
                       >
-                        {a.descripcion}
+                        <Icono nombre={a.icono} lado={20} />
                       </span>
                     )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block">{a.etiqueta}</span>
+                      {a.descripcion && (
+                        <span
+                          className={`mt-0.5 block text-xs font-normal leading-snug ${
+                            critica ? 'text-crit-ink opacity-80' : 'text-muted'
+                          }`}
+                        >
+                          {a.descripcion}
+                        </span>
+                      )}
+                    </span>
                   </button>
                   {/* El motivo va fuera del botón y visible, no en un `title`:
                       un `title` no existe para el dedo, que es el único puntero

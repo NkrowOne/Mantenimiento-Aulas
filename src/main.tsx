@@ -5,6 +5,7 @@ import { App } from './App'
 import { registrarServiceWorker } from './sw'
 import { vigilarElHistorial } from './lib/historial'
 import { vigilarLaInstalacion } from './lib/instalar'
+import { iniciarTema } from './lib/tema'
 import { vigilarElTeclado } from './lib/viewport'
 import './index.css'
 
@@ -73,6 +74,10 @@ vigilarLaInstalacion()
  * no en la interfaz.
  */
 registrarServiceWorker()
+
+/* El tema ya lo aplicó `index.html` antes de pintar; esto deja de acuerdo con él
+   el color de la barra del sistema, que desde allí no se toca. */
+iniciarTema()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

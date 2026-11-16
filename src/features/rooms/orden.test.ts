@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nextRoom, roomMatches, sortRooms } from './orden'
+import { nextRoom, roomMatches, salaCoincide, sortRooms } from './orden'
 import type { Room, Zone } from '@/domain/types'
 
 function sala(code: string, zone: string, last: string | null, name = code): Room {
@@ -126,6 +126,23 @@ describe('nextRoom', () => {
     expect(nextRoom(rooms, ZONAS, 'planta', 'z-baja-0.2')?.code).toBe('0.3')
   })
 
+  it('por planta se salta las que ya se han revisado hoy', () => {
+    // La 0.3 estaba ocupada: se hizo antes la 0.4 y luego se volvió a por ella.
+    const haceUnRato = new Date(Date.now() - 30 * 60_000).toISOString()
+    const rooms = [
+      sala('0.3', 'z-baja', null),
+      sala('0.4', 'z-baja', haceUnRato),
+      sala('0.5', 'z-baja', '2026-01-01'),
+    ]
+    expect(nextRoom(rooms, ZONAS, 'planta', 'z-baja-0.3')?.code).toBe('0.5')
+  })
+
+  it('por planta no se salta una que va al día pero no es de hoy', () => {
+    const ayer = new Date(Date.now() - 30 * 3_600_000).toISOString()
+    const rooms = [sala('0.3', 'z-baja', null), sala('0.4', 'z-baja', ayer)]
+    expect(nextRoom(rooms, ZONAS, 'planta', 'z-baja-0.3')?.code).toBe('0.4')
+  })
+
   it('por planta cruza a la planta siguiente cuando se acaba la actual', () => {
     const rooms = [sala('0.9', 'z-baja', null), sala('1.1', 'z-primera', null)]
     expect(nextRoom(rooms, ZONAS, 'planta', 'z-baja-0.9')?.code).toBe('1.1')
@@ -143,5 +160,42 @@ describe('nextRoom', () => {
     // desde la que seguir, pero sí una sala razonable que ofrecer.
     const rooms = [sala('0.1', 'z-baja', null), sala('0.2', 'z-baja', null)]
     expect(nextRoom(rooms, ZONAS, 'planta', 'z-baja-9.9')?.code).toBe('0.1')
+  })
+})
+
+describe('salaCoincide', () => {
+  const H = { code: 'H', name: 'EDIFICIO H' }
+  const CRAI = { code: 'CRAI', name: 'BIBLIOTECA CRAI' }
+  const aula = sala('1.12', 'z-primera', null)
+  const lab = sala('-2.1', 'z-sotano', null, 'Lab Criminología')
+
+  it('encuentra el aula tecleando el edificio delante, como llega el aviso', () => {
+    expect(salaCoincide(aula, 'h 1.12', '1ª PLANTA', H)).toBe(true)
+    expect(salaCoincide(aula, '1.12 h', '1ª PLANTA', H)).toBe(true)
+  })
+
+  it('no la encuentra en otro edificio que tenga el mismo código de sala', () => {
+    expect(salaCoincide(aula, 'h 1.12', '1ª PLANTA', CRAI)).toBe(false)
+  })
+
+  it('encuentra por un trozo del nombre del edificio', () => {
+    expect(salaCoincide(aula, 'biblio 1.12', '1ª PLANTA', CRAI)).toBe(true)
+  })
+
+  it('la letra del edificio no coincide como trozo de otra palabra', () => {
+    // «h» está dentro de «hemeroteca», pero quien teclea «h» pide el edificio H.
+    const hemeroteca = sala('0.3', 'z-baja', null, 'Hemeroteca')
+    expect(salaCoincide(hemeroteca, 'h', 'PLANTA BAJA', H)).toBe(true)
+    expect(salaCoincide(hemeroteca, 'h 1.12', 'PLANTA BAJA', H)).toBe(false)
+  })
+
+  it('una sola palabra sigue buscando como antes', () => {
+    expect(salaCoincide(lab, 'criminologia', 'SÓTANO', H)).toBe(true)
+    expect(salaCoincide(lab, '2.1', 'SÓTANO', H)).toBe(true)
+    expect(salaCoincide(lab, 'informatica', 'SÓTANO', H)).toBe(false)
+  })
+
+  it('con la búsqueda vacía no filtra nada', () => {
+    expect(salaCoincide(lab, '  ', 'SÓTANO', H)).toBe(true)
   })
 })

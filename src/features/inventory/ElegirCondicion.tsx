@@ -1,5 +1,6 @@
 import { useId } from 'react'
 import { CONDICIONES, CONDICION_AYUDA, CONDICION_LABEL, type Condicion } from '@/domain/unidades'
+import { BotonVolver } from '@/components/BotonVolver'
 
 /**
  * El estado de una unidad, en cuatro botones.
@@ -53,12 +54,6 @@ export function ElegirCondicion({
 /** «← Volver»: la salida de cada vista de la hoja hacia la anterior. */
 export function Volver({ onVolver, texto = 'Volver' }: { onVolver: () => void; texto?: string }): React.ReactElement {
   return (
-    <button
-      type="button"
-      onClick={onVolver}
-      className="-ml-2 inline-flex min-h-11 items-center px-2 font-mono text-[0.6875rem] uppercase tracking-[0.14em] text-accent"
-    >
-      ← {texto}
-    </button>
+    <BotonVolver onClick={onVolver} texto={texto} />
   )
 }

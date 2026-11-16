@@ -292,7 +292,7 @@ export function ParteDeHoy({
     <div className="mx-auto max-w-4xl p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">{esHoy ? 'Parte de hoy' : 'Parte del día'}</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{esHoy ? 'Parte de hoy' : 'Parte del día'}</h1>
           <p className="text-sm text-muted first-letter:uppercase">{nombreDelDia(dia)}</p>
         </div>
         {/* Hoy es lo normal. Las flechas están para el lunes, que es cuando se
