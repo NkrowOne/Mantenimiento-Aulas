@@ -328,8 +328,8 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
 
   return (
     <div className="mx-auto max-w-4xl p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold tracking-tight">Almacén</h1>
+      <div className="flex items-center justify-between gap-2">
+        <h1 className="min-w-0 truncate text-2xl font-bold tracking-tight">Almacén</h1>
         {/* El Excel y el PDF están al final de la lista, debajo de todos los
             artículos: este botón baja hasta ahí sin tener que recorrerla. */}
         <button
@@ -339,10 +339,16 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
               .getElementById('exportar-almacen')
               ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
           }
-          className="key-ghost ml-auto inline-flex min-h-11 shrink-0 items-center gap-1.5 px-2.5 text-sm"
+          /* En un teléfono estrecho, solo el icono. Con el texto, la cabecera
+             medía 380 px —título, este botón y «Nuevo artículo»— y en un
+             Android de 360 o un iPhone SE de 375 el último botón se salía por
+             la derecha y toda la pantalla se podía arrastrar de lado. */
+          aria-label="Exportar a Excel y PDF"
+          title="Exportar a Excel y PDF"
+          className="key-ghost ml-auto inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 px-2.5 text-sm"
         >
           <Icono nombre="instalar" lado={18} />
-          Excel y PDF
+          <span className="hidden min-[430px]:inline">Excel y PDF</span>
         </button>
         {esAdmin && (
           <button
