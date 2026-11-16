@@ -44,7 +44,10 @@ function pagina(escala = 1): string {
 const salidas: Array<{ fichero: string; lado: number; escala: number }> = [
   { fichero: 'public/icon-192.png', lado: 192, escala: 1 },
   { fichero: 'public/icon-512.png', lado: 512, escala: 1 },
-  { fichero: 'public/icon-maskable-512.png', lado: 512, escala: 0.78 },
+  /* 0,85 y no 0,78: el dibujo de `favicon.svg` ya viene con su propio margen
+     (está al 92 % del original), así que aquí hace falta encogerlo menos para
+     acabar en el mismo tamaño de siempre dentro del círculo de Android. */
+  { fichero: 'public/icon-maskable-512.png', lado: 512, escala: 0.85 },
   { fichero: 'public/apple-touch-icon.png', lado: 180, escala: 1 },
 ]
 

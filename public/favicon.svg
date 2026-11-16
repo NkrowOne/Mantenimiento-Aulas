@@ -4,11 +4,17 @@
     grupos de tres girados noventa grados.
 
     Va dibujado por geometría, no calcado. Las doce gotas son la MISMA gota
-    —una cabeza redonda de radio 23,8, una punta de radio 4,1 y 145,5 entre
-    centros— colocada tres veces con un paso de 39 y girada cuatro. Reconstruido
+    —una cabeza redonda de radio 21,9, una punta de radio 3,8 y 133,9 entre
+    centros— colocada tres veces con un paso de 35,9 y girada cuatro. Reconstruido
     así pesa un kilobyte, se ve nítido a cualquier tamaño y coincide con la
     imagen original salvo en el píxel de suavizado del borde. Un calco
     automático daba el mismo dibujo en nueve kilobytes de curvas.
+
+    EL MARGEN. En la imagen que se entregó el dibujo ocupa el 90 % del cuadro, y
+    en un icono eso es llegar casi al borde: redondeadas las esquinas, las gotas
+    de los extremos se quedaban a dos píxeles del canto. Aquí va al 92 % de
+    aquel tamaño —ocupa el 83 % del cuadro—, con el mismo azul alrededor. Son
+    las medidas de arriba; las de la imagen original eran 23,8 · 4,1 · 145,5 · 39.
 
     Sin fuentes ni imágenes dentro: un icono no puede depender de lo que tenga
     instalado la máquina que lo pinta.
@@ -24,6 +30,6 @@
   <!-- El contenido va agrupado: la variante maskable lo encoge SOLO a él,
        dejando el fondo a sangre, para sobrevivir al recorte circular. -->
   <g id="contenido">
-    <path fill="#fff" d="M269.5 35.6L356.6 150.4A4.1 4.1 0 0 1 350.9 156.1L236.1 69A23.8 23.8 0 1 1 269.5 35.6ZM230.5 74.6L317.6 189.4A4.1 4.1 0 0 1 311.9 195.1L197.1 108A23.8 23.8 0 1 1 230.5 74.6ZM191.5 113.6L278.6 228.4A4.1 4.1 0 0 1 272.9 234.1L158.1 147A23.8 23.8 0 1 1 191.5 113.6ZM476.4 269.5L361.6 356.6A4.1 4.1 0 0 1 355.9 350.9L443 236.1A23.8 23.8 0 1 1 476.4 269.5ZM437.4 230.5L322.6 317.6A4.1 4.1 0 0 1 316.9 311.9L404 197.1A23.8 23.8 0 1 1 437.4 230.5ZM398.4 191.5L283.6 278.6A4.1 4.1 0 0 1 277.9 272.9L365 158.1A23.8 23.8 0 1 1 398.4 191.5ZM242.5 476.4L155.4 361.6A4.1 4.1 0 0 1 161.1 355.9L275.9 443A23.8 23.8 0 1 1 242.5 476.4ZM281.5 437.4L194.4 322.6A4.1 4.1 0 0 1 200.1 316.9L314.9 404A23.8 23.8 0 1 1 281.5 437.4ZM320.5 398.4L233.4 283.6A4.1 4.1 0 0 1 239.1 277.9L353.9 365A23.8 23.8 0 1 1 320.5 398.4ZM35.6 242.5L150.4 155.4A4.1 4.1 0 0 1 156.1 161.1L69 275.9A23.8 23.8 0 1 1 35.6 242.5ZM74.6 281.5L189.4 194.4A4.1 4.1 0 0 1 195.1 200.1L108 314.9A23.8 23.8 0 1 1 74.6 281.5ZM113.6 320.5L228.4 233.4A4.1 4.1 0 0 1 234.1 239.1L147 353.9A23.8 23.8 0 1 1 113.6 320.5Z"/>
+    <path fill="#fff" d="M268.4 53.2L348.6 158.9A3.8 3.8 0 0 1 343.3 164.1L237.7 83.9A21.9 21.9 0 1 1 268.4 53.2ZM232.5 89.1L312.7 194.7A3.8 3.8 0 0 1 307.4 200L201.8 119.8A21.9 21.9 0 1 1 232.5 89.1ZM196.6 125L276.8 230.6A3.8 3.8 0 0 1 271.6 235.9L165.9 155.7A21.9 21.9 0 1 1 196.6 125ZM458.8 268.4L353.1 348.6A3.8 3.8 0 0 1 347.9 343.3L428.1 237.7A21.9 21.9 0 1 1 458.8 268.4ZM422.9 232.5L317.3 312.7A3.8 3.8 0 0 1 312 307.4L392.2 201.8A21.9 21.9 0 1 1 422.9 232.5ZM387 196.6L281.4 276.8A3.8 3.8 0 0 1 276.1 271.6L356.3 165.9A21.9 21.9 0 1 1 387 196.6ZM243.6 458.8L163.4 353.1A3.8 3.8 0 0 1 168.7 347.9L274.3 428.1A21.9 21.9 0 1 1 243.6 458.8ZM279.5 422.9L199.3 317.3A3.8 3.8 0 0 1 204.6 312L310.2 392.2A21.9 21.9 0 1 1 279.5 422.9ZM315.4 387L235.2 281.4A3.8 3.8 0 0 1 240.4 276.1L346.1 356.3A21.9 21.9 0 1 1 315.4 387ZM53.2 243.6L158.9 163.4A3.8 3.8 0 0 1 164.1 168.7L83.9 274.3A21.9 21.9 0 1 1 53.2 243.6ZM89.1 279.5L194.7 199.3A3.8 3.8 0 0 1 200 204.6L119.8 310.2A21.9 21.9 0 1 1 89.1 279.5ZM125 315.4L230.6 235.2A3.8 3.8 0 0 1 235.9 240.4L155.7 346.1A21.9 21.9 0 1 1 125 315.4Z"/>
   </g>
 </svg>
