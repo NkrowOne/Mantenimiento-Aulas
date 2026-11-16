@@ -493,6 +493,64 @@ async function main(): Promise<void> {
      * vacíos con un «undefined» debajo. Se vio en la captura, no razonándolo.
      */
     if (/\/incidents\?/.test(url)) {
+      /*
+       * El parte de hoy pregunta por un tramo de `opened_at` o de
+       * `resolved_at`. Las horas se ponen sobre el día en que corre el guion:
+       * con fechas fijas, mañana la captura saldría vacía.
+       */
+      if (url.includes('resolved_at.gte')) {
+        const hoy = new Date().toISOString().slice(0, 10)
+        return json([
+          {
+            id: 'p1',
+            title: 'Proyector: no da imagen',
+            description: 'Se queda en azul al encender. Probado con otro portátil.',
+            severity: 'alta',
+            state: 'resuelta',
+            kind: 'incidencia',
+            opened_at: `${hoy}T08:12:00Z`,
+            opened_by: null,
+            resolved_at: `${hoy}T10:40:00Z`,
+            resolved_by: null,
+            resolution: 'Cambiado el cable HDMI de la mesa. Ya da imagen.',
+            external_ref: 'I261116_0003',
+            easyvista_ref: null,
+            room_id: null,
+          },
+          {
+            id: 'p2',
+            title: 'Micrófono de solapa sin batería',
+            description: null,
+            severity: 'media',
+            state: 'abierta',
+            kind: 'incidencia',
+            opened_at: `${hoy}T09:30:00Z`,
+            opened_by: null,
+            resolved_at: null,
+            resolved_by: null,
+            resolution: null,
+            external_ref: 'I261116_0004',
+            easyvista_ref: null,
+            room_id: null,
+          },
+          {
+            id: 'p3',
+            title: 'Altavoces: zumbido de fondo',
+            description: 'Se oye con el volumen a la mitad.',
+            severity: 'media',
+            state: 'resuelta',
+            kind: 'incidencia',
+            opened_at: '2026-11-10T09:00:00Z',
+            opened_by: null,
+            resolved_at: `${hoy}T11:05:00Z`,
+            resolved_by: null,
+            resolution: 'Era la regleta. Cambiada por una con toma de tierra.',
+            external_ref: 'I261110_0012',
+            easyvista_ref: 'I261110_0871',
+            room_id: null,
+          },
+        ])
+      }
       if (url.includes('state=eq.borrador')) {
         return json(
           conBorradores
@@ -581,6 +639,19 @@ async function main(): Promise<void> {
   await page.locator('nav').getByRole('button', { name: 'Incidencias' }).click()
   await page.waitForTimeout(1200)
   await shot('incidencias-con-borradores')
+
+  // El parte de hoy: lo que se pasa a EasyVista al acabar la jornada.
+  await page.getByRole('button', { name: 'Hoy · para EasyVista' }).click()
+  await page.waitForTimeout(1200)
+  await shot('incidencias-parte-de-hoy')
+  // Y la segunda sección, que queda por debajo del primer pantallazo.
+  await page.getByRole('heading', { name: /Ya en EasyVista/ }).scrollIntoViewIfNeeded()
+  await page.waitForTimeout(300)
+  await shot('incidencias-parte-de-hoy-pasadas')
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.waitForTimeout(400)
+  await shot('incidencias-parte-de-hoy-oscuro')
+  await page.emulateMedia({ colorScheme: 'light' })
 
   /*
    * El caso contrario —sin ningún borrador, donde no debe dibujarse nada— no se

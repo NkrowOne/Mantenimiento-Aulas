@@ -14,6 +14,7 @@ import { ResolverIncidencia } from './ResolverIncidencia'
 import { useCierresEnCola } from './cierresEnCola'
 import { usePersonas } from '@/sync/personas'
 import { Borradores } from './Borradores'
+import { ParteDeHoy } from './ParteDeHoy'
 import {
   INCIDENT_KIND_LABELS,
   STALE_INCIDENT_DAYS,
@@ -90,7 +91,56 @@ interface Props {
   onAbrirSala?: (roomId: string) => void
 }
 
+/**
+ * La pestaña tiene dos caras, y se elige arriba.
+ *
+ * «Pendientes» es la lista de trabajo de siempre: lo que hay que arreglar.
+ * «Hoy» es el parte del día —lo abierto y lo cerrado hoy, con su estado—, que
+ * es lo que se pasa a EasyVista al acabar. Son dos preguntas distintas y cada
+ * una tiene su pantalla: mezclarlas con un filtro más era pedirle a la lista
+ * que hiciera de parte, y no ordena ni enseña lo que el parte necesita.
+ */
 export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
+  /* La vista se recuerda, como los filtros: quien está pasando el parte a
+     EasyVista y se asoma a otra pestaña vuelve al parte, no a «Pendientes». */
+  const [vista, setVista] = useEstadoDeSesion<'pendientes' | 'hoy'>(
+    'incidencias.vista',
+    'pendientes',
+    (v) => v === 'pendientes' || v === 'hoy',
+  )
+
+  return (
+    <>
+      <div className="mx-auto max-w-4xl px-4 pt-4">
+        <div role="group" aria-label="Qué incidencias se ven" className="segmento grid w-full grid-cols-2">
+          {(
+            [
+              ['pendientes', 'Pendientes'],
+              ['hoy', 'Hoy · para EasyVista'],
+            ] as const
+          ).map(([id, nombre]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={vista === id}
+              onClick={() => setVista(id)}
+              className="!min-h-11"
+            >
+              {nombre}
+            </button>
+          ))}
+        </div>
+      </div>
+      {vista === 'hoy' ? (
+        <ParteDeHoy onAbrirSala={onAbrirSala} />
+      ) : (
+        <ListaDeIncidencias onAbrirSala={onAbrirSala} />
+      )}
+    </>
+  )
+}
+
+function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
   /* Recordados mientras la aplicación siga abierta: cambiar de pestaña y volver
      no borra lo que se estaba buscando (ver `lib/estado-de-sesion.ts`). */
   const [showResolved, setShowResolved] = useEstadoDeSesion('incidencias.resueltas', false)
