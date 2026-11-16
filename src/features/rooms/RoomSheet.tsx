@@ -192,6 +192,13 @@ interface Props {
    * desconfiar de todos los botones de la pantalla.
    */
   onInventario?: () => void
+  /**
+   * Abrir la pestaña Historial ya filtrada a esta sala. Aquí se ven los últimos
+   * movimientos; el histórico entero, con sus fechas y su buscador, está allí,
+   * y llegar a él desde cero —pestaña, filtrar, edificio, sala— eran ocho
+   * toques para repetir un dato que esta pantalla ya tiene.
+   */
+  onHistorial?: () => void
 }
 
 /**
@@ -220,6 +227,7 @@ export function RoomSheet({
   onCorregir,
   onImprimir,
   onInventario,
+  onHistorial,
 }: Props): React.ReactElement {
   const qc = useQueryClient()
   const ayudaCodigoId = useId()
@@ -668,6 +676,9 @@ export function RoomSheet({
               value={texto}
               onChange={(e) => setTexto(e.target.value)}
               rows={3}
+              /* El formulario se abre con un toque en «Incidencia o
+                 solicitud» y lo siguiente es escribir: el cursor ya está. */
+              autoFocus
               placeholder="¿Qué ocurre? Opcional — se puede rellenar luego."
               className="mt-3 w-full rounded-ctl border border-line bg-surface p-3 text-base"
             />
@@ -831,7 +842,7 @@ export function RoomSheet({
               {texto.trim() ? (
                 <>
                   El <Rayo className="inline h-3.5 w-3.5 align-[-0.2em]" /> la guarda y te abre su
-                  cierre aquí mismo, con este mismo texto puesto: apuntas el material y listo.
+                  cierre aquí mismo: escribes qué has hecho, apuntas el material y listo.
                 </>
               ) : (
                 <>
@@ -843,105 +854,6 @@ export function RoomSheet({
             </p>
           </form>
         )}
-
-        {/*
-          Lo que sigue —el índice, las reincidencias y las dos hojas que se
-          imprimen— estaba ENCIMA de «Revisar esta sala». La ficha se abre para
-          revisar: es el botón que se pulsa nueve de cada diez veces, y quedaba
-          debajo de tres bloques de consulta y de dos botones de papeleo, a
-          media pantalla en un iPad y fuera de ella en un teléfono. Ahora el
-          botón va pegado a la placa y esto va después, que es cuando se lee.
-        */}
-        {/*
-          Las dos hojas que se imprimen desde aquí, en una fila discreta y fuera
-          del bloque de la placa.
-
-          Estaban dentro, y con `room.short_ref` nulo —una sala que todavía no ha
-          recibido matrícula, o que este dispositivo aún no ha descargado— la
-          sección entera no se pinta: el único acceso a las placas del edificio
-          desaparecía justo en la sala que hace falta etiquetar, y meter ahí el
-          inventario habría atado una hoja que no tiene nada que ver con las
-          placas a que ESTA sala tenga una.
-
-          En `key-quiet` y con la letra pequeña a propósito: son papeleo de
-          oficina, y la ficha se abre para revisar. Compitiendo con «Revisar
-          esta sala» —que está debajo, en acento y a ancho completo— convertirían
-          la pantalla de trabajo en un menú de descargas.
-        */}
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={onImprimir}
-            className="key key-quiet inline-flex min-h-11 items-center gap-1.5 px-3 text-sm"
-          >
-            <Icono nombre="etiqueta" lado={18} className="text-accent" />
-            Imprimir las placas del edificio
-          </button>
-          {onInventario && (
-            <button
-              type="button"
-              onClick={onInventario}
-              className="key key-quiet inline-flex min-h-11 items-center gap-1.5 px-3 text-sm"
-            >
-              <Icono nombre="lista" lado={18} className="text-accent" />
-              Inventario en PDF
-            </button>
-          )}
-        </div>
-
-        {/*
-          El índice, y de qué está hecho.
-          Un número solo invita a discutirlo; un número con su recuento al lado
-          se puede comprobar. Y con la base recién arrancada dice honestamente
-          que no sabe lo suficiente, en vez de sacar un 100 de la nada — que se
-          leería como «va perfecta» cuando significa «no sé nada de ella».
-        */}
-        {fiabilidad && (
-          <div className="card mt-4 flex items-center gap-4 p-4">
-            <span
-              className={`font-mono text-3xl font-bold tabular ${
-                !fiabilidad.hay_datos
-                  ? 'text-muted'
-                  : fiabilidad.score >= 75
-                    ? 'text-ok'
-                    : fiabilidad.score >= 45
-                      ? 'text-warn'
-                      : 'text-crit'
-              }`}
-            >
-              {fiabilidad.hay_datos ? fiabilidad.score : '—'}
-            </span>
-            <div className="min-w-0 text-sm">
-              <p className="font-medium">Índice de fiabilidad</p>
-              <p className="text-muted">
-                {fiabilidad.hay_datos
-                  ? `${fiabilidad.incidencias} incidencias · ${fiabilidad.observaciones} observaciones · ${fiabilidad.revisiones} revisiones en el último año`
-                  : 'Datos insuficientes todavía: hacen falta unas cuantas revisiones más para que este número signifique algo.'}
-              </p>
-              {fiabilidad.hay_datos && fiabilidad.solicitudes > 0 && (
-                <p className="mt-1 text-xs text-muted">
-                  {fiabilidad.solicitudes} solicitudes, que no penalizan: pedir trabajo no es un
-                  fallo de la sala.
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {(reincidencias ?? []).map((r) => (
-          <div key={r.item} className="card mt-3 border-warn/30 bg-warn-tint p-4 text-sm">
-            <p className="font-medium text-warn">Reincidencia detectada: {r.item}</p>
-            <p className="mt-1">
-              {r.veces} sustituciones en esta sala desde {fechaCorta(r.desde)}. Poner la pieza otra
-              vez no resuelve la causa: conviene revisar canalización, rosetas o longitud del
-              tirado.
-            </p>
-            <p className="mt-1 text-xs text-muted">
-              Basado en {r.veces} incidencias con consumo de ese artículo, la última el{' '}
-              {fechaCorta(r.hasta)}.
-            </p>
-          </div>
-        ))}
 
         {/*
           Lo que está roto en esta sala, y el sitio donde se da por arreglado.
@@ -1069,6 +981,107 @@ export function RoomSheet({
           )}
         </section>
 
+        {/*
+          Lo que sigue —el índice, las reincidencias y las dos hojas que se
+          imprimen— estaba ENCIMA de «Revisar esta sala». La ficha se abre para
+          revisar: es el botón que se pulsa nueve de cada diez veces, y quedaba
+          debajo de tres bloques de consulta y de dos botones de papeleo, a
+          media pantalla en un iPad y fuera de ella en un teléfono. Ahora el
+          botón va pegado a la placa y esto va después —y después también de
+          las averías abiertas, que son lo otro que pide algo a quien abre la
+          ficha: «Resolver» no puede quedar por debajo de un índice—.
+        */}
+        {/*
+          Las dos hojas que se imprimen desde aquí, en una fila discreta y fuera
+          del bloque de la placa.
+
+          Estaban dentro, y con `room.short_ref` nulo —una sala que todavía no ha
+          recibido matrícula, o que este dispositivo aún no ha descargado— la
+          sección entera no se pinta: el único acceso a las placas del edificio
+          desaparecía justo en la sala que hace falta etiquetar, y meter ahí el
+          inventario habría atado una hoja que no tiene nada que ver con las
+          placas a que ESTA sala tenga una.
+
+          En `key-quiet` y con la letra pequeña a propósito: son papeleo de
+          oficina, y la ficha se abre para revisar. Compitiendo con «Revisar
+          esta sala» —que está debajo, en acento y a ancho completo— convertirían
+          la pantalla de trabajo en un menú de descargas.
+        */}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onImprimir}
+            className="key key-quiet inline-flex min-h-11 items-center gap-1.5 px-3 text-sm"
+          >
+            <Icono nombre="etiqueta" lado={18} className="text-accent" />
+            Imprimir las placas del edificio
+          </button>
+          {onInventario && (
+            <button
+              type="button"
+              onClick={onInventario}
+              className="key key-quiet inline-flex min-h-11 items-center gap-1.5 px-3 text-sm"
+            >
+              <Icono nombre="lista" lado={18} className="text-accent" />
+              Inventario en PDF
+            </button>
+          )}
+        </div>
+
+        {/*
+          El índice, y de qué está hecho.
+          Un número solo invita a discutirlo; un número con su recuento al lado
+          se puede comprobar. Y con la base recién arrancada dice honestamente
+          que no sabe lo suficiente, en vez de sacar un 100 de la nada — que se
+          leería como «va perfecta» cuando significa «no sé nada de ella».
+        */}
+        {fiabilidad && (
+          <div className="card mt-4 flex items-center gap-4 p-4">
+            <span
+              className={`font-mono text-3xl font-bold tabular ${
+                !fiabilidad.hay_datos
+                  ? 'text-muted'
+                  : fiabilidad.score >= 75
+                    ? 'text-ok'
+                    : fiabilidad.score >= 45
+                      ? 'text-warn'
+                      : 'text-crit'
+              }`}
+            >
+              {fiabilidad.hay_datos ? fiabilidad.score : '—'}
+            </span>
+            <div className="min-w-0 text-sm">
+              <p className="font-medium">Índice de fiabilidad</p>
+              <p className="text-muted">
+                {fiabilidad.hay_datos
+                  ? `${fiabilidad.incidencias} incidencias · ${fiabilidad.observaciones} observaciones · ${fiabilidad.revisiones} revisiones en el último año`
+                  : 'Datos insuficientes todavía: hacen falta unas cuantas revisiones más para que este número signifique algo.'}
+              </p>
+              {fiabilidad.hay_datos && fiabilidad.solicitudes > 0 && (
+                <p className="mt-1 text-xs text-muted">
+                  {fiabilidad.solicitudes} solicitudes, que no penalizan: pedir trabajo no es un
+                  fallo de la sala.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {(reincidencias ?? []).map((r) => (
+          <div key={r.item} className="card mt-3 border-warn/30 bg-warn-tint p-4 text-sm">
+            <p className="font-medium text-warn">Reincidencia detectada: {r.item}</p>
+            <p className="mt-1">
+              {r.veces} sustituciones en esta sala desde {fechaCorta(r.desde)}. Poner la pieza otra
+              vez no resuelve la causa: conviene revisar canalización, rosetas o longitud del
+              tirado.
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              Basado en {r.veces} incidencias con consumo de ese artículo, la última el{' '}
+              {fechaCorta(r.hasta)}.
+            </p>
+          </div>
+        ))}
+
         <section aria-labelledby="sec-inv" className="mt-8">
           <div className="section-head">
             <h2 id="sec-inv" className="eyebrow">Inventario instalado</h2>
@@ -1110,6 +1123,16 @@ export function RoomSheet({
           <div className="section-head">
             <h2 id="sec-hist" className="eyebrow">Historial</h2>
           </div>
+          {onHistorial && (
+            <button
+              type="button"
+              onClick={onHistorial}
+              className="key-ghost -ml-2.5 inline-flex min-h-11 items-center gap-1.5 px-2.5 text-sm"
+            >
+              <Icono nombre="historial" lado={18} />
+              Ver todo el historial de esta sala
+            </button>
+          )}
           {historialFalla && (
             <p className="mt-2 text-sm text-muted">
               El historial necesita conexión; lo demás de esta ficha funciona sin ella.

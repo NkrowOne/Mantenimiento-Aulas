@@ -29,6 +29,14 @@ interface Props {
   order: RoomOrder
   onOrderChange: (order: RoomOrder) => void
   /**
+   * Lo tecleado en el buscador. Lo guarda quien monta la lista, y no la lista:
+   * al abrir una ficha esta pantalla se desmonta, y con el texto dentro se
+   * perdía —se buscaba «lab», se abría el primero, se volvía, y la lista estaba
+   * otra vez entera y había que teclear «lab» de nuevo para abrir el segundo—.
+   */
+  query: string
+  onQueryChange: (query: string) => void
+  /**
    * El rol llega entero y `esAdmin` se deriva dentro, igual que en `StockPage` y
    * `ReportsPage`: quien decide qué se puede tocar es una sola línea de este
    * fichero, no siete llamadas del padre que podrían discrepar entre sí.
@@ -60,8 +68,9 @@ export function RoomListPage({
   order,
   onOrderChange,
   role,
+  query,
+  onQueryChange: setQuery,
 }: Props): React.ReactElement {
-  const [query, setQuery] = useState('')
   const esAdmin = role === 'admin'
 
   /*
@@ -207,17 +216,32 @@ export function RoomListPage({
           </button>
         </div>
 
-        <label className="mt-3 block">
-          <span className="sr-only">Buscar sala en {building.name}</span>
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar sala"
-            enterKeyHint="search"
-            className="h-touch w-full rounded-ctl border border-line bg-surface px-3"
-          />
-        </label>
+        {/* Un `form`, como el buscador del campus: «Intro» —o «Ir» en el
+            teclado del móvil— abre la primera sala de la lista filtrada. */}
+        <form
+          role="search"
+          className="mt-3"
+          onSubmit={(e) => {
+            e.preventDefault()
+            const primera = query.trim() ? visible[0] : undefined
+            if (primera) onPick(primera)
+          }}
+        >
+          <label className="block">
+            <span className="sr-only">Buscar sala en {building.name}</span>
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar sala"
+              enterKeyHint="go"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              className="h-touch w-full rounded-ctl border border-line bg-surface px-3"
+            />
+          </label>
+        </form>
 
         {/* El orden se elige y se ve. Antes era fijo y solo lo decía un texto. */}
         <div className="mt-3 flex items-center justify-between gap-2">

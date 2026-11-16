@@ -45,6 +45,22 @@ sesión— al pie de ese menú.
 cuántas tocan y cuántas averías hay abiertas. Debajo, escanear el QR de la
 puerta, buscar un aula por su nombre y la lista de edificios.
 
+### Atajos que ahorran toques
+
+- **Buscar con el edificio delante.** En el buscador del inicio puedes teclear
+  el aviso tal como llega: `h 1.12`, `crai sala 3`. Pulsa «Ir» en el teclado y
+  se abre el primer resultado. Al volver del aula, la búsqueda sigue ahí.
+- **Volver al sitio.** Al volver de un aula a la lista, la lista está donde la
+  dejaste, no arriba del todo. Lo mismo al cambiar de pestaña y volver, y los
+  filtros y búsquedas de cada pestaña se conservan mientras la aplicación siga
+  abierta.
+- **Tocar la pestaña en la que ya estás** te lleva a su inicio: desde la ficha
+  de un aula, un toque en **Revisar** devuelve a la lista de edificios.
+- **Revisiones a medias.** Si dejaste un aula sin cerrar, aparece arriba en el
+  inicio: un toque y sigues donde estabas.
+- **Con teclado**, la tecla `/` lleva al buscador de la pantalla, e «Intro»
+  guarda en los formularios.
+
 ### Claro u oscuro
 
 En **Más → Tema** eliges *Claro*, *Oscuro* o *Automático* (lo que diga el
@@ -204,7 +220,8 @@ corrección»** la tira y no cambia nada.
    - **Molesta** — interrumpe.
    - **Impide la clase** — no se puede usar el aula.
 
-   Haz una foto. A quien vaya a repararlo le ahorra un viaje.
+   Haz una foto. A quien vaya a repararlo le ahorra un viaje. El botón está ahí
+   mismo, debajo de la descripción.
 
    **Al guardar, cada equipo en falla pasa a la pestaña Incidencias y se queda
    ahí hasta que alguien lo resuelve.** Ya no hay que apuntarlo dos veces: marcar
@@ -221,6 +238,13 @@ corrección»** la tira y no cambia nada.
    su equipo — si lo escribes solo aquí, nadie recibe un parte de trabajo.
 
 6. **Guardar y siguiente sala** te lleva directo a la siguiente sin volver atrás.
+   Si vas por planta, se salta las que ya hayas revisado hoy.
+
+**Si en el aula todo funciona**, no hace falta marcar nada: nada más entrar, el
+botón de abajo dice **Todo correcto y siguiente sala**. Un toque guarda la
+revisión con todo en OK y abre la siguiente. (El **Todo correcto** de arriba
+marca todo en OK y te deja en el aula, por si quieres añadir una foto o una
+observación antes de guardar.)
 
 ### Si el inventario no cuadra
 

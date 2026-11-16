@@ -41,10 +41,13 @@ import { pullMaster, startPull, type ResultadoPull } from '@/sync/pull'
 import { startSync } from '@/sync/outbox'
 import { configError, supabase } from '@/lib/supabase'
 import { PARAM_SALA, salaDeLaUrl, salaDeTextoQR } from '@/lib/enlace-sala'
+import { olvidarEstadoDeSesion, ponerEstadoDeSesion } from '@/lib/estado-de-sesion'
 import { nivelar } from '@/lib/historial'
+import { ID_CONTENIDO } from '@/lib/viewport'
 import { pedirInstalar, useSePuedeInstalar } from '@/lib/instalar'
 import type { SealedSession } from '@/auth/pin'
 import type { Building, Role, Room } from '@/domain/types'
+import type { Seccion as SeccionDeDatos } from '@/features/admin/CleanupPage'
 import { HojaDeMas } from '@/features/shell/HojaDeMas'
 import { BarraDePestanas, MarcaDeLaApp, MenuLateral } from '@/features/shell/Navegacion'
 import { EN_MAS, RANK, etiquetaDe, puedeVer, type Tab } from '@/features/shell/secciones'
@@ -171,6 +174,9 @@ const EscanerQR = lazy(() =>
  * Por eso cada vista que se apila recuerda de dónde vino: volver tiene que
  * devolver al sitio del que se salió, no a uno que no se ha visto nunca.
  */
+/** Los sitios desde los que se llega a la ficha de un aula sin venir de su revisión. */
+type OrigenDeFicha = 'salas' | 'edificios' | 'incidencias'
+
 type RoomView =
   | { name: 'edificios' }
   | { name: 'salas'; building: Building }
@@ -179,6 +185,16 @@ type RoomView =
       building: Building
       room: Room
       desdeFicha?: boolean
+      /**
+       * De dónde venía la ficha desde la que se empezó, si se empezó desde una.
+       *
+       * Sin esto, «Volver» desde la revisión rehacía la ficha diciendo siempre
+       * que venía de la lista de salas. Quien había llegado al aula por el
+       * buscador o por el QR —o desde una incidencia— volvía dos veces y
+       * acababa en la lista de un edificio que no había abierto nunca, a tres
+       * toques del buscador del que salió.
+       */
+      origen?: OrigenDeFicha
       /**
        * La revisión que se está corrigiendo, si esto es una corrección.
        *
@@ -213,14 +229,14 @@ type RoomView =
    * quien consultaba la ficha a media corrección aterrizaba en una revisión
    * vacía de la misma sala, con la corrección perdida por el camino.
    */
-  | { name: 'ficha'; building: Building; room: Room; volverA: 'salas' | 'edificios' | 'incidencias' }
+  | { name: 'ficha'; building: Building; room: Room; volverA: OrigenDeFicha }
   | {
       name: 'ficha'
       building: Building
       room: Room
       volverA: 'revision'
       /** La revisión a la que se vuelve: si entró desde la ficha y qué corrige. */
-      revision: { desdeFicha?: boolean; correccion?: Correccion }
+      revision: { desdeFicha?: boolean; correccion?: Correccion; origen?: OrigenDeFicha }
     }
   /*
    * La hoja de placas del edificio. Vive aquí y no en «Datos» porque se imprime
@@ -281,7 +297,12 @@ function atras(view: RoomView): { view: RoomView; tab?: Tab } | null {
     case 'revision':
       return {
         view: view.desdeFicha
-          ? { name: 'ficha', building: view.building, room: view.room, volverA: 'salas' }
+          ? {
+              name: 'ficha',
+              building: view.building,
+              room: view.room,
+              volverA: view.origen ?? 'salas',
+            }
           : { name: 'salas', building: view.building },
       }
     case 'ficha':
@@ -308,6 +329,16 @@ function atras(view: RoomView): { view: RoomView; tab?: Tab } | null {
             : { name: 'salas', building: view.building },
       }
   }
+}
+
+/**
+ * De dónde venía esta ficha, para que la revisión que se abre desde ella lo
+ * recuerde. Si la ficha se abrió a media revisión, lo que vale es de dónde
+ * venía ESA revisión.
+ */
+function origenDe(view: RoomView): OrigenDeFicha | undefined {
+  if (view.name !== 'ficha') return undefined
+  return view.volverA === 'revision' ? view.revision.origen : view.volverA
 }
 
 /**
@@ -372,6 +403,24 @@ export function App(): React.ReactElement {
      lista tiene que parecerse al camino que van a hacer sus pies. El orden por
      antigüedad sigue a un toque, para el día que se persigue el retraso. */
   const [roomOrder, setRoomOrder] = useState<RoomOrder>(ROOM_ORDER_POR_DEFECTO)
+  /*
+   * Lo tecleado en el buscador de la lista de salas. Vive aquí para sobrevivir
+   * al viaje de ida y vuelta a una ficha (ver `RoomListPage`), y se borra al
+   * salir del edificio: un filtro olvidado de otro edificio dejaría la lista
+   * siguiente medio vacía sin que nada explicase por qué.
+   */
+  const [busquedaDeSalas, setBusquedaDeSalas] = useState('')
+  /* Y lo mismo para el buscador del campus, el de la pantalla de inicio. Este
+     se borra al entrar en un edificio por su fila: ahí ya se ha dejado de
+     buscar. */
+  const [busquedaDelCampus, setBusquedaDelCampus] = useState('')
+  /* La sección de Datos a la que lleva un atajo (ver `CleanupPage`). Vale para
+     una visita: al salir de Datos se olvida, y la siguiente vez manda la
+     sección recordada. */
+  const [datosEn, setDatosEn] = useState<SeccionDeDatos | null>(null)
+  useEffect(() => {
+    if (tab !== 'datos') setDatosEn(null)
+  }, [tab])
   const [escaneando, setEscaneando] = useState(false)
   /**
    * La hoja de «Más», y con qué cara: entera —secciones y cuenta— desde la
@@ -420,6 +469,9 @@ export function App(): React.ReactElement {
    * primera, y eso solo se nota cuando ya te has equivocado de aula.
    */
   const buildingId = view.name === 'edificios' ? null : view.building.id
+  useEffect(() => {
+    setBusquedaDeSalas('')
+  }, [buildingId])
   const rondaActual = useLiveQuery(async () => {
     if (!buildingId) return null
     const zones = await db.zones.where('building_id').equals(buildingId).toArray()
@@ -525,6 +577,36 @@ export function App(): React.ReactElement {
   }, [profundidad, tab, view, volver])
 
   useEffect(() => watchSession(), [])
+
+  /*
+   * «/» lleva al buscador de la pantalla, con teclado delante.
+   *
+   * En un ordenador —o en un iPad con su teclado— buscar un aula era soltar las
+   * teclas, coger el ratón y pulsar en el campo. Es el atajo de siempre en la
+   * web, y aquí sirve en todas las pantallas a la vez porque todas llevan su
+   * buscador como `type="search"`: se enfoca el primero que haya a la vista.
+   * No hace nada mientras se escribe en otro campo ni con una hoja abierta.
+   */
+  useEffect(() => {
+    const alPulsar = (e: KeyboardEvent): void => {
+      if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return
+      const en = e.target
+      if (
+        en instanceof HTMLElement &&
+        (en.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(en.tagName))
+      ) {
+        return
+      }
+      if (document.querySelector('[role="dialog"]')) return
+      const campo = document.querySelector<HTMLInputElement>(`#${ID_CONTENIDO} input[type="search"]`)
+      if (!campo) return
+      e.preventDefault()
+      campo.focus()
+      campo.select()
+    }
+    window.addEventListener('keydown', alPulsar)
+    return () => window.removeEventListener('keydown', alPulsar)
+  }, [])
 
   /*
    * La revisión abierta es trabajo delicado: mientras dura, la versión nueva no
@@ -864,6 +946,10 @@ export function App(): React.ReactElement {
           'esté cerrada no se sube nada. ¿Cerrar sesión igualmente?'
         : '¿Cerrar sesión?'
     if (confirm(aviso)) {
+      // Con la sesión se van las búsquedas y los filtros recordados: en un iPad
+      // compartido, quien entra después no hereda lo que buscaba quien salió.
+      olvidarEstadoDeSesion()
+      setBusquedaDelCampus('')
       void lock().then(() => setUnlocked(false))
     }
   }
@@ -874,16 +960,42 @@ export function App(): React.ReactElement {
 
   /*
    * Cambiar de sección. Una sola función para la barra, el menú lateral y la
-   * hoja de «Más»: las tres hacen lo mismo y, además, devuelven el contenido
-   * arriba. Sin eso, quien bajaba hasta el final de Incidencias y pasaba a
-   * Almacén aterrizaba a media lista de una pantalla que no había visto nunca,
-   * porque lo que desplaza es el marco y el marco no se desmonta.
+   * hoja de «Más».
+   *
+   * Pulsar la pestaña en la que YA se está no es un toque perdido: lleva a la
+   * raíz de esa sección y arriba del todo. Es lo que hace cualquier aplicación
+   * de teléfono y aquí ahorra el camino más repetido del día —de la ficha de un
+   * aula a la lista de edificios eran dos «Volver»; ahora es un toque en
+   * «Revisar»—. Durante una revisión no saca de ella: ahí solo sube arriba, que
+   * un formulario a medias no se abandona por tocar donde ya se estaba.
+   *
+   * Por dónde va el desplazamiento de cada sección lo lleva el marco (ver
+   * `useMemoriaDeDesplazamiento`): al cambiar de pestaña y volver se aterriza
+   * donde se dejó.
    */
   const irA = (t: Tab): void => {
     setMasAbierto(null)
-    if (t !== tab) subirArriba()
+    if (t === tab) {
+      if (t === 'revisar' && view.name !== 'revision') setView({ name: 'edificios' })
+      subirArriba()
+      return
+    }
     setTab(t)
   }
+
+  /*
+   * El sitio, para la memoria de desplazamiento del marco. Lleva dentro el aula
+   * o el edificio: dos aulas son la misma pantalla y dos sitios distintos, y la
+   * segunda tiene que empezar por arriba.
+   */
+  const sitio =
+    tab !== 'revisar'
+      ? tab
+      : view.name === 'edificios'
+        ? 'edificios'
+        : view.name === 'revision' || view.name === 'ficha'
+          ? `${view.name}-${view.room.id}`
+          : `${view.name}-${view.building.id}`
 
   return (
     <Marco
@@ -1009,6 +1121,7 @@ export function App(): React.ReactElement {
          en la clave el formulario se desmontaría y volvería a montarse entre
          una y otra. */
       claveDePantalla={tab === 'revisar' ? `revisar-${view.name}` : tab}
+      sitio={sitio}
       avisos={
         <>
           {escaneoFallido && (
@@ -1052,7 +1165,18 @@ export function App(): React.ReactElement {
             setEscaneando(true)
           }}
           avisoQR={avisoQR}
-          onEdificio={(building) => setView({ name: 'salas', building })}
+          busqueda={busquedaDelCampus}
+          onBusqueda={setBusquedaDelCampus}
+          /* Directo al formulario, que es donde estaba. Se abre «desde la
+             ficha» y con origen en esta pantalla para que tanto «Volver» como
+             «Guardar» acaben devolviendo aquí. */
+          onContinuar={(building, room) =>
+            setView({ name: 'revision', building, room, desdeFicha: true, origen: 'edificios' })
+          }
+          onEdificio={(building) => {
+            setBusquedaDelCampus('')
+            setView({ name: 'salas', building })
+          }}
           /* A la ficha, como la fila de la lista y el QR. Se vuelve aquí, a la
              pantalla de edificios, que es donde está el buscador. */
           onSala={(building, room) =>
@@ -1067,6 +1191,8 @@ export function App(): React.ReactElement {
           role={role}
           order={roomOrder}
           onOrderChange={setRoomOrder}
+          query={busquedaDeSalas}
+          onQueryChange={setBusquedaDeSalas}
           onBack={volver}
           onPlacas={() => setView({ name: 'placas', building: view.building, volverA: 'salas' })}
           /* Sin sala: la hoja del edificio entero, que es lo que se pide desde
@@ -1106,7 +1232,11 @@ export function App(): React.ReactElement {
               volverA: 'revision',
               /* Lo que hace falta para volver a ESTA revisión y no a una nueva de
                  la misma sala: si es una corrección, la corrección. */
-              revision: { desdeFicha: view.desdeFicha, correccion: view.correccion },
+              revision: {
+                desdeFicha: view.desdeFicha,
+                correccion: view.correccion,
+                origen: view.origen,
+              },
             })
           }
           onDone={(encadenar) => {
@@ -1123,7 +1253,7 @@ export function App(): React.ReactElement {
                 name: 'ficha',
                 building: view.building,
                 room: view.room,
-                volverA: 'salas',
+                volverA: view.origen ?? 'salas',
               })
               return
             }
@@ -1133,9 +1263,26 @@ export function App(): React.ReactElement {
                 ? nextRoom(rondaActual.rooms, rondaActual.zones, roomOrder, view.room.id)
                 : null
 
+            if (siguiente) {
+              setView({ name: 'revision', building: view.building, room: siguiente })
+              return
+            }
+
+            /*
+             * Sin siguiente sala, al sitio desde el que se llegó a esta.
+             *
+             * Volvía siempre a la lista del edificio, también para quien había
+             * llegado por el buscador, por el QR o desde una incidencia: guardar
+             * el aula le dejaba en una lista que no había abierto, y lo siguiente
+             * que quería —escanear otra puerta, o seguir con las incidencias—
+             * estaba a dos o tres toques. Guardar es «he terminado aquí», así
+             * que devuelve a donde se estaba antes de empezar.
+             */
+            const origen = view.name === 'revision' ? view.origen : undefined
+            if (origen === 'incidencias') setTab('incidencias')
             setView(
-              siguiente
-                ? { name: 'revision', building: view.building, room: siguiente }
+              origen === 'edificios' || origen === 'incidencias'
+                ? { name: 'edificios' }
                 : { name: 'salas', building: view.building },
             )
           }}
@@ -1157,6 +1304,7 @@ export function App(): React.ReactElement {
               building: view.building,
               room: view.room,
               desdeFicha: true,
+              origen: origenDe(view),
             })
           }
           /* Corregir es el mismo destino con una carga distinta: el formulario
@@ -1167,6 +1315,7 @@ export function App(): React.ReactElement {
               building: view.building,
               room: view.room,
               desdeFicha: true,
+              origen: origenDe(view),
               correccion,
             })
           }
@@ -1183,6 +1332,18 @@ export function App(): React.ReactElement {
               volverA: 'ficha',
             })
           }
+          /* A la pestaña Historial, con esta sala ya puesta en sus filtros y
+             sin límite de fechas. «Volver» devuelve a esta ficha. */
+          onHistorial={() => {
+            ponerEstadoDeSesion('historial.edificio', view.building.id)
+            ponerEstadoDeSesion('historial.sala', view.room.id)
+            ponerEstadoDeSesion('historial.atajo', 'todo')
+            ponerEstadoDeSesion('historial.familia', null)
+            ponerEstadoDeSesion('historial.desde', '')
+            ponerEstadoDeSesion('historial.hasta', '')
+            ponerEstadoDeSesion('historial.texto', '')
+            setTab('historial')
+          }}
         />
       )}
 
@@ -1239,7 +1400,13 @@ export function App(): React.ReactElement {
                    —la política de lectura de `buildings` es `is_staff()`—. Sin
                    este condicional, el único atajo de la aplicación a «Datos»
                    era el que se le ofrecía a quien no puede usarlo. */
-                datos: puedeVer('datos', role) ? () => setTab('datos') : undefined,
+                datos: puedeVer('datos', role)
+                  ? () => {
+                      // A la sección donde está lo que la tarjeta anuncia.
+                      setDatosEn('importacion')
+                      setTab('datos')
+                    }
+                  : undefined,
               }}
             />
           )}
@@ -1273,7 +1440,9 @@ export function App(): React.ReactElement {
               o cualquiera que se añada mañana— y el panel de administración
               montado entero para quien no puede tocar nada de lo que enseña. */}
           {tab === 'informes' && puedeVer('informes', role) && <ReportsPage />}
-          {tab === 'datos' && puedeVer('datos', role) && <CleanupPage yo={userId} />}
+          {tab === 'datos' && puedeVer('datos', role) && (
+            <CleanupPage yo={userId} abrirEn={datosEn ?? undefined} />
+          )}
         </Suspense>
       )}
     </Marco>

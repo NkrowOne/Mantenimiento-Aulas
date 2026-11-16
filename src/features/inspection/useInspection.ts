@@ -485,8 +485,40 @@ export function useInspection(
   )
 
   /** Cierra la revisión. A partir de aquí es inmutable, también en el servidor. */
-  const complete = useCallback(async (): Promise<Inspection | null> => {
-    if (!draft) return null
+  // Con otro nombre porque dentro de `complete` el borrador que se cierra puede
+  // no ser este tal cual —lleva además lo que se da por bueno al cerrar—, y ese
+  // es el que allí se llama `draft`.
+  const borrador = draft
+  const complete = useCallback(async (opciones?: {
+    /**
+     * Dar por buenas las comprobaciones que queden sin contestar, en el mismo
+     * gesto de cerrar. Es lo que hay detrás de «Todo correcto y siguiente
+     * sala»: `markRestOk()` seguido de `complete()` no sirve, porque el
+     * primero pide un cambio de estado y el segundo leería el borrador de
+     * ANTES de ese cambio —cerraría la revisión vacía—.
+     */
+    restoOk?: boolean
+  }): Promise<Inspection | null> => {
+    if (!borrador) return null
+
+    let draft = borrador
+    if (opciones?.restoOk) {
+      const checks = new Map(borrador.checks)
+      for (const row of rows) {
+        if (checks.has(row.key)) continue
+        checks.set(row.key, {
+          id: uuidv7(),
+          inspection_id: borrador.inspection.id,
+          check_key: row.key,
+          result: 'ok',
+          severity: null,
+          measure: null,
+          measure_unit: null,
+          note: null,
+        })
+      }
+      draft = { ...borrador, checks }
+    }
 
     const hasIncident = [...draft.checks.values()].some((c) => c.result === 'incidencia')
     const inspection: Inspection = {
@@ -592,7 +624,7 @@ export function useInspection(
 
     setDraft(null)
     return inspection
-  }, [draft, etiquetaDe, qc])
+  }, [borrador, rows, etiquetaDe, qc])
 
   /**
    * Tira una corrección empezada.

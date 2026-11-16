@@ -329,6 +329,14 @@ function CrearSala({
           placeholder="Código del aula"
           aria-label="Código de la sala nueva"
           disabled={estado.tipo === 'creando'}
+          /* El código es el último campo: «Intro» crea la sala, con la misma
+             condición que el botón. */
+          enterKeyHint="done"
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' || !edificioId || code.trim() === '') return
+            e.preventDefault()
+            crear()
+          }}
         />
         <button
           type="button"

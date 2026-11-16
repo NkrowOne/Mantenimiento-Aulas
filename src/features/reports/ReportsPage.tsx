@@ -380,8 +380,6 @@ export function ReportsPage(): React.ReactElement {
         </p>
       </header>
 
-      <EstadoIA />
-
       <section className="card p-4">
         <h2 className="font-semibold">Generar un informe</h2>
 
@@ -928,6 +926,14 @@ export function ReportsPage(): React.ReactElement {
         )}
       </section>
 
+      {/*
+        El estado del análisis con IA, al final.
+        Estaba ARRIBA, entre el título y «Generar un informe»: tres párrafos
+        sobre la clave de Gemini y el modelo, que es algo que se configura una
+        vez. En un teléfono empujaba lo único que se viene a hacer aquí —elegir
+        el periodo y generar— una pantalla entera hacia abajo, todas las veces.
+      */}
+      <EstadoIA />
     </div>
   )
 }

@@ -578,6 +578,7 @@ export function HojaDeMaestro({
 
         <button
           type="button"
+          data-principal
           disabled={bloqueado || motivo !== null}
           onClick={() =>
             ejecutar({
@@ -667,6 +668,7 @@ export function HojaDeMaestro({
 
         <button
           type="button"
+          data-principal
           disabled={bloqueado || motivo !== null}
           onClick={() =>
             ejecutar({
@@ -766,6 +768,7 @@ export function HojaDeMaestro({
 
         <button
           type="button"
+          data-principal
           disabled={bloqueado || motivo !== null}
           onClick={() =>
             ejecutar({
@@ -904,6 +907,7 @@ export function HojaDeMaestro({
 
         <button
           type="button"
+          data-principal
           disabled={bloqueado || invalido !== null}
           onClick={() => {
             if (!confirmarFusion()) return

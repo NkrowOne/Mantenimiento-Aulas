@@ -5,6 +5,7 @@ import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { Tira, useFotos } from '@/components/Fotos'
 import { displayRoomCode, norm } from '@/domain/normalize'
+import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
 import { cuantos } from '@/lib/plural'
 import { salasQueCasan, type SalaBuscable } from './busqueda'
 import { CodigoEasyVista } from './CodigoEasyVista'
@@ -90,8 +91,10 @@ interface Props {
 }
 
 export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
-  const [showResolved, setShowResolved] = useState(false)
-  const [query, setQuery] = useState('')
+  /* Recordados mientras la aplicación siga abierta: cambiar de pestaña y volver
+     no borra lo que se estaba buscando (ver `lib/estado-de-sesion.ts`). */
+  const [showResolved, setShowResolved] = useEstadoDeSesion('incidencias.resueltas', false)
+  const [query, setQuery] = useEstadoDeSesion('incidencias.busqueda', '')
   /* Qué incidencia tiene abierto el apunte de material. Solo una: el técnico
      está apuntando lo de una avería, no llevando la contabilidad de seis. */
   const [apuntando, setApuntando] = useState<string | null>(null)
@@ -398,15 +401,7 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
         </p>
       )}
 
-      {/*
-        Lo sin terminar, antes que lo abierto, y solo si lo hay.
-        Un borrador es una incidencia a medio escribir: su sitio es esta
-        pantalla, no una pestaña propia en la barra de navegación. Cuando no hay
-        ninguno, este componente no dibuja absolutamente nada.
-      */}
-      <Borradores />
-
-      <label className="mt-4 block">
+      <label className="mt-3 block">
         <span className="sr-only">Buscar incidencia</span>
         <input
           type="search"
@@ -414,9 +409,24 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Buscar por descripción, referencia o sala"
           enterKeyHint="search"
+          /* Sin autocorrector: una referencia como «I261102_0031» o un «0.1»
+             no son palabras, y el iPad las «corrige». */
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           className="h-touch w-full rounded-ctl border border-line bg-surface px-3"
         />
       </label>
+
+      {/*
+        Lo sin terminar, antes que lo abierto, y solo si lo hay. Va DEBAJO del
+        buscador: con borradores, su explicación empujaba el buscador y la lista
+        media pantalla hacia abajo, y lo primero que se hace aquí es buscar.
+        Un borrador es una incidencia a medio escribir: su sitio es esta
+        pantalla, no una pestaña propia en la barra de navegación. Cuando no hay
+        ninguno, este componente no dibuja absolutamente nada.
+      */}
+      <Borradores />
 
       <ul className="mt-3 divide-y divide-line">
         {visibles.map((i) => {
@@ -598,7 +608,7 @@ export function IncidentsPage({ onAbrirSala }: Props = {}): React.ReactElement {
                 </div>
               )}
 
-              {apuntando === i.id && <MaterialUsado incidentId={i.id} />}
+              {apuntando === i.id && <MaterialUsado incidentId={i.id} enfocar />}
 
               {resolviendo === i.id && (
                 <ResolverIncidencia

@@ -157,6 +157,15 @@ export function AssetTypeTray(): React.ReactElement {
                 type="text"
                 value={renaming[type.id] ?? type.name}
                 onChange={(e) => setRenaming((r) => ({ ...r, [type.id]: e.target.value }))}
+                /* «Intro» corrige el nombre: lo mismo que el botón de al lado, y
+                   con su misma condición. */
+                enterKeyHint="done"
+                onKeyDown={(e) => {
+                  const nombre = (renaming[type.id] ?? type.name).trim()
+                  if (e.key !== 'Enter' || act.isPending || nombre === type.name || !nombre) return
+                  e.preventDefault()
+                  act.mutate({ kind: 'rename', id: type.id, name: nombre })
+                }}
                 aria-label={`Nombre corregido de ${type.name}`}
                 className="h-11 min-w-40 flex-1 rounded-ctl border border-line bg-surface px-2 text-base"
               />

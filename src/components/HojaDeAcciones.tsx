@@ -143,6 +143,41 @@ export function HojaDeAcciones({
        * inferior, donde activar una pestaña invisible desmonta la pantalla
        * entera con la hoja todavía abierta encima.
        */
+      /*
+       * «Intro» en un campo de la hoja pulsa su botón principal.
+       *
+       * Los formularios que viven en una hoja —añadir una sala, renombrar— no
+       * son `<form>`: son campos sueltos y un botón, así que «Intro» no hacía
+       * nada y con un teclado delante había que soltarlo para ir a por el botón.
+       * El botón se señala con `data-principal`, a mano y uno por formulario:
+       * adivinarlo por el color acabaría pulsando lo que no es el día que una
+       * hoja tenga dos teclas de acento.
+       *
+       * Solo en campos de una línea y fuera de un `<form>` de verdad, que ya
+       * sabe enviarse solo. Si el botón está deshabilitado —falta un dato—, no
+       * pasa nada, que es lo mismo que pasa al pulsarlo.
+       */
+      if (e.key === 'Enter' && !e.defaultPrevented && !e.isComposing) {
+        const campo = e.target
+        const raiz = panel.current
+        if (
+          raiz &&
+          campo instanceof HTMLInputElement &&
+          raiz.contains(campo) &&
+          !campo.form &&
+          !['checkbox', 'radio', 'file', 'button', 'submit'].includes(campo.type)
+        ) {
+          const principal = raiz.querySelector<HTMLButtonElement>(
+            'button[data-principal]:not([disabled])',
+          )
+          if (principal) {
+            e.preventDefault()
+            principal.click()
+          }
+        }
+        return
+      }
+
       if (e.key === 'Tab') {
         const raiz = panel.current
         if (!raiz) return

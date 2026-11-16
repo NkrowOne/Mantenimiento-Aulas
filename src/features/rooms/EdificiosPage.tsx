@@ -22,6 +22,7 @@ import { FilaConAcciones } from '@/components/FilaConAcciones'
 import { Icono } from '@/components/Icono'
 import { InsigniaAveria, detalleDeAverias } from '@/components/InsigniaAveria'
 import { db } from '@/db/dexie'
+import { displayRoomCode } from '@/domain/normalize'
 import { OVERDUE_INSPECTION_DAYS, type Building, type Role, type Room } from '@/domain/types'
 import { cuantos } from '@/lib/plural'
 import type { ResultadoPull } from '@/sync/pull'
@@ -47,6 +48,11 @@ interface Props {
   avisoQR: string | null
   onEdificio: (building: Building) => void
   onSala: (building: Building, room: Room) => void
+  /** Seguir con una revisión que se dejó a medias: abre su formulario tal cual. */
+  onContinuar: (building: Building, room: Room) => void
+  /** Lo tecleado en el buscador del campus, que sobrevive a abrir una ficha. */
+  busqueda: string
+  onBusqueda: (texto: string) => void
 }
 
 /**
@@ -158,6 +164,9 @@ export function EdificiosPage({
   avisoQR,
   onEdificio,
   onSala,
+  onContinuar,
+  busqueda,
+  onBusqueda,
 }: Props): React.ReactElement {
   /*
    * El edificio cuyas acciones están abiertas.
@@ -243,6 +252,34 @@ export function EdificiosPage({
   }, [hojaEdificio?.id])
 
   /*
+   * Las revisiones que se quedaron a medias, con su aula y su edificio.
+   *
+   * Un borrador se guarda solo y no se pierde, pero desde aquí no se veía:
+   * estaba marcado «A medias» en la fila de su aula, dentro de la lista de su
+   * edificio. Quien dejó dos aulas sin cerrar ayer —le llamaron, se fue— tenía
+   * que acordarse de cuáles eran y de en qué edificio, y entrar a buscarlas:
+   * edificio, aula, «Revisar esta sala». Aquí están las dos, a un toque.
+   *
+   * Sin las correcciones: una corrección a medias se retoma desde la revisión
+   * que corrige, en la ficha del aula, y abrirla como una revisión nueva la
+   * mezclaría con la de hoy.
+   */
+  const aMedias = useLiveQuery(async () => {
+    const borradores = await db.inspections.where('status').equals('borrador').toArray()
+    const filas: Array<{ building: Building; room: Room; cuando: string }> = []
+    for (const b of borradores) {
+      if (b.corrects) continue
+      const room = await db.rooms.get(b.room_id)
+      const zone = room ? await db.zones.get(room.zone_id) : undefined
+      const building = zone ? await db.buildings.get(zone.building_id) : undefined
+      if (room && building) filas.push({ building, room, cuando: b.occurred_at })
+    }
+    // La más reciente primero, y una sola por aula.
+    filas.sort((a, b) => b.cuando.localeCompare(a.cuando))
+    return filas.filter((f, i) => filas.findIndex((g) => g.room.id === f.room.id) === i).slice(0, 4)
+  }, [])
+
+  /*
    * El campus entero, sumando los edificios. Sale del mismo mapa que las filas
    * de abajo, así que el resumen y la lista no pueden decir cosas distintas.
    */
@@ -301,6 +338,35 @@ export function EdificiosPage({
         </section>
       )}
 
+      {(aMedias?.length ?? 0) > 0 && (
+        <section aria-label="Revisiones a medias" className="card mt-3 overflow-hidden">
+          <h2 className="eyebrow px-4 pt-3">
+            {aMedias!.length === 1 ? 'Una revisión a medias' : 'Revisiones a medias'}
+          </h2>
+          <ul className="mt-1">
+            {aMedias!.map(({ building, room }) => (
+              <li key={room.id} className="border-t border-line-soft first:border-t-0">
+                <button
+                  type="button"
+                  onClick={() => onContinuar(building, room)}
+                  className="fila flex min-h-touch w-full items-center gap-3 px-4 py-2 text-left"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">
+                      <span className="font-mono">{displayRoomCode(room.code)}</span>
+                      {room.name !== room.code && ` · ${room.name}`}
+                    </span>
+                    <span className="block truncate text-xs text-muted">{building.name}</span>
+                  </span>
+                  <span className="chip chip-accent">Seguir</span>
+                  <Icono nombre="derecha" lado={16} className="text-muted" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {/*
         Escanear va ANTES del buscador y de la lista, y ocupa el ancho entero,
         porque es el camino corto: el técnico ya está delante de la puerta.
@@ -328,7 +394,7 @@ export function EdificiosPage({
 
       {/* A la ficha, como la fila de la lista y el QR. Se vuelve aquí, a la
           pantalla de edificios, que es donde está el buscador. */}
-      <BuscadorGlobal onPick={onSala} />
+      <BuscadorGlobal onPick={onSala} query={busqueda} onQueryChange={onBusqueda} />
 
       <div className="section-head mt-6">
         <h2 className="eyebrow">

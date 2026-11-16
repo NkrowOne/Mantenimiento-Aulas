@@ -56,7 +56,7 @@ import { porSeccion, usePendientesDeDatos, useRefrescarPendientes } from './pend
  * sección se recuerda en este navegador: quien sincroniza el Excel los viernes
  * no tiene que volver a buscar la pestaña cada viernes.
  */
-type Seccion = 'pendientes' | 'maestro' | 'excel' | 'importacion' | 'actividad' | 'usuarios'
+export type Seccion = 'pendientes' | 'maestro' | 'excel' | 'importacion' | 'actividad' | 'usuarios'
 
 const SECCIONES: Array<{ id: Seccion; titulo: string; texto: string }> = [
   { id: 'pendientes', titulo: 'Por decidir', texto: 'Retiradas, equipos y tipos sin validar, y los duplicados del inventario' },
@@ -87,8 +87,22 @@ function recordarSeccion(s: Seccion): void {
   }
 }
 
-export function CleanupPage({ yo }: { yo: string | null }): React.ReactElement {
-  const [seccion, setSeccion] = useState<Seccion>(seccionRecordada)
+export function CleanupPage({
+  yo,
+  abrirEn,
+}: {
+  yo: string | null
+  /**
+   * La sección en la que hay que aterrizar, cuando quien trae hasta aquí sabe a
+   * qué viene. La tarjeta ámbar del Panel —«Datos por revisar: edificios sin
+   * identificar, filas en cuarentena»— abría Datos en la sección RECORDADA, que
+   * podía ser Excel o Usuarios: había que saber que aquello vive en Importación
+   * e ir a buscarlo. Manda sobre la recordada, y no la sustituye: es una visita,
+   * no una preferencia.
+   */
+  abrirEn?: Seccion
+}): React.ReactElement {
+  const [seccion, setSeccion] = useState<Seccion>(() => abrirEn ?? seccionRecordada())
   const pendientes = usePendientesDeDatos()
   const cuentas = porSeccion(pendientes)
   const contadorDe: Partial<Record<Seccion, number>> = {

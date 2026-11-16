@@ -100,6 +100,8 @@ export function ResolverIncidencia({
      averías se arreglan sin gastar nada, y quien sí ha gastado se acuerda. En
      el express se abre solo, que es el gesto que viene después de escribir. */
   const [material, setMaterial] = useState(conMaterial)
+  /** El panel de material lo ha abierto un toque aquí, no venía ya abierto. */
+  const [materialAMano, setMaterialAMano] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const problema = problemaDeExplicacion(texto)
@@ -202,6 +204,11 @@ export function ResolverIncidencia({
           value={texto}
           onChange={(e) => setTexto(e.target.value)}
           rows={3}
+          /* El cursor, aquí. Este formulario se abre SIEMPRE con un toque en
+             «Resolver» —o con el rayo—, y lo que sigue es escribir qué se ha
+             hecho: sin esto había que tocar el campo antes de teclear, en cada
+             avería que se cierra. */
+          autoFocus
           aria-invalid={tocado && problema !== null}
           aria-describedby={ayudaId}
           placeholder="Se ha cambiado el cable HDMI de la mesa; el proyector ya da imagen."
@@ -315,12 +322,15 @@ export function ResolverIncidencia({
             Lo que apuntes se descuenta del almacén al cerrar la avería y queda cargado a esta sala.
             Puedes cerrar sin apuntar nada.
           </p>
-          <MaterialUsado incidentId={incidencia.id} />
+          <MaterialUsado incidentId={incidencia.id} enfocar={materialAMano} />
         </div>
       ) : (
         <button
           type="button"
-          onClick={() => setMaterial(true)}
+          onClick={() => {
+            setMaterialAMano(true)
+            setMaterial(true)
+          }}
           className="key key-quiet mt-3 min-h-11 w-full px-3 text-sm"
         >
           ¿Has usado material? Apúntalo

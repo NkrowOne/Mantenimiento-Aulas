@@ -99,6 +99,46 @@ export function roomMatches(room: Room, query: string, zoneName?: string): boole
 }
 
 /**
+ * ¿Coincide esta sala con lo que se ha tecleado en el buscador del campus?
+ *
+ * El aviso llega siempre con el edificio delante: «falla el proyector del 1.12
+ * del H». Y `roomMatches` solo miraba la sala —código, nombre, planta—, así que
+ * teclear «h 1.12» no encontraba NADA: había que saber quitar el edificio de la
+ * frase, buscar «1.12» y luego distinguir a ojo entre los seis 1.12 que hay en
+ * el campus, uno por aulario.
+ *
+ * Aquí la búsqueda se parte en palabras y TODAS tienen que estar en algún sitio
+ * de la sala: en su código, su nombre, su planta, o en el código o el nombre de
+ * su edificio. «h 1.12», «1.12 h» y «crai sala 3» encuentran lo que dicen.
+ *
+ * El código del edificio se compara ENTERO y no como trozo: una «h» suelta
+ * dentro de cualquier palabra —«hemeroteca», «laboratorio h»— haría que la letra
+ * del edificio coincidiera con medio campus. El nombre sí admite trozos, que es
+ * como se busca «biblio».
+ */
+export function salaCoincide(
+  room: Room,
+  query: string,
+  zoneName: string | undefined,
+  building: { code: string; name: string } | undefined,
+): boolean {
+  const palabras = norm(query).split(' ').filter(Boolean)
+  if (palabras.length === 0) return true
+
+  const codigoDeEdificio = norm(building?.code ?? '')
+  const nombreDeEdificio = norm(building?.name ?? '')
+
+  return palabras.every(
+    (p) =>
+      roomMatches(room, p, zoneName) || p === codigoDeEdificio || nombreDeEdificio.includes(p),
+  )
+}
+
+/** Lo que cuenta como «ya revisada en esta ronda»: las últimas dieciocho horas,
+    que cubren una jornada sin alcanzar a la de ayer. */
+const REVISADA_HOY_MS = 18 * 3_600_000
+
+/**
  * La sala que toca después de terminar una.
  *
  * Se calcula con el mismo orden que ve el técnico en la lista, pero **la
@@ -136,7 +176,23 @@ export function nextRoom(
     // Y al llegar al final del edificio se acaba. Volver a empezar por arriba
     // haría revisar dos veces las mismas aulas sin que nada lo dijera; `null`
     // devuelve a la lista, que es donde se ve que el edificio está hecho.
-    return ordenadas[i + 1] ?? null
+    /*
+     * …y la siguiente es la siguiente de la ruta que NO se haya revisado ya hoy.
+     *
+     * Por planta el orden no se mueve al revisar, así que «la siguiente» era
+     * la siguiente a secas: quien había hecho la 0.4 antes que la 0.3 —porque
+     * la 0.3 estaba ocupada y volvió luego— cerraba la 0.3 y aterrizaba en la
+     * 0.4, recién hecha, a darle a «Volver» y buscar la 0.5 a mano. Las de
+     * hoy se saltan; las demás no, aunque vayan al día: quien encadena por
+     * planta está recorriendo el edificio entero, y eso lo decide él.
+     */
+    const hoy = Date.now() - REVISADA_HOY_MS
+    return (
+      ordenadas
+        .slice(i + 1)
+        .find((r) => !r.last_inspection_at || new Date(r.last_inspection_at).getTime() < hoy) ??
+      null
+    )
   }
 
   return ordenadas.find((r) => r.id !== currentId) ?? null
