@@ -423,9 +423,10 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
     <div className="mx-auto max-w-4xl p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <h1 className="text-2xl font-bold tracking-tight">Incidencias</h1>
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm">
           <input
             type="checkbox"
+            className="h-5 w-5"
             checked={showResolved}
             onChange={(e) => setShowResolved(e.target.checked)}
           />
@@ -434,9 +435,7 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
               lista de tres. */}
           Incluir resueltas
           {resueltas !== undefined && resueltas > 0 && (
-            <span className="rounded-tag bg-raised px-1.5 py-0.5 font-mono text-xs text-muted">
-              {resueltas}
-            </span>
+            <span className="chip">{resueltas}</span>
           )}
         </label>
       </div>
@@ -445,9 +444,8 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
           corta es corta porque el resto está cerrado. */}
       {!showResolved && !buscado && (resueltas ?? 0) > 0 && (
         <p className="mt-2 text-xs text-muted">
-          {resueltas} resuelta{resueltas === 1 ? '' : 's'} no se muestran. Marca «Incluir
-          resueltas» para verlas, o busca por texto o referencia — la búsqueda mira también
-          las cerradas.
+          {resueltas} resuelta{resueltas === 1 ? '' : 's'} oculta{resueltas === 1 ? '' : 's'}. La
+          búsqueda también las encuentra.
         </p>
       )}
 
@@ -478,7 +476,14 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
       */}
       <Borradores />
 
-      <ul className="mt-3 divide-y divide-line">
+      {/*
+        Cada incidencia, una tarjeta con dos partes, igual que en la ficha del
+        aula: arriba lo que se lee, abajo —tras un filete— lo que se hace, en
+        botones del mismo ancho. Era una lista sin cajas, con la etiqueta de
+        estado en una columna, el texto en otra y los botones colgando debajo,
+        uno a la izquierda y dos a la derecha.
+      */}
+      <ul className="mt-3 space-y-2">
         {visibles.map((i) => {
           const days = Math.floor((Date.now() - new Date(i.opened_at).getTime()) / 86_400_000)
           const sala = i.room_id ? (salas?.get(i.room_id) ?? null) : null
@@ -494,7 +499,7 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
           const cerro = i.state === 'resuelta' ? nombreDe(i.resolved_by) : null
 
           return (
-            <li key={i.id} className="py-3">
+            <li key={i.id} className="card overflow-hidden">
               {/*
                 En un móvil, tres botones y un texto no caben en la misma línea.
                 `shrink-0` en el bloque de acciones dejaba al título 90 px y lo
@@ -502,18 +507,29 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
                 justo el dato que se viene a leer. Ahora las acciones bajan a su
                 propia fila hasta que hay sitio de sobra: se envuelve.
               */}
-              <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
-                {/* Rectángulo, no píldora: esto es una etiqueta de un parte de
-                    trabajo. La cápsula en todo es el tic más repetido. */}
+              <div className="flex items-start gap-3 px-4 pb-3 pt-3.5">
+                {/* La gravedad, en un punto: rojo si impide la clase, ámbar si
+                    molesta, gris si es leve, petróleo si es una solicitud y
+                    verde si ya está resuelta. Es el mismo punto del inicio y de
+                    la ficha del aula; con palabras va en la línea de datos. */}
                 <span
-                  className={`shrink-0 rounded-tag px-2 py-0.5 text-xs font-medium ${STATE_STYLE[estado]}`}
-                >
-                  {STATE_LABEL[estado]}
-                </span>
+                  aria-hidden
+                  className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${
+                    estado === 'resuelta'
+                      ? 'bg-ok'
+                      : i.kind !== 'incidencia'
+                        ? 'bg-accent'
+                        : i.severity === 'alta'
+                          ? 'bg-crit'
+                          : i.severity === 'media'
+                            ? 'bg-warn'
+                            : 'bg-na'
+                  }`}
+                />
 
-                <div className="min-w-0 flex-1 basis-48">
-                  <p className="font-medium">{i.title}</p>
-                  <p className="mt-0.5 text-xs text-muted">
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium leading-snug">{i.title}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted">
                     {sala &&
                       (onAbrirSala && i.room_id ? (
                         // El código es el enlace a la ficha: es lo que se busca
@@ -585,7 +601,7 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
                       se pintaba en ningún sitio: quien tiene que arreglarlo leía
                       «Proyector» y tenía que ir a preguntar. */}
                   {i.description && (
-                    <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-muted">
+                    <p className="mt-1.5 line-clamp-3 text-sm leading-relaxed text-ink-2">
                       {i.description}
                     </p>
                   )}
@@ -597,10 +613,15 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
                   )}
                 </div>
 
-                {esperandoSubir && (
-                  <span className="ml-auto shrink-0 rounded-tag bg-warn-tint px-2 py-0.5 text-xs text-warn">
-                    sin subir
-                  </span>
+                {/* El estado, solo cuando no es el de todas: en la lista de
+                    pendientes cada fila decía «Abierta», que es etiquetar lo
+                    normal. Sí se dice «En curso», «Resuelta» y «Sin subir». */}
+                {esperandoSubir ? (
+                  <span className="chip chip-warn">Sin subir</span>
+                ) : (
+                  estado !== 'abierta' && (
+                    <span className={`chip ${STATE_STYLE[estado]}`}>{STATE_LABEL[estado]}</span>
+                  )
                 )}
               </div>
 
@@ -623,11 +644,17 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
                 acciones no salen.
               */}
               {!esperandoSubir && (
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <CodigoEasyVista incidentId={i.id} codigo={i.easyvista_ref} className="" />
+                <div className="flex flex-wrap gap-2 border-t border-line-soft bg-ground px-4 py-3">
+                  <CodigoEasyVista
+                    incidentId={i.id}
+                    codigo={i.easyvista_ref}
+                    className="flex-1 !text-sm"
+                    claseAlEditar="basis-full"
+                    corto={i.state !== 'resuelta'}
+                  />
 
                   {i.state !== 'resuelta' && (
-                    <div className="ml-auto flex shrink-0 gap-2">
+                    <div className="contents">
                       {/* El material también se apunta dentro del cierre, que es
                           donde alguien se acuerda del cable que ha puesto. Este
                           botón se queda para la avería que sigue abierta: la
@@ -638,7 +665,7 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
                         type="button"
                         aria-expanded={apuntando === i.id}
                         onClick={() => setApuntando((a) => (a === i.id ? null : i.id))}
-                        className="key key-quiet min-h-11 px-3 text-xs"
+                        className="key key-quiet min-h-11 flex-1 px-3 text-sm"
                       >
                         Material
                       </button>
@@ -649,7 +676,9 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
                         type="button"
                         aria-expanded={resolviendo === i.id}
                         onClick={() => setResolviendo((a) => (a === i.id ? null : i.id))}
-                        className="key key-accent min-h-11 px-3 text-xs"
+                        className={`key min-h-11 flex-1 px-3 text-sm ${
+                          resolviendo === i.id ? 'key-quiet' : 'key-accent'
+                        }`}
                       >
                         {resolviendo === i.id ? 'Cancelar' : 'Resolver'}
                       </button>
@@ -658,9 +687,14 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
                 </div>
               )}
 
-              {apuntando === i.id && <MaterialUsado incidentId={i.id} enfocar />}
+              {apuntando === i.id && (
+                <div className="border-t border-line-soft px-4 pb-4 pt-1">
+                  <MaterialUsado incidentId={i.id} enfocar />
+                </div>
+              )}
 
               {resolviendo === i.id && (
+                <div className="border-t border-line-soft px-4 pb-4">
                 <ResolverIncidencia
                   incidencia={i}
                   /* Aquí no se nombra el aparato: esta lista no tiene el
@@ -676,6 +710,7 @@ function ListaDeIncidencias({ onAbrirSala }: Props): React.ReactElement {
                   onCerrada={() => setResolviendo(null)}
                   onCancelar={() => setResolviendo(null)}
                 />
+                </div>
               )}
             </li>
           )

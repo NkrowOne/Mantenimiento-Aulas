@@ -155,13 +155,15 @@ export function Actividad({
     porDia.set(dia, [...(porDia.get(dia) ?? []), c])
   }
 
+  /* Los filtros, en rejilla de columnas iguales: sueltos caían uno en una
+     fila y dos en la siguiente, cada desplegable del ancho de su texto. */
   const filtros = (
-    <>
+    <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3">
       <select
         value={dias}
         onChange={(e) => setDias(Number(e.target.value))}
         aria-label="Periodo"
-        className="h-11 rounded-ctl border border-line bg-surface px-2 text-base"
+        className="h-11 min-w-0 rounded-ctl border border-line bg-surface px-2 text-base"
       >
         {PERIODOS.map((p) => (
           <option key={p.dias} value={p.dias}>
@@ -173,7 +175,7 @@ export function Actividad({
         value={tabla}
         onChange={(e) => setTabla(e.target.value)}
         aria-label="Qué"
-        className="h-11 rounded-ctl border border-line bg-surface px-2 text-base"
+        className="h-11 min-w-0 rounded-ctl border border-line bg-surface px-2 text-base"
       >
         <option value="">Todo</option>
         {Object.entries(TABLAS)
@@ -197,14 +199,14 @@ export function Actividad({
           </option>
         ))}
       </select>
-    </>
+    </div>
   )
 
   return (
     <Seccion
       id="sec-actividad"
       titulo="Actividad"
-      texto={`Quién cambió qué y cuándo, en salas, edificios, equipos, incidencias${usuarios ? ', catálogo y usuarios' : ' y catálogo'}. Solo se lee: lo que haya que corregir se corrige en su sección. Las revisiones, los movimientos del almacén y los eventos de equipo no están aquí porque tienen su propio histórico, en la pestaña Historial.`}
+      texto={`Registro de cambios en salas, edificios, equipos, incidencias${usuarios ? ', catálogo y usuarios' : ' y catálogo'}. Es de solo lectura. Las revisiones, los movimientos del almacén y los eventos de equipo se consultan en Historial.`}
       acciones={filtros}
     >
       {isPending && <Cargando texto="Leyendo la actividad…" />}

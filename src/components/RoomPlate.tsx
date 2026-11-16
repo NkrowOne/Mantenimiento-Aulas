@@ -46,7 +46,10 @@ export function RoomPlate({
   const placa = (
     <>
       <div className="min-w-0 flex-1 border-r border-line px-5 py-3 text-left">
-        <p className="font-mono text-[0.625rem] font-bold uppercase tracking-[0.17em] text-muted">
+        {/* La misma línea de situación que la ficha del aula: era
+            monoespaciada y muy espaciada aquí y en versalitas allí, para decir
+            exactamente lo mismo de la misma sala. */}
+        <p className="eyebrow truncate">
           {building} · {zone}
         </p>
         {/*

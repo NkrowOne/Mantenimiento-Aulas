@@ -253,9 +253,9 @@ corrección»** la tira y no cambia nada.
 
 **Si en el aula todo funciona**, no hace falta marcar nada: nada más entrar, el
 botón de abajo dice **Todo correcto y siguiente sala**. Un toque guarda la
-revisión con todo en OK y abre la siguiente. (El **Todo correcto** de arriba
-marca todo en OK y te deja en el aula, por si quieres añadir una foto o una
-observación antes de guardar.)
+revisión con todo en OK y abre la siguiente. (El botón de arriba, **Marcar todo
+correcto y seguir en esta sala**, marca todo en OK y te deja en el aula, por si
+quieres añadir una foto o una observación antes de guardar.)
 
 ### Si el inventario no cuadra
 

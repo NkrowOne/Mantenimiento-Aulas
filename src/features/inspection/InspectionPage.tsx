@@ -303,11 +303,21 @@ export function InspectionPage({
                 markRestOk()
                 filas.current?.focus()
               }}
-              className="key key-ok flex h-touch w-full items-center justify-center gap-2"
+              /*
+               * En tecla secundaria, no en verde.
+               *
+               * Desde que la barra de abajo ofrece «Todo correcto y siguiente
+               * sala», había DOS botones verdes a ancho completo en la misma
+               * pantalla, con casi el mismo nombre y a un palmo uno del otro.
+               * Este es el camino de quien quiere marcarlo todo y quedarse —a
+               * añadir una foto o una observación—, que es el menos frecuente:
+               * se queda aquí, pero sin competir con el de abajo.
+               */
+              className="key key-quiet flex min-h-11 w-full items-center justify-center gap-2 px-3 text-sm"
             >
-              <span aria-hidden className="text-lg">✓</span>
+              <span aria-hidden className="text-ok">✓</span>
               {draft.checks.size === 0
-                ? 'Todo correcto'
+                ? 'Marcar todo correcto y seguir en esta sala'
                 : `Marcar OK las ${missing.length} restantes`}
             </button>
           </div>
