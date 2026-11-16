@@ -1383,6 +1383,9 @@ la aplicación—:
   que suma la base entra como un movimiento de ajuste con su nota, al final de
   la pasada, detrás de compras y salidas. Un disponible negativo no se cuadra
   —el almacén no baja de cero— y se avisa para revisar «Total Comprado».
+  La nota de ese ajuste termina en «(prevalece el Excel)»; en los ajustes
+  anteriores a noviembre de 2026 dice «(manda el Excel)», que es lo mismo: un
+  movimiento del almacén ya apuntado no se reescribe.
 - **Prevalece la aplicación**: lo que dice la aplicación se escribe en la hoja.
   Para cuando el Excel lleva meses sin tocarse.
 
@@ -1401,7 +1404,7 @@ ese día. De agosto en adelante, la bolsa, los partes y el almacén hablan de lo
 mismo. Un parte cuya aula dice «Varias aulas», «Almacén» o «Sin aula» entra
 sin sala y no se pregunta: es un parte de regularización.
 
-**1c · El corte: desde un día manda la aplicación en lo que ella cambió.**
+**1c · El corte: desde un día prevalece la aplicación en lo que ella cambió.**
 Debajo de «Prioridad» hay una fecha (la fecha de corte). Es para el caso más corriente: el libro
 es el inventario de partida y lo trabajado en la aplicación desde la última
 sincronización —revisiones, partes cerrados, equipos instalados— tiene que
@@ -1423,7 +1426,7 @@ aviso por edificio, con cuántas filas afecta y qué hacer: renombrarlo en Datos
 de esas filas se retiene con él, porque aplicarla sola la crearía dentro del
 edificio de antes y sin decir nada.
 
-Y una cosa más cuando manda el Excel: si el libro cambia el **edificio** de una
+Y una cosa más cuando prevalece el Excel: si el libro cambia el **edificio** de una
 sala —y es el libro el que lo ha cambiado desde la última pasada—, la sala se
 muda en la aplicación, y se lleva su planta (si el edificio de destino no la
 tiene, se crea). Si fue la aplicación la que movió la sala, la fila se muda en

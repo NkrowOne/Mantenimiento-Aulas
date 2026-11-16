@@ -396,7 +396,7 @@ npm run informe:ia
   identidad de fila, fusión a tres bandas, y cómo escribir en el libro sin
   llevarse por delante sus fórmulas ni su formato.
 
-  Funciona ya, desde **Datos → Excel**: se elige quién manda cuando una celda es
+  Funciona ya, desde **Datos → Excel**: se elige qué prevalece cuando una celda es
   distinta en los dos lados y no se puede saber quién la cambió —el Excel, la
   aplicación, o una persona más tarde—, se sube el `.xlsx`, se ve qué va a
   pasar en cuatro montones —al Excel, a la aplicación, hay que decidir, se deja
