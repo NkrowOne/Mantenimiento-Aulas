@@ -267,7 +267,7 @@ export function HistorialPage(): React.ReactElement {
         type="button"
         onClick={() => setFiltros((v) => !v)}
         aria-expanded={filtros}
-        className="mt-2 flex w-full items-center justify-between rounded-ctl border border-line bg-surface px-3 py-2 text-left"
+        className="mt-2 flex min-h-11 w-full items-center justify-between rounded-ctl border border-line bg-surface px-3 py-2 text-left"
       >
         {/* Plegado, el botón dice QUÉ hay filtrado. Decía siempre «Sitio,
             fechas y búsqueda», con un filtro puesto o sin ninguno, así que una

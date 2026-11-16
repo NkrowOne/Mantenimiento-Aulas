@@ -55,6 +55,18 @@
     @apply bg-ground text-ink font-sans antialiased;
     /* Área segura del iPhone: el notch y la barra de gestos se comen píxeles reales. */
     padding-top: env(safe-area-inset-top);
+    /*
+     * Y los lados, para el teléfono tumbado.
+     *
+     * Con `viewport-fit=cover` la página llega hasta el borde físico, y en
+     * apaisado el borde izquierdo —o el derecho, según hacia dónde se gire— es
+     * la muesca de la cámara: la chapa del edificio, el punto de estado de cada
+     * fila y la primera pestaña quedaban debajo de ella. En vertical estas dos
+     * medidas valen cero y no cambian nada. La aplicación instalada no bloquea
+     * el giro, así que basta con que alguien apoye el iPhone de lado.
+     */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
 
     /*
      * Quita el pellizco para ampliar y el zoom por doble toque, y deja pasar el
@@ -312,8 +324,11 @@
     @apply inline-flex gap-1 rounded-ctl bg-raised p-1;
   }
 
+  /* 44px de alto, no 36: es lo que mide un dedo, y lo que medían las teclas a
+     las que sustituye. Con 36 quedaba más fino y por debajo del mínimo de Apple
+     en el control que elige el orden de la lista, que se toca con el pulgar. */
   .segmento > button {
-    @apply min-h-9 rounded-[9px] px-3 text-sm font-medium text-ink-2;
+    @apply min-h-11 rounded-[9px] px-3 text-sm font-medium text-ink-2;
     transition:
       background-color 140ms var(--ease-out),
       color 140ms var(--ease-out),

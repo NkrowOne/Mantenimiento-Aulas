@@ -634,7 +634,7 @@ export function InspectionPage({
             <button
               type="button"
               onClick={() => void complete({ restoOk: true }).then(() => onDone(true))}
-              className="key key-ok flex h-touch w-full items-center justify-center gap-2"
+              className="key key-ok flex h-touch w-full items-center justify-center gap-2 px-2 leading-tight"
             >
               <span aria-hidden className="text-lg">✓</span>
               Todo correcto y siguiente sala
@@ -653,7 +653,10 @@ export function InspectionPage({
                 type="button"
                 disabled={missing.length > 0}
                 onClick={() => void complete().then(() => onDone(true))}
-                className="key key-accent h-touch flex-[2]"
+                /* `leading-tight` y dos renglones si hace falta: en un teléfono
+                   estrecho, o con la letra del sistema agrandada, el texto
+                   llenaba el botón de borde a borde. */
+                className="key key-accent h-touch flex-[2] px-2 leading-tight"
               >
                 Guardar y siguiente sala
               </button>

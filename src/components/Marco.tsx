@@ -24,7 +24,7 @@
  * portal en vez de ser `fixed`.
  */
 
-import { createContext, useContext, useLayoutEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { CLASE_MARCO, ID_CONTENIDO } from '@/lib/viewport'
@@ -165,20 +165,32 @@ function useMemoriaDeDesplazamiento(
     return soltar
   }, [sitio])
 
-  // Un `ref` de función, y no un efecto, para colgar el oyente: el `<main>`
-  // existe desde el primer render y no cambia nunca.
-  return (nodo) => {
-    if (main.current === nodo) return
+  /*
+   * El oyente de desplazamiento, colgado UNA vez.
+   *
+   * Va en un `ref` de función porque el `<main>` existe desde el primer render
+   * y no cambia nunca. Y la función va en `useCallback` por algo que no se ve
+   * leyéndola: si fuera una función nueva en cada render, React llamaría a la
+   * vieja con `null` y a la nueva con el nodo CADA VEZ que el marco se repinta,
+   * y cada una de esas veces colgaría otro oyente sin quitar el anterior. En un
+   * teléfono que se pasa la mañana abierto eso son cientos de oyentes
+   * respondiendo a cada píxel de desplazamiento. Estable, se llama al montar y
+   * al desmontar, y el oyente se quita al irse.
+   */
+  const alDesplazar = useRef<(() => void) | null>(null)
+  return useCallback((nodo: HTMLElement | null) => {
+    if (main.current && alDesplazar.current) {
+      main.current.removeEventListener('scroll', alDesplazar.current)
+    }
     main.current = nodo
-    nodo?.addEventListener(
-      'scroll',
-      () => {
-        const arriba = pila.current.at(-1)
-        if (arriba) arriba.top = nodo.scrollTop
-      },
-      { passive: true },
-    )
-  }
+    alDesplazar.current = null
+    if (!nodo) return
+    alDesplazar.current = () => {
+      const arriba = pila.current.at(-1)
+      if (arriba) arriba.top = nodo.scrollTop
+    }
+    nodo.addEventListener('scroll', alDesplazar.current, { passive: true })
+  }, [])
 }
 
 export function Marco({
