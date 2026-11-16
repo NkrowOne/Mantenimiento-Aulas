@@ -380,8 +380,8 @@ botón de cerrar no espera a ninguno de los dos.
 avería ya lo tenía, sale puesto; si te lo acaban de dar, lo escribes ahí y
 viaja con el cierre, también sin cobertura. Y si llega días después, con la
 avería ya resuelta, no pasa nada: en la pestaña de Incidencias cada fila tiene
-el botón **«Poner el código de EasyVista»** —o «EasyVista I260916_0042 ·
-cambiar» si ya lo tiene—, que funciona igual en las abiertas y en las
+el botón **«Código EasyVista»** —o «Cambiar código» si ya lo tiene—, que
+funciona igual en las abiertas y en las
 resueltas. Eso sí necesita cobertura: se teclea mirando EasyVista, que es una
 pantalla con red.
 
@@ -395,7 +395,7 @@ ha abierto hoy y lo que se ha cerrado hoy, aunque viniera de antes—, cada cosa
 con su estado, su sala, sus horas y lo que se hizo. Arriba, tres cifras:
 abiertas hoy, cerradas hoy y cuántas faltan por pasar. Lo que no tiene código
 va primero, en «Pendientes de EasyVista»: pulsa **«Copiar todo»**, pega en
-EasyVista y apunta el código que te dé con «Poner el código de EasyVista»; al
+EasyVista y apunta el código que te dé con «Código EasyVista»; al
 guardarlo, la incidencia pasa a «Registradas en EasyVista». Si solo quieres un trozo,
 tienes «Copiar descripción» y «Copiar solución», y «Copiar el parte entero» se
 lleva el día de una vez. Con **«Día anterior»** ves el de ayer, para el lunes
