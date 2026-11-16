@@ -313,20 +313,39 @@
   }
 
   /*
-   * El selector de dos o tres posiciones.
+   * ELEGIR UNA ENTRE VARIAS: tres formas, y cuándo va cada una.
    *
-   * Un carril hundido con la opción elegida levantada encima, como el de iOS.
-   * Sustituye a la fila de teclas sueltas, donde la elegida era «la que está
-   * pintada» y había que comparar las tres para saberlo: aquí se ve de un
-   * vistazo cuál es, porque es la única que tiene cuerpo.
+   * La aplicación tenía este mismo gesto resuelto de cuatro maneras —teclas
+   * sueltas que saltaban de línea donde cayeran, un carril hecho a mano con su
+   * borde, otro sin él, y el selector de abajo— y cada pantalla había elegido
+   * la suya. El resultado se veía sobre todo en Informes: seis periodos en tres
+   * filas de anchos distintos, la primera con dos botones, la segunda con tres
+   * y la tercera con uno. Ahora son tres piezas, y la regla es cuántas opciones
+   * hay y para qué sirven:
+   *
+   *   `.segmento`   Dos o tres opciones cortas que caben en una fila: el tipo de
+   *                 incidencia, el orden de la lista, el tema. Un carril con
+   *                 las opciones a partes iguales.
+   *   `.opciones`   Cuatro o más, o con etiquetas largas: los periodos de un
+   *                 informe. Una rejilla de celdas IGUALES, de dos columnas. Lo
+   *                 que la ordena es que las columnas alinean: «en curso» a la
+   *                 izquierda y «pasada» a la derecha, sin tener que leerlo.
+   *   carril        Los filtros encima de una lista (`.scroll-x` con teclas):
+   *                 pueden ser muchos y llevan recuentos, así que deslizan en
+   *                 una sola fila en vez de comerse media pantalla.
+   *
+   * En las tres, LO ELEGIDO VA EN PETRÓLEO, con el mismo relleno que una tecla
+   * de acento. El selector llevaba la opción elegida en blanco sobre gris —como
+   * el de iOS—, y en oscuro eso era un gris sobre otro gris: había que comparar
+   * las tres para saber cuál estaba puesta. Un solo color para «esto es lo que
+   * hay elegido», en toda la aplicación.
    */
   .segmento {
     @apply inline-flex gap-1 rounded-ctl bg-raised p-1;
   }
 
   /* 44px de alto, no 36: es lo que mide un dedo, y lo que medían las teclas a
-     las que sustituye. Con 36 quedaba más fino y por debajo del mínimo de Apple
-     en el control que elige el orden de la lista, que se toca con el pulgar. */
+     las que sustituye. */
   .segmento > button {
     @apply min-h-11 rounded-[9px] px-3 text-sm font-medium text-ink-2;
     transition:
@@ -337,8 +356,39 @@
 
   .segmento > button[aria-pressed='true'],
   .segmento > button[aria-checked='true'] {
-    @apply bg-surface text-ink;
-    box-shadow: var(--edge-quiet), 0 1px 3px rgb(15 23 30 / 0.1);
+    @apply bg-accent-fill font-semibold text-accent-ink;
+    box-shadow: var(--edge);
+  }
+
+  .segmento > button:disabled,
+  .opciones > button:disabled {
+    @apply opacity-40;
+  }
+
+  .opciones {
+    @apply grid grid-cols-2 gap-2;
+  }
+
+  /* Todas las celdas miden lo mismo, tenga la etiqueta las letras que tenga, y
+     una etiqueta larga se parte en dos renglones dentro de la suya en vez de
+     ensanchar la fila. */
+  .opciones > button {
+    @apply min-h-11 w-full rounded-ctl border border-line bg-surface px-3 py-2 text-center text-sm font-medium leading-tight text-ink;
+    box-shadow: var(--edge-quiet);
+    transition:
+      transform 120ms var(--ease-out),
+      background-color 120ms var(--ease-out),
+      border-color 120ms var(--ease-out),
+      color 120ms var(--ease-out);
+  }
+
+  .opciones > button:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  .opciones > button[aria-pressed='true'] {
+    @apply border-transparent bg-accent-fill font-semibold text-accent-ink;
+    box-shadow: var(--edge);
   }
 
   /*

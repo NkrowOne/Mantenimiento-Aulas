@@ -311,7 +311,7 @@ export function OrigenDelEquipo({
       {/* Control segmentado: las tres respuestas se ven a la vez y se compara
           entre ellas. Con un desplegable habría que abrirlo para saber que
           existe la opción de traslado. */}
-      <div className="mt-2 flex gap-1 rounded-ctl border border-line bg-surface p-1">
+      <div className="segmento mt-2 flex w-full">
         {MODOS.filter((m) => m.disponible).map((m) => (
           <button
             key={m.id}
@@ -321,9 +321,7 @@ export function OrigenDelEquipo({
               setModo(m.id)
             }}
             aria-pressed={modo === m.id}
-            className={`min-h-11 flex-1 rounded-ctl px-2 text-xs font-semibold ${
-              modo === m.id ? 'key key-accent' : 'text-muted'
-            }`}
+            className="flex-1 !px-2 !text-xs"
           >
             {m.label}
           </button>
@@ -625,16 +623,13 @@ function Sustitucion({
       {sustituye && sustituye !== 'no' && (
         <div className="mt-2">
           <p className="px-1 text-xs text-muted">El que se quita va a…</p>
-          <div className="mt-1 flex gap-1 rounded-ctl border border-line bg-raised p-1">
+          <div className="segmento mt-1 grid w-full grid-cols-2">
             {(['almacen', 'baja'] as const).map((d) => (
               <button
                 key={d}
                 type="button"
                 aria-pressed={destino === d}
                 onClick={() => onDestino(d)}
-                className={`min-h-11 flex-1 rounded-ctl px-2 text-xs font-semibold ${
-                  destino === d ? 'key key-accent' : 'text-muted'
-                }`}
               >
                 {d === 'almacen' ? 'Vuelve al almacén' : 'Baja definitiva'}
               </button>
