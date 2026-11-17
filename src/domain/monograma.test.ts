@@ -41,14 +41,15 @@ describe('la chapa de un edificio', () => {
     expect(monogramaDeEdificio('', 'Sin sigla').texto).toBe('–')
   })
 
-  it('solo usa la letra gruesa, un detalle y dos tintas', () => {
+  it('solo usa la letra gruesa, un detalle y dos fondos del mismo color', () => {
     // Es el contrato con quien lo mira: nada de contornos, rótulos en vertical
     // ni cuatro colores. Si alguien amplía el sistema, que sea a sabiendas.
     for (const [code, name] of CAMPUS) {
       const m = monogramaDeEdificio(code, name)
       expect(['recta', 'inclinada', 'pesada']).toContain(m.letra)
       expect(['liso', 'base', 'franja', 'arco']).toContain(m.detalle)
-      expect(['tinte', 'llena']).toContain(m.tinta)
+      // Las dos son fondos con la letra en blanco: no hay tinta de letra oscura.
+      expect(['llena', 'honda']).toContain(m.tinta)
     }
   })
 

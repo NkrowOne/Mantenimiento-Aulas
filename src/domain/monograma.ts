@@ -11,8 +11,8 @@
  *     centro;
  *   - **el detalle**: ninguno, una base, una franja al lado o un arco en la
  *     esquina. Uno solo;
- *   - **la tinta**: teñida —letra de color sobre fondo claro— o llena —letra
- *     blanca sobre el color—.
+ *   - **el fondo**: el color de la aplicación o su tono hondo. La letra, blanca
+ *     siempre.
  *
  * **Poco, y a propósito.** La primera versión variaba mucho más: letras de
  * contorno, finas y estrechas, rótulos en vertical, a sangre, apilados, puntos,
@@ -23,6 +23,12 @@
  * reconoce porque comparte casi todo: aquí se comparte la tipografía, el
  * color, la colocación y la forma, y lo que cambia es la inclinación, el peso y
  * dónde va el detalle.
+ *
+ * La letra blanca es también petición de quien lo usa. Había una tinta
+ * «teñida» —letra de color sobre fondo claro— y, mezclada con las llenas, la
+ * lista alternaba chapas oscuras y claras sin que eso significara nada. Con la
+ * letra siempre blanca todas pesan lo mismo, y lo que distingue a una de otra
+ * es su forma.
  *
  * **Sale del código y del nombre, y de nada más.** No se guarda en ningún
  * sitio: es una función pura de lo que el edificio ya dice de sí mismo. Así
@@ -41,7 +47,8 @@ export type LetraDeMonograma = 'recta' | 'inclinada' | 'pesada'
 
 export type DetalleDeMonograma = 'liso' | 'base' | 'franja' | 'arco'
 
-export type TintaDeMonograma = 'tinte' | 'llena'
+/** El fondo, porque la letra es siempre blanca: el color, o su tono hondo. */
+export type TintaDeMonograma = 'llena' | 'honda'
 
 export interface Monograma {
   /** Lo que se escribe: el código, sin espacios. */
@@ -56,7 +63,7 @@ const LETRAS: readonly LetraDeMonograma[] = ['recta', 'inclinada', 'pesada']
 /** La base y la franja van dos veces: son el gesto más claro, y el que más gustó. */
 const DETALLES: readonly DetalleDeMonograma[] = ['base', 'franja', 'arco', 'liso', 'base', 'franja']
 
-const TINTAS: readonly TintaDeMonograma[] = ['tinte', 'llena']
+const TINTAS: readonly TintaDeMonograma[] = ['llena', 'honda']
 
 /**
  * FNV-1a de 32 bits con el batido final de MurmurHash3. No hace falta nada
@@ -94,6 +101,6 @@ export function monogramaDeEdificio(code: string, name: string | null | undefine
     texto,
     letra: elige('letra', LETRAS, 'recta'),
     detalle: elige('detalle', DETALLES, 'liso'),
-    tinta: elige('tinta', TINTAS, 'tinte'),
+    tinta: elige('tinta', TINTAS, 'llena'),
   }
 }

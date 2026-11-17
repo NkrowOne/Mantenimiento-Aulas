@@ -797,14 +797,20 @@
 /*
  * ── La chapa de un edificio ──────────────────────────────────────────────────
  *
- * Las dos tintas de un monograma (`components/MonogramaDeEdificio.tsx`). Las dos
- * salen del color de la aplicación, así que cambian solas con el tema: en una
- * hace de letra y en la otra de fondo.
+ * Los colores de un monograma (`components/MonogramaDeEdificio.tsx`).
+ *
+ * La letra es SIEMPRE blanca. Lo que cambia es el fondo, entre dos tonos del
+ * mismo color: el de las teclas de la aplicación y uno más hondo.
  *
  *   --m-bg      el fondo de la chapa
  *   --m-fg      la letra
  *   --m-suave   lo que queda DETRÁS de la letra (el arco): tiene que dejarla leer
  *   --m-fuerte  lo que no la toca (la franja, la base): puede marcar
+ *
+ * El tono hondo va escrito y no calculado con `color-mix`: un iPad con un
+ * Safari de hace tres años no lo entiende y pintaría la chapa sin fondo, o sea
+ * letra blanca sobre tarjeta blanca. Es el mismo en los dos temas: sobre el
+ * fondo oscuro sigue siendo color, y sobre el claro sigue dejando leer.
  *
  * El canto es un trazo interior de un píxel (`::after`), que la afina.
  */
@@ -814,23 +820,22 @@
   flex: none;
   overflow: hidden;
   border-radius: var(--r-ctl);
-  --m-bg: rgb(var(--accent-tint));
-  --m-fg: rgb(var(--accent));
-  --m-suave: rgb(var(--accent) / 0.16);
-  --m-fuerte: rgb(var(--accent));
-}
-.monograma[data-tinta='llena'] {
   --m-bg: rgb(var(--accent-fill));
-  --m-fg: rgb(var(--accent-ink));
+  --m-fg: #ffffff;
   --m-suave: rgb(255 255 255 / 0.16);
-  --m-fuerte: rgb(255 255 255 / 0.85);
+  /* Turquesa claro, y no blanco: una franja blanca en el borde de la chapa se
+     funde con una tarjeta blanca y parece que a la chapa le falta un trozo. */
+  --m-fuerte: rgb(98 212 226);
+}
+.monograma[data-tinta='honda'] {
+  --m-bg: rgb(4 78 90);
 }
 .monograma::after {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  box-shadow: inset 0 0 0 1px rgb(var(--ink) / 0.08);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
   pointer-events: none;
 }
 

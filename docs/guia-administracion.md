@@ -575,8 +575,8 @@ pero quien decide es el servidor, que es el único que ve las 276 salas a la vez
 Si lo rechaza, el mensaje que sale es el suyo, tal cual.
 
 **La chapa del edificio se hace sola.** Cada edificio lleva su chapa —la letra
-recta, inclinada o más gruesa; lisa, con una base, una franja o un arco; sobre
-fondo claro o sobre el color— para reconocerlo de un vistazo en el inicio, en la
+recta, inclinada o más gruesa; lisa, con una base, una franja o un arco; siempre
+en blanco sobre el color— para reconocerlo de un vistazo en el inicio, en la
 lista de salas y aquí. No se diseña ni se guarda: sale de la **sigla y el nombre**.
 Por eso un edificio nuevo tiene la suya nada más crearlo, y por eso **cambia si
 cambias la sigla o el nombre**: es otro rótulo. Todos los dispositivos pintan la
