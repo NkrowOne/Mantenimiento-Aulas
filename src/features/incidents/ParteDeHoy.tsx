@@ -22,14 +22,17 @@ import { displayRoomCode } from '@/domain/normalize'
 import { ZONA, diaEnMadrid, fechaCorta, horaCorta } from '@/domain/fechas'
 import {
   filasDelParte,
+  filtrarParte,
   limitesDelDia,
   moverDia,
   resumenDelParte,
   textoParaEasyVista,
   type CierreEnCola,
   type FilaDelParte,
+  type FiltroDelParte,
   type IncidenciaDelParte,
 } from '@/domain/parteDelDia'
+import { Icono } from '@/components/Icono'
 import { INCIDENT_KIND_LABELS } from '@/domain/types'
 import { usePersonas } from '@/sync/personas'
 import { CodigoEasyVista } from './CodigoEasyVista'
@@ -85,6 +88,29 @@ function Copiar({
       </span>
     </button>
   )
+}
+
+/** Los botones secundarios de una tarjeta: todos del mismo ancho. */
+const SECUNDARIO = 'key key-quiet min-h-11 w-full px-3 text-sm'
+
+/**
+ * Las tres cifras, en el orden en que pasa el día.
+ *
+ * Etiquetas de un renglón, a propósito: «Sin registrar en EasyVista» ocupaba
+ * dos y desalineaba su cifra respecto a las otras. El nombre largo se dice
+ * abajo, en la línea del filtro, donde sí cabe.
+ */
+const INDICADORES: Array<{ id: FiltroDelParte; nombre: string; color: (n: number) => string }> = [
+  { id: 'abiertas', nombre: 'Abiertas', color: () => 'text-crit' },
+  { id: 'cerradas', nombre: 'Cerradas', color: () => 'text-ok' },
+  // Lo que falta por pasar: ámbar mientras quede algo, verde cuando no.
+  { id: 'porPasar', nombre: 'Sin EasyVista', color: (n) => (n > 0 ? 'text-warn' : 'text-ok') },
+]
+
+/** El filtro, dicho entero: es lo que se lee en la línea de debajo de las cifras. */
+function nombreDelFiltro(filtro: FiltroDelParte, esHoy: boolean): string {
+  if (filtro === 'porPasar') return 'Sin registrar en EasyVista'
+  return `${filtro === 'abiertas' ? 'Abiertas' : 'Cerradas'} ${esHoy ? 'hoy' : 'ese día'}`
 }
 
 export function ParteDeHoy({
@@ -166,8 +192,20 @@ export function ParteDeHoy({
   )
 
   const resumen = resumenDelParte(filas)
-  const porPasar = filas.filter((f) => !f.easyvista_ref)
-  const pasadas = filas.filter((f) => f.easyvista_ref)
+
+  /*
+   * El filtro: una de las tres cifras, o ninguna.
+   *
+   * NO se recuerda, y es a propósito: quien vuelve al parte tiene que ver el
+   * día entero. Un filtro que sigue puesto al volver esconde incidencias sin
+   * avisar —se entra, se ven seis, y son siete—, y en una pantalla que existe
+   * para no dejarse ninguna sin pasar eso es justo lo que no puede ocurrir.
+   * Dura lo que dura la visita: al salir del parte, se quita.
+   */
+  const [filtro, setFiltro] = useState<FiltroDelParte | null>(null)
+  const visibles = useMemo(() => filtrarParte(filas, filtro), [filas, filtro])
+  const porPasar = visibles.filter((f) => !f.easyvista_ref)
+  const pasadas = visibles.filter((f) => f.easyvista_ref)
 
   const textoDe = (f: FilaDelParte): string =>
     textoParaEasyVista(f, {
@@ -176,7 +214,8 @@ export function ParteDeHoy({
       cerro: nombreDe(f.resolved_by),
     })
 
-  const todoElDia = filas.map(textoDe).join('\n\n———\n\n')
+  // Lo que se copia es lo que se ve: con un filtro puesto, solo esas.
+  const todoLoVisible = visibles.map(textoDe).join('\n\n———\n\n')
 
   const fila = (f: FilaDelParte): React.ReactElement => {
     const sala = f.room_id ? (local?.salas.get(f.room_id) ?? null) : null
@@ -185,6 +224,8 @@ export function ParteDeHoy({
     const resuelta = f.state === 'resuelta'
     const descripcion = (f.description ?? '').trim()
     const solucion = resuelta ? (f.resolution ?? '').trim() : ''
+    // Cuántos botones lleva la tarjeta, para cuadrarlos de dos en dos.
+    const botones = 1 + (descripcion ? 1 : 0) + (solucion ? 1 : 0) + (f.sinSubir ? 0 : 1)
 
     return (
       <li key={f.id} className="card p-3">
@@ -272,16 +313,41 @@ export function ParteDeHoy({
           </p>
         )}
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Copiar texto={textoDe(f)} className="key key-accent min-h-11 px-3 text-xs">
+        {/*
+          Los botones, en dos columnas iguales.
+          Eran teclas sueltas, cada una del ancho de su texto, que saltaban de
+          línea donde cayeran: en un teléfono salían dos arriba y una abajo en
+          una tarjeta, tres en fila en la siguiente y dos en la otra. Ahora
+          todas miden lo mismo y caen en el mismo sitio en todas las tarjetas.
+          «Copiar todo» va primero, y si el número es impar ocupa la fila
+          entera: es lo que se pulsa nueve de cada diez veces.
+        */}
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <Copiar
+            texto={textoDe(f)}
+            className={`key key-accent min-h-11 w-full px-3 text-sm ${botones % 2 === 1 ? 'col-span-2' : ''}`}
+          >
             Copiar todo
           </Copiar>
-          {descripcion && <Copiar texto={descripcion}>Copiar descripción</Copiar>}
-          {solucion && <Copiar texto={solucion}>Copiar solución</Copiar>}
+          {descripcion && (
+            <Copiar texto={descripcion} className={SECUNDARIO}>
+              Copiar descripción
+            </Copiar>
+          )}
+          {solucion && (
+            <Copiar texto={solucion} className={SECUNDARIO}>
+              Copiar solución
+            </Copiar>
+          )}
           {/* Lo que se acaba de abrir sin cobertura aún no existe arriba, y el
               código se guarda en el servidor: el botón no sale hasta que suba. */}
           {!f.sinSubir && (
-            <CodigoEasyVista incidentId={f.id} codigo={f.easyvista_ref} className="" />
+            <CodigoEasyVista
+              incidentId={f.id}
+              codigo={f.easyvista_ref}
+              className="w-full !text-sm"
+              claseAlEditar="col-span-2"
+            />
           )}
         </div>
       </li>
@@ -328,22 +394,90 @@ export function ParteDeHoy({
         </div>
       </div>
 
-      {/* El día en tres cifras. La tercera es la que importa al sentarse
-          delante de EasyVista: cuántas faltan. */}
-      <dl className="mt-4 grid grid-cols-3 gap-2 text-center">
-        {(
-          [
-            ['Abiertas hoy', resumen.abiertas, 'text-crit'],
-            ['Cerradas hoy', resumen.cerradas, 'text-ok'],
-            ['Sin registrar en EasyVista', resumen.porPasar, resumen.porPasar > 0 ? 'text-warn' : 'text-ok'],
-          ] as const
-        ).map(([nombre, cifra, color]) => (
-          <div key={nombre} className="card flex flex-col-reverse px-2 py-3">
-            <dt className="mt-0.5 text-xs leading-tight text-muted">{nombre}</dt>
-            <dd className={`font-mono text-2xl font-semibold ${color}`}>{cifra}</dd>
+      {/*
+        El día en tres cifras, que son también tres filtros.
+
+        Eran tres recuadros de solo lectura, y con dos defectos a la vista: la
+        etiqueta de la tercera ocupaba dos renglones y subía su cifra por encima
+        de las otras dos, y nada decía qué incidencias eran esas once. Ahora:
+
+         - Miden lo mismo y sus cifras caen en la misma línea: la etiqueta es
+           corta y va en un renglón.
+         - Son botones. Tocar una deja en la lista solo esas, y volver a tocarla
+           lo quita. La elegida se pinta como todo lo elegido en la aplicación
+           —en petróleo— y lleva su marca, para que se vea sin leer.
+         - Una cifra a cero no se puede tocar: filtraría a una lista vacía.
+      */}
+      <div role="group" aria-label="Resumen del día: toca una cifra para filtrar" className="mt-4 grid grid-cols-3 gap-2">
+        {INDICADORES.map(({ id, nombre, color }) => {
+          const cifra = resumen[id]
+          const activo = filtro === id
+          return (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={activo}
+              // A cero no filtra nada… salvo que sea el que está puesto, que
+              // entonces hay que poder quitarlo.
+              disabled={cifra === 0 && !activo}
+              onClick={() => setFiltro(activo ? null : id)}
+              className="indicador card relative flex min-h-[4.75rem] flex-col justify-between px-3 py-2.5 text-left"
+            >
+              <span className="flex items-start justify-between gap-1">
+                <span
+                  className={`tabular text-[1.75rem] font-bold leading-none tracking-tight ${
+                    activo ? 'text-accent-ink' : color(cifra)
+                  }`}
+                >
+                  {cifra}
+                </span>
+                {/* La marca de «elegido», en la esquina. Reserva su sitio aunque
+                    no se vea, para que la cifra no se mueva al aparecer. */}
+                <Icono nombre="hecho" lado={16} className={activo ? 'text-accent-ink' : 'invisible'} />
+              </span>
+              <span
+                // Sin recortar: en un teléfono estrecho «Sin EasyVista» baja a dos
+                // renglones antes que quedarse en «Sin EasyVi…». La cifra va
+                // arriba, así que sigue alineada con las otras dos.
+                className={`mt-1.5 block text-[0.6875rem] font-medium leading-tight ${
+                  activo ? 'text-accent-ink' : 'text-muted'
+                }`}
+              >
+                {nombre}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/*
+        Debajo, siempre una línea que dice qué se está viendo. Sin filtro,
+        enseña que las cifras se pueden tocar —un recuadro con un número no
+        parece un botón hasta que alguien lo dice—. Con filtro, lo nombra y
+        ofrece quitarlo, en el mismo sitio donde se puso.
+      */}
+      {filas.length > 0 &&
+        (filtro ? (
+          <div className="mt-2 flex items-center justify-between gap-3 rounded-ctl bg-accent-tint py-1 pl-3 pr-1">
+            <p aria-live="polite" className="min-w-0 text-sm text-ink">
+              <span className="font-semibold">{nombreDelFiltro(filtro, esHoy)}</span>
+              <span className="text-ink-2">
+                {' '}
+                · {visibles.length} de {filas.length}
+              </span>
+            </p>
+            <button
+              type="button"
+              onClick={() => setFiltro(null)}
+              className="key-ghost inline-flex min-h-11 shrink-0 items-center gap-1 px-2 text-sm"
+            >
+              <Icono nombre="cerrar" lado={14} />
+              Quitar filtro
+            </button>
           </div>
+        ) : (
+          <p className="mt-2 text-xs text-muted">Toca una cifra para ver solo esas incidencias.</p>
         ))}
-      </dl>
 
       {servidor.isError && (
         <div className="card mt-4 p-4">
@@ -374,9 +508,19 @@ export function ParteDeHoy({
         </p>
       )}
 
-      {filas.length > 1 && (
-        <Copiar texto={todoElDia} className="key key-quiet mt-4 min-h-11 w-full px-3 text-sm">
-          Copiar el parte entero ({cuantos(filas.length, 'incidencia', 'incidencias')})
+      {/* Un filtro que no deja nada: pasa al cambiar de día con uno puesto. */}
+      {filas.length > 0 && visibles.length === 0 && filtro && (
+        <p className="card mt-4 p-4 text-sm text-muted">
+          No hay ninguna incidencia en «{nombreDelFiltro(filtro, esHoy)}».
+          {filtro === 'porPasar' && ' Todas tienen ya su código.'}
+        </p>
+      )}
+
+      {visibles.length > 1 && (
+        <Copiar texto={todoLoVisible} className="key key-quiet mt-4 min-h-11 w-full px-3 text-sm">
+          {filtro
+            ? `Copiar estas ${visibles.length} incidencias`
+            : `Copiar el parte entero (${cuantos(filas.length, 'incidencia', 'incidencias')})`}
         </Copiar>
       )}
 
@@ -391,7 +535,7 @@ export function ParteDeHoy({
         </section>
       )}
 
-      {filas.length > 0 && porPasar.length === 0 && (
+      {filas.length > 0 && resumen.porPasar === 0 && filtro !== 'porPasar' && (
         <p className="mt-5 rounded-ctl bg-ok-tint px-3 py-2 text-sm text-ok">
           Todas las incidencias de {esHoy ? 'hoy' : 'ese día'} tienen su código de EasyVista.
         </p>

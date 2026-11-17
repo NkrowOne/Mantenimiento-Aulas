@@ -1311,6 +1311,7 @@ export function App(): React.ReactElement {
           room={view.room}
           abrirCon={view.volverA !== 'revision' ? view.registrar : undefined}
           buildingName={view.building.name}
+          buildingCode={view.building.code}
           zoneName={zoneName}
           userId={userId}
           /* Al sitio del que se salió: lo decide `atras`, arriba, que es la

@@ -113,6 +113,31 @@
   }
 
   /*
+   * Sitio para escribir al final de un carril.
+   *
+   * `--teclado` es cuánto de la pantalla tapa el teclado ahora mismo; lo mide y
+   * lo mantiene `lib/campo-a-la-vista.ts`. Sin teclado vale cero.
+   *
+   * Un carril que desplaza —el `<main>` del marco, el cuerpo de una hoja—
+   * termina donde termina su contenido, y su último campo no puede subir más
+   * aunque el teclado lo esté tapando: ya está abajo del todo. Este hueco, del
+   * alto del teclado, es lo que le deja subir. No mueve nada de lo que se ve:
+   * solo añade recorrido por debajo.
+   *
+   * Va como `::after` y no como `padding-bottom` para no pisar el relleno que
+   * cada carril ya lleve puesto con sus propias clases.
+   */
+  :root {
+    --teclado: 0px;
+  }
+
+  .hueco-del-teclado::after {
+    content: '';
+    display: block;
+    height: var(--teclado);
+  }
+
+  /*
    * Ningún campo por debajo de 16px.
    *
    * Safari de iOS AMPLÍA la página al enfocar un `input`, `textarea` o `select`
@@ -359,6 +384,34 @@
   .segmento > button[aria-checked='true'] {
     @apply bg-accent-fill font-semibold text-accent-ink;
     box-shadow: var(--edge);
+  }
+
+  /*
+   * Una cifra que además es un filtro (el parte del día).
+   *
+   * Es una tarjeta que responde como una tecla —se hunde al pulsar— y que,
+   * elegida, se rellena del mismo color que todo lo elegido en la aplicación.
+   * La cifra y su etiqueta pasan a blanco: sobre petróleo, el rojo y el verde
+   * de las cifras no se leen.
+   */
+  .indicador {
+    transition:
+      transform 120ms var(--ease-out),
+      background-color 140ms var(--ease-out),
+      border-color 140ms var(--ease-out);
+  }
+
+  .indicador:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  .indicador[aria-pressed='true'] {
+    @apply border-transparent bg-accent-fill;
+    box-shadow: var(--edge);
+  }
+
+  .indicador:disabled {
+    @apply opacity-50;
   }
 
   .segmento > button:disabled,

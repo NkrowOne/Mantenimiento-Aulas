@@ -236,7 +236,7 @@ export function Marco({
       <main
         ref={recordar}
         id={ID_CONTENIDO}
-        className="marco-contenido min-h-0 flex-1 overflow-y-auto overscroll-y-none"
+        className="marco-contenido hueco-del-teclado min-h-0 flex-1 overflow-y-auto overscroll-y-none"
       >
         <RanuraDelPie.Provider value={ranura}>
           {/*

@@ -58,6 +58,15 @@ sesión— al pie de ese menú.
 
 ### Atajos que ahorran toques
 
+- **Escribir sin perder la caja de vista.** Al tocar un campo para escribir, la
+  pantalla se coloca sola para que quede entre la cabecera y el teclado, con su
+  etiqueta, esté donde esté: al final de una revisión, en el cierre de una
+  incidencia o dentro de una hoja que sube desde abajo. No hace falta cerrar el
+  teclado y subir a mano.
+- **Las listas largas vienen recogidas.** La ficha de un aula enseña sus seis
+  primeros equipos y un «Ver los 14 equipos» para el resto, y la descarga del
+  historial es una fila hasta que se toca.
+
 - **Buscar con el edificio delante.** En el buscador del inicio puedes teclear
   el aviso tal como llega: `h 1.12`, `crai sala 3`. Pulsa «Ir» en el teclado y
   se abre el primer resultado. Al volver del aula, la búsqueda sigue ahí.
@@ -395,7 +404,10 @@ pantalla con red.
 botón de arriba en la pestaña de Incidencias. Enseña solo lo de hoy —lo que se
 ha abierto hoy y lo que se ha cerrado hoy, aunque viniera de antes—, cada cosa
 con su estado, su sala, sus horas y lo que se hizo. Arriba, tres cifras:
-abiertas hoy, cerradas hoy y cuántas faltan por pasar. Lo que no tiene código
+abiertas hoy, cerradas hoy y cuántas faltan por pasar. **Toca una y la lista se
+queda solo con esas**; vuelve a tocarla, o pulsa «Quitar filtro», para verlas
+todas. Con una cifra puesta, el botón de copiar copia solo lo que se ve. El
+filtro no se guarda: al salir del parte y volver, se ve otra vez el día entero. Lo que no tiene código
 va primero, en «Pendientes de EasyVista»: pulsa **«Copiar todo»**, pega en
 EasyVista y apunta el código que te dé con «Código EasyVista»; al
 guardarlo, la incidencia pasa a «Registradas en EasyVista». Si solo quieres un trozo,
@@ -538,6 +550,45 @@ la hoja está entera.
 > Si la hoja sale vacía estando sin cobertura, la aplicación no da por hecho que
 > el aula esté vacía: te dice que no puede saber si no hay nada o si esa parte
 > del inventario nunca llegó a este dispositivo. Con cobertura sí lo afirma.
+
+## Descargar el historial de un aula o de un edificio
+
+Lo que le ha pasado a un aula se puede **llevar**: a una reunión, a un proveedor
+que pregunta cuántas veces se ha cambiado esa lámpara, a quien decide qué aula se
+renueva.
+
+- **De un aula:** al final de su ficha, debajo de «Documentos», en **Descargar
+  el historial**. Viene plegado: tócalo y se despliega ahí mismo.
+- **De un edificio entero:** en la lista de sus salas, el botón **Historial** de
+  arriba despliega la misma tarjeta, al final, y te lleva hasta ella.
+
+Antes de descargar **eliges dos cosas**:
+
+- **El periodo:** último mes, últimos 3 meses, últimos 12 meses, este año,
+  todo, o dos fechas puestas a mano. Debajo te dice siempre de qué día a qué
+  día va.
+- **Qué incluir:** revisiones, incidencias, solicitudes, material y equipos.
+  Viene todo marcado; quita lo que no quieras.
+
+Lo que eliges se recuerda mientras la aplicación siga abierta, así que para
+sacar el último mes de cinco aulas seguidas lo eliges una vez.
+
+Pulsa **Ver y exportar** y lo ves antes de descargarlo, igual que el almacén.
+Lleva hasta tres hojas (si quitas las incidencias o el material, su hoja no
+sale):
+
+| Hoja | Qué cuenta |
+|---|---|
+| **Intervenciones** | Todo lo que se hizo, en orden, con su **día y su hora**: revisiones, incidencias, material, equipos |
+| **Incidencias** | Una fila por incidencia: cuándo se abrió, cuándo se resolvió, **qué se hizo** y **qué material se gastó** en ella |
+| **Material usado** | Cada movimiento de almacén apuntado al aula: artículo, cantidad y la incidencia en la que se gastó |
+
+El de un edificio lleva además la columna **Sala**. El Excel trae todas las
+columnas; el PDF, las que caben en un folio. Necesita conexión: el histórico
+completo no está guardado en el dispositivo.
+
+Una incidencia sale en un periodo si **estuvo abierta** en él, aunque se
+abriera antes: la que lleva abierta desde enero aparece en «el último mes».
 
 ## El indicador de arriba
 

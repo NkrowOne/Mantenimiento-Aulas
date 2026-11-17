@@ -15,6 +15,7 @@ import { supabase } from '@/lib/supabase'
 import { imprimirDocumento, prepararPdf } from '@/features/reports/informe/imprimir'
 import { ESTILO_DE_LA_HOJA, esAppInstalada } from './pdf'
 import { Confirmacion } from '@/components/Confirmacion'
+import { Icono, type NombreDeIcono } from '@/components/Icono'
 
 /**
  * Exportar con vista previa: se ve lo que sale, y luego se descarga en Excel o
@@ -48,6 +49,10 @@ export function ExportarConVistaPrevia({
   descripcion,
   preparar,
   disabled = false,
+  children,
+  eleccion,
+  plegable,
+  abrir = 0,
 }: {
   /** Lo que dice la tarjeta: «Exportar el almacén». */
   titulo: string
@@ -55,6 +60,33 @@ export function ExportarConVistaPrevia({
   /** Lee los datos y devuelve las hojas. Si falla, lanza un `Error` que se pueda enseñar tal cual. */
   preparar: () => Promise<Exportacion>
   disabled?: boolean
+  /**
+   * Lo que se elige ANTES de leer los datos —un periodo, qué incluir—. Va entre
+   * la descripción y el botón, y se quita mientras la vista previa está abierta:
+   * lo que se ve es lo que se eligió, y cambiarlo con la vista delante dejaría
+   * en pantalla unas hojas que ya no corresponden. Para cambiar, se cierra.
+   */
+  children?: React.ReactNode
+  /**
+   * Lo elegido, en una cadena. Cuando cambia, se retira el fallo del intento
+   * anterior: «no hay nada en ese periodo» debajo de un periodo que ya es otro
+   * se lee como que tampoco hay nada en este, y todavía no se ha preguntado.
+   */
+  eleccion?: string
+  /**
+   * La tarjeta nace PLEGADA, en una fila: su dibujo, su título y una línea de
+   * para qué sirve. Es para cuando va al final de una pantalla que ya es larga
+   * —la ficha de un aula, la lista de salas de un edificio— y dentro lleva
+   * cosas que elegir: desplegada siempre, serían dos pantallas más de
+   * desplazamiento para algo que se pide una vez al mes.
+   */
+  plegable?: { icono: NombreDeIcono; resumen: string }
+  /**
+   * Una señal para abrirla desde fuera y traerla a la vista: cada vez que el
+   * número cambia, se despliega. Es lo que usa el botón «Historial» de la
+   * cabecera del edificio, que está a cuarenta salas de distancia.
+   */
+  abrir?: number
 }): React.ReactElement {
   const idTitulo = useId()
   const [cargando, setCargando] = useState(false)
@@ -72,6 +104,21 @@ export function ExportarConVistaPrevia({
     }
   }, [])
 
+  useEffect(() => setFallo(null), [eleccion])
+
+  const [abierta, setAbierta] = useState(!plegable)
+  const seccion = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (abrir === 0) return
+    setAbierta(true)
+    // Tras pintar: plegada mide una fila, y llevarla arriba antes de abrirla
+    // dejaría el contenido recién desplegado fuera de la pantalla.
+    const id = requestAnimationFrame(() =>
+      seccion.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    )
+    return () => cancelAnimationFrame(id)
+  }, [abrir])
+
   // Leer tarda: si la pantalla se cierra mientras tanto, la respuesta no tiene
   // a quién contárselo.
   const viva = useRef(true)
@@ -82,7 +129,7 @@ export function ExportarConVistaPrevia({
     }
   }, [])
 
-  const abrir = (): void => {
+  const abrirVista = (): void => {
     if (cargando) return
     setCargando(true)
     setFallo(null)
@@ -99,20 +146,22 @@ export function ExportarConVistaPrevia({
     })()
   }
 
-  return (
-    <section className="card mt-6 p-4" aria-labelledby={idTitulo}>
-      <h2 id={idTitulo} className="text-sm font-semibold">
-        {titulo}
-      </h2>
-      {descripcion && <p className="mt-1 text-sm text-muted">{descripcion}</p>}
+  const cuerpo = (
+    <>
+      {descripcion && <p className={`text-sm text-muted ${plegable ? '' : 'mt-1'}`}>{descripcion}</p>}
+
+      {!lista && children}
 
       {!lista && (
         <button
           type="button"
-          className="key key-accent mt-3 min-h-11 px-4 text-sm"
+          // A todo el ancho en un teléfono: es la única acción de la tarjeta, y
+          // un botón que mide lo que su texto se queda a la izquierda, lejos
+          // del pulgar.
+          className="key key-accent mt-4 min-h-touch w-full px-4 text-sm sm:w-auto"
           disabled={disabled || cargando || !enLinea}
           aria-busy={cargando}
-          onClick={abrir}
+          onClick={abrirVista}
         >
           {cargando ? 'Leyendo los datos…' : 'Ver y exportar'}
         </button>
@@ -136,10 +185,56 @@ export function ExportarConVistaPrevia({
           emitidaEl={lista.emitidaEl}
           actualizando={cargando}
           puedeActualizar={enLinea && !disabled}
-          onActualizar={abrir}
+          onActualizar={abrirVista}
           onCerrar={() => setLista(null)}
         />
       )}
+    </>
+  )
+
+  if (!plegable) {
+    return (
+      <section ref={seccion} className="card mt-6 p-4" aria-labelledby={idTitulo}>
+        <h2 id={idTitulo} className="text-sm font-semibold">
+          {titulo}
+        </h2>
+        {cuerpo}
+      </section>
+    )
+  }
+
+  return (
+    <section ref={seccion} className="card mt-6 scroll-mt-3 overflow-hidden" aria-labelledby={idTitulo}>
+      {/* La misma fila que «Documentos», justo encima en la ficha: el dibujo en
+          su recuadro, el nombre y una línea. Con el galón, que dice «esto se
+          abre» y, girado, que está abierto. */}
+      <button
+        type="button"
+        onClick={() => setAbierta((v) => !v)}
+        aria-expanded={abierta}
+        className="fila flex min-h-touch w-full items-center gap-3 px-4 py-2.5 text-left"
+      >
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] bg-accent-tint text-accent">
+          <Icono nombre={plegable.icono} lado={20} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span id={idTitulo} className="block font-medium">
+            {titulo}
+          </span>
+          <span className="mt-0.5 block text-xs leading-snug text-muted">{plegable.resumen}</span>
+        </span>
+        <Icono
+          nombre="abajo"
+          lado={18}
+          className={`shrink-0 text-muted transition-transform duration-150 ${abierta ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      <div className="collapse-y" data-open={abierta} inert={!abierta}>
+        <div>
+          <div className="border-t border-line-soft px-4 pb-4 pt-3">{cuerpo}</div>
+        </div>
+      </div>
     </section>
   )
 }
@@ -343,15 +438,23 @@ function VistaPrevia({
         <p className="mt-1 text-xs text-muted">El Excel lleva siempre todas las hojas y todas las columnas.</p>
       </fieldset>
 
-      <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" onClick={descargarExcel} className="key key-accent min-h-11 px-4 text-sm">
+      {/*
+        Dos filas de dos, todas las teclas del mismo ancho.
+        Eran cuatro teclas sueltas que saltaban de línea donde cayeran: en un
+        teléfono salían dos arriba y dos abajo, pero cada una de un ancho, y en
+        cuanto una cambiaba de texto —«Preparando el PDF…»— bailaban las cuatro.
+        Arriba lo que se viene a hacer, en el color de las acciones; abajo lo
+        que se hace con la vista, en el de las secundarias.
+      */}
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:max-w-md">
+        <button type="button" onClick={descargarExcel} className="key key-accent min-h-touch w-full px-3 text-sm">
           Descargar Excel
         </button>
         {pdf?.fase === 'listo' ? (
           <button
             type="button"
             onClick={() => guardarElPdf(pdf)}
-            className="key key-accent min-h-11 px-4 text-sm"
+            className="key key-accent min-h-touch w-full px-3 text-sm"
             title="El PDF ya está hecho: pulsa para guardarlo"
           >
             Guardar PDF
@@ -361,9 +464,10 @@ function VistaPrevia({
             type="button"
             onClick={() => void prepararElPdf()}
             disabled={!algunaEnPdf || pdf?.fase === 'preparando'}
-            className="key key-accent min-h-11 px-4 text-sm"
+            aria-busy={pdf?.fase === 'preparando'}
+            className="key key-accent min-h-touch w-full px-3 text-sm"
           >
-            {pdf?.fase === 'preparando' ? 'Preparando el PDF…' : 'Preparar PDF'}
+            {pdf?.fase === 'preparando' ? 'Preparando…' : 'Preparar PDF'}
           </button>
         )}
         <button
@@ -371,11 +475,11 @@ function VistaPrevia({
           type="button"
           onClick={onActualizar}
           disabled={actualizando || !puedeActualizar}
-          className="key key-quiet min-h-11 px-3 text-sm"
+          className="key key-quiet min-h-11 w-full px-3 text-sm"
         >
           {actualizando ? 'Actualizando…' : 'Actualizar'}
         </button>
-        <button type="button" onClick={onCerrar} className="key key-quiet min-h-11 px-3 text-sm">
+        <button type="button" onClick={onCerrar} className="key key-quiet min-h-11 w-full px-3 text-sm">
           Cerrar
         </button>
       </div>

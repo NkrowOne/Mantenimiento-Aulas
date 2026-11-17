@@ -57,7 +57,7 @@
  * medias.
  */
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { v7 as uuidv7 } from 'uuid'
@@ -88,6 +88,9 @@ import {
 import { BotonVolver } from '@/components/BotonVolver'
 import { Icono } from '@/components/Icono'
 import { Confirmacion } from '@/components/Confirmacion'
+
+/* La descarga del historial, bajo demanda: ver `DescargarHistorial.tsx`. */
+const DescargarHistorial = lazy(() => import('@/features/history/DescargarHistorial'))
 
 interface TimelineRow {
   at: string
@@ -167,9 +170,14 @@ const MARCA: Record<TimelineRow['kind'], { punto: string; texto: string }> = {
   inventario: { punto: 'bg-ok', texto: 'Inventario' },
 }
 
+/** Cuántos equipos enseña la ficha antes de pedir un toque para ver el resto. */
+const EQUIPOS_A_LA_VISTA = 6
+
 interface Props {
   room: Room
   buildingName: string
+  /** La sigla del edificio, para titular lo que se descarga: «H 1.7». */
+  buildingCode?: string
   zoneName: string
   userId: string | null
   onBack: () => void
@@ -228,6 +236,7 @@ function Rayo({ className }: { className?: string }): React.ReactElement {
 export function RoomSheet({
   room,
   buildingName,
+  buildingCode = '',
   zoneName,
   userId,
   onBack,
@@ -331,6 +340,7 @@ export function RoomSheet({
      desaparece de la lista en el acto, y sin una frase que lo diga el gesto se
      lee como si la ficha hubiera perdido la fila. */
   const [resuelto, setResuelto] = useState<string | null>(null)
+  const [todosLosEquipos, setTodosLosEquipos] = useState(false)
 
   // El inventario sale del espejo local: la ficha tiene que abrirse en un
   // sótano sin cobertura igual que la revisión.
@@ -1095,8 +1105,16 @@ export function RoomSheet({
               Equipamiento instalado{equipos && equipos.length > 0 ? ` · ${equipos.length}` : ''}
             </h2>
           </div>
+          {/*
+            Los seis primeros, y el resto a un toque.
+            Un aula bien equipada tiene catorce aparatos, y catorce filas son
+            una pantalla y media entre las averías y todo lo que viene después
+            —las revisiones, el historial, los documentos—. Quien abre la ficha
+            casi nunca viene a leer el inventario entero, y quien viene lo tiene
+            ahí mismo: la última fila dice cuántos hay y los despliega.
+          */}
           <ul className="escalonada card divide-y divide-line-soft overflow-hidden">
-            {(equipos ?? []).map((a) => (
+            {(equipos ?? []).slice(0, todosLosEquipos ? undefined : EQUIPOS_A_LA_VISTA).map((a) => (
               <li key={a.id} className="flex items-center gap-3 px-4 py-3">
                 <span className="min-w-0 flex-1">
                   <span className="block font-medium">{a.label || a.tipo}</span>
@@ -1112,6 +1130,23 @@ export function RoomSheet({
             {equipos?.length === 0 && (
               <li className="px-4 py-3.5 text-sm text-muted">
                 No hay equipos registrados en esta sala.
+              </li>
+            )}
+            {(equipos?.length ?? 0) > EQUIPOS_A_LA_VISTA && (
+              <li>
+                <button
+                  type="button"
+                  onClick={() => setTodosLosEquipos((v) => !v)}
+                  aria-expanded={todosLosEquipos}
+                  className="fila flex min-h-11 w-full items-center justify-center gap-1.5 px-4 text-sm font-medium text-accent"
+                >
+                  {todosLosEquipos ? 'Ver menos' : `Ver los ${equipos?.length} equipos`}
+                  <Icono
+                    nombre="abajo"
+                    lado={16}
+                    className={`transition-transform duration-150 ${todosLosEquipos ? 'rotate-180' : ''}`}
+                  />
+                </button>
               </li>
             )}
           </ul>
@@ -1261,6 +1296,29 @@ export function RoomSheet({
             )}
           </ul>
         </section>
+
+        {/*
+          El historial, para llevárselo.
+          La ficha lo enseña, pero no se puede sacar de aquí: ni a una reunión,
+          ni a un proveedor que pregunta cuántas veces se ha cambiado esa
+          lámpara. Va al final, con los documentos, porque es lo mismo que
+          ellos: papel que se pide de vez en cuando, no trabajo del aula. Y con
+          la misma vista previa que el almacén: se ve lo que sale antes de
+          descargarlo, en Excel o en PDF.
+        */}
+        <Suspense fallback={null}>
+          <DescargarHistorial
+            titulo="Descargar el historial"
+            descripcion="Todo lo que se ha hecho en esta sala, con su fecha y su hora: revisiones, incidencias con su solución y el material usado en cada una. Se ve antes de descargar."
+            alcance={{
+              de: 'sala',
+              roomId: room.id,
+              codigo: room.code,
+              nombre: room.name,
+              edificio: buildingCode,
+            }}
+          />
+        </Suspense>
       </div>
     </div>
   )
