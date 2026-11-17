@@ -42,6 +42,7 @@ import { norm } from '@/domain/normalize'
 import { EMPTY_CAPABILITIES } from '@/domain/types'
 import type { Asset, AssetRemoval, AssetType, Building, Room, Zone } from '@/domain/types'
 import { sortRooms } from '@/features/rooms/orden'
+import { porCodigoDeEdificio } from '@/domain/ordenDeEdificios'
 
 /**
  * Una línea de la hoja, con todo lo que hay que imprimir de un equipo.
@@ -365,9 +366,21 @@ export function agruparPorSala(filas: FilaDeInventario[]): GrupoDeSala[] {
    * porque las dos llevan el mismo `sort_order`. Se reordena después y no en el
    * mismo comparador porque `Array.prototype.sort` es estable desde ES2019: lo
    * que ya ordenó `sortRooms` se conserva dentro de cada edificio.
+   *
+   * Los edificios, por su código, como en el resto de la aplicación
+   * (`ordenDeEdificios.ts`): iban por `sort_order`, el orden del Excel, y la
+   * hoja salía en un orden distinto al de la lista desde la que se imprime.
    */
-  const edificioDeSala = new Map(grupos.map(({ muestra }) => [muestra.room_id, muestra.building_sort]))
-  ordenadas.sort((a, b) => (edificioDeSala.get(a.id) ?? 0) - (edificioDeSala.get(b.id) ?? 0))
+  const edificioDeSala = new Map(
+    grupos.map(({ muestra }) => [
+      muestra.room_id,
+      { code: muestra.building_code, name: muestra.building_name },
+    ]),
+  )
+  const SIN_EDIFICIO = { code: '', name: '' }
+  ordenadas.sort((a, b) =>
+    porCodigoDeEdificio(edificioDeSala.get(a.id) ?? SIN_EDIFICIO, edificioDeSala.get(b.id) ?? SIN_EDIFICIO),
+  )
 
   const resultado: GrupoDeSala[] = []
   for (const sala of ordenadas) {

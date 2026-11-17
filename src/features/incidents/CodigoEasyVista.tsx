@@ -166,6 +166,7 @@ export function CodigoEasyVista({
 
       <div className="mt-2 flex gap-2">
         <button
+          aria-busy={guardar.isPending}
           type="submit"
           disabled={guardar.isPending}
           className="key key-accent min-h-11 px-3 text-sm"

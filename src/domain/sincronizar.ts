@@ -612,7 +612,7 @@ function repartir<T>(
           campo: c.campo,
           destino: par.destino,
           valor: decision.excel,
-          motivo: `manda el Excel: la hoja dice ${decision.excel} disponibles y la aplicación ${decision.base}; el almacén se cuadra con un ajuste`,
+          motivo: `prevalece el Excel: la hoja dice ${decision.excel} disponibles y la aplicación ${decision.base}; el almacén se cuadra con un ajuste`,
         })
         return
       }
@@ -1002,7 +1002,7 @@ export function sincronizarEstado(e: EntradaDeEstado): Plan {
       // aplicación, no en el libro. La celda sigue su camino normal hacia la
       // base, que la coloca en su planta (y la crea si el edificio no la tiene).
       plan.avisos.push(
-        `Fila ${f.fila}: «${sala.code}» está en «${sala.edificio}» en la aplicación y el libro la pone en «${edificio}»: manda el Excel, la sala se muda en la aplicación.`,
+        `Fila ${f.fila}: «${sala.code}» está en «${sala.edificio}» en la aplicación y el libro la pone en «${edificio}»: prevalece el Excel, la sala se muda en la aplicación.`,
       )
     } else if (esOtroEdificio(e.indice, edificio, sala.edificio)) {
       const grupo = grupoDe(f.fila)

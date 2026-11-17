@@ -24,6 +24,7 @@ import { NuevaUnidad } from './NuevaUnidad'
 import { MOTIVO_MIN, faltanParaElMotivo, motivoValido } from './motivo'
 import { falloDeAdministracion } from './fallos'
 import type { MovimientoPedido } from './estadosDatos'
+import { Confirmacion } from '@/components/Confirmacion'
 
 /** Lo que la lista sabe de un artículo: la fila de `stock_levels`. */
 export interface ArticuloDeLaLista {
@@ -208,11 +209,7 @@ export function HojaDelArticulo({
   } else {
     contenido = (
       <>
-        {hecho && (
-          <p role="status" className="mb-3 rounded-ctl bg-ok-tint p-3 text-sm text-ok">
-            {hecho}
-          </p>
-        )}
+        {hecho && <Confirmacion texto={hecho} className="mb-3" />}
         <Resumen
           articulo={articulo}
           nivel={nivel ?? null}
@@ -725,7 +722,7 @@ function Ajustes({
           {falloDeAdministracion(guardar.error)}
         </p>
       )}
-      {hecho && <p className="mt-2 text-sm text-ok">{hecho}</p>}
+      {hecho && <Confirmacion texto={hecho} className="mt-2" />}
 
       <div className="mt-4 space-y-2 border-t border-line-soft pt-3">
         <button
@@ -814,6 +811,7 @@ function Renombrar({
         </p>
       )}
       <button
+        aria-busy={renombrar.isPending}
         type="submit"
         disabled={!cambiado || renombrar.isPending}
         className="key key-accent mt-4 min-h-touch w-full px-4 text-sm"
@@ -887,6 +885,7 @@ function Retirar({
         </p>
       )}
       <button
+        aria-busy={retirar.isPending}
         type="submit"
         disabled={!motivoValido(motivo) || retirar.isPending}
         className="key key-crit mt-4 min-h-touch w-full px-4 text-sm"

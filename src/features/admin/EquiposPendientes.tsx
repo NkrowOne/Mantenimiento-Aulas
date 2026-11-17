@@ -157,7 +157,8 @@ export function EquiposPendientes(): React.ReactElement {
     <Seccion
       id="sec-equipos-pendientes"
       titulo="Equipos sin validar"
-      texto="Apuntados desde un aula. Ya cuentan en las revisiones; esto solo confirma que están. «No está» lo borra de la sala, o lo retira si alguna revisión ya lo comprobó."
+      texto="Equipos registrados desde un aula, pendientes de confirmar."
+      detalle="Ya cuentan en las revisiones; aquí solo se confirma que existen. «No está» lo elimina de la sala, o lo retira si alguna revisión ya lo había comprobado."
       pendientes={pendientes.length}
       acciones={
         data && pendientes.length > 0 ? (

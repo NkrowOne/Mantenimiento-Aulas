@@ -14,6 +14,7 @@ import { ofrecerFichero } from '@/lib/ficheros'
 import { supabase } from '@/lib/supabase'
 import { imprimirDocumento, prepararPdf } from '@/features/reports/informe/imprimir'
 import { ESTILO_DE_LA_HOJA, esAppInstalada } from './pdf'
+import { Confirmacion } from '@/components/Confirmacion'
 
 /**
  * Exportar con vista previa: se ve lo que sale, y luego se descarga en Excel o
@@ -366,6 +367,7 @@ function VistaPrevia({
           </button>
         )}
         <button
+          aria-busy={actualizando}
           type="button"
           onClick={onActualizar}
           disabled={actualizando || !puedeActualizar}
@@ -383,7 +385,7 @@ function VistaPrevia({
         iPad, guardar abre Compartir: elige «Guardar en Archivos» o mándalo por correo.
       </p>
       {!algunaEnPdf && <p className="mt-1 text-xs text-crit">Marca al menos una hoja para el PDF.</p>}
-      {excel && <p className="mt-2 text-sm text-ok">{excel}</p>}
+      {excel && <Confirmacion texto={excel} className="mt-2" />}
       {pdf?.fase === 'preparando' && <p className="mt-2 text-sm text-muted">Preparando el PDF en el servidor…</p>}
       {pdf?.fase === 'listo' && <p className="mt-2 text-sm text-ok">El PDF está listo: pulsa «Guardar PDF».</p>}
       {pdf?.fase === 'aviso' && (

@@ -87,6 +87,7 @@ import {
 } from '@/domain/types'
 import { BotonVolver } from '@/components/BotonVolver'
 import { Icono } from '@/components/Icono'
+import { Confirmacion } from '@/components/Confirmacion'
 
 interface TimelineRow {
   at: string
@@ -558,11 +559,15 @@ export function RoomSheet({
             // «registrada» se lee como «ya está». El cierre viene vacío: lo
             // que se escribió arriba es la avería, y lo que se hizo se cuenta
             // aquí, aunque sea en el mismo minuto.
-            `${INCIDENT_KIND_LABELS[kind]} registrada.${conFotos} Abajo tienes el cierre: cuenta qué has hecho, apunta el material si has gastado y pulsa «Marcar como resuelta».`
+            `${INCIDENT_KIND_LABELS[kind]} registrada.${conFotos} Para cerrarla, completa el formulario de abajo: describe la solución, indica el material usado y pulsa «Marcar como resuelta».`
           : completo
-            ? `${INCIDENT_KIND_LABELS[kind]} registrada.${conFotos} Sube en cuanto haya cobertura.`
-            : `Guardado sin describir.${conFotos} Aparecerá en Incidencias para que lo completes.`,
+            ? // Sin «sube cuando haya cobertura»: con conexión se envía en el
+              // acto, y si no la hay lo dice `Confirmacion`, que lo mira en vivo.
+              `${INCIDENT_KIND_LABELS[kind]} registrada.${conFotos}`
+            : `Guardada como borrador, sin descripción.${conFotos} Puedes completarla desde Incidencias.`,
       )
+      // Una confirmación cada vez: la del cierre anterior ya no viene a cuento.
+      setResuelto(null)
       setTexto('')
       setCodigo('')
       cerrarFormulario()
@@ -643,11 +648,7 @@ export function RoomSheet({
           </button>
         </div>
 
-        {guardado && !abierto && (
-          <p aria-live="polite" className="mt-3 text-sm text-ok">
-            {guardado}
-          </p>
-        )}
+        {guardado && !abierto && <Confirmacion texto={guardado} enCola className="mt-3" />}
 
         {abierto && (
           <form
@@ -811,6 +812,7 @@ export function RoomSheet({
             */}
             <div className="mt-3 flex">
               <button
+                aria-busy={registrar.isPending}
                 type="submit"
                 disabled={registrar.isPending}
                 className="key key-accent min-h-11 flex-1 rounded-r-none px-3 text-sm"
@@ -871,11 +873,7 @@ export function RoomSheet({
             </h2>
           </div>
 
-          {resuelto && (
-            <p aria-live="polite" className="mb-2 text-sm text-ok">
-              {resuelto}
-            </p>
-          )}
+          {resuelto && <Confirmacion texto={resuelto} enCola className="mb-2" />}
 
           {/*
             Cada incidencia, una tarjeta con dos partes.
@@ -926,15 +924,20 @@ export function RoomSheet({
                         {i.easyvista_ref && (
                           <span className="font-mono">EasyVista {i.easyvista_ref} · </span>
                         )}
-                        Abierta hace{' '}
+                        {/* «Abierta hace 0 días» es lo que se leía justo después
+                            de registrarla, o sea siempre que se mira: hoy es
+                            hoy y ayer es ayer. */}
+                        {dias <= 0 ? 'Abierta hoy' : dias === 1 ? 'Abierta ayer' : <>Abierta hace{' '}</>}
                         {/* El mismo umbral que usa la pestaña de Incidencias y
                             el panel: una incidencia estancada se ve igual en
                             las tres pantallas o no significa nada. */}
-                        <span
-                          className={dias > STALE_INCIDENT_DAYS ? 'font-semibold text-crit' : ''}
-                        >
-                          {cuantos(dias, 'día', 'días')}
-                        </span>
+                        {dias > 1 && (
+                          <span
+                            className={dias > STALE_INCIDENT_DAYS ? 'font-semibold text-crit' : ''}
+                          >
+                            {cuantos(dias, 'día', 'días')}
+                          </span>
+                        )}
                         {nombreDe(i.opened_by) && (
                           <> por <span className="text-ink-2">{nombreDe(i.opened_by)}</span></>
                         )}
@@ -983,9 +986,11 @@ export function RoomSheet({
                         onCerrada={() => {
                           setResolviendo(null)
                           setRecienAbierta(null)
-                          setResuelto(
-                            'Resuelta. Sube en cuanto haya cobertura y queda en el historial de la sala.',
-                          )
+                          setResuelto('Incidencia resuelta. Queda en el historial de la sala.')
+                          // Una confirmación cada vez: «registrada» y «resuelta»
+                          // a la vez, una encima de otra, se leían como dos
+                          // avisos de dos cosas, y eran la misma avería.
+                          setGuardado(null)
                           // El historial y el índice los calcula el servidor, así
                           // que no se piden aquí: hasta que el cierre suba
                           // contestarían lo de antes. Los vuelve a pedir
@@ -1014,7 +1019,7 @@ export function RoomSheet({
           {esperandoSubir > 0 && (
             <p className="mt-2 text-xs text-muted">
               {cuantos(esperandoSubir, 'incidencia resuelta', 'incidencias resueltas')} pendiente
-              {esperandoSubir === 1 ? '' : 's'} de subir, a la espera de cobertura.
+              {esperandoSubir === 1 ? '' : 's'} de enviar al servidor.
             </p>
           )}
         </section>
@@ -1090,7 +1095,7 @@ export function RoomSheet({
               Equipamiento instalado{equipos && equipos.length > 0 ? ` · ${equipos.length}` : ''}
             </h2>
           </div>
-          <ul className="card divide-y divide-line-soft overflow-hidden">
+          <ul className="escalonada card divide-y divide-line-soft overflow-hidden">
             {(equipos ?? []).map((a) => (
               <li key={a.id} className="flex items-center gap-3 px-4 py-3">
                 <span className="min-w-0 flex-1">
@@ -1215,7 +1220,7 @@ export function RoomSheet({
           <div className="section-head">
             <h2 id="sec-docs" className="eyebrow">Documentos</h2>
           </div>
-          <ul className="card divide-y divide-line-soft overflow-hidden">
+          <ul className="escalonada card divide-y divide-line-soft overflow-hidden">
             <li>
               <button
                 type="button"

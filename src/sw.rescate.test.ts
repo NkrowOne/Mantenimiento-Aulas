@@ -57,16 +57,25 @@ function ventana(respuesta: unknown | 'sinRespuesta'): ClienteFalso {
 async function decidir(opciones: {
   hayWorkerActivo?: boolean
   clientes?: ClienteFalso[]
-}): Promise<{ rescatado: boolean }> {
+}): Promise<{
+  rescatado: boolean
+  /** Cuántas veces se reclamaron los clientes. */
+  reclamados: number
+  /** Dispara `activate` y devuelve lo que el worker pidió esperar, si pidió algo. */
+  activar: () => Promise<unknown> | null
+}> {
   const { hayWorkerActivo = true, clientes = [] } = opciones
   const oyentes = new Map<string, (evento: { waitUntil: (p: Promise<unknown>) => void }) => void>()
   const skipWaiting = vi.fn(async () => {})
+  let reclamados = 0
 
   const self = {
     registration: { active: hayWorkerActivo ? {} : null },
     clients: {
       matchAll: async () => clientes,
-      claim: async () => {},
+      claim: async () => {
+        reclamados++
+      },
     },
     skipWaiting,
     addEventListener: (tipo: string, fn: never) => oyentes.set(tipo, fn),
@@ -108,7 +117,19 @@ async function decidir(opciones: {
   await vi.advanceTimersByTimeAsync(10_000)
   await enCurso
 
-  return { rescatado: skipWaiting.mock.calls.length > 0 }
+  const activar = (): Promise<unknown> | null => {
+    let esperado: Promise<unknown> | null = null
+    oyentes.get('activate')?.({ waitUntil: (p) => (esperado = p) })
+    return esperado
+  }
+
+  return {
+    rescatado: skipWaiting.mock.calls.length > 0,
+    get reclamados() {
+      return reclamados
+    },
+    activar,
+  }
 }
 
 describe('rescate de dispositivos atascados', () => {
@@ -187,6 +208,75 @@ describe('rescate de dispositivos atascados', () => {
     try {
       const { rescatado } = await decidir({ hayWorkerActivo: false, clientes: [] })
       expect(rescatado).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('la activación del rescate no espera a la recarga que ella misma pide', async () => {
+    // La recarga de la página la sirve este mismo worker, y un worker no sirve
+    // nada hasta que termina de activarse. Esperar a `navigate` dentro de
+    // `activate` era esperarse a uno mismo: la página se quedaba congelada. Aquí
+    // `navigate` no se cumple NUNCA, y la activación tiene que acabar igual.
+    vi.useFakeTimers()
+    try {
+      let pedida = false
+      const cliente: ClienteFalso = {
+        url: 'https://aulas/',
+        navigate: () => {
+          pedida = true
+          return new Promise<void>(() => {})
+        },
+        postMessage: () => {},
+      }
+      const { rescatado, activar } = await decidir({ clientes: [cliente] })
+      expect(rescatado).toBe(true)
+
+      const esperado = activar()
+      expect(esperado).not.toBeNull()
+      let acabada = false
+      void esperado?.then(() => (acabada = true))
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      expect(pedida).toBe(true)
+      expect(acabada).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('el primer service worker toma el control de la página que lo registró', async () => {
+    // Es lo que deja cubierta a la página que vuelve del servidor tras el
+    // segundo camino de «Actualizar»: mismo código en los dos lados, así que
+    // reclamarla no cruza versiones. Y no recarga a nadie.
+    vi.useFakeTimers()
+    try {
+      let recargas = 0
+      const cliente: ClienteFalso = {
+        url: 'https://aulas/',
+        navigate: async () => {
+          recargas++
+        },
+        postMessage: () => {},
+      }
+      const estado = await decidir({ hayWorkerActivo: false, clientes: [cliente] })
+      await estado.activar()
+      expect(estado.reclamados).toBe(1)
+      expect(recargas).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('una versión nueva que nadie ha rescatado no reclama ni recarga', async () => {
+    // El caso corriente: la página sabe activar, el worker espera, y en
+    // `activate` no hay nada que hacer aquí.
+    vi.useFakeTimers()
+    try {
+      const estado = await decidir({ clientes: [ventana({ politica: 3 })] })
+      expect(estado.rescatado).toBe(false)
+      expect(estado.activar()).toBeNull()
+      expect(estado.reclamados).toBe(0)
     } finally {
       vi.useRealTimers()
     }

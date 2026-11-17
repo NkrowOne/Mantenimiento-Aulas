@@ -19,6 +19,7 @@ import {
 } from './FilaDeEdificio'
 import { PapeleraDelMaestro, useEdificiosArchivados } from './PapeleraDelMaestro'
 import { Cargando, FalloDeCarga, Nota, Seccion, mensajeDe } from './Seccion'
+import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
 /**
  * Altas, bajas y nomenclatura de salas y edificios.
@@ -78,9 +79,11 @@ export function MaestroSalas(): React.ReactElement {
         .from('buildings')
         .select('id, code, name, needs_review')
         .eq('active', true)
-        .order('sort_order')
+        .order('code')
       if (error) throw error
-      return (data ?? []) as EdificioDelMaestro[]
+      // Se reordena aquí: el servidor compara con su propia intercalación, y
+      // la lista tiene que salir igual que la del inicio y los desplegables.
+      return ordenarEdificios((data ?? []) as EdificioDelMaestro[])
     },
   })
 
@@ -183,9 +186,10 @@ export function MaestroSalas(): React.ReactElement {
       titulo="Salas y edificios"
       texto={
         edificios && salas
-          ? `${edificios.length} ${edificios.length === 1 ? 'edificio' : 'edificios'} y ${nSalas} ${nSalas === 1 ? 'sala activa' : 'salas activas'}. Se tocan desde aquí y desde la lista de «Revisar», manteniendo pulsada la fila. Una sala nueva nace con matrícula, QR y el equipamiento por defecto de su edificio.`
-          : 'El maestro se toca desde aquí y desde la lista de «Revisar», manteniendo pulsada la fila. Una sala nueva nace con matrícula, QR y el equipamiento por defecto de su edificio.'
+          ? `${edificios.length} ${edificios.length === 1 ? 'edificio' : 'edificios'} y ${nSalas} ${nSalas === 1 ? 'sala activa' : 'salas activas'}.`
+          : 'Edificios, plantas y salas.'
       }
+      detalle="También se editan desde la lista de salas de un edificio, manteniendo pulsada la fila. Una sala nueva se crea con su matrícula, su QR y el equipamiento por defecto de su edificio."
     >
       {isPending && <Cargando texto="Cargando el maestro…" />}
       {isError && <FalloDeCarga que="los edificios" error={error} onReintentar={() => void refetch()} />}

@@ -77,7 +77,7 @@ function Pestana({
     >
       <span
         className={`flex h-7 w-14 items-center justify-center rounded-full transition-colors duration-150 ease-out group-active:bg-raised ${
-          activa ? 'bg-accent-tint text-accent' : 'text-muted'
+          activa ? 'pastilla-activa bg-accent-tint text-accent' : 'text-muted'
         }`}
       >
         {children}

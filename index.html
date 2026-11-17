@@ -54,6 +54,12 @@
       body { margin: 0 }
       #arranque { display: flex; min-height: 100vh; min-height: 100dvh; align-items: center; justify-content: center }
       #arranque svg { border-radius: 24% }
+      /* Si el arranque se alarga —red lenta, primera carga—, la marca late para
+         que se vea que sigue vivo. Con 0,6 s de retraso: en un arranque normal
+         no llega a moverse, que es lo que se quería. */
+      @keyframes late { 50% { opacity: .5; transform: scale(.94) } }
+      #arranque svg, .marca-espera { animation: late 1.4s ease-in-out .6s infinite }
+      @media (prefers-reduced-motion: reduce) { #arranque svg, .marca-espera { animation: none } }
     </style>
   </head>
   <body>

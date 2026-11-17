@@ -98,7 +98,7 @@ export function HojaDeMas({
           return (
             <section key={g.id} className="mt-4">
               <h2 className="eyebrow px-1 pb-1.5">{g.titulo}</h2>
-              <ul className="overflow-hidden rounded-card border border-line-soft">
+              <ul className="escalonada overflow-hidden rounded-card border border-line-soft">
                 {secciones.map((t) => {
                   const abierta = t === tab
                   return (

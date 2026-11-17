@@ -36,6 +36,7 @@ import { BuscadorGlobal } from './BuscadorGlobal'
 import { HojaDeMaestro } from './HojaDeMaestro'
 import { NuevaIncidencia } from './NuevaIncidencia'
 import { averiasPorEdificio, averiasPorSala } from './averias'
+import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
 /* El diagnóstico del servidor va en diferido: solo se abre cuando algo falla,
    nunca con el dedo apoyado, y son trescientas líneas que el arranque de cada
@@ -143,7 +144,7 @@ function Anillo({ pct, alDia }: { pct: number; alDia: boolean }): React.ReactEle
             strokeLinecap="round"
             pathLength={100}
             strokeDasharray={`${pct} 100`}
-            className={alDia ? 'stroke-ok' : 'stroke-accent'}
+            className={`anillo-trazo ${alDia ? 'stroke-ok' : 'stroke-accent'}`}
           />
         )}
       </svg>
@@ -235,7 +236,7 @@ export function EdificiosPage({
    */
   const [hojaEdificio, setHojaEdificio] = useState<Building | null>(null)
 
-  const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [])
+  const buildings = useLiveQuery(() => db.buildings.toArray().then(ordenarEdificios), [])
 
   /*
    * Cuántas salas tiene cada edificio y cuántas van con retraso.
@@ -461,7 +462,7 @@ export function EdificiosPage({
               <Icono nombre="derecha" lado={14} />
             </button>
           </div>
-          <ul className="card overflow-hidden">
+          <ul className="escalonada card overflow-hidden">
             {abiertas.filas.map(({ incidencia: i, building, room }) => (
               <li key={i.id} className="border-t border-line-soft first:border-t-0">
                 <button
@@ -595,7 +596,7 @@ export function EdificiosPage({
 
       {/* Dos columnas en una pantalla ancha: veintitrés edificios en una sola
           tira de 900 px son veintitrés líneas con el dato a un palmo del nombre. */}
-      <ul className="grid gap-2 lg:grid-cols-2">
+      <ul className="escalonada grid gap-2 lg:grid-cols-2">
         {(buildings ?? []).map((b) => {
           const cuenta = porEdificio?.get(b.id)
           const total = cuenta?.total ?? 0

@@ -206,7 +206,8 @@ export function Actividad({
     <Seccion
       id="sec-actividad"
       titulo="Actividad"
-      texto={`Registro de cambios en salas, edificios, equipos, incidencias${usuarios ? ', catálogo y usuarios' : ' y catálogo'}. Es de solo lectura. Las revisiones, los movimientos del almacén y los eventos de equipo se consultan en Historial.`}
+      texto={`Registro de cambios en salas, edificios, equipos, incidencias${usuarios ? ', catálogo y usuarios' : ' y catálogo'}. Solo lectura.`}
+      detalle="Las revisiones, los movimientos del almacén y los eventos de equipo no salen aquí: se consultan en Historial."
       acciones={filtros}
     >
       {isPending && <Cargando texto="Leyendo la actividad…" />}
@@ -264,6 +265,7 @@ export function Actividad({
         <div className="mt-4 flex flex-wrap items-center gap-3">
           {hasNextPage && (
             <button
+              aria-busy={isFetchingNextPage}
               type="button"
               disabled={isFetchingNextPage}
               onClick={() => void fetchNextPage()}

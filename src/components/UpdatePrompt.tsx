@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
-import { aplicarActualizacion, onVersionNueva, posponerActualizacion } from '@/sw'
+import {
+  aplicarActualizacion,
+  onVersionNueva,
+  posponerActualizacion,
+  type ParteDeActivacion,
+} from '@/sw'
 
 /**
  * Aviso de versión nueva.
@@ -41,8 +46,33 @@ export function UpdatePrompt({ enFlujo = false }: Props): React.ReactElement | n
    * que se está arreglando; repetirlo aquí sería absurdo.
    */
   const [retenida, setRetenida] = useState(false)
+  /*
+   * Que pulsar se VEA, en el acto.
+   *
+   * Entre el toque y la recarga pueden pasar varios segundos —el navegador
+   * tiene que activar el worker nuevo, y si no lo hace se va por el segundo
+   * camino— y en ese rato la barra se quedaba exactamente igual. Un botón que
+   * no cambia al pulsarlo es un botón que no funciona, haga lo que haga por
+   * dentro: se pulsa otra vez, y otra, y se da por roto.
+   */
+  const [trabajando, setTrabajando] = useState(false)
+  const [sinRed, setSinRed] = useState(false)
 
   useEffect(() => onVersionNueva(setNeedRefresh), [])
+
+  const actualizar = (): void => {
+    if (trabajando) return
+    setTrabajando(true)
+    setSinRed(false)
+    const alAcabar = (parte: ParteDeActivacion | 'fallo'): void => {
+      setRetenida(parte === 'retenida')
+      setSinRed(parte === 'sin-red' || parte === 'fallo')
+      // Si acabó en recarga, la página se va y esto da igual. Si no, el botón
+      // vuelve: con una foto en curso o sin red, hay que poder insistir.
+      if (parte !== 'activada' && parte !== 'recargada') setTrabajando(false)
+    }
+    aplicarActualizacion().then(alAcabar, () => alAcabar('fallo'))
+  }
 
   if (!needRefresh) return null
 
@@ -71,26 +101,32 @@ export function UpdatePrompt({ enFlujo = false }: Props): React.ReactElement | n
     >
       <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
         <p aria-live="polite" className="flex-1 text-sm">
-          {retenida
-            ? 'Se instalará en cuanto termine de guardarse la foto.'
-            : 'Hay una versión nueva.'}
+          {trabajando
+            ? 'Instalando la versión nueva…'
+            : retenida
+              ? 'Se instalará en cuanto termine de guardarse la foto.'
+              : sinRed
+                ? 'Sin conexión con el servidor. Inténtalo con cobertura.'
+                : 'Hay una versión nueva.'}
         </p>
 
+        {!trabajando && (
+          <button
+            type="button"
+            onClick={() => posponerActualizacion()}
+            className="key key-quiet min-h-11 px-3 text-sm font-medium text-muted"
+          >
+            Ahora no
+          </button>
+        )}
         <button
+          aria-busy={trabajando}
           type="button"
-          onClick={() => posponerActualizacion()}
-          className="key key-quiet min-h-11 px-3 text-sm font-medium text-muted"
+          disabled={trabajando}
+          onClick={actualizar}
+          className="key key-accent min-h-11 px-3 text-sm"
         >
-          Ahora no
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            void aplicarActualizacion().then((parte) => setRetenida(parte === 'retenida'))
-          }}
-          className="key key-accent px-3 py-2 text-sm"
-        >
-          Actualizar
+          {trabajando ? 'Actualizando…' : sinRed ? 'Reintentar' : 'Actualizar'}
         </button>
       </div>
     </div>

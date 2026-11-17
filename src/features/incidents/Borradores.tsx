@@ -213,6 +213,7 @@ export function Borradores(): React.ReactElement | null {
                 )}
                 <div className="mt-2 flex gap-2">
                   <button
+                    aria-busy={completar.isPending}
                     type="submit"
                     disabled={completar.isPending || !titulo.trim()}
                     className="key key-accent min-h-11 px-3 text-sm"

@@ -654,6 +654,7 @@ export function HojaDeInventario({
               hay hoja que imprimir.
             </p>
             <button
+              aria-busy={reintentando}
               type="button"
               onClick={reintentar}
               disabled={reintentando}
@@ -701,6 +702,7 @@ export function HojaDeInventario({
               Último intento a las {horaCorta(servidor.dataUpdatedAt)}.
             </p>
             <button
+              aria-busy={reintentando}
               type="button"
               onClick={reintentar}
               disabled={reintentando}

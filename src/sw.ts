@@ -82,6 +82,24 @@ const arrancadaEn = Date.now()
 const PLAZO_DE_RELEVO_MS = 8_000
 
 /**
+ * Lo mismo, cuando lo ha pedido una persona con el dedo.
+ *
+ * Más corto por dos razones. Hay alguien mirando la pantalla, y cuatro segundos
+ * con «Actualizando…» ya son muchos. Y aquí agotar el plazo no deja la cosa sin
+ * hacer: detrás hay un segundo camino que no depende del relevo (ver `activar`).
+ */
+const PLAZO_DE_RELEVO_MANUAL_MS = 4_000
+
+/**
+ * Cuánto se da por buena una orden de recarga antes de admitir otra.
+ *
+ * Una recarga que ocurre se lleva este módulo por delante, así que si pasado
+ * este tiempo el código sigue vivo es que la recarga NO ocurrió, y hay que poder
+ * pedir otra.
+ */
+const PLAZO_DE_RECARGA_MS = 4_000
+
+/**
  * Qué versión de la política de activación ejecuta esta página.
  *
  * Es lo que se contesta al sondeo del rescate, y tiene que coincidir con
@@ -92,7 +110,7 @@ const PLAZO_DE_RELEVO_MS = 8_000
  * es pedir el rescate, y contestar uno que no se cumple es lo que dejó iPads
  * meses sin actualizar.
  */
-const POLITICA_DE_ACTIVACION = 2
+const POLITICA_DE_ACTIVACION = 3
 
 /**
  * Cuánto tiene que durar una ausencia para que la vuelta cuente como un
@@ -440,13 +458,77 @@ export type ParteDeActivacion =
   | 'sin-relevo'
   /** No hubo relevo y se recargó igualmente, porque alguien lo pidió. */
   | 'recargada'
+  /** No hubo relevo y el servidor no contesta: recargar no traería nada nuevo. */
+  | 'sin-red'
 
-/** Una sola recarga, venga de donde venga la orden. */
-let recargando = false
+/**
+ * Una sola recarga, venga de donde venga la orden… mientras esté en curso.
+ *
+ * Era un cerrojo sin vuelta: `recargando = true` y nada lo abría. Tiene sentido
+ * si la recarga ocurre —este módulo desaparece con la página—, pero si el
+ * navegador la ignora, que es justo el caso en que hace falta insistir, todas
+ * las órdenes posteriores morían aquí en silencio y el botón «Actualizar»
+ * quedaba de adorno hasta cerrar la aplicación. Ahora caduca.
+ */
+let recargaPedidaEn = 0
 function recargar(): void {
-  if (recargando) return
-  recargando = true
+  const ahora = Date.now()
+  if (ahora - recargaPedidaEn < PLAZO_DE_RECARGA_MS) return
+  recargaPedidaEn = ahora
   window.location.reload()
+}
+
+const CLAVE_DEL_INTENTO = 'aulas.actualizacion.ultimo-intento'
+
+/**
+ * Deja escrito cómo acabó el último intento de actualizar a mano.
+ *
+ * Sobrevive a la recarga a propósito: el fallo que esto documenta es «pulso y
+ * no pasa nada», y lo que hace falta para diagnosticarlo desde una captura de
+ * pantalla es saber qué había en el navegador en ese instante —si había worker
+ * en espera, si tomó el relevo—. Lo enseña el panel de sincronización, debajo
+ * de la versión.
+ */
+function apuntarIntento(parte: string, reg: ServiceWorkerRegistration | null): void {
+  try {
+    localStorage.setItem(
+      CLAVE_DEL_INTENTO,
+      JSON.stringify({
+        cuando: new Date().toISOString(),
+        desde: __BUILD__,
+        parte,
+        espera: reg?.waiting?.state ?? null,
+        instalando: reg?.installing?.state ?? null,
+        controlada: navigator.serviceWorker?.controller != null,
+      }),
+    )
+  } catch {
+    // Sin almacenamiento no hay rastro, y no pasa nada más.
+  }
+}
+
+/** El último intento de actualizar a mano, en una línea. `null` si no hubo. */
+export function ultimoIntentoDeActualizacion(): string | null {
+  try {
+    const crudo = localStorage.getItem(CLAVE_DEL_INTENTO)
+    if (!crudo) return null
+    const i = JSON.parse(crudo) as {
+      cuando: string
+      desde: string
+      parte: string
+      espera: string | null
+      instalando: string | null
+      controlada: boolean
+    }
+    // Si la versión de ahora ya es otra, el intento funcionó: no hay nada que contar.
+    if (i.desde !== __BUILD__) return null
+    const hora = new Intl.DateTimeFormat('es-ES', { dateStyle: 'short', timeStyle: 'short' }).format(
+      new Date(i.cuando),
+    )
+    return `último intento ${hora}: ${i.parte} · espera ${i.espera ?? 'no'} · instalando ${i.instalando ?? 'no'} · ${i.controlada ? 'controlada' : 'sin controlar'}`
+  } catch {
+    return null
+  }
 }
 
 /** Corta la espera de una promesa que puede no volver nunca. */
@@ -474,7 +556,7 @@ function esperarInstalacion(sw: ServiceWorker): Promise<void> {
 }
 
 /** Espera al relevo de verdad: que el worker nuevo pase a controlar la página. */
-function esperarRelevo(): Promise<boolean> {
+function esperarRelevo(plazo: number): Promise<boolean> {
   return new Promise((resolver) => {
     const fin = (ocurrio: boolean): void => {
       clearTimeout(tope)
@@ -482,7 +564,7 @@ function esperarRelevo(): Promise<boolean> {
       resolver(ocurrio)
     }
     const alRelevo = (): void => fin(true)
-    const tope = setTimeout(() => fin(false), PLAZO_DE_RELEVO_MS)
+    const tope = setTimeout(() => fin(false), plazo)
     navigator.serviceWorker.addEventListener('controllerchange', alRelevo)
   })
 }
@@ -510,7 +592,7 @@ function esperarRelevo(): Promise<boolean> {
  * le manda el relevo y se espera a `controllerchange`, que es el único hecho que
  * significa «ya mandas tú».
  */
-async function relevar(): Promise<'activada' | 'sin-worker' | 'sin-relevo'> {
+async function relevar(plazo: number): Promise<'activada' | 'sin-worker' | 'sin-relevo'> {
   if (!('serviceWorker' in navigator)) return 'sin-worker'
 
   registro ??= (await navigator.serviceWorker.getRegistration().catch(() => null)) ?? null
@@ -520,7 +602,7 @@ async function relevar(): Promise<'activada' | 'sin-worker' | 'sin-relevo'> {
   // El anuncio pudo quedarse viejo. Preguntar otra vez recupera el worker que
   // haya ahora, y no cuesta nada cuando ya hay uno en la puerta.
   if (!reg.waiting && !reg.installing) {
-    await conTope(reg.update().catch(() => {}), PLAZO_DE_RELEVO_MS, undefined)
+    await conTope(reg.update().catch(() => {}), plazo, undefined)
   }
 
   // Uno a medio instalar todavía no acepta el relevo: se le deja terminar.
@@ -529,9 +611,69 @@ async function relevar(): Promise<'activada' | 'sin-worker' | 'sin-relevo'> {
   const enCola = reg.waiting
   if (!enCola) return 'sin-worker'
 
-  const relevo = esperarRelevo()
-  enCola.postMessage({ type: 'SKIP_WAITING' })
+  const relevo = esperarRelevo(plazo)
+  try {
+    enCola.postMessage({ type: 'SKIP_WAITING' })
+  } catch {
+    // Un worker que acaba de quedar `redundant` no admite mensajes y lo dice
+    // con una excepción. Sin esto, la excepción subía hasta el `onClick` y allí
+    // se perdía: otra forma de botón que no hace nada.
+    return 'sin-worker'
+  }
   return (await relevo) ? 'activada' : 'sin-relevo'
+}
+
+/**
+ * ¿Contesta el servidor, de verdad y ahora?
+ *
+ * Se pide el propio `sw.js`, con un parámetro para que no lo sirva ninguna
+ * caché, y se exige que lo que vuelva sea JavaScript: un portal cautivo —la wifi
+ * de invitados— contesta 200 con una página de inicio de sesión a cualquier
+ * cosa, y darlo por bueno sería soltar el service worker sin tener de dónde
+ * bajar el siguiente.
+ */
+async function servidorResponde(): Promise<boolean> {
+  const corte = new AbortController()
+  const tope = setTimeout(() => corte.abort(), 4_000)
+  try {
+    const r = await fetch(`/sw.js?comprobacion=${Date.now()}`, {
+      cache: 'no-store',
+      signal: corte.signal,
+    })
+    return r.ok && /javascript/i.test(r.headers.get('content-type') ?? '')
+  } catch {
+    return false
+  } finally {
+    clearTimeout(tope)
+  }
+}
+
+/**
+ * El segundo camino: soltar el service worker y cargar del servidor.
+ *
+ * El relevo depende de que el navegador active el worker en espera, y eso no lo
+ * decide esta página: lo decide el navegador, que lo aplaza mientras el worker
+ * viejo tenga algo a medias. Cuando no ocurre, recargar —lo que se hacía— vuelve
+ * a traer la versión de siempre, servida por el worker de siempre, con la barra
+ * otra vez puesta: desde fuera, «pulso y no hace nada».
+ *
+ * Dar de baja el registro saca al worker viejo de en medio: la recarga que viene
+ * detrás no la sirve nadie más que el servidor, así que trae el código nuevo
+ * pase lo que pase con el relevo. La página nueva vuelve a registrar el service
+ * worker al arrancar, que se instala con lo que ya hay en la caché y toma el
+ * control (`rescate-sw.js`).
+ *
+ * Solo se llega aquí con el servidor recién comprobado: sin red, soltar el
+ * worker dejaría la aplicación sin poder abrirse hasta recuperarla.
+ */
+async function soltarElRegistro(reg: ServiceWorkerRegistration | null): Promise<void> {
+  if (!reg) return
+  await conTope(
+    reg.unregister().catch(() => false),
+    3_000,
+    false,
+  )
+  registro = null
 }
 
 /**
@@ -546,11 +688,12 @@ let ultimoRecursoGastado = false
  * El camino común de la instalación. Lo que cambia entre las tres órdenes es
  * qué se hace cuando el relevo NO ocurre, y es una diferencia de fondo:
  *
- *  - `manual` es una orden. Recargar por las bravas trae el código nuevo igual
- *    —un `reload` vuelve a pedir el service worker y el navegador reintenta el
- *    ciclo entero— y, sobre todo, hace que pulsar el botón SIEMPRE haga algo.
- *    Recargar de más es un segundo perdido; un botón que no responde cuesta
- *    semanas de versión vieja.
+ *  - `manual` es una orden, y se cumple aunque el relevo no ocurra. Antes se
+ *    recargaba por las bravas, dando por hecho que eso traía el código nuevo;
+ *    no lo trae: la recarga la sirve el worker VIEJO, desde su caché, y vuelve
+ *    la misma versión con la misma barra. Ahora, si el servidor contesta, se da
+ *    de baja el registro y la recarga baja del servidor (`soltarElRegistro`).
+ *    Sin red no se toca nada y se dice.
  *  - `automatica` no fuerza nada, y no es simetría mal entendida: nadie ha
  *    pedido esto, y una recarga forzada aquí se repetiría en cada arranque
  *    mientras el relevo siguiera sin ocurrir — un bucle de recargas en la cara
@@ -569,7 +712,7 @@ let ultimoRecursoGastado = false
 async function activar(
   orden: 'manual' | 'automatica' | 'desatendida',
 ): Promise<ParteDeActivacion> {
-  const parte = await relevar()
+  const parte = await relevar(orden === 'manual' ? PLAZO_DE_RELEVO_MANUAL_MS : PLAZO_DE_RELEVO_MS)
 
   if (parte === 'activada') {
     // `controllerchange` significa que el worker nuevo manda, no que esta página
@@ -578,8 +721,18 @@ async function activar(
     return 'activada'
   }
 
-  if (orden === 'manual' || (orden === 'desatendida' && !ultimoRecursoGastado)) {
-    if (orden === 'desatendida') ultimoRecursoGastado = true
+  if (orden === 'manual') {
+    // El relevo no ha ocurrido y hay una persona esperando. Recargar sin más
+    // traería la versión de siempre; se va por el segundo camino.
+    apuntarIntento(parte, registro)
+    if (!(await servidorResponde())) return 'sin-red'
+    await soltarElRegistro(registro)
+    recargar()
+    return 'recargada'
+  }
+
+  if (orden === 'desatendida' && !ultimoRecursoGastado) {
+    ultimoRecursoGastado = true
     recargar()
     return 'recargada'
   }

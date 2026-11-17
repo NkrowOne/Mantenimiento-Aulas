@@ -7,6 +7,7 @@ import type { AssetType, RemovalDestino } from '@/domain/types'
 import { serialComparable, sinNumeroDeSerie, type UnidadDeAlmacen } from '@/domain/unidades'
 import { ElegirUnidad } from './ElegirUnidad'
 import type { Origen } from './useRoomInventory'
+import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
 /**
  * ¿De dónde sale este equipo?
@@ -113,7 +114,7 @@ export function OrigenDelEquipo({
   const [origenRoomId, setOrigenRoomId] = useState('')
   const [assetId, setAssetId] = useState('')
 
-  const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [], [])
+  const buildings = useLiveQuery(() => db.buildings.toArray().then(ordenarEdificios), [], [])
 
   const salas = useLiveQuery(
     async () => {

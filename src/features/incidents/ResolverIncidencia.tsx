@@ -345,6 +345,7 @@ export function ResolverIncidencia({
 
       <div className="mt-3 flex gap-2">
         <button
+          aria-busy={cerrar.isPending}
           type="submit"
           disabled={cerrar.isPending}
           className="key key-accent min-h-11 flex-1 px-3 text-sm"

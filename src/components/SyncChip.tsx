@@ -5,7 +5,12 @@ import { flush, getUltimoErrorSync, onSyncState, retryRejected, type SyncState }
 import { pullMaster, ultimoPull } from '@/sync/pull'
 import { ofrecerFichero } from '@/lib/ficheros'
 import { exportarPendientes } from '@/sync/rescate'
-import { aplicarActualizacion, buscarActualizacion, onVersionNueva } from '@/sw'
+import {
+  aplicarActualizacion,
+  buscarActualizacion,
+  onVersionNueva,
+  ultimoIntentoDeActualizacion,
+} from '@/sw'
 
 /**
  * La lámpara de estado.
@@ -78,6 +83,8 @@ export function SyncChip(): React.ReactElement {
   // —una foto a medio guardar aplaza la orden— dejaba la caja idéntica, o sea
   // indistinguible de que el botón no funcionara.
   const [retenida, setRetenida] = useState(false)
+  const [actualizando, setActualizando] = useState(false)
+  const [sinRed, setSinRed] = useState(false)
 
   /*
    * Cerrar tocando fuera, y con Escape.
@@ -154,7 +161,10 @@ export function SyncChip(): React.ReactElement {
       >
         {/* El piloto. Apagado es un punto gris que no pide nada; encendido lleva
             color y su frase al lado, que es lo que se lee. */}
-        <span aria-hidden className={`h-2.5 w-2.5 rounded-full ${lamp}`} />
+        <span
+          aria-hidden
+          className={`h-2.5 w-2.5 rounded-full ${lamp} ${state === 'sincronizando' ? 'piloto-activo' : ''}`}
+        />
         {label}
       </button>
 
@@ -228,13 +238,32 @@ export function SyncChip(): React.ReactElement {
               </p>
               <button
                 type="button"
+                disabled={actualizando}
                 onClick={() => {
-                  void aplicarActualizacion().then((parte) => setRetenida(parte === 'retenida'))
+                  // Que pulsar se vea en el acto: ver `UpdatePrompt`.
+                  setActualizando(true)
+                  setSinRed(false)
+                  aplicarActualizacion().then(
+                    (parte) => {
+                      setRetenida(parte === 'retenida')
+                      setSinRed(parte === 'sin-red')
+                      if (parte !== 'activada' && parte !== 'recargada') setActualizando(false)
+                    },
+                    () => {
+                      setSinRed(true)
+                      setActualizando(false)
+                    },
+                  )
                 }}
                 className="key key-accent mt-2 min-h-11 w-full px-3 text-sm"
               >
-                Actualizar ahora
+                {actualizando ? 'Actualizando…' : sinRed ? 'Reintentar' : 'Actualizar ahora'}
               </button>
+              {sinRed && (
+                <p aria-live="polite" className="mt-2 text-xs text-crit">
+                  Sin conexión con el servidor. Inténtalo con cobertura.
+                </p>
+              )}
               {retenida && (
                 <p aria-live="polite" className="mt-2 text-xs text-muted">
                   Se instalará en cuanto termine de guardarse la foto que está en curso.
@@ -426,6 +455,7 @@ export function SyncChip(): React.ReactElement {
           */}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-2">
             <button
+              aria-busy={busqueda === 'buscando'}
               type="button"
               disabled={busqueda === 'buscando'}
               onClick={() => {
@@ -451,6 +481,14 @@ export function SyncChip(): React.ReactElement {
           <p className="mt-2 text-right font-mono text-[10px] text-muted">
             versión {__BUILD__}
           </p>
+          {/* Cómo acabó el último «Actualizar» que no trajo versión nueva. Con
+              esto en una captura de pantalla se sabe qué había en el navegador
+              en ese instante, que es lo que hace falta para arreglarlo. */}
+          {ultimoIntentoDeActualizacion() && (
+            <p className="mt-1 break-words text-right font-mono text-[10px] text-muted">
+              {ultimoIntentoDeActualizacion()}
+            </p>
+          )}
         </div>
       )}
     </div>

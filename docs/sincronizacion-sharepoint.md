@@ -233,7 +233,7 @@ apuesta:
 |---|---|---|
 | = antepasado | = antepasado | Nada. Es la inmensa mayoría de las celdas |
 | **cambió** | = antepasado | Manda la app → se escribe en el Excel |
-| = antepasado | **cambió** | **Manda el Excel** → se escribe en la base |
+| = antepasado | **cambió** | **Prevalece el Excel** → se escribe en la base |
 | **cambió** | **cambió**, y a cosas distintas | **Conflicto**: no se toca ninguno de los dos, va a cuarentena y se avisa en las dos partes |
 | **cambió** | **cambió**, a lo mismo | Nada que hacer, ya coinciden |
 
@@ -249,11 +249,11 @@ otra manera de decir «se pierden ediciones y nadie sabe cuáles». Por eso la
 instantánea no es un detalle de implementación: es lo que hace que la
 bidireccionalidad sea segura.
 
-### Quién manda cuando no se puede saber: se elige al cargar
+### Qué prevalece cuando no se puede saber: se elige al cargar
 
 La tabla deja dos casos sin respuesta: la **primera pasada** de un libro —no
 hay antepasado, así que no se sabe quién cambió cada celda— y el **choque**
-—cambiaron los dos—. Hasta ahora el primero lo resolvía «manda la app» a secas
+—cambiaron los dos—. Hasta ahora el primero lo resolvía «prevalece la aplicación» a secas
 y el segundo iba a la bandeja. Pero quien sube el libro suele saber cuál de los
 dos inventarios es el bueno ese día: si se acaba de corregir el Excel a mano,
 es el Excel; si el Excel lleva meses sin tocarse, es la aplicación.
@@ -263,13 +263,13 @@ puede cambiar y la pasada se recalcula al momento:
 
 | Elección | Primera pasada y choques |
 |---|---|
-| **Que decida una persona** (por defecto) | Primera pasada: manda la app. Choque: no se toca ninguno de los dos lados y sale aquí y en la hoja `Sincronización` |
-| **Manda el Excel** | Lo que dice la hoja entra en la base |
-| **Manda la aplicación** | Lo que dice la aplicación se escribe en la hoja |
+| **Decidir a mano** (por defecto) | Primera pasada: prevalece la aplicación. Choque: no se toca ninguno de los dos lados y sale aquí y en la hoja `Sincronización` |
+| **Prevalece el Excel** | Lo que dice la hoja entra en la base |
+| **Prevalece la aplicación** | Lo que dice la aplicación se escribe en la hoja |
 
 Y solo esos dos casos. Lo que la fusión **sí** sabe decidir no cambia con la
 elección: si solo un lado se movió desde la última pasada, gana ese lado.
-Elegir «manda el Excel» no puede revertir en la base una avería que un técnico
+Elegir «prevalece el Excel» no puede revertir en la base una avería que un técnico
 cerró ayer en el aula y que la hoja no ha visto todavía. Tampoco cambian de
 dueño las columnas que lo tienen fijo —los m², la fecha de revisión anterior,
 las fórmulas— ni la regla del hueco: el vacío nunca gana. Cada celda decidida
@@ -277,7 +277,7 @@ así queda anotada con el porqué («primera pasada: se eligió que mande el
 Excel»), en la pantalla y en `import_fixes`.
 
 Y un **corte**, opcional, al lado de la elección (`Celda.corte`): un día desde
-el que manda la aplicación en lo que **ella** cambió, se haya elegido lo que se
+el que prevalece la aplicación en lo que **ella** cambió, se haya elegido lo que se
 haya elegido. Es la forma de decir «el libro es el inventario de partida y lo
 trabajado en la aplicación desde el 9/9 se aplica encima»: en los dos casos
 que la fusión no decide sola, si la aplicación cambió el dato el día del corte
@@ -325,7 +325,7 @@ La que menos depende de nadie, y por eso va la primera.
 Una pantalla en administración: **arrastras el `.xlsx`**, la aplicación lo lee, cruza,
 y te enseña **qué entraría, qué se rellenaría y qué choca** antes de tocar nada. Lo
 confirmas, se aplica a la base, y la aplicación te devuelve **ese mismo fichero con
-las celdas que manda la app ya escritas** —fecha de revisión, estado, consumo, las
+las celdas que prevalece la aplicación ya escritas** —fecha de revisión, estado, consumo, las
 matrículas `Ref` recién asignadas—. Lo subes tú a SharePoint.
 
 Lo que esto elimina, entero: registro de aplicación en Entra ID, consentimiento de
@@ -376,7 +376,7 @@ la hoja conserva su fórmula y su número bueno. El peligro va al revés, y tien
 víctima concreta: `Stock Disponible` es la celda contra la que —cuando manda el
 Excel— el almacén se cuadra con un movimiento de `ajuste`. Cuadrarlo contra el 19
 en vez de contra el 50 borra treinta y un cables del almacén sin que salte nada, y
-el parte diría que manda el Excel.
+el parte diría que prevalece el Excel.
 
 Por eso `domain/formulas.ts` **recalcula las fórmulas con los números de la propia
 hoja** antes de comparar nada, y lo dice en el parte. Cubre la aritmética que estos
@@ -730,7 +730,7 @@ el informe del viernes.
 | 1 | **Hecho.** Lector de los dos libros + cruce contra el maestro, en seco: `npm run cruce:excel`. Resuelve por matrícula, alias, edificio+código y auditoría de edificios desaparecidos; cuenta y explica cada fila que no cruza. No escribe nada | ✅ con los ficheros de hoy |
 | 2 | **Hecho.** Migración del apartado 10 + las cuatro tablas de sincronización + la instantánea + la fusión a tres bandas (`src/domain/fusion.ts`, 30 pruebas) + los choques a `import_quarantine`. Sigue sin escribir nada: devuelve decisiones | ✅ |
 | 3 | **Hecho** (la columna `Ref`; las hojas como tablas de Excel, no: no hace falta para identificar filas). La columna va **al final**, no la primera — insertarla a la izquierda obliga a reescribir cada fórmula, el rango del autofiltro y los cuatro formatos condicionales | ✅ |
-| **3b** | **Hecho.** La pantalla (`Datos → Excel`) hace el viaje entero **en los dos sentidos**: elegir quién manda → subir → previsualizar → aplicar a la base → descargar el libro sincronizado. La previsualización va en cuatro montones, siempre los mismos —al Excel, a la aplicación, hay que decidir, se deja como está—, en total y hoja por hoja, celda a celda con de qué aula o parte es, qué dice hoy, qué va a decir y por qué; y el almacén tiene su bloque: qué compras, salidas y devoluciones va a apuntar la pasada y qué material no se descuenta porque el catálogo no lo reconoce. La instantánea se guarda de verdad (`sync_celdas`, por matrícula y no por número de fila) y la vuelta entra en una transacción con `sync_aplicar` | ✅ |
+| **3b** | **Hecho.** La pantalla (`Datos → Excel`) hace el viaje entero **en los dos sentidos**: elegir qué prevalece → subir → previsualizar → aplicar a la base → descargar el libro sincronizado. La previsualización va en cuatro montones, siempre los mismos —al Excel, a la aplicación, hay que decidir, se deja como está—, en total y hoja por hoja, celda a celda con de qué aula o parte es, qué dice hoy, qué va a decir y por qué; y el almacén tiene su bloque: qué compras, salidas y devoluciones va a apuntar la pasada y qué material no se descuenta porque el catálogo no lo reconoce. La instantánea se guarda de verdad (`sync_celdas`, por matrícula y no por número de fila) y la vuelta entra en una transacción con `sync_aplicar` | ✅ |
 | **3c** | **Hecho.** Las cinco hojas, no solo la de estado: partes con su material, bolsa con el consumo repartido mes a mes y las fórmulas pisadas devueltas a su sitio. Filas nuevas insertadas en el bloque de su edificio, filas de salas archivadas fuera, y el corte de año creando `Material Instalado <año>` y `Bolsa <año>` con el saldo de apertura | ✅ |
 | **3d** | **Hecho.** Cuatro hojas nuevas para lo que no cabe en una celda: `Revisiones` (una fila por revisión con hora, autor y comprobaciones), `Movimientos de Almacén` (con el saldo detrás), `Inventario por Sala` (que sí puede enseñar un aula con dos proyectores) y `Sincronización` (los choques y la cuarentena, dentro del propio libro) | ✅ |
 | **3e** | **Hecho.** Lo que el libro tiene y la aplicación no, entra: partes sin número (o con un número que la aplicación no conoce) se dan de alta con `sync_alta`, la base les pone número y la pasada lo escribe en su fila; artículos nuevos de la bolsa y PCs de repuesto nuevos, igual. Y las **dudas**: una fila de estado sin código de aula, un parte cuya aula no cruza o cruza con varias, un número de serie que crearía un equipo que la sala no tenía, se preguntan en la pantalla antes de aplicar (`src/domain/dudas.ts`), la respuesta vuelve a la pasada y con dudas sin contestar no se sincroniza | ✅ |
@@ -800,9 +800,9 @@ y que el código respeta desde entonces:
   descontar»**, la marca que la gente ya usaba para lo reciclado, lo de
   garantía y el stock antiguo. La cantidad 0 se guarda en `incident_materials`
   con su texto y no mueve nada.
-- **`Stock Disponible` cuadra el almacén cuando manda el Excel.** La celda
+- **`Stock Disponible` cuadra el almacén cuando prevalece el Excel.** La celda
   sigue siendo una fórmula y no se escribe jamás; pero si la persona eligió
-  «manda el Excel», su valor viaja como `articulo.disponible` y la base pone el
+  «prevalece el Excel», su valor viaja como `articulo.disponible` y la base pone el
   saldo a ese número con un `ajuste` que dice de dónde sale, el último de la
   pasada. Un disponible negativo no entra: el almacén no baja de cero, y el
   aviso dice que se revise «Total Comprado».
@@ -827,12 +827,12 @@ y que el código respeta desde entonces:
   el parte entra sin sala, y en las pasadas siguientes esa celda se compara
   como el blanco que es y no se escribe.
 - **El corte** (`corte`, en `Celda`, en las entradas de las cuatro hojas y en
-  `Analisis`): desde un día manda la aplicación en lo que ella cambió. Ver el
-  apartado «Quién manda cuando no se puede saber».
+  `Analisis`): desde un día prevalece la aplicación en lo que ella cambió. Ver el
+  apartado «Qué prevalece cuando no se puede saber».
 - **Un edificio que el maestro no conoce no viaja a la base** (`noALaBase`, en
   `sincronizarEstado`). La hoja escribe «ED. S - SÓCRATES» y el maestro tiene
   «EDIFICIO S»: la fila cruza por matrícula, pero la celda no coincide y con
-  «manda el Excel» se mandaba aula por aula a `sync_mover_sala`, que solo sabe
+  «prevalece el Excel» se mandaba aula por aula a `sync_mover_sala`, que solo sabe
   mover a un edificio que existe. Eran 23 apuntes de cuarentena idénticos por
   pasada. Ahora se retiene esa celda —y la de la planta con ella, porque la
   planta se crea dentro del edificio en el que la sala está HOY— y se emite un
@@ -853,7 +853,7 @@ y que el código respeta desde entonces:
   (`movimientos.ts`): el material que el catálogo no reconoce ya no sale como
   «artículo desconocido», porque la base descarta el parte antiguo antes de
   mirar si el nombre cruza y no apunta nada.
-- **Con «manda el Excel», el libro muda salas de edificio** (`laMudaElLibro`):
+- **Con «prevalece el Excel», el libro muda salas de edificio** (`laMudaElLibro`):
   si la celda del edificio ya no dice lo que decía en la última pasada, la
   fila se queda y la celda viaja a la base, donde `sync_mover_sala` mueve la
   sala llevándose su planta —y la crea en el edificio de destino si no la

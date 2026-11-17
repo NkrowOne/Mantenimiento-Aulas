@@ -81,11 +81,31 @@ const PLAZO_DE_RESPUESTA_MS = 5000
  *   1 · contestaba «entendida» y activaba con `updateSW()`, que podía no hacer
  *       nada en silencio. Incapaz de actualizarse sola: se rescata.
  *   2 · conduce el relevo desde el registro y, si no ocurre, recarga igual.
+ *       Pero esa recarga la sirve el worker viejo: vuelve la misma versión con
+ *       la misma barra, y «Actualizar» parece no hacer nada. Se rescata.
+ *   3 · si el relevo no ocurre y el servidor contesta, da de baja el registro
+ *       y recarga del servidor: la orden se cumple sin depender del relevo.
  */
-const POLITICA_MINIMA = 2
+const POLITICA_MINIMA = 3
 
 /** ¿La activación fue forzada por este rescate? Decide si `activate` recarga. */
 let rescatado = false
+
+/**
+ * ¿Es el primer service worker de este registro?
+ *
+ * Entonces la página que lo ha registrado se cargó del servidor y lleva
+ * exactamente su mismo código, así que tomar el control de ella no cruza
+ * versiones: solo hace que lo que pida a partir de ahora pase por la caché. Sin
+ * esto, una instalación nueva no funciona sin red hasta la SEGUNDA vez que se
+ * abre —la primera página se queda sin controlar toda su vida—.
+ *
+ * Importa sobre todo después del segundo camino de «Actualizar»
+ * (`soltarElRegistro`, en `src/sw.ts`): la página vuelve del servidor sin
+ * service worker, lo registra de nuevo, y tiene que quedar otra vez cubierta en
+ * esa misma carga, no en la siguiente.
+ */
+let primeraInstalacion = false
 
 function sabeActivar(cliente) {
   return new Promise((resolver) => {
@@ -110,7 +130,10 @@ function sabeActivar(cliente) {
 async function decidirRescate() {
   // Sin service worker activo no hay atasco posible: es la primera
   // instalación y el navegador la activa solo.
-  if (!self.registration.active) return
+  if (!self.registration.active) {
+    primeraInstalacion = true
+    return
+  }
 
   const clientes = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
 
@@ -129,16 +152,32 @@ self.addEventListener('install', (evento) => {
 })
 
 self.addEventListener('activate', (evento) => {
+  if (primeraInstalacion) {
+    evento.waitUntil(self.clients.claim())
+    return
+  }
   if (!rescatado) return
   evento.waitUntil(
     (async () => {
       await self.clients.claim()
       const clientes = await self.clients.matchAll({ type: 'window' })
-      // `navigate` a su propia URL es la recarga: la página vieja no escucha
-      // `controllerchange`, así que nadie más puede dársela. Si el navegador
-      // la niega no pasa nada — el worker nuevo ya está activo y la próxima
-      // apertura sirve la versión nueva de todos modos.
-      await Promise.all(clientes.map((c) => c.navigate(c.url).catch(() => {})))
+      /*
+       * `navigate` a su propia URL es la recarga: la página vieja no escucha
+       * `controllerchange`, así que nadie más puede dársela. Si el navegador
+       * la niega no pasa nada — el worker nuevo ya está activo y la próxima
+       * apertura sirve la versión nueva de todos modos.
+       *
+       * SE PIDE Y NO SE ESPERA, y de eso depende que funcione. La promesa de
+       * `navigate` se cumple cuando la página ha terminado de navegar; esa
+       * navegación la tiene que servir ESTE worker; y un worker no sirve nada
+       * hasta que termina de activarse, o sea hasta que acaba este `waitUntil`.
+       * Esperarla aquí dentro era esperarse a uno mismo: la activación no
+       * acababa, la navegación no arrancaba y la página se quedaba congelada
+       * —sin responder a un toque— hasta que el navegador se cansaba, minutos
+       * después. Medido en Chromium: el rescate, tal como estaba, convertía un
+       * dispositivo atascado en uno colgado.
+       */
+      for (const c of clientes) c.navigate(c.url).catch(() => {})
     })(),
   )
 })

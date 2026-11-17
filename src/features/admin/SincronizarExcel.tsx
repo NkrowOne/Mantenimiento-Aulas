@@ -26,7 +26,8 @@ import type { Alta, Plan, Referencia } from '@/domain/sincronizar'
 import { diaEnMadrid, fechaCorta, horaCorta } from '@/domain/fechas'
 import { guardarLibroSincronizado, leerLibroSincronizado } from '@/db/dexie'
 import type { LibroGuardado } from '@/db/dexie'
-import { Seccion } from './Seccion'
+import { MasInformacion, Seccion } from './Seccion'
+import { Confirmacion } from '@/components/Confirmacion'
 
 /**
  * Sincronizar el Excel de SharePoint, en los dos sentidos.
@@ -222,7 +223,7 @@ export function SincronizarExcel(): React.ReactElement {
       // esta pantalla siga abierta, y quien se vaya a comer sin bajarlo lo
       // pierde: la pasada ya está aplicada y no se puede regenerar.
       setSinGuardar(
-        'No se ha podido guardar el libro en este aparato para luego. Bájalo ahora: si sales de aquí, habrá que volver a sincronizar.',
+        'No se ha podido guardar el libro en este dispositivo para luego. Descárgalo ahora: si sales de aquí, habrá que volver a sincronizar.',
       )
       console.warn('No se ha podido guardar el libro para bajarlo luego:', err)
     }
@@ -302,7 +303,7 @@ export function SincronizarExcel(): React.ReactElement {
             : x.porQue === 'forma'
             ? 'No se ha hecho el libro de hoy: una hoja del libro guardado no tiene la forma que la aplicación espera. Está explicado abajo.'
             : x.porQue === 'posterior'
-              ? 'No se ha hecho el libro de hoy: después de esta copia ha habido otra sincronización, probablemente desde otro aparato. Aplicarla devolvería la base a la foto de antes. Pide el libro a quien la hizo, o sube el de SharePoint por el selector de abajo. Lo que haría está abajo, sin aplicar.'
+              ? 'No se ha hecho el libro de hoy: después de esta copia ha habido otra sincronización, probablemente desde otro dispositivo. Aplicarla devolvería la base a la foto de antes. Pide el libro a quien la hizo, o sube el de SharePoint por el selector de abajo. Lo que haría está abajo, sin aplicar.'
               : 'No se ha hecho el libro de hoy: el servidor no ha podido decir cuál fue la última sincronización, y sin saberlo no se aplica una copia guardada. Vuelve a intentarlo con cobertura, o sube el libro de SharePoint por el selector de abajo.',
         )
         return
@@ -487,7 +488,8 @@ export function SincronizarExcel(): React.ReactElement {
     <Seccion
       id="sec-excel"
       titulo="Sincronizar el Excel de SharePoint"
-      texto="Sube el libro y baja el mismo fichero con todo lo que la aplicación sabe: revisiones, horas, salidas de material, entradas y movimientos del almacén. Lo que hayas corregido en la hoja entra en la base. El fichero no sale de este ordenador."
+      texto="Se sube el libro y se descarga actualizado. No se escribe nada hasta pulsar «Sincronizar»."
+      detalle="El fichero que se descarga es el mismo libro, actualizado con los datos de la aplicación: revisiones, horas, salidas de material, entradas y movimientos del almacén. Lo corregido en la hoja entra en la base de datos. El fichero no sale de este ordenador."
       pendientes={pendientes}
       acciones={
         analisis ? (
@@ -589,8 +591,7 @@ export function SincronizarExcel(): React.ReactElement {
           </div>
         ) : (
           <p className="mt-2 text-xs text-muted">
-            Se miran las seis hojas del libro: estado, partes, bolsa y PCs de repuesto del año, y
-            las dos de 2025. Nada se escribe hasta que pulses «Sincronizar».
+            Se leen las seis hojas del libro. No se escribe nada hasta pulsar «Sincronizar».
           </p>
         )}
       </div>
@@ -608,10 +609,9 @@ export function SincronizarExcel(): React.ReactElement {
             {analisis.ultimaSalida
               ? `La última se hizo el ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(analisis.ultimaSalida))} y produjo un fichero distinto de éste.`
               : 'La aplicación esperaba otro fichero.'}{' '}
-            Si es una copia de antes, lo que la hoja diga se tomará por una
-            corrección y entrará en la base: se revertiría lo que se haya hecho en
-            la aplicación desde entonces, y no daría ningún error. Mira lo que
-            entraría antes de aplicar.
+            Si es una copia antigua, su contenido se tomará por una corrección y entrará en la
+            base de datos: se revertiría, sin ningún aviso de error, lo hecho en la aplicación
+            desde entonces. Revisa lo que entraría antes de aplicar.
           </p>
         </div>
       )}
@@ -639,6 +639,7 @@ export function SincronizarExcel(): React.ReactElement {
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <button
+              aria-busy={sincronizar.isPending}
               type="button"
               className="key key-accent h-11 px-4"
               disabled={ocupado || pendientes > 0}
@@ -652,6 +653,7 @@ export function SincronizarExcel(): React.ReactElement {
                   : 'Sincronizar'}
             </button>
             <button
+              aria-busy={previsualizar.isPending}
               type="button"
               className="key key-quiet h-11 px-4"
               disabled={ocupado}
@@ -661,7 +663,7 @@ export function SincronizarExcel(): React.ReactElement {
             </button>
           </div>
 
-          {aplicado && <p className="mt-3 text-sm text-ok">{aplicado}</p>}
+          {aplicado && <Confirmacion texto={aplicado} className="mt-3" />}
 
           {sinGuardar && (
             <p className="mt-3 rounded-ctl bg-warn-tint p-3 text-sm text-warn">{sinGuardar}</p>
@@ -682,24 +684,24 @@ export function SincronizarExcel(): React.ReactElement {
 }
 
 // -----------------------------------------------------------------------------
-// 1 · Quién manda
+// 1 · Qué prevalece
 // -----------------------------------------------------------------------------
 
 const OPCIONES: Array<{ id: Referencia | null; titulo: string; texto: string }> = [
   {
     id: null,
-    titulo: 'Que decida una persona',
-    texto: 'Sale como choque, no se toca ninguno de los dos lados y se ve aquí y en la hoja «Sincronización».',
+    titulo: 'Decidir a mano',
+    texto: 'No se cambia ninguno de los dos lados. El choque se muestra aquí y en la hoja «Sincronización».',
   },
   {
     id: 'excel',
-    titulo: 'Manda el Excel',
-    texto: 'Lo que dice la hoja entra en la aplicación.',
+    titulo: 'Prevalece el Excel',
+    texto: 'El valor de la hoja entra en la aplicación.',
   },
   {
     id: 'app',
-    titulo: 'Manda la aplicación',
-    texto: 'Lo que dice la aplicación se escribe en la hoja.',
+    titulo: 'Prevalece la aplicación',
+    texto: 'El valor de la aplicación se escribe en la hoja.',
   },
 ]
 
@@ -731,7 +733,7 @@ function EquiposNuevos({
 }): React.ReactElement {
   return (
     <div className="card mt-4 p-4">
-      <p className="eyebrow">Equipos que el libro trae y la sala no</p>
+      <p className="eyebrow">Equipos del libro que faltan en la sala</p>
       <label className="mt-2 flex items-start gap-3">
         <input
           type="checkbox"
@@ -743,21 +745,21 @@ function EquiposNuevos({
         <span className="text-sm">
           <span className="font-semibold">Crear los equipos con número de serie</span>
           <span className="mt-0.5 block text-muted">
-            En todas las aulas y de una vez, en vez de preguntar aula por aula. El número de serie
-            es único por aparato, así que uno creado de más no se confunde con otro.
+            En todas las aulas a la vez, sin preguntar una por una. El número de serie es único,
+            así que un equipo creado de más no se confunde con otro.
           </span>
         </span>
       </label>
       {!encendido && hayLibro && cuantos > 0 && (
         <p className="mt-2 text-sm text-muted">
-          Ahora mismo hay {cuantos} {cuantos === 1 ? 'pregunta' : 'preguntas'} de equipo esperando
-          abajo. Enciende esto y entran todas.
+          Hay {cuantos} {cuantos === 1 ? 'pregunta' : 'preguntas'} de equipo pendientes más abajo.
+          Con esta opción activada se resuelven todas.
         </p>
       )}
       {encendido && hayLibro && (
         <p className="mt-2 text-sm text-muted">
-          Van a entrar solos. Lo que entra está abajo, celda a celda, con su aula y su número de
-          serie: míralo antes de aplicar.
+          Se crearán automáticamente. El detalle está más abajo, con su aula y su número de serie:
+          revísalo antes de aplicar.
         </p>
       )}
     </div>
@@ -793,7 +795,7 @@ function AulasNuevas({
 }): React.ReactElement {
   return (
     <div className="card mt-4 p-4">
-      <p className="eyebrow">Aulas que el libro trae y el maestro no</p>
+      <p className="eyebrow">Aulas del libro que faltan en el maestro</p>
       <label className="mt-2 flex items-start gap-3">
         <input
           type="checkbox"
@@ -803,19 +805,19 @@ function AulasNuevas({
           onChange={(ev) => onCambiar(ev.target.checked)}
         />
         <span className="text-sm">
-          <span className="font-semibold">Crear las aulas que estén bien escritas</span>
+          <span className="font-semibold">Crear las aulas con código válido</span>
           <span className="mt-0.5 block text-muted">
-            Solo las que llevan un código de los de siempre —«2.6», «-1.3», «0.1P»— en un edificio
-            que el maestro ya conoce. Un nombre suelto como «Aula Demo» se sigue preguntando: ahí
-            una errata no se ve, y la sala inventada se lleva la mitad del histórico de la buena.
+            Solo las que tienen un código habitual —«2.6», «-1.3», «0.1P»— en un edificio que el
+            maestro ya conoce. Un nombre libre como «Aula Demo» se sigue preguntando: una errata
+            crearía una sala duplicada y dividiría el histórico de la correcta.
           </span>
         </span>
       </label>
       {encendido && hayLibro && (
         <p className="mt-2 text-sm text-muted">
           {cuantas === 0
-            ? 'Este libro no trae ninguna aula nueva que se pueda crear sin preguntar.'
-            : `Se van a crear ${cuantas} aula${cuantas === 1 ? '' : 's'}. Están abajo, en las altas, con su edificio y su planta: míralas antes de aplicar.`}
+            ? 'Este libro no trae ninguna aula nueva que se pueda crear automáticamente.'
+            : `Se van a crear ${cuantas} aula${cuantas === 1 ? '' : 's'}. Están más abajo, en las altas, con su edificio y su planta: revísalas antes de aplicar.`}
         </p>
       )}
     </div>
@@ -845,17 +847,17 @@ function QuienManda({
 }): React.ReactElement {
   return (
     <div className="card mt-4 p-4">
-      <p className="eyebrow">1 · Quién manda</p>
+      <p className="eyebrow">1 · Prioridad</p>
       <h2 className="mt-1 text-sm font-semibold">
-        Si una celda es distinta en los dos lados y no se puede saber quién la cambió
+        Qué valor prevalece cuando una celda es distinta en el Excel y en la aplicación
       </h2>
-      <p className="mt-1 text-xs leading-relaxed text-muted">
-        Pasa la primera vez que se sincroniza un libro —no hay con qué comparar— y cuando la
-        misma celda cambió en el Excel y en la aplicación. Si solo cambió un lado, gana ese lado,
-        se elija lo que se elija. Y las columnas con dueño fijo —los m², la fecha de revisión
-        anterior, las fórmulas— no cambian de dueño.
-      </p>
-      <div className="mt-3 grid gap-2 sm:grid-cols-3" role="group" aria-label="Quién manda">
+      <MasInformacion>
+        Solo se aplica cuando no se puede saber qué lado cambió: la primera vez que se sincroniza
+        un libro —no hay con qué comparar— y cuando la misma celda cambió en los dos. Si solo
+        cambió un lado, se conserva ese cambio, sea cual sea la opción elegida. Las columnas con
+        origen fijo —los m², la fecha de revisión anterior, las fórmulas— no se ven afectadas.
+      </MasInformacion>
+      <div className="mt-1 grid gap-2 sm:grid-cols-3" role="group" aria-label="Qué valor prevalece">
         {OPCIONES.map((o) => {
           const activa = referencia === o.id
           return (
@@ -877,16 +879,19 @@ function QuienManda({
       {referencia !== 'app' && (
         <div className="mt-4">
           <label htmlFor="excel-corte" className="block text-sm font-semibold">
-            Desde este día manda la aplicación en lo que ella cambió
+            Fecha de corte (opcional)
           </label>
           <p className="mt-1 text-xs leading-relaxed text-muted">
-            Para cuando el libro es el inventario de partida y lo trabajado en la aplicación desde
-            un día —revisiones, partes cerrados, equipos instalados— tiene que quedarse aunque
-            choque con la hoja. Lo que la aplicación cambió ese día o después gana; el resto sigue
-            lo elegido arriba. Sin fecha, no hay corte.
+            Desde este día prevalece la aplicación en lo que ella cambió.
             {ultimaSalida ? ` La última sincronización fue el ${fechaCorta(ultimaSalida)}.` : ''}
           </p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <MasInformacion>
+            Sirve cuando el libro es el inventario de partida y el trabajo hecho en la aplicación
+            desde un día —revisiones, partes cerrados, equipos instalados— debe conservarse aunque
+            no coincida con la hoja. Lo que la aplicación cambió ese día o después prevalece; el
+            resto sigue la opción elegida arriba. Sin fecha, no hay corte.
+          </MasInformacion>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
             <input
               id="excel-corte"
               type="date"
@@ -916,11 +921,11 @@ function QuienManda({
 function nombreDeLaReferencia(r: Referencia | null, corte: string | null = null): string {
   const base =
     r === 'excel'
-      ? 'manda el Excel'
+      ? 'prevalece el Excel'
       : r === 'app'
-        ? 'manda la aplicación'
-        : 'decide una persona: los choques se quedan sin tocar'
-  return corte && r !== 'app' ? `${base} · desde el ${fechaCorta(corte)} manda la aplicación en lo que cambió` : base
+        ? 'prevalece la aplicación'
+        : 'se decide a mano: los choques no se modifican'
+  return corte && r !== 'app' ? `${base} · desde el ${fechaCorta(corte)} prevalece la aplicación en lo que cambió` : base
 }
 
 // -----------------------------------------------------------------------------
@@ -995,27 +1000,26 @@ function Resumen({ analisis, total }: { analisis: Analisis; total: Totales }): R
         </p>
       )}
       <p className="mt-3 text-sm text-muted">
-        Se rehacen además las hojas <strong>Revisiones</strong>,{' '}
+        También se regeneran, completas, las hojas <strong>Revisiones</strong>,{' '}
         <strong>Movimientos de Almacén</strong>, <strong>Inventario por Sala</strong>,{' '}
-        <strong>Sincronización</strong> y <strong>Léeme</strong>, enteras, con lo que la aplicación
-        sabe hoy; las tres primeras salen como tablas de Excel, y las dos últimas van al final con
-        la pestaña en gris.
+        <strong>Sincronización</strong> y <strong>Léeme</strong>, con los datos actuales de la
+        aplicación.
         {analisis.hojasNuevas.some((h) => h.nombre.startsWith('PCs STOCK')) &&
-          ' El libro no traía la hoja de PCs de repuesto: se estrena con lo que la aplicación sabe.'}
+          ' El libro no traía la hoja de PCs de repuesto: se crea con los datos de la aplicación.'}
       </p>
       {analisis.datos.sinUnidades && (
         <p className="mt-2 text-sm text-warn">
-          El servidor no tiene todavía la tabla de PCs de repuesto (falta aplicar la migración de
-          septiembre): la hoja «PCs STOCK» se deja como está y el resto se sincroniza igual.
+          El servidor todavía no tiene la tabla de PCs de repuesto (falta aplicar la migración de
+          septiembre). La hoja «PCs STOCK» no se modifica; el resto se sincroniza con normalidad.
         </p>
       )}
       {porDecidir === 0 ? (
         <p className="mt-2 text-sm text-ok">Nada queda pendiente de decidir.</p>
       ) : (
         <p className="mt-2 text-sm text-warn">
-          {porDecidir} cosas por decidir. Las dudas se contestan aquí abajo; los choques y lo que no
-          se puede leer no se tocan en ninguno de los dos lados, y salen listados en la hoja
-          «Sincronización» del libro.
+          {porDecidir} {porDecidir === 1 ? 'elemento pendiente' : 'elementos pendientes'} de
+          decidir. Las dudas se contestan más abajo. Los choques y las celdas ilegibles no se
+          modifican en ninguno de los dos lados y quedan listados en la hoja «Sincronización».
         </p>
       )}
     </div>
@@ -1063,42 +1067,42 @@ const TIPO_DE_MOVIMIENTO: Record<MovimientoPrevisto['tipo'], { titulo: string; t
   compra: {
     titulo: 'Compras',
     tono: 'app',
-    texto: 'Entran en el almacén. La diferencia entre lo que dice «Total Comprado» y lo que la aplicación ya tenía apuntado ese año.',
+    texto: 'Entran en el almacén: la diferencia entre «Total Comprado» y lo que la aplicación ya tenía registrado ese año.',
   },
   consumo: {
     titulo: 'Salidas',
     tono: 'app',
-    texto: 'Salen del almacén a nombre del parte, con su aula y con la fecha del parte. Solo la diferencia con lo que ese parte ya tenía descontado.',
+    texto: 'Salen del almacén asociadas al parte, con su aula y su fecha. Solo la diferencia con lo que ese parte ya tenía descontado.',
   },
   devolucion: {
     titulo: 'Devoluciones',
     tono: 'app',
-    texto: 'Vuelven al almacén: la hoja baja la cantidad, o ya no cuenta ese artículo en el parte.',
+    texto: 'Vuelven al almacén: la hoja reduce la cantidad o ya no incluye ese artículo en el parte.',
   },
   ajuste: {
     titulo: 'Ajustes al «Stock Disponible»',
     tono: 'excel',
-    texto: 'Manda el Excel: lo que quede en el almacén después de compras y salidas se pone a lo que dice la hoja, con un movimiento de ajuste que deja rastro.',
+    texto: 'Prevalece el Excel: tras las compras y las salidas, las existencias se igualan a las de la hoja con un movimiento de ajuste, que queda registrado.',
   },
   sin_descontar: {
-    titulo: 'Apuntado sin descontar',
+    titulo: 'Registrado sin descontar',
     tono: 'igual',
-    texto: 'Lleva un 0 delante en «Material Usado»: material reciclado, de garantía o de stock antiguo. Se guarda en el parte y no sale del almacén.',
+    texto: 'Lleva un 0 delante en «Material Usado»: material reciclado, en garantía o de stock antiguo. Se guarda en el parte y no se descuenta del almacén.',
   },
   historico: {
     titulo: 'Anteriores al recuento',
     tono: 'igual',
-    texto: 'Partes de antes de que la aplicación llevara el almacén (1 de agosto de 2026). El material queda apuntado en el parte y no descuenta nada: esos meses de la bolsa son del libro.',
+    texto: 'Partes anteriores al 1 de agosto de 2026, cuando la aplicación empezó a gestionar el almacén. El material queda registrado en el parte y no descuenta nada: esos meses los lleva el libro.',
   },
   sin_articulo: {
     titulo: 'No se descuenta: artículo desconocido',
     tono: 'decidir',
-    texto: 'El catálogo del almacén no reconoce el nombre. Se guarda el texto en el parte y no sale nada del almacén. Añade el alias en el catálogo y vuelve a subir el libro.',
+    texto: 'El catálogo del almacén no reconoce el nombre. El texto se guarda en el parte y no se descuenta nada. Añade el alias en el catálogo y vuelve a subir el libro.',
   },
   no_entra: {
     titulo: 'No entra',
     tono: 'decidir',
-    texto: 'La hoja dice menos compras que la aplicación. Una compra no se deshace desde una celda: va a la bandeja para que alguien mire cuál sobra.',
+    texto: 'La hoja indica menos compras que la aplicación. Una compra no se anula desde una celda: pasa a la bandeja de choques para revisarla.',
   },
 }
 
@@ -1112,12 +1116,11 @@ function Almacen({ movimientos }: { movimientos: MovimientoPrevisto[] }): React.
     <div className="card mt-4 p-4">
       <p className="eyebrow">Almacén</p>
       {grupos.length === 0 ? (
-        <p className="mt-1 text-sm text-muted">El almacén no se toca en esta pasada.</p>
+        <p className="mt-1 text-sm text-muted">Esta sincronización no modifica el almacén.</p>
       ) : (
         <>
           <p className="mt-1 text-sm text-muted">
-            Lo que el almacén va a apuntar al sincronizar, calculado como lo calcula la base: solo
-            las diferencias.
+            Movimientos que se registrarán en el almacén al sincronizar. Solo las diferencias.
           </p>
           <div className="mt-3 space-y-4">
             {grupos.map(({ tipo, lista }) => {
@@ -1179,7 +1182,7 @@ function PorHoja({ plan }: { plan: Plan }): React.ReactElement {
           <Grupo
             tono="excel"
             titulo={`Al Excel (${alExcel})`}
-            explicacion="Lo que la aplicación escribe en esta hoja. Nada de esto toca la base."
+            explicacion="Lo que la aplicación escribe en esta hoja. No modifica la base de datos."
           >
             {plan.haciaElExcel.length > 0 && (
               <Subgrupo titulo={`Celdas (${plan.haciaElExcel.length})`}>
@@ -1219,7 +1222,7 @@ function PorHoja({ plan }: { plan: Plan }): React.ReactElement {
           <Grupo
             tono="app"
             titulo={`A la aplicación (${aLaApp})`}
-            explicacion="Lo que se corrigió en la hoja y entra en la base. Queda anotado, celda a celda, como corrección hecha desde el Excel."
+            explicacion="Correcciones hechas en la hoja que entran en la base de datos. Cada celda queda registrada como corrección desde el Excel."
           >
             {plan.haciaLaBase.length > 0 && (
               <Subgrupo titulo={`Celdas (${plan.haciaLaBase.length})`}>
@@ -1238,8 +1241,8 @@ function PorHoja({ plan }: { plan: Plan }): React.ReactElement {
             {plan.altas.length > 0 && (
               <Subgrupo titulo={`Filas del libro que entran como nuevas (${plan.altas.length})`}>
                 <p className="mb-2 text-xs text-muted">
-                  Estaban en el libro y la aplicación no las tenía. A un parte le pone número la base,
-                  y el número vuelve a su fila.
+                  Están en el libro y no en la aplicación. A cada parte nuevo se le asigna un
+                  número, que se escribe en su fila.
                 </p>
                 <Tabla
                   cabeceras={['Fila', 'Qué', 'Detalle']}
@@ -1254,7 +1257,7 @@ function PorHoja({ plan }: { plan: Plan }): React.ReactElement {
           <Grupo
             tono="decidir"
             titulo={`Hay que decidir (${decidir})`}
-            explicacion="No se toca ninguno de los dos lados hasta que alguien decida."
+            explicacion="No se modifica ninguno de los dos lados hasta que se decida."
           >
             {plan.dudas.length > 0 && (
               <p className="text-sm">
@@ -1265,8 +1268,8 @@ function PorHoja({ plan }: { plan: Plan }): React.ReactElement {
             {plan.conflictos.length > 0 && (
               <Subgrupo titulo={`Choques (${plan.conflictos.length})`}>
                 <p className="mb-2 text-xs text-muted">
-                  Los dos lados cambiaron desde la última sincronización, y a cosas distintas. Elige
-                  arriba quién manda o resuélvelos a mano en uno de los dos sitios.
+                  Los dos lados cambiaron desde la última sincronización, con valores distintos.
+                  Elige arriba qué prevalece, o corrígelos a mano en uno de los dos.
                 </p>
                 <Tabla
                   cabeceras={['Celda', 'De qué', 'Columna', 'Dice la aplicación', 'Dice la hoja']}
@@ -1283,8 +1286,8 @@ function PorHoja({ plan }: { plan: Plan }): React.ReactElement {
             {plan.cuarentena.length > 0 && (
               <Subgrupo titulo={`No se pueden leer (${plan.cuarentena.length})`}>
                 <p className="mb-2 text-xs text-muted">
-                  Ni entran en la base ni se pisan en la hoja. Un cero inventado en la columna de
-                  lámparas mandaría a alguien a un aula que está perfectamente.
+                  No entran en la base de datos ni se sobrescriben en la hoja: un valor supuesto
+                  podría generar un aviso falso sobre un aula que está bien.
                 </p>
                 <Tabla
                   cabeceras={['Celda', 'De qué', 'Columna', 'Dice', 'Por qué']}
@@ -1305,7 +1308,7 @@ function PorHoja({ plan }: { plan: Plan }): React.ReactElement {
           <Grupo
             tono="igual"
             titulo={`Se deja como está${igual > 0 ? ` (${igual})` : ''}`}
-            explicacion="Filas que no se han podido emparejar con nada de la aplicación, y lo que la pasada decide por su cuenta. Nada de esto cambia."
+            explicacion="Filas sin correspondencia en la aplicación y avisos de la sincronización. No se modifican."
           >
             {plan.sinCruzar.length > 0 && (
               <Subgrupo titulo={`Filas sin cruzar (${plan.sinCruzar.length})`}>
@@ -1318,7 +1321,7 @@ function PorHoja({ plan }: { plan: Plan }): React.ReactElement {
             {plan.avisos.length > 0 && (
               <details className="text-sm">
                 <summary className="cursor-pointer text-xs font-semibold text-muted">
-                  Avisos ({plan.avisos.length}): lo que la pasada hace o cuenta por su cuenta
+                  Avisos ({plan.avisos.length})
                 </summary>
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
                   {plan.avisos.map((a, i) => (
@@ -1477,10 +1480,9 @@ function ElUltimoLibro({
       </h2>
       <p className="mt-1 text-sm text-muted">
         {estado.que === 'hay otro mas nuevo'
-          ? 'Guardado en este aparato, pero no es el último.'
-          : 'Guardado en este aparato. Súbelo a SharePoint sustituyendo el original.'}{' '}
-        Se queda aquí siempre: es la copia de los datos a mano, y solo la sustituye la
-        sincronización siguiente.
+          ? 'Guardado en este dispositivo, pero no es el último.'
+          : 'Guardado en este dispositivo. Súbelo a SharePoint sustituyendo el original.'}{' '}
+        Se conserva hasta la siguiente sincronización.
       </p>
       <p className="mt-1 text-xs text-muted">{guardado.resumen}</p>
 
@@ -1489,15 +1491,15 @@ function ElUltimoLibro({
           {frase.texto}
           {frase.viejo &&
             !mandaElExcel &&
-            ' «Hacer el libro de hoy» lo lee contra la aplicación de ahora, lo aplica y lo escribe: luego se baja.'}
+            ' «Hacer el libro de hoy» lo actualiza con los datos actuales de la aplicación y lo deja listo para descargar.'}
         </p>
       )}
 
       {mandaElExcel && (
         <p className="mt-2 rounded-ctl bg-warn-tint p-2 text-sm text-warn">
-          Has elegido «Manda el Excel». Esta copia salió de la aplicación y no trae nada del Excel que
-          pueda mandar: sube el libro de SharePoint de nuevo, abajo en «2 · El libro». El libro de hoy
-          desde esta copia se hace siempre con «Manda la aplicación».
+          Has elegido «Prevalece el Excel». Esta copia salió de la aplicación y no contiene cambios
+          del Excel: sube de nuevo el libro de SharePoint, más abajo, en «2 · El libro». El libro de
+          hoy a partir de esta copia se hace siempre con «Prevalece la aplicación».
         </p>
       )}
 
@@ -1505,15 +1507,15 @@ function ElUltimoLibro({
         <p className="mt-2 rounded-ctl bg-warn-tint p-2 text-sm text-warn">
           Después de éste ha habido otra sincronización
           {estado.cuando ? ` (${fechaCorta(estado.cuando)} a las ${horaCorta(estado.cuando)})` : ''}
-          , probablemente desde otro aparato. Subir éste devolvería SharePoint a la foto de antes:
-          pide el suyo a quien la hizo, o vuelve a sincronizar tú.
+          , probablemente desde otro dispositivo. Subir este libro devolvería SharePoint a un
+          estado anterior: pide el libro a quien la hizo, o vuelve a sincronizar.
         </p>
       )}
 
       {estado.que === 'no se sabe' && (
         <p className="mt-2 rounded-ctl bg-warn-tint p-2 text-sm text-warn">
-          No se ha podido comprobar con el servidor si éste sigue siendo el último libro. Si alguien
-          ha sincronizado después que tú, subir éste devolvería SharePoint a la foto de antes.
+          No se ha podido comprobar con el servidor si este sigue siendo el último libro. Si alguien
+          ha sincronizado después, subirlo devolvería SharePoint a un estado anterior.
         </p>
       )}
 
@@ -1538,7 +1540,7 @@ function ElUltimoLibro({
             className={`key ${viejo ? 'key-accent h-11 px-4' : 'key-quiet min-h-11 px-3 text-sm'}`}
             disabled={disabled}
             onClick={onHacerHoy}
-            title="Lee esta misma copia contra la aplicación de ahora —manda la aplicación—, aplica y escribe el libro"
+            title="Actualiza esta copia con los datos actuales de la aplicación —prevalece la aplicación— y genera el libro"
           >
             {haciendoHoy
               ? 'Haciendo el libro de hoy…'
@@ -1550,14 +1552,14 @@ function ElUltimoLibro({
       </div>
       {!mandaElExcel && !haciendoHoy && (
         <p className="mt-1 text-xs text-muted">
-          El libro de hoy se hace con «Manda la aplicación», se haya elegido lo que se haya elegido
-          arriba: esta copia salió de la aplicación y no tiene nada del Excel que pueda mandar.
+          El libro de hoy se hace siempre con «Prevalece la aplicación», sea cual sea la opción
+          elegida arriba: esta copia salió de la aplicación y no contiene cambios del Excel.
         </p>
       )}
       {haciendoHoy && (
         <p role="status" className="mt-2 text-xs text-muted">
-          Se lee la copia contra la aplicación de ahora, se aplica y se escribe el libro. Con poca
-          cobertura puede tardar un minuto. Cuando esté, aparece abajo con su botón de descarga.
+          Actualizando el libro con los datos de la aplicación. Con poca cobertura puede tardar un
+          minuto. Al terminar aparecerá más abajo, con su botón de descarga.
         </p>
       )}
       <p className="mt-2 text-xs text-muted">{guardado.nombre}</p>
@@ -1595,10 +1597,11 @@ function Entrega({
       </h2>
       <p className="mt-1 text-sm text-muted">
         {libro.sincronizado
-          ? `Hecho hoy a las ${horaCorta(libro.hecho)} con todo lo que la aplicación sabe. Súbelo a SharePoint sustituyendo el original.`
-          : 'Es cómo quedaría el libro. No ha tocado la base, y no es el que hay que subir a SharePoint: para eso, sincroniza.'}
+          ? `Generado hoy a las ${horaCorta(libro.hecho)} con los datos actuales de la aplicación. Súbelo a SharePoint sustituyendo el original.`
+          : 'Muestra cómo quedaría el libro. No ha modificado la base de datos y no es el fichero que se sube a SharePoint: para eso, sincroniza.'}
       </p>
       <button
+        aria-busy={entregando}
         type="button"
         className="key key-accent mt-3 h-11 px-4"
         disabled={entregando}
@@ -1614,7 +1617,7 @@ function Entrega({
             : `Descargad${libro.sincronizado ? 'o' : 'a'}.`}{' '}
           {libro.sincronizado
             ? 'Súbelo a SharePoint sustituyendo el original.'
-            : 'Si te convence, pulsa «Sincronizar» y baja el libro de verdad.'}
+            : 'Si es correcta, pulsa «Sincronizar» y descarga el libro definitivo.'}
         </p>
       )}
     </div>
@@ -1626,13 +1629,16 @@ function Bloqueada({ planes }: { planes: Plan[] }): React.ReactElement {
   return (
     <div className="card mt-4 border-crit p-4">
       <h2 className="text-sm font-semibold text-crit">
-        Una hoja no tiene la forma que la aplicación espera
+        Una hoja no tiene la estructura esperada
       </h2>
       <p className="mt-2 text-sm text-muted">
-        La pasada no empieza. Una columna insertada mueve todas las de su derecha, y escribir sin
-        comprobarlo pondría cientos de números de serie en la columna de al lado sin que saltara
-        nada. Corrige la cabecera en el libro o avisa de que la hoja ha cambiado.
+        La sincronización no se inicia. Corrige la cabecera en el libro, o avisa de que la hoja ha
+        cambiado.
       </p>
+      <MasInformacion>
+        Una columna insertada desplaza todas las que tiene a su derecha. Escribir sin comprobarlo
+        pondría cientos de números de serie en la columna contigua, sin ningún aviso de error.
+      </MasInformacion>
       <Tabla
         cabeceras={['Hoja', 'Columna', 'Debería decir', 'Dice']}
         filas={fuera.map((f) => [f.hoja, f.letra, f.esperada, f.encontrada || '(vacía)'])}
@@ -1752,7 +1758,7 @@ function loQueEntro(r: Aplicado): string {
       ? `${nuevas} filas nuevas del libro han entrado en la aplicación${partes > 0 ? `; los ${partes === 1 ? 'parte lleva' : `${partes} partes llevan`} ya su número en el libro` : ''}.`
       : '',
     aulas > 0
-      ? `Y se ${aulas === 1 ? 'ha creado 1 aula nueva' : `han creado ${aulas} aulas nuevas`}: sus filas cruzarán solas en la pasada siguiente.`
+      ? `Y se ${aulas === 1 ? 'ha creado 1 aula nueva' : `han creado ${aulas} aulas nuevas`}: sus filas se enlazarán automáticamente en la siguiente sincronización.`
       : '',
   ]
     .filter(Boolean)
@@ -1761,7 +1767,7 @@ function loQueEntro(r: Aplicado): string {
 
 /** Por qué no se lee la base con cosas de este aparato todavía en la cola. */
 function mensajeDeCola(n: number): string {
-  return `Este aparato tiene ${n} ${n === 1 ? 'cambio' : 'cambios'} sin subir al servidor y no se han podido subir ahora. El libro se hace con lo que el servidor sabe, así que saldría sin ${n === 1 ? 'él' : 'ellos'}: espera a tener cobertura, comprueba la barra de sincronización de arriba y vuelve a intentarlo.`
+  return `Este dispositivo tiene ${n} ${n === 1 ? 'cambio' : 'cambios'} sin subir al servidor y no se han podido subir ahora. El libro se hace con lo que el servidor sabe, así que saldría sin ${n === 1 ? 'él' : 'ellos'}: espera a tener cobertura, comprueba la barra de sincronización de arriba y vuelve a intentarlo.`
 }
 
 /** La copia guardada, como el fichero que se habría elegido con el selector. */

@@ -631,6 +631,7 @@ export function ReportsPage(): React.ReactElement {
 
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <button
+            aria-busy={generar.isPending}
             type="button"
             disabled={impedimento !== null || generar.isPending}
             onClick={() => generar.mutate()}

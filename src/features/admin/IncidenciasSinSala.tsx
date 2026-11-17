@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
@@ -7,6 +7,8 @@ import { displayRoomCode } from '@/domain/normalize'
 import { fechaCorta } from '@/domain/fechas'
 import { Cargando, EstadoVacio, FalloDeCarga, Nota, Seccion, mensajeDe } from './Seccion'
 import { useRefrescarPendientes } from './pendientes'
+import { proponerSala } from './propuesta'
+import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
 /**
  * Las incidencias importadas que quedaron sin sala, y su camino de vuelta.
@@ -21,6 +23,10 @@ import { useRefrescarPendientes } from './pendientes'
  * Agrupadas por el texto del aula: las 118 son unas veinte aulas escritas de
  * formas distintas, y «0.1 BC» aparece doce veces. Asignar el grupo entero de
  * una vez es doce decisiones que son la misma.
+ *
+ * Y cuando el texto ya dice qué sala es —«1.7 H», con un edificio y una sala
+ * que el maestro conoce—, el grupo llega con los dos desplegables puestos y
+ * solo queda comprobar y pulsar. Qué se propone y qué no, en `propuesta.ts`.
  */
 
 interface SinSala {
@@ -36,6 +42,8 @@ interface SinSala {
 interface SalaElegible {
   id: string
   buildingId: string
+  /** El código tal cual, para casarlo con el texto del Excel. */
+  codigo: string
   etiqueta: string
 }
 
@@ -54,8 +62,17 @@ function Grupo({
   ocupado: boolean
   onAsignar: (roomId: string) => void
 }): React.ReactElement {
-  const [buildingId, setBuildingId] = useState('')
-  const [roomId, setRoomId] = useState('')
+  /*
+   * Lo elegido a mano, o `null` mientras nadie haya tocado los desplegables: en
+   * ese caso manda la propuesta. No se copia la propuesta al estado porque el
+   * maestro llega del espejo DESPUÉS de pintar la lista, y un estado inicial
+   * calculado sin salas se quedaría vacío para siempre.
+   */
+  const [eleccion, setEleccion] = useState<{ buildingId: string; roomId: string } | null>(null)
+  const propuesta = useMemo(() => proponerSala(aula, salas, edificios), [aula, salas, edificios])
+  const buildingId = eleccion ? eleccion.buildingId : (propuesta?.buildingId ?? '')
+  const roomId = eleccion ? eleccion.roomId : (propuesta?.roomId ?? '')
+  const propuestaALaVista = eleccion === null && propuesta !== null
 
   const delEdificio = salas.filter((s) => s.buildingId === buildingId)
 
@@ -85,15 +102,25 @@ function Grupo({
         {filas.length > 5 && <li className="py-1.5 text-xs text-muted">y {filas.length - 5} más.</li>}
       </ul>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      {/* Que es una propuesta se dice con palabras: dos desplegables que
+          aparecen rellenos sin que nadie los haya tocado, al lado de «Asignar
+          las 12», se toman por un hecho. */}
+      {propuestaALaVista && (
+        <p className="mt-3 text-xs text-muted">
+          {propuesta.roomId
+            ? 'Sala propuesta por el texto del Excel. Compruébala antes de asignar.'
+            : 'Edificio propuesto por el texto del Excel. Falta elegir la sala.'}
+        </p>
+      )}
+
+      {/* En un teléfono, los dos desplegables a medias y el botón debajo, a
+          todo el ancho; con sitio, los tres en fila. */}
+      <div className={`grid grid-cols-2 gap-2 sm:flex sm:items-center ${propuestaALaVista ? 'mt-1.5' : 'mt-3'}`}>
         <select
           value={buildingId}
-          onChange={(e) => {
-            setBuildingId(e.target.value)
-            setRoomId('')
-          }}
+          onChange={(e) => setEleccion({ buildingId: e.target.value, roomId: '' })}
           aria-label="Edificio de la sala"
-          className="h-11 rounded-ctl border border-line bg-surface px-2 text-base"
+          className="h-11 w-full min-w-0 rounded-ctl border border-line bg-surface px-2 text-base sm:w-auto"
         >
           <option value="">Edificio…</option>
           {edificios.map((b) => (
@@ -105,10 +132,10 @@ function Grupo({
 
         <select
           value={roomId}
-          onChange={(e) => setRoomId(e.target.value)}
+          onChange={(e) => setEleccion({ buildingId, roomId: e.target.value })}
           disabled={!buildingId}
           aria-label="Sala que le corresponde"
-          className="h-11 rounded-ctl border border-line bg-surface px-2 text-base disabled:opacity-40"
+          className="h-11 w-full min-w-0 rounded-ctl border border-line bg-surface px-2 text-base disabled:opacity-40 sm:w-auto"
         >
           <option value="">{buildingId ? 'Sala…' : '—'}</option>
           {delEdificio.map((s) => (
@@ -122,7 +149,7 @@ function Grupo({
           type="button"
           disabled={!roomId || ocupado}
           onClick={() => onAsignar(roomId)}
-          className="key key-accent min-h-11 px-3 text-sm"
+          className="key key-accent col-span-2 min-h-11 px-3 text-sm"
         >
           {filas.length === 1 ? 'Asignar' : `Asignar las ${filas.length}`}
         </button>
@@ -150,13 +177,14 @@ export function IncidenciasSinSala(): React.ReactElement {
     const [rooms, zones, buildings] = await Promise.all([
       db.rooms.toArray(),
       db.zones.toArray(),
-      db.buildings.orderBy('sort_order').toArray(),
+      db.buildings.toArray().then(ordenarEdificios),
     ])
     const zonaEdificio = new Map(zones.map((z) => [z.id, z.building_id]))
     const salas: SalaElegible[] = rooms
       .map((r) => ({
         id: r.id,
         buildingId: zonaEdificio.get(r.zone_id) ?? '',
+        codigo: r.code,
         etiqueta: `${displayRoomCode(r.code)}${r.name && r.name !== r.code ? ` — ${r.name}` : ''}`,
       }))
       .sort((a, b) => a.etiqueta.localeCompare(b.etiqueta, 'es', { numeric: true }))
@@ -205,7 +233,8 @@ export function IncidenciasSinSala(): React.ReactElement {
     <Seccion
       id="sec-sin-sala"
       titulo="Incidencias sin sala"
-      texto="El histórico las trajo con aulas que el maestro no conoce, y se guardaron sin sala en vez de inventarles una. Sin su sala no salen en ninguna ficha ni cuentan en ningún edificio. Asignarla las devuelve a todas las vistas, y el texto original queda de alias para que la próxima importación acierte sola."
+      texto="Incidencias importadas cuya aula no se pudo identificar."
+      detalle="Se guardaron sin sala para no asignarles una incorrecta. Mientras no la tengan, no aparecen en ninguna ficha ni cuentan en ningún edificio. Al asignarla vuelven a todas las vistas, y el texto original se guarda como alias para que la próxima importación lo reconozca. Si el texto ya indica un edificio y una sala conocidos, se proponen: compruébalos antes de asignar."
       pendientes={filas?.length ?? 0}
     >
       {isPending && <Cargando texto="Buscando incidencias sin sala…" />}

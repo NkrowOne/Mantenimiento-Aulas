@@ -277,6 +277,7 @@ export function EstadoIA(): React.ReactElement {
 
           <div className="mt-4 flex flex-wrap gap-2">
             <button
+              aria-busy={guardar.isPending}
               type="button"
               disabled={guardar.isPending}
               onClick={() => guardar.mutate()}
@@ -305,6 +306,7 @@ export function EstadoIA(): React.ReactElement {
             </button>
             {estado?.clave_guardada && (
               <button
+                aria-busy={quitar.isPending}
                 type="button"
                 disabled={quitar.isPending}
                 onClick={() => quitar.mutate()}

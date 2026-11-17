@@ -47,7 +47,7 @@ export function RecuperarCopia(): React.ReactElement {
             `Subidos ${subido.subidos}.` +
             (subido.pendientes > 0 ? ` Quedan ${subido.pendientes} esperando.` : '') +
             (subido.rechazados > 0
-              ? ` ${subido.rechazados} rechazados por el servidor: míralos en la lámpara de arriba.`
+              ? ` ${subido.rechazados} rechazados por el servidor: revísalos en el indicador de sincronización.`
               : '') +
             (trae.entradas + trae.fotos === 0 ? ' La copia venía vacía.' : ''),
         )
@@ -67,7 +67,8 @@ export function RecuperarCopia(): React.ReactElement {
     <Seccion
       id="sec-recuperar-copia"
       titulo="Recuperar trabajo de un dispositivo"
-      texto="Para cuando un iPad no consigue subir su cola. El técnico pulsa «Guardar copia de lo pendiente» en la lámpara de sincronización y manda el fichero; aquí se vuelve a encolar y se sube con esta sesión. Importar dos veces la misma copia no duplica nada."
+      texto="Sube los cambios de un dispositivo que no consigue sincronizar."
+      detalle="En ese dispositivo, el técnico pulsa «Guardar copia de lo pendiente» en el indicador de sincronización y envía el fichero. Aquí se vuelve a poner en cola y se sube con esta sesión. Importar dos veces la misma copia no duplica nada."
     >
       <input
         ref={input}
@@ -81,8 +82,9 @@ export function RecuperarCopia(): React.ReactElement {
       />
 
       <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
-        <p className="text-sm text-muted">Un fichero <span className="font-mono">.json</span> de la lámpara de sincronización.</p>
+        <p className="text-sm text-muted">Un fichero <span className="font-mono">.json</span> del indicador de sincronización.</p>
         <button
+          aria-busy={trabajando}
           type="button"
           disabled={trabajando}
           onClick={() => input.current?.click()}

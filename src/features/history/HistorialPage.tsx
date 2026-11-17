@@ -19,6 +19,8 @@ import {
 } from '@/features/reports/informe/espera'
 import { LineaTiempo } from './LineaTiempo'
 import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
+import { salasQueCasan, type SalaBuscable } from '@/features/incidents/busqueda'
+import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
 /**
  * Historial.
@@ -111,7 +113,7 @@ export function HistorialPage(): React.ReactElement {
   const [texto, setTexto] = useEstadoDeSesion('historial.texto', '')
   const [filtros, setFiltros] = useState(false)
 
-  const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [], [])
+  const buildings = useLiveQuery(() => db.buildings.toArray().then(ordenarEdificios), [], [])
 
   const salas = useLiveQuery(async () => {
     if (!buildingId) return []
@@ -120,6 +122,33 @@ export function HistorialPage(): React.ReactElement {
     const rooms = await db.rooms.filter((r) => zoneIds.has(r.zone_id)).toArray()
     return rooms.sort((a, b) => a.code.localeCompare(b.code, 'es', { numeric: true }))
   }, [buildingId], [])
+
+  /*
+   * Las salas que casan con lo tecleado, para preguntar también por `room_id`.
+   *
+   * El buscador promete «aula» y solo miraba `room_code`, que es el código a
+   * secas: «1.7» encontraba, pero «H 1.7» y «1.7 H» —como se dice en voz alta y
+   * como lo escribe el histórico— no encontraban nada, y «H» traía cada fila
+   * con una hache en el título en vez del edificio H. Es la misma regla que ya
+   * usa el buscador de Incidencias (`busqueda.ts`), para que las dos pantallas
+   * entiendan lo mismo.
+   */
+  const buscables = useLiveQuery(async (): Promise<SalaBuscable[]> => {
+    const [rooms, zones, edificios] = await Promise.all([
+      db.rooms.toArray(),
+      db.zones.toArray(),
+      db.buildings.toArray(),
+    ])
+    const edificioDeZona = new Map(zones.map((z) => [z.id, z.building_id]))
+    const codigoDe = new Map(edificios.map((b) => [b.id, b.code]))
+    return rooms.map((r) => ({
+      id: r.id,
+      edificio: codigoDe.get(edificioDeZona.get(r.zone_id) ?? '') ?? '',
+      codigo: r.code,
+      nombre: r.name,
+    }))
+  }, [], [])
+  const idsDeSala = useMemo(() => salasQueCasan(buscables, texto), [buscables, texto])
 
   /** Lo que hay filtrado, en palabras, para el botón que despliega los filtros. */
   const filtrosActivos = [
@@ -138,7 +167,7 @@ export function HistorialPage(): React.ReactElement {
   const hastaEfectivo = hasta ? new Date(`${hasta}T23:59:59`).toISOString() : null
 
   const consulta = useInfiniteQuery({
-    queryKey: ['historial', familia, buildingId, roomId, desdeEfectivo, hastaEfectivo, texto],
+    queryKey: ['historial', familia, buildingId, roomId, desdeEfectivo, hastaEfectivo, texto, idsDeSala],
     initialPageParam: 0,
     getNextPageParam: (ultima: EventoConSala[], todas) =>
       ultima.length < PAGINA ? undefined : todas.length * PAGINA,
@@ -174,7 +203,12 @@ export function HistorialPage(): React.ReactElement {
         // valores. Sin esto, escribir una coma en el buscador no es un ataque
         // pero sí una consulta rota que devuelve un error incomprensible.
         const t = texto.trim().replace(/[,()*"\\]/g, ' ')
-        q = q.or(`title.ilike.*${t}*,detail.ilike.*${t}*,room_code.ilike.*${t}*,who.ilike.*${t}*`)
+        // Y las salas que casan con lo tecleado: «H 1.7», o el edificio «H»
+        // entero. Son ids del espejo, sin nada que limpiar.
+        const porSala = idsDeSala.length > 0 ? `,room_id.in.(${idsDeSala.join(',')})` : ''
+        q = q.or(
+          `title.ilike.*${t}*,detail.ilike.*${t}*,room_code.ilike.*${t}*,who.ilike.*${t}*${porSala}`,
+        )
       }
 
       const { data, error } = await q
@@ -229,7 +263,13 @@ export function HistorialPage(): React.ReactElement {
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <h1 className="text-2xl font-bold tracking-tight">Historial</h1>
         {activos > 0 && (
-          <button type="button" onClick={limpiar} className="text-sm text-accent underline-offset-4 hover:underline">
+          /* 44 px de alto aunque sea un enlace de una línea: medía 20, y en un
+             teléfono es lo único que saca de una búsqueda sin resultados. */
+          <button
+            type="button"
+            onClick={limpiar}
+            className="-my-2 inline-flex min-h-11 items-center text-sm text-accent underline-offset-4 hover:underline"
+          >
             Quitar filtros
           </button>
         )}
@@ -464,6 +504,7 @@ export function HistorialPage(): React.ReactElement {
 
       {consulta.hasNextPage && (
         <button
+          aria-busy={consulta.isFetchingNextPage}
           type="button"
           onClick={() => void consulta.fetchNextPage()}
           disabled={consulta.isFetchingNextPage}

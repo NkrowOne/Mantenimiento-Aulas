@@ -61,6 +61,8 @@ sesión— al pie de ese menú.
 - **Buscar con el edificio delante.** En el buscador del inicio puedes teclear
   el aviso tal como llega: `h 1.12`, `crai sala 3`. Pulsa «Ir» en el teclado y
   se abre el primer resultado. Al volver del aula, la búsqueda sigue ahí.
+  El buscador del **Historial** entiende lo mismo: «H 1.7» trae lo de esa aula
+  y «H» a secas, lo del edificio entero.
 - **Volver al sitio.** Al volver de un aula a la lista, la lista está donde la
   dejaste, no arriba del todo. Lo mismo al cambiar de pestaña y volver, y los
   filtros y búsquedas de cada pestaña se conservan mientras la aplicación siga
@@ -593,6 +595,14 @@ aparato y sube igual después de actualizar. Si aparece la barra de «Hay una
 versión nueva», pulsarla la instala ya; «Ahora no» solo la aplaza hasta que
 guardes el iPad. Y en la lámpara de estado tienes **Buscar versión nueva** para
 comprobarlo cuando quieras.
+
+Al pulsar **Actualizar** el botón pasa a decir «Actualizando…» y en unos
+segundos la aplicación se recarga ya con la versión nueva, en el mismo sitio en
+el que estabas. Si dice «Sin conexión con el servidor», no ha cambiado nada:
+busca cobertura y pulsa «Reintentar». Si alguna vez no cambia de versión,
+cierra la aplicación del todo y ábrela otra vez; y si tampoco, haz una captura
+del panel de la lámpara —debajo de la versión dice cómo acabó el último
+intento— y pásala.
 
 **¿Y si pierdo el iPad?**
 Avisa a administración cuanto antes para dar de baja el dispositivo. Si habías

@@ -171,6 +171,7 @@
     *::after {
       animation-duration: 1ms !important;
       animation-iteration-count: 1 !important;
+      animation-delay: 0ms !important;
       transition-property: opacity, color, background-color, border-color, box-shadow !important;
       transition-duration: 120ms !important;
     }
@@ -451,6 +452,27 @@
   }
 
   /* Etiqueta en versalitas: la usan las cabeceras de sección y los eyebrows. */
+  /*
+   * «Más información»: la explicación larga de una sección, plegada.
+   *
+   * El triángulo del navegador se quita —cada uno lo pinta de una forma y en
+   * Safari se descoloca— y se pone un ángulo propio que gira al abrir. La
+   * línea mide 44 px de alto aunque el texto sea pequeño: es un botón.
+   */
+  .mas-informacion > summary {
+    @apply inline-flex min-h-11 cursor-pointer select-none list-none items-center gap-1.5 text-sm font-medium text-accent;
+  }
+  .mas-informacion > summary::-webkit-details-marker {
+    display: none;
+  }
+  .mas-informacion > summary::after {
+    content: '';
+    @apply h-1.5 w-1.5 -translate-y-px rotate-45 border-b-[1.5px] border-r-[1.5px] border-current transition-transform duration-150;
+  }
+  .mas-informacion[open] > summary::after {
+    @apply translate-y-px -rotate-[135deg];
+  }
+
   .eyebrow {
     @apply text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-muted;
   }
@@ -626,6 +648,150 @@
 
 .pantalla {
   animation: entra 160ms var(--ease-out);
+}
+
+/*
+ * La confirmación de algo recién hecho. Entra como una pantalla —sube unos
+ * píxeles mientras aparece— pero un poco más despacio: es la respuesta a un
+ * botón, y tiene que verse llegar para que se entienda que es NUEVA y no algo
+ * que ya estaba ahí.
+ */
+.confirmacion {
+  animation: entra 220ms var(--ease-out);
+}
+
+/*
+ * ── El movimiento que acompaña ───────────────────────────────────────────────
+ *
+ * Todo lo de aquí abajo cumple las mismas tres reglas, que son las que hacen que
+ * una animación ayude en vez de estorbar en una herramienta de trabajo:
+ *
+ *  1. **No hace esperar.** Nada bloquea un toque: lo que entra ya se puede
+ *     pulsar mientras entra, y nada dura más de lo que se tarda en mirarlo.
+ *  2. **Solo `transform` y `opacity`** (y el trazo del anillo). Los pinta el
+ *     compositor sin recalcular la página, así que no le quitan tiempo a lo que
+ *     de verdad se está cargando — que es cuando más se ven.
+ *  3. **Dice algo.** Cada una contesta a una pregunta: ¿esto es nuevo?, ¿está
+ *     trabajando?, ¿cuánto llevo? Ninguna está de adorno.
+ *
+ * Con «reducir movimiento» activado, la regla de arriba (`prefers-reduced-
+ * motion`) las deja en un instante: se ve el resultado, no el viaje.
+ */
+
+/*
+ * Una lista que entra de arriba abajo, fila a fila.
+ *
+ * La lista entera aparecía de golpe al llegar los datos. Con treinta
+ * milisegundos entre fila y fila el ojo la recorre en el orden en que se lee, y
+ * la carga se percibe como algo que se está colocando, no como un parpadeo.
+ * Solo las ocho primeras llevan retraso: de la novena en adelante entran todas
+ * a la vez, porque están fuera de la pantalla y nadie tiene por qué esperarlas.
+ *
+ * `backwards`: mientras espera su turno, la fila está como en el primer
+ * fotograma —invisible—, y no pintada y luego escondida.
+ *
+ * No se pone en las listas que se filtran al teclear: cada letra cambiaría las
+ * filas y la lista entera volvería a bailar.
+ */
+.escalonada > * {
+  animation: entra 240ms var(--ease-out) backwards;
+}
+.escalonada > :nth-child(2) { animation-delay: 30ms; }
+.escalonada > :nth-child(3) { animation-delay: 60ms; }
+.escalonada > :nth-child(4) { animation-delay: 90ms; }
+.escalonada > :nth-child(5) { animation-delay: 120ms; }
+.escalonada > :nth-child(6) { animation-delay: 150ms; }
+.escalonada > :nth-child(7) { animation-delay: 180ms; }
+.escalonada > :nth-child(n + 8) { animation-delay: 210ms; }
+
+/*
+ * El anillo de la ronda se dibuja: de vacío a su porcentaje.
+ *
+ * Es el único número de la pantalla que es un progreso, y un progreso se
+ * entiende mejor viéndolo avanzar que leyendo «57». Setecientos milisegundos y
+ * una sola vez, al montarse.
+ */
+@keyframes anillo {
+  from {
+    stroke-dasharray: 0 100;
+  }
+}
+.anillo-trazo {
+  animation: anillo 700ms var(--ease-out) 120ms backwards;
+}
+
+/*
+ * La marca de «hecho» de una confirmación: llega un poco grande y se asienta,
+ * como un sello. Es lo que hace que el aviso se lea como una respuesta al botón
+ * que se acaba de pulsar.
+ */
+@keyframes sello {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  60% {
+    transform: scale(1.14);
+  }
+}
+.confirmacion svg {
+  animation: sello 320ms var(--ease-out) 80ms backwards;
+}
+
+/* El número de un contador que cambia: un pequeño salto, para que se note que
+   ya no es el de antes. */
+.contador {
+  animation: sello 260ms var(--ease-out);
+}
+
+/* La pastilla de la pestaña que se enciende: crece desde el centro, en vez de
+   aparecer ya hecha. */
+@keyframes pastilla {
+  from {
+    opacity: 0.3;
+    transform: scaleX(0.55);
+  }
+}
+.pastilla-activa {
+  animation: pastilla 220ms var(--ease-out);
+}
+
+/* Lo que se despliega con «Más información» entra como una pantalla pequeña. */
+.mas-informacion[open] > div {
+  animation: entra 180ms var(--ease-out);
+}
+
+/*
+ * Un botón que está trabajando lo dice con una rueda, además de con la palabra.
+ *
+ * «Guardando…» en un botón deshabilitado se parece demasiado a un botón roto:
+ * no se mueve nada. La rueda sale sola en cualquier `.key` con
+ * `aria-busy="true"`, que es además lo que le dice a VoiceOver que espere.
+ * Del color del texto del botón, y medida en `em` para que valga en todos los
+ * tamaños.
+ */
+@keyframes gira {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.key[aria-busy='true']::before {
+  content: '';
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.5em;
+  vertical-align: -0.14em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 9999px;
+  animation: gira 700ms linear infinite;
+}
+
+/* El piloto de sincronización late mientras está enviando: es la única señal de
+   que hay algo en marcha cuando el panel está cerrado. */
+.piloto-activo {
+  animation: latido 1.1s var(--ease-in-out) infinite;
 }
 
 /* El fondo oscuro de una hoja, que hasta ahora aparecía de golpe. */

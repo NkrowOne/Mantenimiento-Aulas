@@ -7,6 +7,7 @@ import { pullMaster } from '@/sync/pull'
 import { faltantesPorDefecto } from '@/domain/defaults'
 import type { AssetDefault, AssetType, Building } from '@/domain/types'
 import { Nota, Seccion, mensajeDe } from './Seccion'
+import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
 /**
  * El equipamiento que una sala lleva por defecto.
@@ -83,7 +84,7 @@ export function EquipoPorDefecto(): React.ReactElement {
 
   /* Los edificios salen del espejo local: ya están descargados y así la lista
      aparece llena antes de que el servidor conteste. */
-  const edificios = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [], [])
+  const edificios = useLiveQuery(() => db.buildings.toArray().then(ordenarEdificios), [], [])
 
   /*
    * Qué crearía aplicarlo, contado aquí.
@@ -184,7 +185,8 @@ export function EquipoPorDefecto(): React.ReactElement {
     <Seccion
       id="sec-defecto"
       titulo="Equipamiento por defecto"
-      texto="Lo que se le pone a una sala nueva nada más crearla. Lo declarado para un edificio manda sobre lo global. Aplicarlo a las salas que ya existen es aparte y dice cuántos equipos crearía antes de hacerlo."
+      texto="El equipamiento que recibe una sala nueva al crearla."
+      detalle="Lo definido para un edificio tiene prioridad sobre lo general. Aplicarlo a las salas que ya existen es una acción aparte, y antes de hacerlo indica cuántos equipos crearía."
     >
       <ul className="divide-y divide-line-soft rounded-card border border-line bg-surface">
         {ordenados.map((d) => (
