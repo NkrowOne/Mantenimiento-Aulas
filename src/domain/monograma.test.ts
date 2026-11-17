@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { monogramaDeEdificio } from './monograma'
 
-/** Los edificios del campus, con el nombre con que están dados de alta. */
+/** Una muestra del campus, con nombres como los que tienen dados de alta. */
 const CAMPUS: Array<[string, string]> = [
   ['AYD1', 'AYD1'], ['AYD2', 'AYD2'], ['C', 'ED. CENTRAL'], ['CD', 'CENTRO DEPORTIVO'],
   ['CM', 'COLEGIO MAYOR'], ['COM', 'COMUNICACION'], ['CRAI', 'EDIFICIO CRAI'], ['CSC', 'SIMULACION CLINICA'],
@@ -12,7 +12,7 @@ const CAMPUS: Array<[string, string]> = [
 
 const firma = (code: string, name: string): string => {
   const m = monogramaDeEdificio(code, name)
-  return [m.letra, m.composicion, m.fondo, m.tinta].join('/')
+  return [m.letra, m.detalle, m.tinta].join('/')
 }
 
 describe('la chapa de un edificio', () => {
@@ -23,67 +23,45 @@ describe('la chapa de un edificio', () => {
     expect(firma('COM', 'COMUNICACIÓN')).toBe(firma('COM', 'COMUNICACION'))
   })
 
-  it('cambia cuando cambia la sigla o el nombre, y solo entonces', () => {
-    const base = monogramaDeEdificio('H', 'EDIFICIO H')
-    // Buscando entre varios nombres y siglas, alguno tiene que dar otra chapa:
-    // con dos mil combinaciones, que cinco seguidas salgan iguales es un fallo.
-    const otrosNombres = ['HOSPITAL', 'EDIFICIO HACHE', 'HUMANIDADES', 'H2', 'AULARIO H']
-    expect(otrosNombres.some((n) => firma('H', n) !== [base.letra, base.composicion, base.fondo, base.tinta].join('/'))).toBe(true)
-    expect(monogramaDeEdificio('HX', 'EDIFICIO H').lineas).toEqual(['HX'])
+  it('cambia cuando cambia la sigla o el nombre', () => {
+    // Con veinticuatro combinaciones, que seis nombres distintos den todos la
+    // misma chapa es un fallo del reparto, no una casualidad.
+    const nombres = ['EDIFICIO H', 'HOSPITAL', 'EDIFICIO HACHE', 'HUMANIDADES', 'AULARIO H', 'H2']
+    expect(new Set(nombres.map((n) => firma('H', n))).size).toBeGreaterThan(1)
+    const siglas = ['H', 'HX', 'HA', 'H1', 'HH', 'HZ']
+    expect(new Set(siglas.map((s) => firma(s, 'EDIFICIO H'))).size).toBeGreaterThan(1)
   })
 
-  it('escribe el código entero, sin espacios, y lo apila solo cuando toca', () => {
+  it('escribe el código entero, en mayúsculas y sin espacios', () => {
+    for (const [code, name] of CAMPUS) {
+      expect(monogramaDeEdificio(code, name).texto).toBe(code)
+    }
+    expect(monogramaDeEdificio(' ayd 1 ', '').texto).toBe('AYD1')
+    // Sin sigla no se queda vacía: una chapa en blanco parece un fallo.
+    expect(monogramaDeEdificio('', 'Sin sigla').texto).toBe('–')
+  })
+
+  it('solo usa la letra gruesa, un detalle y dos tintas', () => {
+    // Es el contrato con quien lo mira: nada de contornos, rótulos en vertical
+    // ni cuatro colores. Si alguien amplía el sistema, que sea a sabiendas.
     for (const [code, name] of CAMPUS) {
       const m = monogramaDeEdificio(code, name)
-      expect(m.lineas.join('')).toBe(code)
-      expect(m.lineas.length).toBe(m.composicion === 'apilada' ? 2 : 1)
-    }
-    expect(monogramaDeEdificio('AYD1', 'AYD1').lineas.join('/')).toMatch(/^AYD1$|^AY\/D1$/)
-    expect(monogramaDeEdificio('', 'Sin sigla').lineas).toEqual(['–'])
-  })
-
-  it('nunca propone una combinación que no se pueda leer', () => {
-    // Códigos de todas las medidas, no solo los de hoy: la chapa se genera
-    // también para el edificio que se dé de alta mañana.
-    const codigos = [...CAMPUS.map(([c]) => c), 'A', 'ZZ', 'ABC', 'ABCD', 'ABCDE', 'LAB12', 'X1', 'Ñ', 'BBAA', 'CEFF']
-    for (const code of codigos) {
-      for (const name of ['', 'EDIFICIO', 'OTRO NOMBRE', 'Y OTRO MÁS']) {
-        const m = monogramaDeEdificio(code, name)
-        const largo = code.length
-        // A sangre, solo con una o dos letras.
-        if (m.composicion === 'sangre') expect(largo).toBeLessThanOrEqual(2)
-        // Arrimada a la esquina, hasta tres.
-        if (m.composicion === 'esquina') expect(largo).toBeLessThanOrEqual(3)
-        // Apilada, a partir de cuatro: con tres queda una letra suelta.
-        if (m.composicion === 'apilada') expect(largo).toBeGreaterThanOrEqual(4)
-        // En vertical, nunca una letra sola, ni inclinada.
-        if (m.composicion === 'vertical') {
-          expect(largo).toBeGreaterThanOrEqual(2)
-          expect(m.letra).not.toBe('inclinada')
-        }
-        // Con cinco o más, solo las dos que caben.
-        if (largo >= 5) expect(['apilada', 'centro']).toContain(m.composicion)
-        // El contorno solo con una o dos letras, y la fina nunca a sangre.
-        if (m.letra === 'contorno') expect(largo).toBeLessThanOrEqual(2)
-        if (m.letra === 'fina') expect(m.composicion).not.toBe('sangre')
-        // Y debajo de una letra que apoya en el borde no hay base ni arco.
-        if (m.composicion === 'sangre' || m.composicion === 'esquina') {
-          expect(['base', 'arco']).not.toContain(m.fondo)
-        }
-      }
+      expect(['recta', 'inclinada', 'pesada']).toContain(m.letra)
+      expect(['liso', 'base', 'franja', 'arco']).toContain(m.detalle)
+      expect(['tinte', 'llena']).toContain(m.tinta)
     }
   })
 
-  it('en el campus de hoy no hay dos chapas iguales, y se usa toda la paleta', () => {
+  it('en el campus se reparte: salen las tres letras, los cuatro detalles y las dos tintas', () => {
     const firmas = CAMPUS.map(([c, n]) => firma(c, n))
-    expect(new Set(firmas).size).toBe(CAMPUS.length)
-
-    const usa = (eje: 0 | 1 | 2 | 3): number => new Set(firmas.map((f) => f.split('/')[eje])).size
-    // Con dieciocho edificios tienen que salir casi todas las letras, varias
-    // composiciones y las cuatro tintas: si no, el reparto está torcido.
-    expect(usa(0)).toBeGreaterThanOrEqual(5)
-    expect(usa(1)).toBeGreaterThanOrEqual(4)
-    expect(usa(2)).toBeGreaterThanOrEqual(5)
-    expect(usa(3)).toBe(4)
+    const usa = (eje: 0 | 1 | 2): number => new Set(firmas.map((f) => f.split('/')[eje])).size
+    expect(usa(0)).toBe(3)
+    expect(usa(1)).toBe(4)
+    expect(usa(2)).toBe(2)
+    // Y ninguna combinación se lleva más de tres edificios: con dieciocho en
+    // veinticuatro combinaciones habrá repetidas, pero no un montón iguales.
+    const veces = new Map<string, number>()
+    for (const f of firmas) veces.set(f, (veces.get(f) ?? 0) + 1)
+    expect(Math.max(...veces.values())).toBeLessThanOrEqual(3)
   })
 })
