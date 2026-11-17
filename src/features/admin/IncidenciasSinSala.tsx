@@ -8,6 +8,7 @@ import { fechaCorta } from '@/domain/fechas'
 import { Cargando, EstadoVacio, FalloDeCarga, Nota, Seccion, mensajeDe } from './Seccion'
 import { useRefrescarPendientes } from './pendientes'
 import { proponerSala } from './propuesta'
+import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
 /**
  * Las incidencias importadas que quedaron sin sala, y su camino de vuelta.
@@ -176,7 +177,7 @@ export function IncidenciasSinSala(): React.ReactElement {
     const [rooms, zones, buildings] = await Promise.all([
       db.rooms.toArray(),
       db.zones.toArray(),
-      db.buildings.orderBy('sort_order').toArray(),
+      db.buildings.toArray().then(ordenarEdificios),
     ])
     const zonaEdificio = new Map(zones.map((z) => [z.id, z.building_id]))
     const salas: SalaElegible[] = rooms

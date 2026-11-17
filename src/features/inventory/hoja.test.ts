@@ -146,17 +146,22 @@ describe('agruparPorSala · plantas y salas', () => {
   it('no mezcla las plantas primeras de dos edificios distintos', () => {
     // Las dos llevan el mismo `sort_order`, así que sin ordenar por edificio la
     // hoja iría saltando de un edificio a otro planta por planta.
+    //
+    // Y los edificios van por su código, como en toda la aplicación: el E
+    // delante del H aunque el Excel lo trajera detrás (`building_sort`).
+    const H = { building_id: 'b-h', building_code: 'H', building_sort: 1 }
+    const E = { building_id: 'b-e', building_code: 'E', building_sort: 2 }
     const filas = [
-      enSala('h-1.7', '1.7', PRIMERA, { building_id: 'b-h', building_sort: 1 }),
-      enSala('e-1.1', '1.1', PRIMERA, { building_id: 'b-e', building_sort: 2 }),
-      enSala('h-0.3', '0.3', BAJA, { building_id: 'b-h', building_sort: 1 }),
-      enSala('e-0.1', '0.1', BAJA, { building_id: 'b-e', building_sort: 2 }),
+      enSala('h-1.7', '1.7', PRIMERA, H),
+      enSala('e-1.1', '1.1', PRIMERA, E),
+      enSala('h-0.3', '0.3', BAJA, H),
+      enSala('e-0.1', '0.1', BAJA, E),
     ]
     expect(agruparPorSala(filas).map((g) => g.room_id)).toEqual([
-      'h-0.3',
-      'h-1.7',
       'e-0.1',
       'e-1.1',
+      'h-0.3',
+      'h-1.7',
     ])
   })
 

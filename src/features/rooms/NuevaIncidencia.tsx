@@ -29,6 +29,7 @@ import {
   type Room,
 } from '@/domain/types'
 import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
+import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
 /** Lo que se puede abrir a mano. Una observación se apunta en la revisión. */
 const TIPOS: IncidentKind[] = ['incidencia', 'solicitud']
@@ -51,7 +52,7 @@ export function NuevaIncidencia({ onElegida, onCerrar }: Props): React.ReactElem
   const [buildingId, setBuildingId] = useEstadoDeSesion('nueva-incidencia.edificio', '')
   const [roomId, setRoomId] = useState('')
 
-  const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [], [])
+  const buildings = useLiveQuery(() => db.buildings.toArray().then(ordenarEdificios), [], [])
 
   /*
    * Las salas del edificio, agrupadas por planta y en el orden de la lista de

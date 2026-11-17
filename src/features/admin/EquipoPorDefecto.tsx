@@ -7,6 +7,7 @@ import { pullMaster } from '@/sync/pull'
 import { faltantesPorDefecto } from '@/domain/defaults'
 import type { AssetDefault, AssetType, Building } from '@/domain/types'
 import { Nota, Seccion, mensajeDe } from './Seccion'
+import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
 /**
  * El equipamiento que una sala lleva por defecto.
@@ -83,7 +84,7 @@ export function EquipoPorDefecto(): React.ReactElement {
 
   /* Los edificios salen del espejo local: ya están descargados y así la lista
      aparece llena antes de que el servidor conteste. */
-  const edificios = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [], [])
+  const edificios = useLiveQuery(() => db.buildings.toArray().then(ordenarEdificios), [], [])
 
   /*
    * Qué crearía aplicarlo, contado aquí.

@@ -22,6 +22,7 @@ import { descargaEntera } from '@/sync/paginada'
 import { pullSala } from '@/sync/pull'
 import { displayRoomCode } from '@/domain/normalize'
 import type { EquipoDelRegistro, MovimientoDeEquipo } from '@/domain/fichaDeEquipo'
+import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
 /**
  * Lo que dice un fallo, en palabras de quien lo lee.
@@ -126,7 +127,7 @@ export function useMaestroDeSalas(): { salas: SalaElegible[]; edificios: Edifici
     const [rooms, zones, buildings] = await Promise.all([
       db.rooms.toArray(),
       db.zones.toArray(),
-      db.buildings.orderBy('sort_order').toArray(),
+      db.buildings.toArray().then(ordenarEdificios),
     ])
     const zonaEdificio = new Map(zones.map((z) => [z.id, z.building_id]))
     const salas = rooms

@@ -19,6 +19,7 @@ import {
 } from './FilaDeEdificio'
 import { PapeleraDelMaestro, useEdificiosArchivados } from './PapeleraDelMaestro'
 import { Cargando, FalloDeCarga, Nota, Seccion, mensajeDe } from './Seccion'
+import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
 /**
  * Altas, bajas y nomenclatura de salas y edificios.
@@ -78,9 +79,11 @@ export function MaestroSalas(): React.ReactElement {
         .from('buildings')
         .select('id, code, name, needs_review')
         .eq('active', true)
-        .order('sort_order')
+        .order('code')
       if (error) throw error
-      return (data ?? []) as EdificioDelMaestro[]
+      // Se reordena aquí: el servidor compara con su propia intercalación, y
+      // la lista tiene que salir igual que la del inicio y los desplegables.
+      return ordenarEdificios((data ?? []) as EdificioDelMaestro[])
     },
   })
 

@@ -20,6 +20,7 @@ import {
 import { LineaTiempo } from './LineaTiempo'
 import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
 import { salasQueCasan, type SalaBuscable } from '@/features/incidents/busqueda'
+import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
 /**
  * Historial.
@@ -112,7 +113,7 @@ export function HistorialPage(): React.ReactElement {
   const [texto, setTexto] = useEstadoDeSesion('historial.texto', '')
   const [filtros, setFiltros] = useState(false)
 
-  const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [], [])
+  const buildings = useLiveQuery(() => db.buildings.toArray().then(ordenarEdificios), [], [])
 
   const salas = useLiveQuery(async () => {
     if (!buildingId) return []

@@ -36,6 +36,7 @@ import { BuscadorGlobal } from './BuscadorGlobal'
 import { HojaDeMaestro } from './HojaDeMaestro'
 import { NuevaIncidencia } from './NuevaIncidencia'
 import { averiasPorEdificio, averiasPorSala } from './averias'
+import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
 /* El diagnóstico del servidor va en diferido: solo se abre cuando algo falla,
    nunca con el dedo apoyado, y son trescientas líneas que el arranque de cada
@@ -235,7 +236,7 @@ export function EdificiosPage({
    */
   const [hojaEdificio, setHojaEdificio] = useState<Building | null>(null)
 
-  const buildings = useLiveQuery(() => db.buildings.orderBy('sort_order').toArray(), [])
+  const buildings = useLiveQuery(() => db.buildings.toArray().then(ordenarEdificios), [])
 
   /*
    * Cuántas salas tiene cada edificio y cuántas van con retraso.
