@@ -48,6 +48,8 @@ export function ExportarConVistaPrevia({
   descripcion,
   preparar,
   disabled = false,
+  children,
+  eleccion,
 }: {
   /** Lo que dice la tarjeta: «Exportar el almacén». */
   titulo: string
@@ -55,6 +57,19 @@ export function ExportarConVistaPrevia({
   /** Lee los datos y devuelve las hojas. Si falla, lanza un `Error` que se pueda enseñar tal cual. */
   preparar: () => Promise<Exportacion>
   disabled?: boolean
+  /**
+   * Lo que se elige ANTES de leer los datos —un periodo, qué incluir—. Va entre
+   * la descripción y el botón, y se quita mientras la vista previa está abierta:
+   * lo que se ve es lo que se eligió, y cambiarlo con la vista delante dejaría
+   * en pantalla unas hojas que ya no corresponden. Para cambiar, se cierra.
+   */
+  children?: React.ReactNode
+  /**
+   * Lo elegido, en una cadena. Cuando cambia, se retira el fallo del intento
+   * anterior: «no hay nada en ese periodo» debajo de un periodo que ya es otro
+   * se lee como que tampoco hay nada en este, y todavía no se ha preguntado.
+   */
+  eleccion?: string
 }): React.ReactElement {
   const idTitulo = useId()
   const [cargando, setCargando] = useState(false)
@@ -71,6 +86,8 @@ export function ExportarConVistaPrevia({
       window.removeEventListener('offline', alCambiar)
     }
   }, [])
+
+  useEffect(() => setFallo(null), [eleccion])
 
   // Leer tarda: si la pantalla se cierra mientras tanto, la respuesta no tiene
   // a quién contárselo.
@@ -105,6 +122,8 @@ export function ExportarConVistaPrevia({
         {titulo}
       </h2>
       {descripcion && <p className="mt-1 text-sm text-muted">{descripcion}</p>}
+
+      {!lista && children}
 
       {!lista && (
         <button

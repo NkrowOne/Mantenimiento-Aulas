@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  fechasDelPeriodo,
+  hayAlgoQueExportar,
+  periodoLegible,
+  problemaDeLasOpciones,
+  recortarHistorial,
+  TODO_EL_HISTORIAL,
   hojaDeIncidencias,
   hojaDeIntervenciones,
   hojaDeMaterialUsado,
@@ -196,5 +202,114 @@ describe('el documento', () => {
   it('sin nada que contar, salen las tres hojas con su cabecera y ninguna fila', () => {
     const vacio: DatosDelHistorial = { eventos: [], incidencias: [], incidenciaDeMovimiento: {}, salas: {}, deEdificio: false }
     for (const { hoja } of hojasDelHistorial(vacio)) expect(hoja.filas.length).toBe(1)
+  })
+})
+
+describe('lo que se elige antes de descargar', () => {
+  const HOY = '2026-11-17'
+
+  it('los periodos de un toque acaban hoy y empiezan donde dicen', () => {
+    expect(fechasDelPeriodo('mes', undefined, HOY)).toEqual({ desde: '2026-10-17', hasta: HOY })
+    expect(fechasDelPeriodo('trimestre', undefined, HOY)).toEqual({ desde: '2026-08-17', hasta: HOY })
+    expect(fechasDelPeriodo('doce', undefined, HOY)).toEqual({ desde: '2025-11-17', hasta: HOY })
+    expect(fechasDelPeriodo('anyo', undefined, HOY)).toEqual({ desde: '2026-01-01', hasta: HOY })
+    expect(fechasDelPeriodo('todo', undefined, HOY)).toEqual({ desde: null, hasta: null })
+  })
+
+  it('un mes atrás desde el 31 no se sale del mes', () => {
+    // Del 31 de marzo, un mes atrás es el 28 de febrero, no el 3 de marzo.
+    expect(fechasDelPeriodo('mes', undefined, '2026-03-31').desde).toBe('2026-02-28')
+    expect(fechasDelPeriodo('doce', undefined, '2024-02-29').desde).toBe('2023-02-28')
+  })
+
+  it('con fechas a mano, un extremo vacío es un extremo abierto', () => {
+    expect(fechasDelPeriodo('fechas', { desde: '2026-03-01', hasta: '' }, HOY)).toEqual({ desde: '2026-03-01', hasta: null })
+    expect(fechasDelPeriodo('fechas', { desde: '', hasta: '' }, HOY)).toEqual({ desde: null, hasta: null })
+  })
+
+  it('el periodo se dice con palabras, de qué día a qué día', () => {
+    expect(periodoLegible({ desde: '2026-03-01', hasta: '2026-06-30' })).toBe('Del 01/03/2026 al 30/06/2026')
+    expect(periodoLegible({ desde: '2026-03-01', hasta: null })).toBe('Desde el 01/03/2026')
+    expect(periodoLegible({ desde: null, hasta: '2026-06-30' })).toBe('Hasta el 30/06/2026')
+    expect(periodoLegible({ desde: null, hasta: null })).toBe('Todo el historial')
+  })
+
+  it('no deja descargar sin nada marcado ni con las fechas al revés', () => {
+    expect(problemaDeLasOpciones(TODO_EL_HISTORIAL)).toBeNull()
+    expect(problemaDeLasOpciones({ ...TODO_EL_HISTORIAL, familias: [] })).toMatch(/al menos una/)
+    expect(problemaDeLasOpciones({ ...TODO_EL_HISTORIAL, desde: '2026-06-01', hasta: '2026-03-01' })).toMatch(/posterior/)
+  })
+})
+
+describe('recortar el historial', () => {
+  it('«hasta el 4» incluye todo el día 4, en la hora del campus', () => {
+    // El cierre es del 4 de marzo a las 12:40 de Madrid.
+    const hasta4 = recortarHistorial(DATOS, { ...TODO_EL_HISTORIAL, hasta: '2026-03-04' })
+    expect(hasta4.eventos.some((e) => e.subkind === 'resuelta')).toBe(true)
+    const hasta3 = recortarHistorial(DATOS, { ...TODO_EL_HISTORIAL, hasta: '2026-03-03' })
+    expect(hasta3.eventos.some((e) => e.subkind === 'resuelta')).toBe(false)
+    // Y «desde el 4» también lo trae, pero deja fuera la apertura del día 2.
+    const desde4 = recortarHistorial(DATOS, { ...TODO_EL_HISTORIAL, desde: '2026-03-04' })
+    expect(desde4.eventos.some((e) => e.subkind === 'resuelta')).toBe(true)
+    expect(desde4.eventos.some((e) => e.subkind === 'abierta')).toBe(false)
+  })
+
+  it('una incidencia entra si estuvo viva en el periodo, aunque se abriera antes', () => {
+    const datos: DatosDelHistorial = {
+      ...DATOS,
+      incidencias: [
+        incidencia({ id: 'vieja', opened_at: '2025-01-10T09:00:00Z', resolved_at: null, state: 'abierta' }),
+        incidencia({ id: 'cerrada-antes', opened_at: '2025-01-10T09:00:00Z', resolved_at: '2025-02-01T09:00:00Z' }),
+        incidencia({ id: 'posterior', opened_at: '2026-12-01T09:00:00Z', resolved_at: null, state: 'abierta' }),
+      ],
+    }
+    const r = recortarHistorial(datos, { ...TODO_EL_HISTORIAL, desde: '2026-10-17', hasta: '2026-11-17' })
+    expect(r.incidencias.map((i) => i.id)).toEqual(['vieja'])
+  })
+
+  it('quitar una familia quita sus filas, y las observaciones van con las solicitudes', () => {
+    const sinMaterial = recortarHistorial(DATOS, { ...TODO_EL_HISTORIAL, familias: ['revision', 'incidencia'] })
+    expect(sinMaterial.eventos.some((e) => e.kind === 'material')).toBe(false)
+    expect(sinMaterial.eventos.length).toBe(3)
+
+    const datos = { ...DATOS, incidencias: [incidencia({}), incidencia({ id: 'o', kind: 'observacion' as const })] }
+    expect(recortarHistorial(datos, { ...TODO_EL_HISTORIAL, familias: ['solicitud'] }).incidencias.map((i) => i.id)).toEqual(['o'])
+  })
+})
+
+describe('el documento, con lo elegido', () => {
+  const nombres = (o: Parameters<typeof hojasDelHistorial>[2]): string[] =>
+    hojasDelHistorial(DATOS, new Date('2026-06-01T00:00:00Z'), o).map((h) => h.hoja.nombre)
+
+  it('las familias deciden qué hojas hay: no sale una hoja que nadie ha pedido', () => {
+    expect(nombres(TODO_EL_HISTORIAL)).toEqual(['Intervenciones', 'Incidencias', 'Material usado'])
+    expect(nombres({ ...TODO_EL_HISTORIAL, familias: ['revision'] })).toEqual(['Intervenciones'])
+    expect(nombres({ ...TODO_EL_HISTORIAL, familias: ['incidencia'] })).toEqual(['Intervenciones', 'Incidencias'])
+    expect(nombres({ ...TODO_EL_HISTORIAL, familias: ['material'] })).toEqual(['Intervenciones', 'Material usado'])
+  })
+
+  it('sin «Material» marcado, la incidencia sigue diciendo qué se gastó en ella', () => {
+    const hojas = hojasDelHistorial(DATOS, new Date('2026-06-01T00:00:00Z'), { ...TODO_EL_HISTORIAL, familias: ['incidencia'] })
+    const incidencias = hojas.find((h) => h.hoja.nombre === 'Incidencias')!.hoja
+    expect(columna(incidencias, 'Material usado')).toEqual(['1 × Cable HDMI 2 m; 1 × Lámpara NP-M403'])
+    // Y los nombres siguen saliendo, aunque la fila de quien cerró no esté a la vista.
+    expect(columna(incidencias, 'Resuelta por')).toEqual(['Luis Gil'])
+  })
+
+  it('el resumen lleva el periodo delante y solo cuenta lo incluido', () => {
+    expect(resumenDelHistorial(DATOS, { ...TODO_EL_HISTORIAL, desde: '2026-03-01', hasta: '2026-03-31' })).toBe(
+      'Del 01/03/2026 al 31/03/2026 · 5 intervenciones · 1 incidencia · 3 movimientos de material',
+    )
+    expect(resumenDelHistorial(DATOS, { ...TODO_EL_HISTORIAL, familias: ['revision'] })).toBe('1 intervención')
+  })
+
+  it('las solicitudes constan en el resumen cuando las hay', () => {
+    const datos = { ...DATOS, incidencias: [incidencia({}), incidencia({ id: 's', kind: 'solicitud' as const, state: 'abierta' as const })] }
+    expect(resumenDelHistorial(datos)).toBe('7 intervenciones · 1 incidencia · 1 solicitud · 4 movimientos de material')
+  })
+
+  it('sabe decir cuándo no queda nada que exportar', () => {
+    expect(hayAlgoQueExportar(DATOS, TODO_EL_HISTORIAL)).toBe(true)
+    expect(hayAlgoQueExportar(DATOS, { ...TODO_EL_HISTORIAL, desde: '2030-01-01' })).toBe(false)
   })
 })

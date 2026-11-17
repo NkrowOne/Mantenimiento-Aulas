@@ -22,9 +22,12 @@
 import { db } from '@/db/dexie'
 import { displayRoomCode } from '@/domain/normalize'
 import {
+  hayAlgoQueExportar,
   hojasDelHistorial,
   resumenDelHistorial,
+  TODO_EL_HISTORIAL,
   type DatosDelHistorial,
+  type OpcionesDelHistorial,
   type EventoDelHistorial,
   type IncidenciaDelHistorial,
 } from '@/domain/historialExportado'
@@ -148,8 +151,20 @@ export async function cargarHistorial(alcance: AlcanceDelHistorial): Promise<Dat
 }
 
 /** Lo que la vista previa enseña, y de lo que salen el Excel y el PDF. */
-export async function exportacionDelHistorial(alcance: AlcanceDelHistorial): Promise<Exportacion> {
+export async function exportacionDelHistorial(
+  alcance: AlcanceDelHistorial,
+  opciones: OpcionesDelHistorial = TODO_EL_HISTORIAL,
+): Promise<Exportacion> {
   const datos = await cargarHistorial(alcance)
+  // Dicho aquí y no con tres hojas vacías: una vista previa en blanco parece un
+  // fallo, y lo que pasa es que en ese periodo no hubo nada.
+  if (!hayAlgoQueExportar(datos, opciones)) {
+    throw new Error(
+      datos.eventos.length === 0
+        ? 'Todavía no hay nada en el historial.'
+        : 'No hay nada en el historial con lo que has elegido. Prueba con un periodo más largo o incluye más cosas.',
+    )
+  }
   const de =
     alcance.de === 'sala'
       ? `${alcance.edificio} ${displayRoomCode(alcance.codigo)}`
@@ -160,8 +175,8 @@ export async function exportacionDelHistorial(alcance: AlcanceDelHistorial): Pro
       : `${alcance.codigo} — ${alcance.nombre}`
   return {
     titulo: `Historial de intervenciones · ${nombre}`,
-    resumen: resumenDelHistorial(datos),
+    resumen: resumenDelHistorial(datos, opciones),
     nombreBase: `Historial ${de}`,
-    hojas: hojasDelHistorial(datos),
+    hojas: hojasDelHistorial(datos, new Date(), opciones),
   }
 }

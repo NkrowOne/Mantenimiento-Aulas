@@ -550,8 +550,20 @@ renueva.
 - **De un edificio entero:** en la lista de sus salas, el botón **Historial** de
   arriba te lleva a la misma tarjeta, al final.
 
+Antes de descargar **eliges dos cosas**:
+
+- **El periodo:** último mes, últimos 3 meses, últimos 12 meses, este año,
+  todo, o dos fechas puestas a mano. Debajo te dice siempre de qué día a qué
+  día va.
+- **Qué incluir:** revisiones, incidencias, solicitudes, material y equipos.
+  Viene todo marcado; quita lo que no quieras.
+
+Lo que eliges se recuerda mientras la aplicación siga abierta, así que para
+sacar el último mes de cinco aulas seguidas lo eliges una vez.
+
 Pulsa **Ver y exportar** y lo ves antes de descargarlo, igual que el almacén.
-Lleva tres hojas:
+Lleva hasta tres hojas (si quitas las incidencias o el material, su hoja no
+sale):
 
 | Hoja | Qué cuenta |
 |---|---|
@@ -562,6 +574,9 @@ Lleva tres hojas:
 El de un edificio lleva además la columna **Sala**. El Excel trae todas las
 columnas; el PDF, las que caben en un folio. Necesita conexión: el histórico
 completo no está guardado en el dispositivo.
+
+Una incidencia sale en un periodo si **estuvo abierta** en él, aunque se
+abriera antes: la que lleva abierta desde enero aparece en «el último mes».
 
 ## El indicador de arriba
 
