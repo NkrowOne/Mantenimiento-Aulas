@@ -21,7 +21,6 @@ import { cuantos } from '@/lib/plural'
 import { displayRoomCode } from '@/domain/normalize'
 import { ZONA, diaEnMadrid, fechaCorta, horaCorta } from '@/domain/fechas'
 import {
-  FILTROS_DEL_PARTE,
   filasDelParte,
   filtrarParte,
   limitesDelDia,
@@ -34,7 +33,6 @@ import {
   type IncidenciaDelParte,
 } from '@/domain/parteDelDia'
 import { Icono } from '@/components/Icono'
-import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
 import { INCIDENT_KIND_LABELS } from '@/domain/types'
 import { usePersonas } from '@/sync/personas'
 import { CodigoEasyVista } from './CodigoEasyVista'
@@ -198,16 +196,13 @@ export function ParteDeHoy({
   /*
    * El filtro: una de las tres cifras, o ninguna.
    *
-   * Se recuerda mientras la aplicación siga abierta —quien está pasando «las
-   * que faltan» a EasyVista, va a una ficha y vuelve, sigue viendo las que
-   * faltan—, y al cambiar de día se conserva: el lunes se repasa el viernes
-   * con el mismo criterio.
+   * NO se recuerda, y es a propósito: quien vuelve al parte tiene que ver el
+   * día entero. Un filtro que sigue puesto al volver esconde incidencias sin
+   * avisar —se entra, se ven seis, y son siete—, y en una pantalla que existe
+   * para no dejarse ninguna sin pasar eso es justo lo que no puede ocurrir.
+   * Dura lo que dura la visita: al salir del parte, se quita.
    */
-  const [filtro, setFiltro] = useEstadoDeSesion<FiltroDelParte | null>(
-    'parte.filtro',
-    null,
-    (v) => v === null || (FILTROS_DEL_PARTE as readonly unknown[]).includes(v),
-  )
+  const [filtro, setFiltro] = useState<FiltroDelParte | null>(null)
   const visibles = useMemo(() => filtrarParte(filas, filtro), [filas, filtro])
   const porPasar = visibles.filter((f) => !f.easyvista_ref)
   const pasadas = visibles.filter((f) => f.easyvista_ref)
