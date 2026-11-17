@@ -1105,7 +1105,7 @@ export function App(): React.ReactElement {
             />
           )}
           {escaneando && (
-            <Suspense fallback={<div className="fixed inset-0 z-50 bg-black" />}>
+            <Suspense fallback={<div className="pantalla-negra fixed inset-0 z-50 bg-black" />}>
               <EscanerQR
                 onCerrar={() => setEscaneando(false)}
                 onLeido={(texto) => {

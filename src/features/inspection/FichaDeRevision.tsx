@@ -200,7 +200,7 @@ export function FichaDeRevision({
           dentro su contenido nunca queda tapado. */}
       <header
         className="sticky top-0 z-10 border-b border-line bg-ground"
-        style={{ paddingTop: 'env(safe-area-inset-top)' }}
+        style={{ paddingTop: 'var(--borde-de-arriba)' }}
       >
         <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-2">
           <BotonVolver ref={volver} onClick={onCerrar} className="shrink-0" />

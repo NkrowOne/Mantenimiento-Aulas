@@ -56,55 +56,97 @@
    *
    * iOS 26 pinta un desenfoque propio en la parte de arriba de las aplicaciones
    * instaladas en la pantalla de inicio: una niebla que baja desde la hora y la
-   * batería y se come el borde de lo que haya debajo —aquí, el logotipo y el
-   * nombre de la cabecera—. No es nuestro: no hay ni un `blur` en la cabecera.
-   * Lo pone el sistema cuando cree que hay contenido pasando por debajo de la
-   * barra de estado, y no hay `meta` ni propiedad de CSS que lo apague.
+   * batería hasta unos 40 puntos por debajo, y se come lo que haya ahí —aquí,
+   * el logotipo y el nombre de la cabecera—. No es nuestro: no hay ni un `blur`
+   * en la cabecera. Lo pone el sistema cuando cree que hay contenido pasando
+   * por debajo de la barra de estado, y no hay `meta` ni propiedad de CSS que
+   * lo apague.
    *
    * Lo que sí hace WebKit es NO pintarlo cuando, pegado al borde de arriba,
-   * encuentra un elemento `fixed`, opaco y de todo el ancho: entonces toma su
-   * color para la barra de estado y la deja lisa. La zona de la barra de estado
-   * era el `padding-top` del `body` —o sea, nada—, y la cabecera no es `fixed`
-   * a propósito (ver `components/Marco.tsx`), así que WebKit no encontraba a
-   * nadie y desenfocaba.
+   * encuentra un elemento `fixed` o `sticky`, opaco y de todo el ancho:
+   * entonces toma su color para la barra de estado y la deja lisa. Lo decide
+   * `LocalFrameView::fixedContainerEdges`: mira qué hay a 4 px del borde, en
+   * el centro, y sube por sus antepasados hasta dar con uno fijo que mida más
+   * de 10 px de alto y al menos el 90 % del ancho.
    *
-   * Esta franja es ese elemento, y nada más: mide lo que mide la barra de
-   * estado, lleva el color del fondo y no tapa nada, porque debajo solo estaba
-   * el relleno. Tiene que poder tocarse —un velo con `pointer-events: none` no
-   * cuenta para WebKit—, y da igual: ahí no hay nada que tocar.
+   * Esta franja es ese elemento, y nada más. La primera versión no bastó, y
+   * estas son las tres cosas que le faltaban —las dos últimas las comprobó en
+   * un iPad de verdad otro proyecto con el mismo problema—:
+   *
+   *  1. Un alto que nunca sea cero. Medía `safe-area-inset-top` a secas, y hay
+   *     dos casos en que eso vale 0 en un iPhone: el primer fotograma, antes de
+   *     que el sistema dé las medidas, y cuando iOS coloca la página POR
+   *     DEBAJO de la barra de estado en vez de por detrás. Con 0 px no hay
+   *     franja. Por eso `--borde-de-arriba` tiene un suelo de 12 px en la
+   *     aplicación instalada en iOS —WebKit descarta lo que mida 10 o menos—,
+   *     y el relleno del `body` usa la misma medida para que la franja no pise
+   *     la cabecera. En Android, en el navegador y en el ordenador no hay
+   *     suelo: la franja mide lo que mida el área segura, casi siempre nada.
+   *
+   *  2. Ser SIEMPRE el mismo elemento. iOS se queda con el desenfoque la
+   *     primera vez que lo que encuentra en el borde cambia —otro elemento, o
+   *     ninguno—, y no lo suelta hasta que se cierra la aplicación del todo.
+   *     Antes la franja iba por debajo del visor de fotos y del lector de QR
+   *     (`z-50`): al abrirlos, lo que había en el borde pasaba a ser el visor,
+   *     y al cerrarlos volvía la niebla para el resto de la sesión. Ahora va
+   *     por encima de todo, con el `z-index` más alto que existe, y no se
+   *     desmonta nunca: está en `index.html`, fuera de React.
+   *
+   *  3. Cambiar de color, no de sitio. Encima de una pantalla negra —visor,
+   *     lector— la franja se vuelve negra (`.pantalla-negra`, más abajo). Es
+   *     el mismo elemento con otro fondo, que es lo único que iOS tolera.
+   *
+   * Tiene que poder tocarse —un velo con `pointer-events: none` puede no
+   * contar—, y da igual: ahí arriba no hay nada que tocar.
    *
    * Es lo único `fixed` del marco. El fallo de iOS que deja varado lo `fixed`
    * al bajar el teclado lo corrige `lib/viewport.ts`, y una franja del color
    * del fondo, fuera de sitio un instante, no se ve.
    *
-   * Por ENCIMA de las hojas (`z-40`) y por debajo del visor de fotos y del
-   * lector de QR (`z-50`). El fondo de una hoja es un velo translúcido que
-   * llega hasta arriba: si quedara encima, sería él lo que WebKit encontrara en
-   * el borde, y un velo no es opaco, así que el desenfoque volvería cada vez
-   * que se abre una hoja. Con la franja encima, la barra de estado se queda
-   * lisa también entonces. El visor y el lector son negros y opacos: llegan
-   * hasta arriba con su propio color y la tapan.
-   *
-   * En un navegador de escritorio o en Android, `safe-area-inset-top` es cero
-   * y la franja no mide nada.
+   * Lo que llega hasta arriba y no es la franja —el visor, el lector, la ficha
+   * de revisión— deja su hueco con `--borde-de-arriba`, no con
+   * `safe-area-inset-top`: es lo que mide la franja de verdad.
    *
    * La forma va también en `index.html`, en línea, para que esté desde el
-   * primer fotograma; aquí toma el color del tema elegido.
+   * primer fotograma; aquí toma el color del tema elegido. `src/franja.test.ts`
+   * vigila que las dos copias digan lo mismo y que nadie le quite lo de arriba.
    */
+  :root {
+    --borde-de-arriba: env(safe-area-inset-top, 0px);
+  }
+
+  @supports (-webkit-touch-callout: none) {
+    @media (display-mode: standalone) {
+      :root {
+        --borde-de-arriba: max(env(safe-area-inset-top, 0px), 12px);
+      }
+    }
+  }
+
   .franja-de-estado {
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
-    z-index: 45;
-    height: env(safe-area-inset-top);
+    z-index: 2147483647;
+    height: var(--borde-de-arriba);
     background: rgb(var(--ground));
+  }
+
+  /*
+   * Una pantalla negra a toda la pantalla lleva `.pantalla-negra`, y mientras
+   * exista la franja es negra con ella. Sin esto, en el tema claro quedaría una
+   * tira gris encima de una foto.
+   */
+  html:has(.pantalla-negra) .franja-de-estado {
+    background: #000;
   }
 
   body {
     @apply bg-ground text-ink font-sans antialiased;
-    /* Área segura del iPhone: el notch y la barra de gestos se comen píxeles reales. */
-    padding-top: env(safe-area-inset-top);
+    /* Área segura del iPhone: el notch y la barra de gestos se comen píxeles
+       reales. Con el suelo de la franja de arriba: ver `.franja-de-estado`. */
+    padding-top: var(--borde-de-arriba);
     /*
      * Y los lados, para el teléfono tumbado.
      *

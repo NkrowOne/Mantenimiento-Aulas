@@ -217,7 +217,14 @@ export function EscanerQR({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black">
+    // `pantalla-negra` vuelve negra la franja de la barra de estado, y el hueco
+    // de arriba es su alto: la imagen de la cámara empieza donde acaba la
+    // franja, y la mirilla queda centrada en lo que se ve (ver
+    // `.franja-de-estado` en index.css).
+    <div
+      className="pantalla-negra fixed inset-0 z-50 flex flex-col bg-black"
+      style={{ paddingTop: 'var(--borde-de-arriba)' }}
+    >
       <div className="relative flex-1 overflow-hidden">
         <video
           ref={videoRef}

@@ -460,12 +460,13 @@ export function VisorDeFotos({
       role="dialog"
       aria-modal="true"
       aria-label="Foto"
-      // Negro del todo, y no al 95 %: es lo que hay en el borde de arriba de la
-      // pantalla, y si no es opaco iOS 26 le pone su desenfoque encima (ver
-      // `.franja-de-estado` en index.css). La diferencia no se ve.
-      className="fixed inset-0 z-50 flex flex-col bg-black"
+      // `pantalla-negra` tiñe de negro la franja de la barra de estado, que va
+      // por encima de todo y es la que iOS 26 mira para no poner su desenfoque
+      // (ver `.franja-de-estado` en index.css). El hueco de arriba es el alto
+      // de esa franja, no el área segura a secas.
+      className="pantalla-negra fixed inset-0 z-50 flex flex-col bg-black"
       style={{
-        paddingTop: 'env(safe-area-inset-top)',
+        paddingTop: 'var(--borde-de-arriba)',
         paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >

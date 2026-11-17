@@ -54,7 +54,11 @@ function aplicar(tema: Tema): void {
    */
   for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
     const delSistema = meta.media.includes('dark') ? BARRA.oscuro : BARRA.claro
-    meta.content = tema === 'sistema' ? delSistema : BARRA[tema]
+    const color = tema === 'sistema' ? delSistema : BARRA[tema]
+    // Solo si cambia. Al arrancar casi nunca cambia nada, y reescribir el mismo
+    // valor es tocar los `meta` de la barra del sistema sin necesidad: iOS 26
+    // vuelve a decidir qué pinta arriba cada vez que se mueven.
+    if (meta.content !== color) meta.content = color
   }
 }
 
