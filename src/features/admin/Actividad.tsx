@@ -1,20 +1,24 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { pullPersonas, useDirectorio } from '@/sync/personas'
 import { displayRoomCode } from '@/domain/normalize'
-import { fechaCorta, horaCorta } from '@/domain/fechas'
+import { diaEnMadrid, horaCorta } from '@/domain/fechas'
 import {
-  OPERACION_LABELS,
   SIN_NOMBRES,
   TABLAS,
   describir,
+  formaDelCambio,
+  loQueHizo,
   type Actividad as Cambio,
+  type Cambio as CambioDeCampo,
   type FilaDeAuditoria,
   type Nombres,
 } from '@/domain/actividad'
+import { Icono, type NombreDeIcono } from '@/components/Icono'
+import { cuantos } from '@/lib/plural'
 import { Cargando, EstadoVacio, FalloDeCarga, Seccion } from './Seccion'
 import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
 
@@ -43,17 +47,161 @@ import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
 
 const TAMANO = 100
 
+/* Etiquetas cortas: van las cuatro en una fila, a partes iguales, en un
+   teléfono. «Últimos tres meses» no cabía ni en un desplegable. */
 const PERIODOS: Array<{ dias: number; label: string }> = [
-  { dias: 7, label: 'Última semana' },
-  { dias: 30, label: 'Último mes' },
-  { dias: 90, label: 'Últimos tres meses' },
+  { dias: 7, label: '7 días' },
+  { dias: 30, label: '30 días' },
+  { dias: 90, label: '90 días' },
   { dias: 0, label: 'Todo' },
 ]
 
+/**
+ * El dibujo de cada cosa y el color de lo que se hizo con ella.
+ *
+ * Antes eran dos etiquetas grises seguidas —«Cambio» «Incidencia»— iguales en
+ * todas las filas, así que no ayudaban a encontrar nada. Ahora el recuadro de
+ * la izquierda dice las dos cosas sin leer: el dibujo, DE QUÉ es; el color, QUÉ
+ * se hizo —verde un alta, rojo una baja, el de la aplicación un cambio—.
+ */
+const DIBUJO: Record<string, NombreDeIcono> = {
+  buildings: 'edificio',
+  zones: 'edificio',
+  rooms: 'etiqueta',
+  stock_items: 'almacen',
+  stock_units: 'almacen',
+  assets: 'equipos',
+  incidents: 'incidencias',
+  profiles: 'persona',
+  asset_types: 'lista',
+  asset_removals: 'salir',
+  asset_defaults: 'lista',
+}
+
 const TONO_OP: Record<Cambio['op'], string> = {
   alta: 'bg-ok-tint text-ok',
-  cambio: 'bg-raised text-muted',
+  cambio: 'bg-accent-tint text-accent',
   baja: 'bg-crit-tint text-crit',
+}
+
+/** Cuántos campos enseña un cambio antes de pedir un toque para ver el resto. */
+const CAMPOS_A_LA_VISTA = 3
+
+/** «Hoy», «Ayer» o el día dicho entero: es como se busca —«lo del martes»—. */
+function nombreDelDia(dia: string, hoy: string): string {
+  const [a, m, d] = dia.split('-').map(Number)
+  const [ha, hm, hd] = hoy.split('-').map(Number)
+  // El día de antes, por el calendario: el 1 de marzo, ayer fue 28 o 29 de febrero.
+  const ayer = new Date(Date.UTC(ha!, hm! - 1, hd! - 1)).toISOString().slice(0, 10)
+  if (dia === hoy) return 'Hoy'
+  if (dia === ayer) return 'Ayer'
+  const texto = new Intl.DateTimeFormat('es-ES', {
+    timeZone: 'UTC',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    ...(a === Number(hoy.slice(0, 4)) ? {} : { year: 'numeric' }),
+  }).format(new Date(Date.UTC(a!, m! - 1, d!)))
+  return texto.charAt(0).toUpperCase() + texto.slice(1)
+}
+
+/**
+ * Un campo que cambió, dicho de la forma que se lee mejor según lo que mide.
+ *
+ * Sin tachados. El valor de antes iba tachado, y un texto largo tachado no se
+ * lee: es justo el dato que hace falta —«¿cómo se llamaba?»— convertido en una
+ * mancha. Ahora el de antes va en gris y el de ahora en negro y con peso: se
+ * distinguen igual, y los dos se pueden leer.
+ */
+function CampoCambiado({ cambio }: { cambio: CambioDeCampo }): React.ReactElement {
+  const forma = formaDelCambio(cambio)
+  return (
+    <div className="py-1.5">
+      <dt className="text-xs text-muted">{cambio.campo}</dt>
+      <dd className="mt-0.5 min-w-0 break-words text-sm">
+        {forma === 'nuevo' && <span className="font-medium">{cambio.despues}</span>}
+        {forma === 'quitado' && (
+          <>
+            <span className="text-muted">Se quitó: </span>
+            {cambio.antes}
+          </>
+        )}
+        {forma === 'corto' && (
+          <>
+            <span className="text-muted">{cambio.antes}</span>
+            <Icono nombre="derecha" lado={13} className="mx-1.5 inline-block -translate-y-px text-muted" />
+            <span className="sr-only">pasa a</span>
+            <span className="font-medium">{cambio.despues}</span>
+          </>
+        )}
+        {forma === 'largo' && (
+          <span className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+            <span className="text-xs leading-5 text-muted">Antes</span>
+            <span className="text-muted">{cambio.antes}</span>
+            <span className="text-xs leading-5 text-muted">Ahora</span>
+            <span className="font-medium">{cambio.despues}</span>
+          </span>
+        )}
+      </dd>
+    </div>
+  )
+}
+
+/** Una fila de la actividad: quién, qué hizo, a qué, y qué cambió. */
+function Fila({ c }: { c: Cambio }): React.ReactElement {
+  const [todos, setTodos] = useState(false)
+  const visibles = todos ? c.cambios : c.cambios.slice(0, CAMPOS_A_LA_VISTA)
+  const ocultos = c.cambios.length - CAMPOS_A_LA_VISTA
+
+  return (
+    <li className="flex gap-3 px-3.5 py-3">
+      <span
+        className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] ${TONO_OP[c.op]}`}
+      >
+        <Icono nombre={DIBUJO[c.origen] ?? 'actividad'} lado={20} />
+      </span>
+
+      <div className="min-w-0 flex-1">
+        {/* Quién y cuándo, en el mismo renglón: el nombre a la izquierda, que
+            es por lo que se busca, y la hora a la derecha, alineada en todas
+            las filas. */}
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="min-w-0 truncate font-medium">{c.quien ?? 'Sistema'}</p>
+          <time dateTime={c.cuando} className="shrink-0 font-mono text-xs text-muted tabular">
+            {horaCorta(c.cuando)}
+          </time>
+        </div>
+        <p className="text-sm text-ink-2">{loQueHizo(c)}</p>
+
+        {/* A qué. Hasta dos renglones: el título de una incidencia puede ser un
+            párrafo, y entero empujaba fuera de la pantalla lo que cambió. */}
+        <p className="mt-1.5 line-clamp-2 break-words text-sm font-medium">{c.que}</p>
+
+        {c.cambios.length > 0 && (
+          <dl className="mt-1.5 divide-y divide-line-soft rounded-ctl bg-ground px-3 py-0.5">
+            {visibles.map((x) => (
+              <CampoCambiado key={x.campo} cambio={x} />
+            ))}
+          </dl>
+        )}
+        {ocultos > 0 && (
+          <button
+            type="button"
+            onClick={() => setTodos((v) => !v)}
+            aria-expanded={todos}
+            className="key-ghost -ml-2 mt-0.5 inline-flex min-h-11 items-center gap-1 px-2 text-sm"
+          >
+            {todos ? 'Ver menos' : `Ver ${cuantos(ocultos, 'cambio más', 'cambios más')}`}
+            <Icono
+              nombre="abajo"
+              lado={14}
+              className={`transition-transform duration-150 ${todos ? 'rotate-180' : ''}`}
+            />
+          </button>
+        )}
+      </div>
+    </li>
+  )
 }
 
 export function Actividad({
@@ -149,56 +297,87 @@ export function Actividad({
 
   // Por día, con el más reciente arriba: es como se busca —«el martes por la
   // tarde desapareció»— y no por tabla.
+  const hoy = diaEnMadrid()
   const porDia = new Map<string, Cambio[]>()
   for (const c of visibles) {
-    const dia = fechaCorta(c.cuando)
+    const dia = diaEnMadrid(new Date(c.cuando))
     porDia.set(dia, [...(porDia.get(dia) ?? []), c])
   }
 
-  /* Los filtros, en rejilla de columnas iguales: sueltos caían uno en una
-     fila y dos en la siguiente, cada desplegable del ancho de su texto. */
+  const filtrado = tabla !== '' || persona !== ''
+
+  /*
+   * Los filtros, cada uno diciendo qué filtra.
+   *
+   * Eran tres desplegables sin nombre —«Última semana», «Todo», «Cualquiera»—:
+   * «Todo» ¿de qué?, «Cualquiera» ¿quién? Había que abrirlos para saberlo. Y
+   * el tercero medía menos que los otros dos y caía solo en su fila.
+   *
+   *  - El periodo son cuatro opciones cortas: van a la vista, en un carril, y
+   *    se cambia de un toque en vez de abrir un desplegable.
+   *  - Los otros dos llevan su nombre encima, miden lo mismo, y su opción de
+   *    «sin filtro» dice lo que es: «Todos», «Todas».
+   */
+  const CAMPO = 'mt-1 h-11 w-full min-w-0 rounded-ctl border border-line bg-surface px-2 text-base text-ink'
   const filtros = (
-    <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3">
-      <select
-        value={dias}
-        onChange={(e) => setDias(Number(e.target.value))}
-        aria-label="Periodo"
-        className="h-11 min-w-0 rounded-ctl border border-line bg-surface px-2 text-base"
-      >
+    <div>
+      <div role="group" aria-label="Periodo" className="segmento grid w-full grid-cols-4">
         {PERIODOS.map((p) => (
-          <option key={p.dias} value={p.dias}>
+          <button key={p.dias} type="button" aria-pressed={dias === p.dias} onClick={() => setDias(p.dias)}>
             {p.label}
-          </option>
+          </button>
         ))}
-      </select>
-      <select
-        value={tabla}
-        onChange={(e) => setTabla(e.target.value)}
-        aria-label="Qué"
-        className="h-11 min-w-0 rounded-ctl border border-line bg-surface px-2 text-base"
-      >
-        <option value="">Todo</option>
-        {Object.entries(TABLAS)
-          .filter(([id]) => usuarios || id !== 'profiles')
-          .map(([id, t]) => (
-            <option key={id} value={id}>
-              {t.nombre}
-            </option>
-          ))}
-      </select>
-      <select
-        value={persona}
-        onChange={(e) => setPersona(e.target.value)}
-        aria-label="Quién"
-        className="h-11 max-w-48 rounded-ctl border border-line bg-surface px-2 text-base"
-      >
-        <option value="">Cualquiera</option>
-        {perfiles.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.full_name}
-          </option>
-        ))}
-      </select>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <label className="text-xs text-muted">
+          Qué
+          <select value={tabla} onChange={(e) => setTabla(e.target.value)} className={CAMPO}>
+            <option value="">Todo</option>
+            {Object.entries(TABLAS)
+              .filter(([id]) => usuarios || id !== 'profiles')
+              .map(([id, t]) => (
+                <option key={id} value={id}>
+                  {t.nombre}
+                </option>
+              ))}
+          </select>
+        </label>
+        <label className="text-xs text-muted">
+          Quién
+          <select value={persona} onChange={(e) => setPersona(e.target.value)} className={CAMPO}>
+            <option value="">Todas las personas</option>
+            {perfiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.full_name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {/* Cuánto hay con lo elegido, y cómo deshacerlo. */}
+      {data && (
+        <div className="mt-1 flex min-h-11 items-center justify-between gap-3">
+          <p aria-live="polite" className="text-sm text-muted">
+            {cuantos(visibles.length, 'cambio', 'cambios')}
+            {hasNextPage ? ' hasta ahora' : ''}
+          </p>
+          {filtrado && (
+            <button
+              type="button"
+              onClick={() => {
+                setTabla('')
+                setPersona('')
+              }}
+              className="key-ghost -mr-2 inline-flex min-h-11 items-center gap-1 px-2 text-sm"
+            >
+              <Icono nombre="cerrar" lado={14} />
+              Quitar filtros
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 
@@ -206,10 +385,11 @@ export function Actividad({
     <Seccion
       id="sec-actividad"
       titulo="Actividad"
-      texto={`Registro de cambios en salas, edificios, equipos, incidencias${usuarios ? ', catálogo y usuarios' : ' y catálogo'}. Solo lectura.`}
+      texto={`Quién ha cambiado qué en salas, edificios, equipos, incidencias${usuarios ? ', catálogo y usuarios' : ' y catálogo'}. Solo lectura.`}
       detalle="Las revisiones, los movimientos del almacén y los eventos de equipo no salen aquí: se consultan en Historial."
-      acciones={filtros}
     >
+      {filtros}
+
       {isPending && <Cargando texto="Leyendo la actividad…" />}
       {isError && <FalloDeCarga que="la actividad" error={error} onReintentar={() => void refetch()} />}
       {data && visibles.length === 0 && (
@@ -219,42 +399,18 @@ export function Actividad({
         />
       )}
 
-      <div className="space-y-5">
+      <div className="mt-2 space-y-5">
         {[...porDia.entries()].map(([dia, lista]) => (
-          <section key={dia} aria-label={dia}>
-            <h3 className="eyebrow sticky top-0 bg-ground py-1">{dia}</h3>
-            <ol className="mt-1 divide-y divide-line-soft rounded-card border border-line bg-surface">
+          <section key={dia} aria-label={nombreDelDia(dia, hoy)}>
+            {/* El día y cuántos cambios tuvo: «Hoy · 12» dice de un vistazo si
+                fue un día tranquilo o no, sin contar filas. */}
+            <h3 className="sticky top-0 z-[1] flex items-baseline justify-between gap-3 bg-ground py-1.5">
+              <span className="text-sm font-semibold">{nombreDelDia(dia, hoy)}</span>
+              <span className="text-xs text-muted tabular">{cuantos(lista.length, 'cambio', 'cambios')}</span>
+            </h3>
+            <ol className="card divide-y divide-line-soft overflow-hidden">
               {lista.map((c) => (
-                <li key={c.id} className="px-4 py-3">
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
-                    <span className="font-mono text-xs text-muted tabular">{horaCorta(c.cuando)}</span>
-                    <span className="font-medium">{c.quien ?? 'Sistema'}</span>
-                    <span className={`rounded-tag px-1.5 py-0.5 text-[0.6875rem] font-medium ${TONO_OP[c.op]}`}>
-                      {OPERACION_LABELS[c.op]}
-                    </span>
-                    <span className="rounded-tag bg-raised px-1.5 py-0.5 text-[0.6875rem] text-muted">{c.tabla}</span>
-                    <span className="min-w-0 break-words">{c.que}</span>
-                  </div>
-                  {c.cambios.length > 0 && (
-                    <dl className="mt-1.5 space-y-0.5 pl-0 text-sm sm:pl-14">
-                      {c.cambios.map((x) => (
-                        <div key={x.campo} className="flex flex-wrap gap-x-1.5">
-                          <dt className="text-muted">{x.campo}:</dt>
-                          <dd className="min-w-0 break-words">
-                            <span className={x.antes === null ? 'text-muted' : 'line-through decoration-line'}>
-                              {x.antes ?? '—'}
-                            </span>
-                            <span aria-hidden className="mx-1 text-muted">
-                              →
-                            </span>
-                            <span className="sr-only">pasa a</span>
-                            <span className="font-medium">{x.despues ?? '—'}</span>
-                          </dd>
-                        </div>
-                      ))}
-                    </dl>
-                  )}
-                </li>
+                <Fila key={c.id} c={c} />
               ))}
             </ol>
           </section>
@@ -262,20 +418,20 @@ export function Actividad({
       </div>
 
       {(hasNextPage || omitidas > 0) && (
-        <div className="mt-4 flex flex-wrap items-center gap-3">
+        <div className="mt-4">
           {hasNextPage && (
             <button
               aria-busy={isFetchingNextPage}
               type="button"
               disabled={isFetchingNextPage}
               onClick={() => void fetchNextPage()}
-              className="key key-quiet min-h-11 px-3 text-sm"
+              className="key key-quiet min-h-touch w-full px-3 text-sm sm:w-auto"
             >
-              {isFetchingNextPage ? 'Cargando…' : 'Ver más antiguos'}
+              {isFetchingNextPage ? 'Cargando…' : 'Ver cambios más antiguos'}
             </button>
           )}
           {omitidas > 0 && (
-            <p className="text-xs text-muted">
+            <p className="mt-2 text-xs text-muted">
               {omitidas === 1 ? 'Un cambio automático omitido' : `${omitidas} cambios automáticos omitidos`} (fechas de
               última revisión e inventario, orden).
             </p>

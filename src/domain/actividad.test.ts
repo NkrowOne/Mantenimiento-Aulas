@@ -8,6 +8,8 @@ import {
   valorLegible,
   type FilaDeAuditoria,
   type Nombres,
+  loQueHizo,
+  formaDelCambio,
 } from './actividad'
 
 const nombres: Nombres = {
@@ -273,5 +275,35 @@ describe('las unidades del almacén', () => {
 
   it('«disponible» se lee «En almacén», también suelto', () => {
     expect(valorLegible('disponible')).toBe('En almacén')
+  })
+})
+
+describe('cómo se cuenta un cambio', () => {
+  it('lo que pasó se dice con una frase, con su artículo', () => {
+    expect(loQueHizo({ op: 'cambio', origen: 'incidents', tabla: 'Incidencia' })).toBe('Cambió una incidencia')
+    expect(loQueHizo({ op: 'alta', origen: 'assets', tabla: 'Equipo' })).toBe('Dio de alta un equipo')
+    expect(loQueHizo({ op: 'baja', origen: 'rooms', tabla: 'Sala' })).toBe('Dio de baja una sala')
+    expect(loQueHizo({ op: 'cambio', origen: 'asset_defaults', tabla: 'Equipamiento por defecto' })).toBe(
+      'Cambió el equipamiento por defecto',
+    )
+    // Una tabla que nadie ha nombrado todavía no rompe la frase.
+    expect(loQueHizo({ op: 'cambio', origen: 'algo_nuevo', tabla: 'algo_nuevo' })).toBe('Cambió algo_nuevo')
+  })
+
+  it('todas las tablas conocidas tienen su forma de decirse', () => {
+    for (const origen of Object.keys(TABLAS)) {
+      const frase = loQueHizo({ op: 'cambio', origen, tabla: TABLAS[origen]!.nombre })
+      expect(frase, origen).toMatch(/^Cambió (un|una|el) /)
+    }
+  })
+
+  it('un valor que se pone por primera vez no lleva raya ni flecha', () => {
+    expect(formaDelCambio({ antes: null, despues: 'I261117_0052' })).toBe('nuevo')
+    expect(formaDelCambio({ antes: 'Proyector', despues: null })).toBe('quitado')
+  })
+
+  it('dos valores cortos van en un renglón, y dos largos uno debajo del otro', () => {
+    expect(formaDelCambio({ antes: 'Abierta', despues: 'Resuelta' })).toBe('corto')
+    expect(formaDelCambio({ antes: 'ED. H - SAN AGUSTÍN DE HIPONA', despues: 'SAN AGUSTÍN DE HIPONA' })).toBe('largo')
   })
 })
