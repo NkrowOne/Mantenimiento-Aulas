@@ -3,6 +3,8 @@ import {
   filasDelParte,
   limitesDelDia,
   moverDia,
+  FILTROS_DEL_PARTE,
+  filtrarParte,
   resumenDelParte,
   textoParaEasyVista,
   type IncidenciaDelParte,
@@ -191,6 +193,35 @@ describe('qué entra en el parte', () => {
       ],
     })
     expect(resumenDelParte(filas)).toEqual({ abiertas: 3, cerradas: 1, porPasar: 2 })
+  })
+
+  it('cada cifra es un filtro: al tocarla salen exactamente las que cuenta', () => {
+    const filas = filasDelParte({
+      ...nada,
+      servidor: [
+        inc({ id: 'a' }),
+        inc({ id: 'b', easyvista_ref: 'I1' }),
+        inc({ id: 'c', state: 'resuelta', resolved_at: '2026-11-16T12:00:00Z' }),
+        // Venía de antes y se cerró hoy: cuenta como cerrada, no como abierta.
+        inc({ id: 'd', opened_at: '2026-11-10T09:00:00Z', state: 'resuelta', resolved_at: '2026-11-16T10:00:00Z', easyvista_ref: 'I2' }),
+      ],
+    })
+    const resumen = resumenDelParte(filas)
+    for (const filtro of FILTROS_DEL_PARTE) {
+      expect(filtrarParte(filas, filtro).length, filtro).toBe(resumen[filtro])
+    }
+    expect(filtrarParte(filas, 'abiertas').map((f) => f.id).sort()).toEqual(['a', 'b', 'c'])
+    expect(filtrarParte(filas, 'cerradas').map((f) => f.id).sort()).toEqual(['c', 'd'])
+    expect(filtrarParte(filas, 'porPasar').map((f) => f.id).sort()).toEqual(['a', 'c'])
+  })
+
+  it('sin filtro salen todas, y un filtro no cambia el orden del día', () => {
+    const filas = filasDelParte({
+      ...nada,
+      servidor: [inc({ id: 'tarde', opened_at: '2026-11-16T15:00:00Z' }), inc({ id: 'temprano', opened_at: '2026-11-16T07:30:00Z' })],
+    })
+    expect(filtrarParte(filas, null)).toEqual(filas)
+    expect(filtrarParte(filas, 'abiertas').map((f) => f.id)).toEqual(['temprano', 'tarde'])
   })
 })
 

@@ -167,11 +167,36 @@ export interface ResumenDelParte {
   porPasar: number
 }
 
+/**
+ * Las tres cifras del parte son también sus tres filtros.
+ *
+ * Cada cifra contesta a una pregunta —¿cuántas se abrieron?, ¿cuántas se
+ * cerraron?, ¿cuántas faltan por pasar?— y la pregunta siguiente es siempre
+ * «¿cuáles?». Tocar la cifra la contesta: deja en la lista solo esas.
+ *
+ * Qué entra en cada una se decide AQUÍ, una sola vez, y de aquí salen la cifra
+ * y el filtro. Con dos reglas —una para contar y otra para filtrar— bastaría
+ * un descuido para que el botón dijera «11» y al tocarlo salieran diez.
+ */
+export const FILTROS_DEL_PARTE = ['abiertas', 'cerradas', 'porPasar'] as const
+export type FiltroDelParte = (typeof FILTROS_DEL_PARTE)[number]
+
+const ENTRA_EN: Record<FiltroDelParte, (f: FilaDelParte) => boolean> = {
+  abiertas: (f) => f.abiertaHoy,
+  cerradas: (f) => f.cerradaHoy,
+  porPasar: (f) => !f.easyvista_ref,
+}
+
+/** Las filas que deja un filtro. Sin filtro, todas, en el mismo orden. */
+export function filtrarParte(filas: FilaDelParte[], filtro: FiltroDelParte | null): FilaDelParte[] {
+  return filtro ? filas.filter(ENTRA_EN[filtro]) : filas
+}
+
 export function resumenDelParte(filas: FilaDelParte[]): ResumenDelParte {
   return {
-    abiertas: filas.filter((f) => f.abiertaHoy).length,
-    cerradas: filas.filter((f) => f.cerradaHoy).length,
-    porPasar: filas.filter((f) => !f.easyvista_ref).length,
+    abiertas: filtrarParte(filas, 'abiertas').length,
+    cerradas: filtrarParte(filas, 'cerradas').length,
+    porPasar: filtrarParte(filas, 'porPasar').length,
   }
 }
 
