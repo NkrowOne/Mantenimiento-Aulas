@@ -113,6 +113,31 @@
   }
 
   /*
+   * Sitio para escribir al final de un carril.
+   *
+   * `--teclado` es cuánto de la pantalla tapa el teclado ahora mismo; lo mide y
+   * lo mantiene `lib/campo-a-la-vista.ts`. Sin teclado vale cero.
+   *
+   * Un carril que desplaza —el `<main>` del marco, el cuerpo de una hoja—
+   * termina donde termina su contenido, y su último campo no puede subir más
+   * aunque el teclado lo esté tapando: ya está abajo del todo. Este hueco, del
+   * alto del teclado, es lo que le deja subir. No mueve nada de lo que se ve:
+   * solo añade recorrido por debajo.
+   *
+   * Va como `::after` y no como `padding-bottom` para no pisar el relleno que
+   * cada carril ya lleve puesto con sus propias clases.
+   */
+  :root {
+    --teclado: 0px;
+  }
+
+  .hueco-del-teclado::after {
+    content: '';
+    display: block;
+    height: var(--teclado);
+  }
+
+  /*
    * Ningún campo por debajo de 16px.
    *
    * Safari de iOS AMPLÍA la página al enfocar un `input`, `textarea` o `select`

@@ -7,6 +7,7 @@ import { vigilarElHistorial } from './lib/historial'
 import { vigilarLaInstalacion } from './lib/instalar'
 import { iniciarTema } from './lib/tema'
 import { vigilarElTeclado } from './lib/viewport'
+import { vigilarLosCampos } from './lib/campo-a-la-vista'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -54,6 +55,12 @@ for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
  * vuelven a juntar. Lo cuenta entero `lib/viewport.ts`.
  */
 vigilarElTeclado()
+
+/*
+ * Y el campo en el que se va a escribir, a la vista: al tocarlo se coloca entre
+ * la cabecera y el teclado, esté donde esté. Lo cuenta `lib/campo-a-la-vista.ts`.
+ */
+vigilarLosCampos()
 
 /*
  * El botón atrás del móvil cierra lo de arriba —una hoja, una ficha, una

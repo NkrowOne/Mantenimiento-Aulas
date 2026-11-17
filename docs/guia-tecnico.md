@@ -58,6 +58,15 @@ sesión— al pie de ese menú.
 
 ### Atajos que ahorran toques
 
+- **Escribir sin perder la caja de vista.** Al tocar un campo para escribir, la
+  pantalla se coloca sola para que quede entre la cabecera y el teclado, con su
+  etiqueta, esté donde esté: al final de una revisión, en el cierre de una
+  incidencia o dentro de una hoja que sube desde abajo. No hace falta cerrar el
+  teclado y subir a mano.
+- **Las listas largas vienen recogidas.** La ficha de un aula enseña sus seis
+  primeros equipos y un «Ver los 14 equipos» para el resto, y la descarga del
+  historial es una fila hasta que se toca.
+
 - **Buscar con el edificio delante.** En el buscador del inicio puedes teclear
   el aviso tal como llega: `h 1.12`, `crai sala 3`. Pulsa «Ir» en el teclado y
   se abre el primer resultado. Al volver del aula, la búsqueda sigue ahí.
@@ -545,10 +554,10 @@ Lo que le ha pasado a un aula se puede **llevar**: a una reunión, a un proveedo
 que pregunta cuántas veces se ha cambiado esa lámpara, a quien decide qué aula se
 renueva.
 
-- **De un aula:** al final de su ficha, en **Historial de intervenciones: Excel
-  y PDF**.
+- **De un aula:** al final de su ficha, debajo de «Documentos», en **Descargar
+  el historial**. Viene plegado: tócalo y se despliega ahí mismo.
 - **De un edificio entero:** en la lista de sus salas, el botón **Historial** de
-  arriba te lleva a la misma tarjeta, al final.
+  arriba despliega la misma tarjeta, al final, y te lleva hasta ella.
 
 Antes de descargar **eliges dos cosas**:
 

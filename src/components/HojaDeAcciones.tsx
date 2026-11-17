@@ -415,7 +415,7 @@ export function HojaDeAcciones({
       <div
         ref={panel}
         tabIndex={-1}
-        className="relative max-h-[88vh] w-full overflow-y-auto overscroll-contain rounded-t-[1.5rem] bg-surface px-4 pt-2 shadow-float sm:max-h-[90vh] sm:max-w-lg sm:rounded-[1.5rem] sm:pt-4"
+        className="hueco-del-teclado relative max-h-[88vh] w-full overflow-y-auto overscroll-contain rounded-t-[1.5rem] bg-surface px-4 pt-2 shadow-float sm:max-h-[90vh] sm:max-w-lg sm:rounded-[1.5rem] sm:pt-4"
         style={{
           // La curva de los cajones de iOS, la misma que usa el aviso de versión
           // nueva. Con `prefers-reduced-motion` la base la recorta a 1ms y la

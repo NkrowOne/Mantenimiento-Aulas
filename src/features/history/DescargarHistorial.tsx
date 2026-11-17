@@ -30,6 +30,9 @@ import { exportacionDelHistorial, type AlcanceDelHistorial } from './exportarHis
  *    marcado de entrada. Quitar una la quita de la lista y, si era la única que
  *    alimentaba una hoja, quita la hoja.
  *
+ * **Plegada de entrada.** Es una fila más de «Documentos» hasta que se toca, y
+ * entonces se despliega ahí mismo.
+ *
  * Lo elegido **se recuerda mientras la aplicación siga abierta**: quien saca el
  * historial del último mes de cinco aulas seguidas lo elige una vez.
  *
@@ -43,10 +46,13 @@ export default function DescargarHistorial({
   alcance,
   titulo,
   descripcion,
+  abrir,
 }: {
   alcance: AlcanceDelHistorial
   titulo: string
   descripcion: string
+  /** Señal para desplegarla y traerla a la vista desde fuera. */
+  abrir?: number
 }): React.ReactElement {
   const [periodo, setPeriodo] = useEstadoDeSesion<Periodo>('historial-descarga.periodo', 'doce', (v) =>
     (PERIODOS as readonly unknown[]).includes(v),
@@ -76,11 +82,16 @@ export default function DescargarHistorial({
     <ExportarConVistaPrevia
       titulo={titulo}
       descripcion={descripcion}
+      // Plegada de entrada: va al final de pantallas que ya son largas, y
+      // dentro lleva un periodo y cinco casillas. Abierta siempre, era otra
+      // pantalla y media de desplazamiento debajo de la ficha.
+      plegable={{ icono: 'historial', resumen: 'En Excel o en PDF. Eliges el periodo y qué incluir.' }}
+      abrir={abrir}
       disabled={problema !== null}
       eleccion={JSON.stringify(opciones)}
       preparar={() => exportacionDelHistorial(alcance, opciones)}
     >
-      <fieldset className="mt-4">
+      <fieldset className="mt-3">
         <legend className="eyebrow">Periodo</legend>
         <div role="group" aria-label="Periodo" className="opciones mt-2">
           {PERIODOS.map((p) => (

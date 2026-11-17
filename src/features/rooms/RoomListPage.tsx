@@ -86,6 +86,8 @@ export function RoomListPage({
    * acababa de dar de baja, por ejemplo—. Lo que merece sobrevivir a una recarga
    * es dónde estás, no qué menú tenías desplegado.
    */
+  /* Cada toque en «Historial», arriba, despliega la tarjeta del final y la trae a la vista. */
+  const [abrirHistorial, setAbrirHistorial] = useState(0)
   const [hoja, setHoja] = useState<Hoja | null>(null)
 
   /*
@@ -216,9 +218,7 @@ export function RoomListPage({
               hasta cuarenta salas: este botón lleva hasta él. */}
           <button
             type="button"
-            onClick={() =>
-              document.getElementById('historial-del-edificio')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-            }
+            onClick={() => setAbrirHistorial((n) => n + 1)}
             className="key key-quiet inline-flex min-h-11 shrink-0 items-center gap-1.5 px-3 text-sm"
           >
             <Icono nombre="historial" lado={18} className="text-accent" />
@@ -484,10 +484,11 @@ export function RoomListPage({
         se pide para una memoria o para decidir qué aulario se renueva.
       */}
       {!cargando && rooms && rooms.length > 0 && (
-        <div id="historial-del-edificio" className="mx-4 scroll-mt-4">
+        <div className="mx-4">
           <Suspense fallback={null}>
             <DescargarHistorial
-              titulo="Historial de intervenciones del edificio: Excel y PDF"
+              abrir={abrirHistorial}
+              titulo="Descargar el historial del edificio"
               descripcion={`Todo lo que se ha hecho en las ${rooms.length} salas de ${building.name}, con su fecha y su hora: revisiones, incidencias con su solución y el material usado. Se ve antes de descargar.`}
               alcance={{
                 de: 'edificio',

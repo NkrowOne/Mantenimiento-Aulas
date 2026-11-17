@@ -170,6 +170,9 @@ const MARCA: Record<TimelineRow['kind'], { punto: string; texto: string }> = {
   inventario: { punto: 'bg-ok', texto: 'Inventario' },
 }
 
+/** Cuántos equipos enseña la ficha antes de pedir un toque para ver el resto. */
+const EQUIPOS_A_LA_VISTA = 6
+
 interface Props {
   room: Room
   buildingName: string
@@ -337,6 +340,7 @@ export function RoomSheet({
      desaparece de la lista en el acto, y sin una frase que lo diga el gesto se
      lee como si la ficha hubiera perdido la fila. */
   const [resuelto, setResuelto] = useState<string | null>(null)
+  const [todosLosEquipos, setTodosLosEquipos] = useState(false)
 
   // El inventario sale del espejo local: la ficha tiene que abrirse en un
   // sótano sin cobertura igual que la revisión.
@@ -1101,8 +1105,16 @@ export function RoomSheet({
               Equipamiento instalado{equipos && equipos.length > 0 ? ` · ${equipos.length}` : ''}
             </h2>
           </div>
+          {/*
+            Los seis primeros, y el resto a un toque.
+            Un aula bien equipada tiene catorce aparatos, y catorce filas son
+            una pantalla y media entre las averías y todo lo que viene después
+            —las revisiones, el historial, los documentos—. Quien abre la ficha
+            casi nunca viene a leer el inventario entero, y quien viene lo tiene
+            ahí mismo: la última fila dice cuántos hay y los despliega.
+          */}
           <ul className="escalonada card divide-y divide-line-soft overflow-hidden">
-            {(equipos ?? []).map((a) => (
+            {(equipos ?? []).slice(0, todosLosEquipos ? undefined : EQUIPOS_A_LA_VISTA).map((a) => (
               <li key={a.id} className="flex items-center gap-3 px-4 py-3">
                 <span className="min-w-0 flex-1">
                   <span className="block font-medium">{a.label || a.tipo}</span>
@@ -1118,6 +1130,23 @@ export function RoomSheet({
             {equipos?.length === 0 && (
               <li className="px-4 py-3.5 text-sm text-muted">
                 No hay equipos registrados en esta sala.
+              </li>
+            )}
+            {(equipos?.length ?? 0) > EQUIPOS_A_LA_VISTA && (
+              <li>
+                <button
+                  type="button"
+                  onClick={() => setTodosLosEquipos((v) => !v)}
+                  aria-expanded={todosLosEquipos}
+                  className="fila flex min-h-11 w-full items-center justify-center gap-1.5 px-4 text-sm font-medium text-accent"
+                >
+                  {todosLosEquipos ? 'Ver menos' : `Ver los ${equipos?.length} equipos`}
+                  <Icono
+                    nombre="abajo"
+                    lado={16}
+                    className={`transition-transform duration-150 ${todosLosEquipos ? 'rotate-180' : ''}`}
+                  />
+                </button>
               </li>
             )}
           </ul>
@@ -1279,7 +1308,7 @@ export function RoomSheet({
         */}
         <Suspense fallback={null}>
           <DescargarHistorial
-            titulo="Historial de intervenciones: Excel y PDF"
+            titulo="Descargar el historial"
             descripcion="Todo lo que se ha hecho en esta sala, con su fecha y su hora: revisiones, incidencias con su solución y el material usado en cada una. Se ve antes de descargar."
             alcance={{
               de: 'sala',
