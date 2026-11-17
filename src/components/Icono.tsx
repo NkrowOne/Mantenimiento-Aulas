@@ -210,6 +210,12 @@ const TRAZOS = {
     </>
   ),
   luna: <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />,
+  persona: (
+    <>
+      <circle cx="12" cy="8" r="3.6" />
+      <path d="M4.8 20c.4-3.7 3.4-6 7.2-6s6.8 2.3 7.2 6" />
+    </>
+  ),
   aparato: (
     <>
       <rect x="6.5" y="3" width="11" height="18" rx="2.5" />

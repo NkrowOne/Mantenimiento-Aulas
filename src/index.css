@@ -51,6 +51,56 @@
     text-wrap: balance;
   }
 
+  /*
+   * La franja de la barra de estado, y por qué es un elemento `fixed`.
+   *
+   * iOS 26 pinta un desenfoque propio en la parte de arriba de las aplicaciones
+   * instaladas en la pantalla de inicio: una niebla que baja desde la hora y la
+   * batería y se come el borde de lo que haya debajo —aquí, el logotipo y el
+   * nombre de la cabecera—. No es nuestro: no hay ni un `blur` en la cabecera.
+   * Lo pone el sistema cuando cree que hay contenido pasando por debajo de la
+   * barra de estado, y no hay `meta` ni propiedad de CSS que lo apague.
+   *
+   * Lo que sí hace WebKit es NO pintarlo cuando, pegado al borde de arriba,
+   * encuentra un elemento `fixed`, opaco y de todo el ancho: entonces toma su
+   * color para la barra de estado y la deja lisa. La zona de la barra de estado
+   * era el `padding-top` del `body` —o sea, nada—, y la cabecera no es `fixed`
+   * a propósito (ver `components/Marco.tsx`), así que WebKit no encontraba a
+   * nadie y desenfocaba.
+   *
+   * Esta franja es ese elemento, y nada más: mide lo que mide la barra de
+   * estado, lleva el color del fondo y no tapa nada, porque debajo solo estaba
+   * el relleno. Tiene que poder tocarse —un velo con `pointer-events: none` no
+   * cuenta para WebKit—, y da igual: ahí no hay nada que tocar.
+   *
+   * Es lo único `fixed` del marco. El fallo de iOS que deja varado lo `fixed`
+   * al bajar el teclado lo corrige `lib/viewport.ts`, y una franja del color
+   * del fondo, fuera de sitio un instante, no se ve.
+   *
+   * Por ENCIMA de las hojas (`z-40`) y por debajo del visor de fotos y del
+   * lector de QR (`z-50`). El fondo de una hoja es un velo translúcido que
+   * llega hasta arriba: si quedara encima, sería él lo que WebKit encontrara en
+   * el borde, y un velo no es opaco, así que el desenfoque volvería cada vez
+   * que se abre una hoja. Con la franja encima, la barra de estado se queda
+   * lisa también entonces. El visor y el lector son negros y opacos: llegan
+   * hasta arriba con su propio color y la tapan.
+   *
+   * En un navegador de escritorio o en Android, `safe-area-inset-top` es cero
+   * y la franja no mide nada.
+   *
+   * La forma va también en `index.html`, en línea, para que esté desde el
+   * primer fotograma; aquí toma el color del tema elegido.
+   */
+  .franja-de-estado {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 45;
+    height: env(safe-area-inset-top);
+    background: rgb(var(--ground));
+  }
+
   body {
     @apply bg-ground text-ink font-sans antialiased;
     /* Área segura del iPhone: el notch y la barra de gestos se comen píxeles reales. */

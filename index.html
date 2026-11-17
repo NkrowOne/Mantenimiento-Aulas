@@ -52,6 +52,16 @@
          y el inventario, y un fondo gris —o grafito— es tóner tirado. */
       @media print { html, html[data-theme='dark'], html:not([data-theme='light']) { background: #fff } }
       body { margin: 0 }
+      /*
+        La franja de la barra de estado. Fija, opaca y de todo el ancho, encima
+        de la hora y la batería. Existe por iOS 26: ver `.franja-de-estado` en
+        src/index.css, que es donde se explica y donde toma el color del tema.
+        Aquí va su forma, para que esté desde el primer fotograma.
+      */
+      .franja-de-estado { position: fixed; top: 0; left: 0; right: 0; z-index: 45; height: env(safe-area-inset-top); background: #F3F5F7 }
+      @media (prefers-color-scheme: dark) { html:not([data-theme='light']) .franja-de-estado { background: #0A0C0E } }
+      html[data-theme='dark'] .franja-de-estado { background: #0A0C0E }
+      @media print { .franja-de-estado { display: none } }
       #arranque { display: flex; min-height: 100vh; min-height: 100dvh; align-items: center; justify-content: center }
       #arranque svg { border-radius: 24% }
       /* Si el arranque se alarga —red lenta, primera carga—, la marca late para
@@ -68,6 +78,7 @@
       src/components/Arranque.tsx pinta exactamente lo mismo mientras Dexie
       contesta, así que el relevo no se nota. Si se cambia uno, se cambia el otro.
     -->
+    <div class="franja-de-estado" aria-hidden="true"></div>
     <div id="root">
       <div id="arranque" role="status" aria-label="Cargando">
         <svg width="72" height="72" viewBox="0 0 512 512" aria-hidden="true">

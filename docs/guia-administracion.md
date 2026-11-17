@@ -797,13 +797,23 @@ from audit_log where table_name = 'rooms' order by at desc limit 20;
 ### 3 bis. Actividad — quién cambió qué
 
 Esa misma auditoría se lee sin SQL en `Datos → Actividad`. Cada cambio sale
-con su hora, la persona, qué era (la sala con su código, el equipo con su
-etiqueta y su sala, la incidencia con su número) y cada campo con lo que decía
-y lo que dice, en las palabras de la aplicación: «Sala: — → H 1.7», «Estado:
-Instalado → Averiado». Las altas y las bajas salen marcadas en verde y en rojo.
+dicho como una frase: la persona, lo que hizo («Cambió una incidencia», «Dio de
+alta un equipo»), a qué (la sala con su código, el equipo con su etiqueta y su
+sala, la incidencia con su número) y la hora. El recuadro de la izquierda dice
+de qué es con su dibujo y qué se hizo con su color: verde un alta, rojo una
+baja.
 
-- Se filtra por periodo (última semana por defecto), por qué (salas, equipos,
-  incidencias…) y por quién. Cien cambios por página; «Ver más antiguos» sigue.
+Debajo, cada campo que cambió, en las palabras de la aplicación. Un valor que
+se pone por primera vez sale solo («Código EasyVista: I261117_0052»); dos
+valores cortos, uno al lado del otro («Abierta › Resuelta»); y dos largos, uno
+debajo del otro con «Antes» y «Ahora» delante. Si cambiaron más de tres campos
+se ven tres y un «Ver 2 cambios más».
+
+- Se filtra por periodo (7 días por defecto, a un toque), por **qué** (salas,
+  equipos, incidencias…) y por **quién**. Arriba dice cuántos cambios hay con lo
+  elegido, y «Quitar filtros» lo deshace.
+- Los días van separados y con su recuento: «Hoy · 4 cambios», «Ayer».
+- Cien cambios por página; «Ver cambios más antiguos» sigue.
 - Los nombres salen del espejo del dispositivo. Lo que ya no existe —una sala
   borrada en una fusión— sale abreviado (`#7f3a9c1e`), y se busca por ese
   prefijo en `audit_log` si hace falta.

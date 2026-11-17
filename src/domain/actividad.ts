@@ -69,6 +69,8 @@ export type Operacion = 'alta' | 'cambio' | 'baja'
 
 export interface Actividad {
   id: number
+  /** La tabla de la que viene (`rooms`, `incidents`…): decide el dibujo y la frase. */
+  origen: string
   cuando: string
   /** Nombre de quien lo hizo; nulo si lo hizo el sistema o no se sabe. */
   quien: string | null
@@ -431,6 +433,7 @@ export function describir(fila: FilaDeAuditoria, n: Nombres = SIN_NOMBRES): Acti
   const datos = (fila.new_data ?? fila.old_data ?? {}) as Datos
   const base = {
     id: fila.id,
+    origen: fila.table_name,
     cuando: fila.at,
     quien: fila.by_user ? (n.personas.get(fila.by_user) ?? null) : null,
     tabla: tabla?.nombre ?? fila.table_name,
@@ -452,6 +455,67 @@ export function resumen(a: Actividad): string {
   const [primero, ...resto] = a.cambios
   const linea = primero ? `${primero.campo}: ${primero.antes ?? '—'} → ${primero.despues ?? '—'}` : ''
   return `${a.que} · ${linea}${resto.length ? ` y ${resto.length} más` : ''}`
+}
+
+/**
+ * Cómo se nombra cada cosa dentro de una frase: «una incidencia», «un equipo».
+ *
+ * `TABLAS` da el nombre suelto —«Incidencia»—, que vale para una etiqueta pero
+ * no para decirlo: «Cambio · Incidencia» son dos etiquetas que hay que juntar
+ * de cabeza, y «cambió una incidencia» se lee solo.
+ */
+const CON_ARTICULO: Record<string, string> = {
+  buildings: 'un edificio',
+  zones: 'una planta',
+  rooms: 'una sala',
+  stock_items: 'un artículo del almacén',
+  stock_units: 'una unidad del almacén',
+  assets: 'un equipo',
+  incidents: 'una incidencia',
+  profiles: 'un usuario',
+  asset_types: 'un tipo de equipo',
+  asset_removals: 'una retirada de equipo',
+  asset_defaults: 'el equipamiento por defecto',
+}
+
+const VERBO: Record<Operacion, string> = {
+  alta: 'Dio de alta',
+  cambio: 'Cambió',
+  baja: 'Dio de baja',
+}
+
+/**
+ * Lo que pasó, en una frase que sigue al nombre de quien lo hizo:
+ * «Cambió una incidencia», «Dio de alta un equipo».
+ *
+ * Empieza por el verbo y sin sujeto a propósito: el nombre va encima, en su
+ * propio renglón, y así vale igual para una persona que para «Sistema».
+ */
+export function loQueHizo(a: Pick<Actividad, 'op' | 'origen' | 'tabla'>): string {
+  return `${VERBO[a.op]} ${CON_ARTICULO[a.origen] ?? a.tabla.toLowerCase()}`
+}
+
+/**
+ * Cómo se enseña un cambio de campo.
+ *
+ *  - `nuevo`: antes no había nada. Se dice el valor y ya: «— → I261117_0052»
+ *    obliga a leer una raya y una flecha para enterarse de que se ha puesto un
+ *    código.
+ *  - `quitado`: había y ya no.
+ *  - `corto`: los dos caben en un renglón, uno al lado del otro.
+ *  - `largo`: no caben. Uno debajo del otro, cada uno con su palabra delante:
+ *    partidos por la mitad de una flecha, dos textos largos no se sabe dónde
+ *    acaba el de antes y dónde empieza el de ahora.
+ */
+export type FormaDeCambio = 'nuevo' | 'quitado' | 'corto' | 'largo'
+
+/** A partir de cuántas letras, entre los dos, dejan de caber en un renglón de teléfono. */
+export const LARGO_DE_UN_RENGLON = 34
+
+export function formaDelCambio(c: Pick<Cambio, 'antes' | 'despues'>): FormaDeCambio {
+  if (c.antes === null) return 'nuevo'
+  if (c.despues === null) return 'quitado'
+  return c.antes.length + c.despues.length <= LARGO_DE_UN_RENGLON ? 'corto' : 'largo'
 }
 
 export const OPERACION_LABELS: Record<Operacion, string> = {
