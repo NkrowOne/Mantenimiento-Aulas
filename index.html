@@ -53,14 +53,21 @@
       @media print { html, html[data-theme='dark'], html:not([data-theme='light']) { background: #fff } }
       body { margin: 0 }
       /*
-        La franja de la barra de estado. Fija, opaca y de todo el ancho, encima
-        de la hora y la batería. Existe por iOS 26: ver `.franja-de-estado` en
-        src/index.css, que es donde se explica y donde toma el color del tema.
-        Aquí va su forma, para que esté desde el primer fotograma.
+        La franja de la barra de estado. Fija, opaca, de todo el ancho y por
+        encima de TODO, pegada al borde de arriba. Existe por iOS 26: ver
+        `.franja-de-estado` en src/index.css, que es donde se explica y donde
+        toma el color del tema. Aquí va su forma, para que esté desde el primer
+        fotograma: si iOS mira el borde una sola vez y no la encuentra, pone su
+        desenfoque y ya no lo quita hasta que se cierra la aplicación.
       */
-      .franja-de-estado { position: fixed; top: 0; left: 0; right: 0; z-index: 45; height: env(safe-area-inset-top); background: #F3F5F7 }
+      :root { --borde-de-arriba: env(safe-area-inset-top, 0px) }
+      @supports (-webkit-touch-callout: none) {
+        @media (display-mode: standalone) { :root { --borde-de-arriba: max(env(safe-area-inset-top, 0px), 12px) } }
+      }
+      .franja-de-estado { position: fixed; top: 0; left: 0; right: 0; z-index: 2147483647; height: var(--borde-de-arriba); background: #F3F5F7 }
       @media (prefers-color-scheme: dark) { html:not([data-theme='light']) .franja-de-estado { background: #0A0C0E } }
       html[data-theme='dark'] .franja-de-estado { background: #0A0C0E }
+      html:has(.pantalla-negra) .franja-de-estado { background: #000 }
       @media print { .franja-de-estado { display: none } }
       #arranque { display: flex; min-height: 100vh; min-height: 100dvh; align-items: center; justify-content: center }
       #arranque svg { border-radius: 24% }
