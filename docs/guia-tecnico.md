@@ -539,6 +539,30 @@ la hoja está entera.
 > el aula esté vacía: te dice que no puede saber si no hay nada o si esa parte
 > del inventario nunca llegó a este dispositivo. Con cobertura sí lo afirma.
 
+## Descargar el historial de un aula o de un edificio
+
+Lo que le ha pasado a un aula se puede **llevar**: a una reunión, a un proveedor
+que pregunta cuántas veces se ha cambiado esa lámpara, a quien decide qué aula se
+renueva.
+
+- **De un aula:** al final de su ficha, en **Historial de intervenciones: Excel
+  y PDF**.
+- **De un edificio entero:** en la lista de sus salas, el botón **Historial** de
+  arriba te lleva a la misma tarjeta, al final.
+
+Pulsa **Ver y exportar** y lo ves antes de descargarlo, igual que el almacén.
+Lleva tres hojas:
+
+| Hoja | Qué cuenta |
+|---|---|
+| **Intervenciones** | Todo lo que se hizo, en orden, con su **día y su hora**: revisiones, incidencias, material, equipos |
+| **Incidencias** | Una fila por incidencia: cuándo se abrió, cuándo se resolvió, **qué se hizo** y **qué material se gastó** en ella |
+| **Material usado** | Cada movimiento de almacén apuntado al aula: artículo, cantidad y la incidencia en la que se gastó |
+
+El de un edificio lleva además la columna **Sala**. El Excel trae todas las
+columnas; el PDF, las que caben en un folio. Necesita conexión: el histórico
+completo no está guardado en el dispositivo.
+
 ## El indicador de arriba
 
 Responde a la única pregunta que importa: *¿se ha guardado mi trabajo?*

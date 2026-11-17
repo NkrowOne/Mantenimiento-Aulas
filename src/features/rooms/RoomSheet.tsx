@@ -57,7 +57,7 @@
  * medias.
  */
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { v7 as uuidv7 } from 'uuid'
@@ -88,6 +88,9 @@ import {
 import { BotonVolver } from '@/components/BotonVolver'
 import { Icono } from '@/components/Icono'
 import { Confirmacion } from '@/components/Confirmacion'
+
+/* La descarga del historial, bajo demanda: ver `DescargarHistorial.tsx`. */
+const DescargarHistorial = lazy(() => import('@/features/history/DescargarHistorial'))
 
 interface TimelineRow {
   at: string
@@ -170,6 +173,8 @@ const MARCA: Record<TimelineRow['kind'], { punto: string; texto: string }> = {
 interface Props {
   room: Room
   buildingName: string
+  /** La sigla del edificio, para titular lo que se descarga: «H 1.7». */
+  buildingCode?: string
   zoneName: string
   userId: string | null
   onBack: () => void
@@ -228,6 +233,7 @@ function Rayo({ className }: { className?: string }): React.ReactElement {
 export function RoomSheet({
   room,
   buildingName,
+  buildingCode = '',
   zoneName,
   userId,
   onBack,
@@ -1261,6 +1267,29 @@ export function RoomSheet({
             )}
           </ul>
         </section>
+
+        {/*
+          El historial, para llevárselo.
+          La ficha lo enseña, pero no se puede sacar de aquí: ni a una reunión,
+          ni a un proveedor que pregunta cuántas veces se ha cambiado esa
+          lámpara. Va al final, con los documentos, porque es lo mismo que
+          ellos: papel que se pide de vez en cuando, no trabajo del aula. Y con
+          la misma vista previa que el almacén: se ve lo que sale antes de
+          descargarlo, en Excel o en PDF.
+        */}
+        <Suspense fallback={null}>
+          <DescargarHistorial
+            titulo="Historial de intervenciones: Excel y PDF"
+            descripcion="Todo lo que se ha hecho en esta sala, con su fecha y su hora: revisiones, incidencias con su solución y el material usado en cada una. Se ve antes de descargar."
+            alcance={{
+              de: 'sala',
+              roomId: room.id,
+              codigo: room.code,
+              nombre: room.name,
+              edificio: buildingCode,
+            }}
+          />
+        </Suspense>
       </div>
     </div>
   )

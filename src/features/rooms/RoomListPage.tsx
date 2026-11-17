@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { Suspense, lazy, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { FilaConAcciones } from '@/components/FilaConAcciones'
 import { Icono } from '@/components/Icono'
@@ -18,6 +18,9 @@ import {
 } from './orden'
 import { BotonVolver } from '@/components/BotonVolver'
 import { MonogramaDeEdificio } from '@/components/MonogramaDeEdificio'
+
+/* La descarga del historial, bajo demanda: ver `DescargarHistorial.tsx`. */
+const DescargarHistorial = lazy(() => import('@/features/history/DescargarHistorial'))
 
 interface Props {
   building: Building
@@ -208,6 +211,18 @@ export function RoomListPage({
           >
             <Icono nombre="lista" lado={18} className="text-accent" />
             Inventario del edificio
+          </button>
+          {/* El historial del edificio está al final de la página, debajo de
+              hasta cuarenta salas: este botón lleva hasta él. */}
+          <button
+            type="button"
+            onClick={() =>
+              document.getElementById('historial-del-edificio')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }
+            className="key key-quiet inline-flex min-h-11 shrink-0 items-center gap-1.5 px-3 text-sm"
+          >
+            <Icono nombre="historial" lado={18} className="text-accent" />
+            Historial
           </button>
         </div>
 
@@ -462,6 +477,28 @@ export function RoomListPage({
           )
         })}
       </ul>
+
+      {/*
+        El historial de todo el edificio, para llevárselo: lo mismo que el de
+        una sala, con una columna más que dice de cuál es cada fila. Es lo que
+        se pide para una memoria o para decidir qué aulario se renueva.
+      */}
+      {!cargando && rooms && rooms.length > 0 && (
+        <div id="historial-del-edificio" className="mx-4 scroll-mt-4">
+          <Suspense fallback={null}>
+            <DescargarHistorial
+              titulo="Historial de intervenciones del edificio: Excel y PDF"
+              descripcion={`Todo lo que se ha hecho en las ${rooms.length} salas de ${building.name}, con su fecha y su hora: revisiones, incidencias con su solución y el material usado. Se ve antes de descargar.`}
+              alcance={{
+                de: 'edificio',
+                buildingId: building.id,
+                codigo: building.code,
+                nombre: building.name,
+              }}
+            />
+          </Suspense>
+        </div>
+      )}
 
       {/*
         La hoja se monta al final y por encima de todo (`z-40`), no dentro del
