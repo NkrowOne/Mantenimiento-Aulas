@@ -794,6 +794,63 @@
   animation: latido 1.1s var(--ease-in-out) infinite;
 }
 
+/*
+ * ── La chapa de un edificio ──────────────────────────────────────────────────
+ *
+ * Las cuatro tintas de un monograma (`components/MonogramaDeEdificio.tsx`).
+ * Todas salen de los colores de la aplicación, así que cambian solas con el
+ * tema: lo que varía de una a otra es cuál hace de fondo y cuál de letra.
+ *
+ *   --m-bg      el fondo de la chapa
+ *   --m-fg      la letra
+ *   --m-suave   lo que queda DETRÁS de la letra: tiene que dejarla leer
+ *   --m-fuerte  lo que no la toca (la franja, la base, el punto): puede gritar
+ *
+ * El canto es un trazo interior de un píxel (`::after`): con el fondo de
+ * «papel» —que es el de la tarjeta— es lo que dibuja la chapa, y en las demás
+ * la afina.
+ */
+.monograma {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  overflow: hidden;
+  border-radius: var(--r-ctl);
+  --m-canto: rgb(var(--ink) / 0.08);
+  --m-bg: rgb(var(--accent-tint));
+  --m-fg: rgb(var(--accent));
+  --m-suave: rgb(var(--accent) / 0.16);
+  --m-fuerte: rgb(var(--accent));
+}
+.monograma[data-tinta='llena'] {
+  --m-bg: rgb(var(--accent-fill));
+  --m-fg: rgb(var(--accent-ink));
+  --m-suave: rgb(255 255 255 / 0.16);
+  --m-fuerte: rgb(255 255 255 / 0.85);
+}
+/* El azul del logotipo. Es el mismo en los dos temas, como el logotipo. */
+.monograma[data-tinta='marca'] {
+  --m-bg: #0d3c68;
+  --m-fg: #ffffff;
+  --m-suave: rgb(255 255 255 / 0.14);
+  --m-fuerte: #56d0e0;
+}
+.monograma::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--m-canto);
+  pointer-events: none;
+}
+.monograma[data-tinta='papel'] {
+  --m-canto: rgb(var(--line));
+  --m-bg: rgb(var(--surface));
+  --m-fg: rgb(var(--ink));
+  --m-suave: rgb(var(--accent) / 0.2);
+  --m-fuerte: rgb(var(--accent));
+}
+
 /* El fondo oscuro de una hoja, que hasta ahora aparecía de golpe. */
 @keyframes funde {
   from {

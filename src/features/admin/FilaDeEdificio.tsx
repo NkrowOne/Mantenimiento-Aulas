@@ -28,6 +28,7 @@ import type {
   SalaDeMaestro,
 } from '@/features/rooms/HojaDeMaestro'
 import type { Zone } from '@/domain/types'
+import { MonogramaDeEdificio } from '@/components/MonogramaDeEdificio'
 
 export interface EdificioDelMaestro {
   id: string
@@ -145,9 +146,7 @@ export function FilaDeEdificio({
           aria-expanded={desplegado}
           className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left"
         >
-          <span className="w-12 shrink-0 rounded-tag bg-raised py-1 text-center font-mono text-xs font-semibold text-accent">
-            {edificio.code}
-          </span>
+          <MonogramaDeEdificio code={edificio.code} name={edificio.name} lado={40} />
           <span className="min-w-0 flex-1">
             <span className="block truncate font-medium">{edificio.name}</span>
             <span className="block text-xs text-muted">
