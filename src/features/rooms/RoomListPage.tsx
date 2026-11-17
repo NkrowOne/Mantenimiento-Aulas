@@ -17,6 +17,7 @@ import {
   type RoomOrder,
 } from './orden'
 import { BotonVolver } from '@/components/BotonVolver'
+import { MonogramaDeEdificio } from '@/components/MonogramaDeEdificio'
 
 interface Props {
   building: Building
@@ -148,13 +149,7 @@ export function RoomListPage({
         <BotonVolver onClick={onBack} texto="Edificios" />
 
         <div className="mt-1 flex items-center gap-3">
-          <span
-            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-ctl bg-accent-tint font-mono font-semibold text-accent ${
-              building.code.length > 3 ? 'text-[0.6875rem]' : building.code.length > 2 ? 'text-sm' : 'text-lg'
-            }`}
-          >
-            {building.code}
-          </span>
+          <MonogramaDeEdificio code={building.code} name={building.name} lado={52} />
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-2xl font-bold tracking-tight">{building.name}</h1>
             {rooms && (

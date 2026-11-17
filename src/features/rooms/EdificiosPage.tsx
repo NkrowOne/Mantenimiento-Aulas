@@ -37,6 +37,7 @@ import { HojaDeMaestro } from './HojaDeMaestro'
 import { NuevaIncidencia } from './NuevaIncidencia'
 import { averiasPorEdificio, averiasPorSala } from './averias'
 import { ordenarEdificios } from '@/domain/ordenDeEdificios'
+import { MonogramaDeEdificio } from '@/components/MonogramaDeEdificio'
 
 /* El diagnóstico del servidor va en diferido: solo se abre cuando algo falla,
    nunca con el dedo apoyado, y son trescientas líneas que el arranque de cada
@@ -627,17 +628,13 @@ export function EdificiosPage({
                       El código, en una chapa.
                       Suelto competía con el nombre a la misma altura y el ojo no
                       sabía cuál de los dos era la entrada. Metido en su recuadro
-                      se lee como lo que es: una matrícula. La letra encoge con
-                      los códigos largos («CRAI», «COM») para que la chapa mida
-                      siempre lo mismo y los nombres arranquen alineados.
+                      se lee como lo que es: una matrícula. Y cada edificio
+                      lleva la suya, distinta, generada de su sigla y su nombre
+                      (`domain/monograma.ts`): se reconoce por la forma antes de
+                      leerla. Miden todas lo mismo, así que los nombres arrancan
+                      alineados.
                     */}
-                    <span
-                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-ctl bg-accent-tint font-mono font-semibold text-accent ${
-                        b.code.length > 3 ? 'text-[0.625rem]' : b.code.length > 2 ? 'text-xs' : 'text-base'
-                      }`}
-                    >
-                      {b.code}
-                    </span>
+                    <MonogramaDeEdificio code={b.code} name={b.name} lado={48} />
 
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-2">
