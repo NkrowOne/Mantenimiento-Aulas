@@ -460,7 +460,10 @@ export function VisorDeFotos({
       role="dialog"
       aria-modal="true"
       aria-label="Foto"
-      className="fixed inset-0 z-50 flex flex-col bg-black/95"
+      // Negro del todo, y no al 95 %: es lo que hay en el borde de arriba de la
+      // pantalla, y si no es opaco iOS 26 le pone su desenfoque encima (ver
+      // `.franja-de-estado` en index.css). La diferencia no se ve.
+      className="fixed inset-0 z-50 flex flex-col bg-black"
       style={{
         paddingTop: 'env(safe-area-inset-top)',
         paddingBottom: 'env(safe-area-inset-bottom)',
