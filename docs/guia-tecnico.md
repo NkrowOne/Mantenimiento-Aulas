@@ -404,7 +404,9 @@ pantalla con red.
 botón de arriba en la pestaña de Incidencias. Enseña solo lo de hoy —lo que se
 ha abierto hoy y lo que se ha cerrado hoy, aunque viniera de antes—, cada cosa
 con su estado, su sala, sus horas y lo que se hizo. Arriba, tres cifras:
-abiertas hoy, cerradas hoy y cuántas faltan por pasar. Lo que no tiene código
+abiertas hoy, cerradas hoy y cuántas faltan por pasar. **Toca una y la lista se
+queda solo con esas**; vuelve a tocarla, o pulsa «Quitar filtro», para verlas
+todas. Con una cifra puesta, el botón de copiar copia solo lo que se ve. Lo que no tiene código
 va primero, en «Pendientes de EasyVista»: pulsa **«Copiar todo»**, pega en
 EasyVista y apunta el código que te dé con «Código EasyVista»; al
 guardarlo, la incidencia pasa a «Registradas en EasyVista». Si solo quieres un trozo,
