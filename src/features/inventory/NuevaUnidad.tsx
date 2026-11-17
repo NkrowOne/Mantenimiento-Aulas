@@ -278,6 +278,7 @@ export function NuevaUnidad({
 
       {modo === 'una' ? (
         <button
+          aria-busy={alta.isPending}
           type="submit"
           disabled={!serial.trim() || alta.isPending}
           className="key key-accent mt-4 min-h-touch w-full px-4 text-sm"
@@ -286,6 +287,7 @@ export function NuevaUnidad({
         </button>
       ) : (
         <button
+          aria-busy={varias.isPending}
           type="submit"
           disabled={n === 0 || demasiadas || varias.isPending}
           className="key key-accent mt-4 min-h-touch w-full px-4 text-sm"

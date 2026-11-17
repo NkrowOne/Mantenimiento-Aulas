@@ -667,6 +667,7 @@ export function HojaDeMaestro({
         {bloqueSinRed}
 
         <button
+          aria-busy={enviando}
           type="button"
           data-principal
           disabled={bloqueado || motivo !== null}
@@ -906,6 +907,7 @@ export function HojaDeMaestro({
         {bloqueSinRed}
 
         <button
+          aria-busy={enviando}
           type="button"
           data-principal
           disabled={bloqueado || invalido !== null}

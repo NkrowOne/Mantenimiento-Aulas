@@ -339,6 +339,7 @@ function CrearSala({
           }}
         />
         <button
+          aria-busy={estado.tipo === 'creando'}
           type="button"
           className="key key-accent h-10 px-3 text-sm"
           disabled={!edificioId || code.trim() === '' || estado.tipo === 'creando'}

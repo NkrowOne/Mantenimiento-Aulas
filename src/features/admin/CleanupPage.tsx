@@ -173,7 +173,7 @@ export function CleanupPage({
           de un formulario de alta serían el mismo amontonamiento con otra
           forma. */}
       {seccion === 'pendientes' && (
-        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="escalonada mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatTile
             label="Por decidir"
             value={cuentas.pendientes}

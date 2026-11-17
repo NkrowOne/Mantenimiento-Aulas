@@ -12,6 +12,7 @@ import { InstalarUnidad } from './InstalarUnidad'
 import { MOTIVO_MIN, faltanParaElMotivo, motivoValido } from './motivo'
 import { falloDeUnidad } from './fallos'
 import { darDeBajaUnidad, editarUnidad, refrescarUnidades } from './unidadesDatos'
+import { Confirmacion } from '@/components/Confirmacion'
 
 /**
  * Una unidad del almacén: cuál es, cómo está, dónde está, y qué se hace con ella.
@@ -163,7 +164,7 @@ export function FichaDeUnidad({
           {falloDeUnidad(editar.error)}
         </p>
       )}
-      {hecho && !editar.isError && <p className="mt-2 text-sm text-ok">{hecho}</p>}
+      {hecho && !editar.isError && <Confirmacion texto={hecho} className="mt-2" />}
 
       {u.status === 'disponible' && (
         <button
@@ -310,6 +311,7 @@ function Corregir({
         </p>
       )}
       <button
+        aria-busy={guardar.isPending}
         type="submit"
         disabled={!hayCambios || guardar.isPending}
         className="key key-accent mt-4 min-h-touch w-full px-4 text-sm"
@@ -372,6 +374,7 @@ function DarDeBaja({
         </p>
       )}
       <button
+        aria-busy={baja.isPending}
         type="submit"
         disabled={!motivoValido(motivo) || baja.isPending}
         className="key key-crit mt-4 min-h-touch w-full px-4 text-sm"

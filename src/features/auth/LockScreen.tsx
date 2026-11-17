@@ -195,6 +195,7 @@ export function LockScreen({ sealed, onUnlocked }: Props): React.ReactElement {
           {error && <p className="text-sm text-crit">{error}</p>}
 
           <button
+            aria-busy={busy}
             type="submit"
             disabled={busy || pin.length < MIN_PIN_LENGTH}
             className="key key-accent h-touch"

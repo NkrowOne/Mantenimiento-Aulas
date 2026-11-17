@@ -119,6 +119,7 @@ export function CatalogoDeTipos(): React.ReactElement {
                     className="h-11 min-w-40 flex-1 rounded-ctl border border-line bg-surface px-2 text-base"
                   />
                   <button
+                    aria-busy={renombrar.isPending}
                     type="submit"
                     disabled={
                       renombrar.isPending || !editando.nombre.trim() || editando.nombre.trim() === t.name

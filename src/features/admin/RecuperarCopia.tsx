@@ -84,6 +84,7 @@ export function RecuperarCopia(): React.ReactElement {
       <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
         <p className="text-sm text-muted">Un fichero <span className="font-mono">.json</span> del indicador de sincronización.</p>
         <button
+          aria-busy={trabajando}
           type="button"
           disabled={trabajando}
           onClick={() => input.current?.click()}

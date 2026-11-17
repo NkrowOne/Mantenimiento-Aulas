@@ -124,6 +124,7 @@ export function Diagnostico(): React.ReactElement {
   return (
     <div className="mt-3">
       <button
+        aria-busy={cargando}
         type="button"
         onClick={consultar}
         disabled={cargando}

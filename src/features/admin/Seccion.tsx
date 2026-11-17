@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Icono } from '@/components/Icono'
 
 /**
  * Las piezas que comparten todas las secciones de «Datos».
@@ -40,8 +41,11 @@ const CONTADOR: Record<Tono, string> = {
 export function Contador({ n, tono = 'aviso', que = 'pendientes' }: { n: number; tono?: Tono; que?: string }): React.ReactElement {
   return (
     <span
+      // Con la cifra de clave: al cambiar, el número se vuelve a montar y da su
+      // pequeño salto (`.contador`). Es lo que avisa de que ya no es el de antes.
+      key={n}
       title={`${n} ${que}`}
-      className={`inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 text-xs font-semibold tabular ${CONTADOR[tono]}`}
+      className={`contador inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 text-xs font-semibold tabular ${CONTADOR[tono]}`}
     >
       {n}
     </span>
@@ -178,10 +182,23 @@ export function FalloDeCarga({
  * VoiceOver se saltara el anuncio con frecuencia. Vacía no ocupa.
  */
 export function Nota({ texto, tono = 'ok' }: { texto: string | null; tono?: 'ok' | 'crit' }): React.ReactElement {
-  const color = tono === 'crit' ? 'text-crit' : 'text-ok'
+  // La misma caja que `Confirmacion`, y en rojo si es un error: antes era texto
+  // de color suelto debajo de una lista, y un «asignadas» verde a media pantalla
+  // se confundía con una fila más.
+  const caja =
+    tono === 'crit' ? 'bg-crit-tint text-crit' : 'bg-ok-tint text-ok'
   return (
-    <p aria-live="polite" role={tono === 'crit' ? 'alert' : undefined} className={texto ? `mt-3 text-sm ${color}` : 'sr-only'}>
-      {texto ?? ''}
+    <p
+      aria-live="polite"
+      role={tono === 'crit' ? 'alert' : undefined}
+      className={
+        texto
+          ? `confirmacion mt-3 flex items-start gap-2.5 rounded-ctl px-3 py-2.5 text-sm font-medium leading-snug ${caja}`
+          : 'sr-only'
+      }
+    >
+      {texto && <Icono nombre={tono === 'crit' ? 'cerrar' : 'hecho'} lado={18} className="mt-0.5 shrink-0" />}
+      <span className="min-w-0 flex-1">{texto ?? ''}</span>
     </p>
   )
 }

@@ -31,6 +31,7 @@ import {
   type EdificioElegible,
   type SalaElegible,
 } from './equiposDatos'
+import { Confirmacion } from '@/components/Confirmacion'
 
 /**
  * La ficha de un equipo: todo lo que se sabe de él, y desde aquí se cambia.
@@ -221,11 +222,12 @@ export function FichaDeEquipo({
             Hay casillas mal escritas: están señaladas arriba.
           </p>
         )}
-        {hecho && <p className="mt-3 text-sm text-ok">{hecho}</p>}
+        {hecho && <Confirmacion texto={hecho} className="mt-3" />}
 
         {editable && (
           <div className="mt-4 flex flex-wrap gap-2">
             <button
+              aria-busy={guardar.isPending}
               type="submit"
               disabled={guardar.isPending || !hayCambios}
               className="key key-accent min-h-11 flex-1 px-3 text-sm"
@@ -488,6 +490,7 @@ function Trasladar({
       )}
       <div className="flex gap-2 sm:col-span-2">
         <button
+          aria-busy={trasladar.isPending}
           type="button"
           disabled={!roomId || trasladar.isPending}
           onClick={() => trasladar.mutate()}
@@ -571,6 +574,7 @@ function DarDeBaja({
       )}
       <div className="mt-2 flex gap-2">
         <button
+          aria-busy={baja.isPending}
           type="button"
           disabled={!motivoValido(motivo) || baja.isPending}
           onClick={() => baja.mutate()}

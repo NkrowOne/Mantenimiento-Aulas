@@ -22,6 +22,7 @@ import { Volver } from './ElegirCondicion'
 import { PUNTO_DE_CONDICION } from './ElegirUnidad'
 import { cambiarEstados, type CambioDeEstado, type MovimientoPedido } from './estadosDatos'
 import { falloDeEstado } from './fallos'
+import { Confirmacion } from '@/components/Confirmacion'
 
 /** Lo que estas vistas necesitan saber del artículo: lo de la fila de `stock_levels`. */
 interface Articulo {
@@ -175,11 +176,7 @@ export function ExistenciasPorEstado({
         </div>
       )}
 
-      {hecho && (
-        <p role="status" className="mt-3 text-sm text-ok">
-          {hecho}
-        </p>
-      )}
+      {hecho && <Confirmacion texto={hecho} className="mt-3" />}
 
       <ul aria-label="Por estado" className="mt-3 divide-y divide-line-soft border-t border-line-soft">
         {lineas.map((c) => {
@@ -506,6 +503,7 @@ export function CambiarEstado({
       )}
 
       <button
+        aria-busy={cambiar.isPending}
         type="submit"
         disabled={!valido || cambiar.isPending}
         className="key key-accent mt-3 min-h-touch w-full px-4 text-sm"
@@ -627,6 +625,7 @@ export function Repartir({
       )}
 
       <button
+        aria-busy={guardar.isPending}
         type="submit"
         disabled={repartidas === 0 || pasado || guardar.isPending}
         className="key key-accent mt-3 min-h-touch w-full px-4 text-sm"

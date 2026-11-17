@@ -27,6 +27,7 @@ import { diaEnMadrid, fechaCorta, horaCorta } from '@/domain/fechas'
 import { guardarLibroSincronizado, leerLibroSincronizado } from '@/db/dexie'
 import type { LibroGuardado } from '@/db/dexie'
 import { MasInformacion, Seccion } from './Seccion'
+import { Confirmacion } from '@/components/Confirmacion'
 
 /**
  * Sincronizar el Excel de SharePoint, en los dos sentidos.
@@ -638,6 +639,7 @@ export function SincronizarExcel(): React.ReactElement {
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <button
+              aria-busy={sincronizar.isPending}
               type="button"
               className="key key-accent h-11 px-4"
               disabled={ocupado || pendientes > 0}
@@ -651,6 +653,7 @@ export function SincronizarExcel(): React.ReactElement {
                   : 'Sincronizar'}
             </button>
             <button
+              aria-busy={previsualizar.isPending}
               type="button"
               className="key key-quiet h-11 px-4"
               disabled={ocupado}
@@ -660,7 +663,7 @@ export function SincronizarExcel(): React.ReactElement {
             </button>
           </div>
 
-          {aplicado && <p className="mt-3 text-sm text-ok">{aplicado}</p>}
+          {aplicado && <Confirmacion texto={aplicado} className="mt-3" />}
 
           {sinGuardar && (
             <p className="mt-3 rounded-ctl bg-warn-tint p-3 text-sm text-warn">{sinGuardar}</p>
@@ -1598,6 +1601,7 @@ function Entrega({
           : 'Muestra cómo quedaría el libro. No ha modificado la base de datos y no es el fichero que se sube a SharePoint: para eso, sincroniza.'}
       </p>
       <button
+        aria-busy={entregando}
         type="button"
         className="key key-accent mt-3 h-11 px-4"
         disabled={entregando}

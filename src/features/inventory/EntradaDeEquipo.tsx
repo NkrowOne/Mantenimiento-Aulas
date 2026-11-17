@@ -19,6 +19,7 @@ import {
   type SalaElegible,
   type TipoElegible,
 } from './equiposDatos'
+import { Confirmacion } from '@/components/Confirmacion'
 
 /**
  * Registrar la entrada de un equipo nuevo: lo que llega comprado y se instala.
@@ -318,13 +319,14 @@ export function EntradaDeEquipo({
       )}
 
       {registradas && !registrar.isPending && (
-        <p role="status" className="mt-3 text-sm text-ok">
-          {registradas} Listo para el siguiente: cambia el número de serie.
-        </p>
+        <Confirmacion
+          texto={`${registradas} Listo para el siguiente: cambia el número de serie.`}
+          className="mt-3"
+        />
       )}
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <button type="submit" disabled={registrar.isPending} className="key key-accent min-h-11 flex-1 px-3 text-sm">
+        <button aria-busy={registrar.isPending} type="submit" disabled={registrar.isPending} className="key key-accent min-h-11 flex-1 px-3 text-sm">
           {registrar.isPending ? 'Registrando…' : 'Registrar la entrada'}
         </button>
         <button

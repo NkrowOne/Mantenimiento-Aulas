@@ -226,6 +226,7 @@ export function InstalarUnidad({
 
       {sala && (
         <button
+          aria-busy={instalar.isPending}
           type="button"
           disabled={!listo}
           onClick={() => instalar.mutate()}

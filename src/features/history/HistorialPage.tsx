@@ -504,6 +504,7 @@ export function HistorialPage(): React.ReactElement {
 
       {consulta.hasNextPage && (
         <button
+          aria-busy={consulta.isFetchingNextPage}
           type="button"
           onClick={() => void consulta.fetchNextPage()}
           disabled={consulta.isFetchingNextPage}

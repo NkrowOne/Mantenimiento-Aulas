@@ -31,6 +31,7 @@ import {
 } from './equiposDatos'
 import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
 import { Icono } from '@/components/Icono'
+import { Confirmacion } from '@/components/Confirmacion'
 
 /**
  * Equipos: el inventario entero del campus en una lista, con la ficha de cada
@@ -193,7 +194,7 @@ function Inventario({ puedeEditar }: { puedeEditar: boolean }): React.ReactEleme
             </button>
           </div>
 
-          {aviso && <p className="mt-3 text-sm text-ok">{aviso}</p>}
+          {aviso && <Confirmacion texto={aviso} className="mt-3" />}
 
           {entrada && (
             <EntradaDeEquipo
@@ -743,6 +744,7 @@ function FilaDeVida({
             años
           </label>
           <button
+            aria-busy={guardar.isPending}
             type="button"
             disabled={!cambiado || !valido || guardar.isPending}
             onClick={() => guardar.mutate()}

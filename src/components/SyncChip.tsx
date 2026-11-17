@@ -161,7 +161,10 @@ export function SyncChip(): React.ReactElement {
       >
         {/* El piloto. Apagado es un punto gris que no pide nada; encendido lleva
             color y su frase al lado, que es lo que se lee. */}
-        <span aria-hidden className={`h-2.5 w-2.5 rounded-full ${lamp}`} />
+        <span
+          aria-hidden
+          className={`h-2.5 w-2.5 rounded-full ${lamp} ${state === 'sincronizando' ? 'piloto-activo' : ''}`}
+        />
         {label}
       </button>
 
@@ -452,6 +455,7 @@ export function SyncChip(): React.ReactElement {
           */}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-2">
             <button
+              aria-busy={busqueda === 'buscando'}
               type="button"
               disabled={busqueda === 'buscando'}
               onClick={() => {

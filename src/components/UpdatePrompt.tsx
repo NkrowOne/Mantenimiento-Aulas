@@ -120,6 +120,7 @@ export function UpdatePrompt({ enFlujo = false }: Props): React.ReactElement | n
           </button>
         )}
         <button
+          aria-busy={trabajando}
           type="button"
           disabled={trabajando}
           onClick={actualizar}

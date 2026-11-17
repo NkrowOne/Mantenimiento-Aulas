@@ -265,6 +265,7 @@ export function Actividad({
         <div className="mt-4 flex flex-wrap items-center gap-3">
           {hasNextPage && (
             <button
+              aria-busy={isFetchingNextPage}
               type="button"
               disabled={isFetchingNextPage}
               onClick={() => void fetchNextPage()}

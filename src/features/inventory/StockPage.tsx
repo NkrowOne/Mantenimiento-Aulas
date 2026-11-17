@@ -33,6 +33,7 @@ import { useUnidades } from './unidadesDatos'
 import { useEstadoDeSesion } from '@/lib/estado-de-sesion'
 import { subirArriba } from '@/components/Marco'
 import { Icono } from '@/components/Icono'
+import { Confirmacion } from '@/components/Confirmacion'
 
 /** Una fila de `stock_levels`. Lo que se lee de la vista está entre sus columnas: lo comprueba `contrato-saldos`. */
 interface StockLevel {
@@ -430,7 +431,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
                 : `No se ha podido crear: ${mensajeDe(crear.error) || 'error desconocido'}`}
             </p>
           )}
-          <button type="submit" disabled={crear.isPending} className="key key-accent mt-3 min-h-11 px-4 text-sm">
+          <button aria-busy={crear.isPending} type="submit" disabled={crear.isPending} className="key key-accent mt-3 min-h-11 px-4 text-sm">
             {crear.isPending ? 'Creando…' : 'Crear artículo'}
           </button>
         </form>
@@ -464,11 +465,7 @@ export function StockPage({ role }: { role: Role }): React.ReactElement {
         ))}
       </div>
 
-      {aviso && (
-        <p role="status" className="mt-3 rounded-ctl bg-ok-tint p-3 text-sm text-ok">
-          {aviso}
-        </p>
-      )}
+      {aviso && <Confirmacion texto={aviso} className="mt-3" />}
 
       {porSerie.length > 0 && (
         <section aria-label="Números de serie" className="mt-4">

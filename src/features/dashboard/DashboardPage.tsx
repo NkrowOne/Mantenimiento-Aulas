@@ -92,7 +92,7 @@ export function DashboardPage({ ir }: { ir: Destinos }): React.ReactElement {
             Situación
           </h2>
         </div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="escalonada grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatTile
             label="Revisadas este mes"
             value={s.inspectedThisMonth}
