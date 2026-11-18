@@ -118,6 +118,18 @@ const TRAZOS = {
       <path d="M5 12h14" />
     </>
   ),
+  // El par del de arriba, para los contadores: una menos.
+  menos: <path d="M5 12h14" />,
+  // Y lo que es «una menos» cuando solo queda una: quitarla.
+  papelera: (
+    <>
+      <path d="M4.5 7h15" />
+      <path d="M9.5 7V5.25A1.25 1.25 0 0 1 10.75 4h2.5a1.25 1.25 0 0 1 1.25 1.25V7" />
+      <path d="M6.5 7l.8 11.1a1.5 1.5 0 0 0 1.5 1.4h6.4a1.5 1.5 0 0 0 1.5-1.4L17.5 7" />
+      <path d="M10.25 11v4.75" />
+      <path d="M13.75 11v4.75" />
+    </>
+  ),
   atras: (
     <>
       <path d="M19 12H5" />

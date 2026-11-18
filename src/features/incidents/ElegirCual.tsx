@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { ESTADO_EN_PLURAL } from '@/domain/estados'
-import { CONDICION_LABEL, coincideUnidad, descripcionDeUnidad } from '@/domain/unidades'
-import { EtiquetaDeCondicion, PUNTO_DE_CONDICION } from '@/features/inventory/ElegirUnidad'
+import { CONDICION_LABEL, coincideUnidad, descripcionDeUnidad, type Condicion } from '@/domain/unidades'
+import { PUNTO_DE_CONDICION } from '@/features/inventory/ElegirUnidad'
 import type { Opciones } from './cual'
 import type { Cual } from './material'
 
@@ -10,15 +10,20 @@ import type { Cual } from './material'
  * respuesta.
  *
  * Un toque y está apuntada: se elige y se cierra. No hay «Confirmar» —la
- * elección ES la confirmación, y lo apuntado se corrige en su línea, que lleva
- * su `−`—, ni desplegables: con el material en una mano, se ven todas las
- * respuestas a la vez y se toca una.
+ * elección ES la confirmación, y lo apuntado se corrige en su línea—, ni
+ * desplegables: con el material en una mano, se ven todas las respuestas a la
+ * vez y se toca una.
  *
- *  - Por estado, las que hay: «Nuevo · quedan 5», «Usado · quedan 3». Solo los
- *    estados con existencias; lo averiado al final y en su color, que se puede
- *    haber puesto pero conviene verlo.
- *  - Por número de serie, cada aparato con el suyo, como está en la pegatina, y
- *    su estado al lado. Con más de cuatro, un buscador: se teclean cuatro
+ * **Una lista, y siempre la misma forma.** Cada respuesta es una fila a todo el
+ * ancho: a la izquierda lo que es —el estado, o el número de serie como está en
+ * la pegatina— y a la derecha el dato que ayuda a elegir —cuántas quedan, o en
+ * qué estado está ese aparato—. La primera versión ponía los estados en una
+ * rejilla de dos columnas y los aparatos en una lista: dos dibujos para la misma
+ * pregunta, y con tres estados quedaba un hueco.
+ *
+ *  - Por estado, solo los que tienen existencias; lo averiado al final y en su
+ *    color, que se puede haber puesto pero conviene verlo.
+ *  - Por número de serie, con más de cuatro sale un buscador: se teclean cuatro
  *    cifras y queda el que se tiene delante. Y «Una sin número de serie» si el
  *    almacén cuenta más de las que tienen número.
  *
@@ -31,7 +36,8 @@ export function ElegirCual({
   onElegir,
   onCancelar,
 }: {
-  nombre: string
+  /** El artículo. Dentro de su propia línea no hace falta repetirlo. */
+  nombre?: string
   opciones: Opciones
   onElegir: (cual: Cual) => void
   onCancelar: () => void
@@ -40,8 +46,8 @@ export function ElegirCual({
   const [consulta, setConsulta] = useState('')
   const caja = useRef<HTMLDivElement>(null)
 
-  // A la vista al abrirse: sale donde estaba la lista de resultados, y en un
-  // teléfono con el teclado arriba puede quedar justo debajo de él.
+  // A la vista al abrirse: en un teléfono con el teclado arriba puede quedar
+  // justo debajo de él.
   useEffect(() => {
     caja.current?.scrollIntoView({ block: 'nearest' })
   }, [])
@@ -51,130 +57,126 @@ export function ElegirCual({
     [opciones.unidades, consulta],
   )
   const porSerie = opciones.unidades.length > 0
+  const fila = 'flex min-h-touch w-full items-center gap-3 px-3 py-2 text-left transition-colors duration-100 active:bg-raised'
 
   return (
     <div
       ref={caja}
       role="group"
       aria-labelledby={idTitulo}
-      className="mt-2 scroll-mb-4 rounded-ctl border border-accent/40 bg-surface p-3"
+      className="scroll-mb-4 overflow-hidden rounded-ctl border border-accent/50 bg-surface"
     >
-      <div className="flex items-start justify-between gap-3">
-        <p id={idTitulo} className="min-w-0 flex-1 text-sm">
-          <span className="block font-semibold">¿Cuál has usado?</span>
-          <span className="block truncate text-xs text-muted">{nombre}</span>
+      <div className="flex items-center justify-between gap-2 pl-3 pr-1 pt-1">
+        <p id={idTitulo} className="min-w-0 flex-1 py-1.5">
+          <span className="eyebrow block !text-accent">¿Cuál has usado?</span>
+          {nombre && <span className="mt-0.5 block truncate text-sm font-semibold">{nombre}</span>}
         </p>
-        <button
-          type="button"
-          onClick={onCancelar}
-          className="-mr-1 -mt-1 min-h-11 shrink-0 px-2 text-xs text-muted underline-offset-4 hover:underline"
-        >
+        <button type="button" onClick={onCancelar} className="key-ghost min-h-11 shrink-0 px-3 text-sm">
           Cancelar
         </button>
       </div>
 
-      {!porSerie && (
-        <ul className="mt-2 grid grid-cols-2 gap-1.5">
-          {opciones.estados.map((e) => (
+      {porSerie && opciones.unidades.length > 4 && (
+        <div className="px-3 pb-2">
+          <input
+            type="search"
+            value={consulta}
+            onChange={(e) => setConsulta(e.target.value)}
+            onKeyDown={(e) => {
+              // Dentro del cierre de la avería, Enter lo enviaría.
+              if (e.key === 'Enter') e.preventDefault()
+            }}
+            placeholder="Número de serie o modelo"
+            aria-label="Buscar unidad"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="characters"
+            spellCheck={false}
+            enterKeyHint="search"
+            className="h-11 w-full rounded-ctl border border-line bg-sunken px-3 font-mono text-base"
+          />
+        </div>
+      )}
+
+      <ul className={`divide-y divide-line-soft border-t border-line-soft ${porSerie ? 'max-h-[17.5rem] overflow-y-auto overscroll-contain' : ''}`}>
+        {!porSerie &&
+          opciones.estados.map((e) => (
             <li key={e.condicion}>
               <button
                 type="button"
                 onClick={() => onElegir({ condicion: e.condicion })}
-                className={`flex min-h-touch w-full items-center gap-2 rounded-ctl border bg-raised px-3 py-2 text-left active:bg-sunken ${
-                  e.condicion === 'averiado' ? 'border-crit/40' : 'border-line'
-                }`}
-                aria-label={`${CONDICION_LABEL[e.condicion]}, quedan ${e.quedan}`}
+                className={fila}
+                aria-label={`${nombreDelEstado(e.condicion)}, ${e.quedan === 1 ? 'queda 1' : `quedan ${e.quedan}`}`}
               >
                 <span aria-hidden className={`h-2.5 w-2.5 shrink-0 rounded-full ${PUNTO_DE_CONDICION[e.condicion]}`} />
-                <span className="min-w-0 flex-1">
-                  <span className={`block text-sm font-semibold ${e.condicion === 'averiado' ? 'text-crit' : ''}`}>
-                    {e.condicion === 'sin_indicar' ? 'Sin estado' : CONDICION_LABEL[e.condicion]}
-                  </span>
-                  <span className="block font-mono text-xs text-muted tabular">
-                    {e.quedan === 1 ? 'queda 1' : `quedan ${e.quedan}`}
-                  </span>
+                <span className={`min-w-0 flex-1 truncate text-sm font-medium ${e.condicion === 'averiado' ? 'text-crit' : ''}`}>
+                  {nombreDelEstado(e.condicion)}
+                </span>
+                <span className="shrink-0 text-xs text-muted tabular">
+                  {e.quedan === 1 ? 'queda 1' : `quedan ${e.quedan}`}
                 </span>
               </button>
             </li>
           ))}
-        </ul>
-      )}
 
-      {porSerie && (
-        <>
-          {opciones.unidades.length > 4 && (
-            <input
-              type="search"
-              value={consulta}
-              onChange={(e) => setConsulta(e.target.value)}
-              onKeyDown={(e) => {
-                // Dentro del cierre de la avería, Enter lo enviaría.
-                if (e.key === 'Enter') e.preventDefault()
-              }}
-              placeholder="Buscar por número de serie o modelo"
-              aria-label="Buscar unidad"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="characters"
-              spellCheck={false}
-              enterKeyHint="search"
-              className="mt-2 h-11 w-full rounded-ctl border border-line bg-sunken px-3 font-mono text-base"
-            />
-          )}
-          <ul className="mt-2 max-h-[17rem] space-y-1.5 overflow-y-auto overscroll-contain">
-            {unidades.map((u) => {
-              const detalle = descripcionDeUnidad(u)
-              return (
-                <li key={u.id}>
-                  <button
-                    type="button"
-                    onClick={() => onElegir({ unitId: u.id, condicion: u.condicion })}
-                    className="flex min-h-touch w-full items-center gap-3 rounded-ctl border border-line bg-raised px-3 py-2 text-left active:bg-sunken"
-                    aria-label={`Número de serie ${u.serial}, ${CONDICION_LABEL[u.condicion]}`}
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-mono text-sm font-semibold">{u.serial}</span>
-                      {detalle && <span className="block truncate text-xs text-muted">{detalle}</span>}
-                    </span>
-                    <EtiquetaDeCondicion condicion={u.condicion} />
-                  </button>
-                </li>
-              )
-            })}
-            {unidades.length === 0 && (
-              <li className="px-1 py-2 text-xs text-muted">Ninguna unidad coincide con «{consulta}».</li>
-            )}
-            {opciones.sinNumero > 0 && (
-              <li>
+        {porSerie &&
+          unidades.map((u) => {
+            const detalle = descripcionDeUnidad(u)
+            return (
+              <li key={u.id}>
                 <button
                   type="button"
-                  onClick={() => onElegir(null)}
-                  className="flex min-h-touch w-full items-center gap-3 rounded-ctl border border-dashed border-line bg-raised px-3 py-2 text-left active:bg-sunken"
+                  onClick={() => onElegir({ unitId: u.id, condicion: u.condicion })}
+                  className={fila}
+                  aria-label={`Número de serie ${u.serial}, ${CONDICION_LABEL[u.condicion]}`}
                 >
+                  {/* El estado, como en las demás filas: en el punto y dicho
+                      con su palabra, delante del modelo. */}
+                  <span aria-hidden className={`h-2.5 w-2.5 shrink-0 rounded-full ${PUNTO_DE_CONDICION[u.condicion]}`} />
                   <span className="min-w-0 flex-1">
-                    <span className="block text-sm">Una sin número de serie</span>
-                    <span className="block text-xs text-muted">
-                      El almacén cuenta {opciones.sinNumero} más que no {opciones.sinNumero === 1 ? 'tiene' : 'tienen'} número
-                      apuntado.
+                    <span className="block truncate font-mono text-sm font-medium">{u.serial}</span>
+                    <span className="block truncate text-xs text-muted">
+                      <span className={u.condicion === 'averiado' ? 'text-crit' : ''}>{nombreDelEstado(u.condicion)}</span>
+                      {detalle && ` · ${detalle}`}
                     </span>
                   </span>
                 </button>
               </li>
-            )}
-          </ul>
-        </>
-      )}
+            )
+          })}
+        {porSerie && unidades.length === 0 && (
+          <li className="px-3 py-3 text-xs text-muted">Ninguna unidad coincide con «{consulta}».</li>
+        )}
+        {porSerie && opciones.sinNumero > 0 && (
+          <li>
+            <button type="button" onClick={() => onElegir(null)} className={fila}>
+              <span aria-hidden className="h-2.5 w-2.5 shrink-0 rounded-full border-2 border-line" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium">Una sin número de serie</span>
+                <span className="block text-xs text-muted">
+                  {opciones.sinNumero === 1 ? 'Hay 1 más sin número apuntado' : `Hay ${opciones.sinNumero} más sin número apuntado`}
+                </span>
+              </span>
+            </button>
+          </li>
+        )}
+      </ul>
 
-      <p className="mt-2 text-xs text-muted">
+      <p className="border-t border-line-soft px-3 py-2 text-xs leading-snug text-muted">
         {porSerie
-          ? 'Al cerrar la avería, la unidad sale del almacén y queda en esta aula.'
-          : 'Las cifras son de la última sincronización. Si al cerrar no queda de ese estado, sale de lo que haya.'}
+          ? 'Al cerrar la avería sale del almacén y queda en esta aula.'
+          : 'Cifras de la última sincronización.'}
       </p>
     </div>
   )
 }
 
+/** «Nuevo», «Usado», «Sin estado»: cómo se llama un estado cuando se elige. */
+function nombreDelEstado(c: Condicion): string {
+  return c === 'sin_indicar' ? 'Sin estado' : CONDICION_LABEL[c]
+}
+
 /** «Nuevas», «Usadas»: cómo se llama cada grupo en la línea del parte. */
-export function nombreDelGrupo(condicion: keyof typeof ESTADO_EN_PLURAL): string {
+export function nombreDelGrupo(condicion: Condicion): string {
   return ESTADO_EN_PLURAL[condicion]
 }

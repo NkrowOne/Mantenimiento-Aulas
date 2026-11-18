@@ -7,6 +7,7 @@ import type { AssetType, RemovalDestino } from '@/domain/types'
 import { CONDICION_LABEL, serialComparable, sinNumeroDeSerie, type Condicion, type UnidadDeAlmacen } from '@/domain/unidades'
 import { opcionesDeMaterial } from '@/features/incidents/cual'
 import { ElegirUnidad, PUNTO_DE_CONDICION } from './ElegirUnidad'
+import { Contador } from '@/components/Contador'
 import type { Origen } from './useRoomInventory'
 import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
@@ -433,55 +434,48 @@ export function OrigenDelEquipo({
           {articulos.length > 0 && !unidad && !(hayQueElegir && unidadElegida === null) && (
             <>
               {eligeEstado && estadosDelArticulo ? (
-                <fieldset className="mt-2">
-                  <legend className="text-xs text-muted">
-                    ¿De cuáles? Hay de varios estados: di cuántas de cada uno.
-                  </legend>
-                  <ul className="mt-1 space-y-1">
+                <fieldset className="mt-3">
+                  <legend className="text-xs text-muted">¿De cuáles? Hay de varios estados.</legend>
+                  {/* Una fila por estado, todas iguales: el punto y el nombre,
+                      cuántas quedan debajo, y el contador en su columna. */}
+                  <ul className="mt-1 divide-y divide-line-soft rounded-ctl border border-line bg-surface">
                     {estadosDelArticulo.estados.map((e) => {
                       const n = porEstado[e.condicion] ?? 0
                       const nombre = e.condicion === 'sin_indicar' ? 'Sin estado' : CONDICION_LABEL[e.condicion]
                       return (
-                        <li key={e.condicion} className="flex items-center justify-between gap-3">
-                          <span className="flex min-w-0 flex-1 items-center gap-2 text-sm">
-                            <span aria-hidden className={`h-2.5 w-2.5 shrink-0 rounded-full ${PUNTO_DE_CONDICION[e.condicion]}`} />
-                            <span className={`truncate ${e.condicion === 'averiado' ? 'text-crit' : ''}`}>{nombre}</span>
-                            <span className="shrink-0 font-mono text-xs text-muted tabular">
+                        <li key={e.condicion} className="flex min-h-touch items-center gap-3 px-3 py-1.5">
+                          <span aria-hidden className={`h-2.5 w-2.5 shrink-0 rounded-full ${PUNTO_DE_CONDICION[e.condicion]}`} />
+                          <span className="min-w-0 flex-1">
+                            <span className={`block truncate text-sm font-medium ${e.condicion === 'averiado' ? 'text-crit' : ''}`}>
+                              {nombre}
+                            </span>
+                            <span className={`block text-xs tabular ${n > e.quedan ? 'text-warn' : 'text-muted'}`}>
                               {e.quedan === 1 ? 'queda 1' : `quedan ${e.quedan}`}
                             </span>
                           </span>
-                          <span className="inline-flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setTocado(true)
-                                setPorEstado((p) => ({ ...p, [e.condicion]: Math.max(0, (p[e.condicion] ?? 0) - 1) }))
-                              }}
-                              disabled={n === 0}
-                              className="key key-quiet h-11 w-11"
-                              aria-label={`Una menos de ${nombre}`}
-                            >
-                              −
-                            </button>
-                            <span className="w-6 text-center font-mono tabular" aria-label={`${n} de ${nombre}`}>
-                              {n}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setTocado(true)
-                                setPorEstado((p) => ({ ...p, [e.condicion]: (p[e.condicion] ?? 0) + 1 }))
-                              }}
-                              className="key key-quiet h-11 w-11"
-                              aria-label={`Una más de ${nombre}`}
-                            >
-                              +
-                            </button>
-                          </span>
+                          <Contador
+                            valor={n}
+                            aviso={n > e.quedan}
+                            onMenos={() => {
+                              setTocado(true)
+                              setPorEstado((p) => ({ ...p, [e.condicion]: Math.max(0, (p[e.condicion] ?? 0) - 1) }))
+                            }}
+                            onMas={() => {
+                              setTocado(true)
+                              setPorEstado((p) => ({ ...p, [e.condicion]: (p[e.condicion] ?? 0) + 1 }))
+                            }}
+                            etiquetaMenos={`Una menos de ${nombre}`}
+                            etiquetaMas={`Una más de ${nombre}`}
+                          />
                         </li>
                       )
                     })}
                   </ul>
+                  {elegidasPorEstado > 0 && (
+                    <p className="mt-1.5 text-right text-xs text-muted">
+                      {elegidasPorEstado === 1 ? '1 unidad en total' : `${elegidasPorEstado} unidades en total`}
+                    </p>
+                  )}
                   {estadosDelArticulo.estados.some((e) => (porEstado[e.condicion] ?? 0) > e.quedan) && (
                     <p className="mt-2 text-xs text-warn">
                       Según la última descarga no quedan tantas de ese estado. Si no llegan, el descuento
@@ -491,27 +485,17 @@ export function OrigenDelEquipo({
                 </fieldset>
               ) : (
               <>
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <span className="text-xs text-muted">Unidades</span>
-                <span className="inline-flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setUnidades((n) => Math.max(1, n - 1))}
-                    className="key key-quiet h-11 w-11"
-                    aria-label="Una unidad menos"
-                  >
-                    −
-                  </button>
-                  <span className="w-6 text-center font-mono tabular">{unidades}</span>
-                  <button
-                    type="button"
-                    onClick={() => setUnidades((n) => n + 1)}
-                    className="key key-quiet h-11 w-11"
-                    aria-label="Una unidad más"
-                  >
-                    +
-                  </button>
-                </span>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="text-sm">Unidades</span>
+                <Contador
+                  valor={unidades}
+                  minimo={1}
+                  aviso={disponibles !== null && unidades > disponibles}
+                  onMenos={() => setUnidades((n) => Math.max(1, n - 1))}
+                  onMas={() => setUnidades((n) => n + 1)}
+                  etiquetaMenos="Una unidad menos"
+                  etiquetaMas="Una unidad más"
+                />
               </div>
 
               {/*
