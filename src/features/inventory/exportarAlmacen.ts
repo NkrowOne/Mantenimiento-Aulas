@@ -137,6 +137,17 @@ export interface FilaZona {
 export interface FilaEdificio {
   id: string
   name: string
+  /** La sigla: `H`, `CSQ`. Es lo que sale en la columna «Edificio». */
+  code?: string | null
+}
+
+/**
+ * Cómo se nombra un edificio en una columna: por su sigla, que es corta y es
+ * como se le llama; y si no la tiene, por su nombre.
+ */
+export function siglaDelEdificio(e: Pick<FilaEdificio, 'name' | 'code'> | undefined): string | null {
+  if (!e) return null
+  return e.code?.trim() || e.name.trim() || null
 }
 export interface FilaPerfil {
   id: string
@@ -405,7 +416,9 @@ export interface UnidadParaHoja {
   condicion: Condicion
   /** Dónde está —en el almacén, instalada, de baja—: lo decide lo que se hace con ella. */
   situacion: SituacionDeUnidad
-  /** Dónde está, si está instalada: `2.1 C (Edificio H)`. */
+  /** El edificio del aula en la que está instalada: su sigla, `H`. */
+  edificio: string | null
+  /** El aula en la que está, si está instalada: `2.1 C`. */
   aula: string | null
   /** Día de Madrid de la instalación o de la baja, si la hubo. */
   desde: string | null
@@ -421,6 +434,7 @@ const COL_UNIDADES = [
   'N.º de serie',
   'Estado',
   'Situación',
+  'Edificio',
   'Aula',
   'Desde',
   'Observaciones',
@@ -461,6 +475,7 @@ export function hojaDeUnidadesConSerie(unidades: UnidadParaHoja[]): HojaNueva {
       u.serial,
       CONDICION_LABEL[u.condicion],
       SITUACION_LABEL[u.situacion],
+      u.edificio,
       u.aula,
       serieDelDia(u.desde),
       u.observaciones,
@@ -471,8 +486,8 @@ export function hojaDeUnidadesConSerie(unidades: UnidadParaHoja[]): HojaNueva {
   return {
     nombre: 'Unidades con n.º de serie',
     filas,
-    anchos: [30, 16, 22, 24, 16, 13, 24, 11, 46],
-    formatos: formatos({ 7: 'fecha', 8: 'textoAjustado' }),
+    anchos: [30, 16, 22, 24, 16, 13, 12, 16, 11, 46],
+    formatos: formatos({ 8: 'fecha', 9: 'textoAjustado' }),
     tintes,
     caracter: 'app',
   }
@@ -547,15 +562,19 @@ function claseDeParte(kind: string): MovimientoParaHoja['claseDeParte'] {
  * perdido. Las fechas son el día **de Madrid**.
  */
 export function movimientosParaHoja(
-  d: Pick<DatosDelAlmacen, 'articulos' | 'movimientos' | 'incidencias' | 'salas' | 'perfiles'>,
+  d: Pick<DatosDelAlmacen, 'articulos' | 'movimientos' | 'incidencias' | 'salas' | 'perfiles'> &
+    Partial<Pick<DatosDelAlmacen, 'zonas' | 'edificios'>>,
 ): MovimientoParaHoja[] {
   const articulo = new Map(d.articulos.map((a) => [a.id, a.name]))
-  const aula = new Map(d.salas.map((s) => [s.id, s.code]))
+  const aula = new Map(d.salas.map((s) => [s.id, s]))
+  const zona = new Map((d.zonas ?? []).map((z) => [z.id, z]))
+  const edificio = new Map((d.edificios ?? []).map((e) => [e.id, e]))
   const parte = new Map(d.incidencias.map((i) => [i.id, i]))
   const persona = new Map(d.perfiles.map((p) => [p.id, p.full_name?.trim() ?? '']))
 
   return d.movimientos.map((m) => {
     const p = m.incident_id ? parte.get(m.incident_id) : undefined
+    const s = (m.room_id ? aula.get(m.room_id) : undefined) ?? (p?.room_id ? aula.get(p.room_id) : undefined)
     return {
       cuando: alMediodia(diaEnMadrid(new Date(m.occurred_at))),
       articulo: articulo.get(m.stock_item_id) ?? '—',
@@ -563,8 +582,8 @@ export function movimientosParaHoja(
       tipo: m.kind,
       incidencia: p?.external_ref || null,
       claseDeParte: p ? claseDeParte(p.kind) : null,
-      sala:
-        (m.room_id ? aula.get(m.room_id) : undefined) ?? (p?.room_id ? aula.get(p.room_id) : undefined) ?? null,
+      edificio: s ? siglaDelEdificio(edificio.get(zona.get(s.zone_id)?.building_id ?? '')) : null,
+      sala: s?.code ?? null,
       quien: m.by_user ? persona.get(m.by_user) || null : m.source === 'sharepoint' ? 'Excel' : null,
       nota: m.note,
     }
@@ -576,14 +595,14 @@ const CONDICIONES_CONOCIDAS = new Set<string>(Object.keys(CONDICION_LABEL))
 export function unidadesParaHoja(d: Pick<DatosDelAlmacen, 'unidades' | 'salas' | 'zonas' | 'edificios'>): UnidadParaHoja[] {
   const sala = new Map(d.salas.map((s) => [s.id, s]))
   const zona = new Map(d.zonas.map((z) => [z.id, z]))
-  const edificio = new Map(d.edificios.map((e) => [e.id, e.name]))
+  const edificio = new Map(d.edificios.map((e) => [e.id, e]))
 
   return d.unidades.map((u) => {
     // Una situación que la aplicación no conoce se lee como «en el almacén», que
     // es lo que hace la sincronización: la columna solo admite las tres.
     const situacion: SituacionDeUnidad = u.status === 'instalado' || u.status === 'baja' ? u.status : 'disponible'
     const s = situacion === 'instalado' && u.room_id ? sala.get(u.room_id) : undefined
-    const donde = s ? edificio.get(zona.get(s.zone_id)?.building_id ?? '') : undefined
+    const donde = s ? siglaDelEdificio(edificio.get(zona.get(s.zone_id)?.building_id ?? '')) : null
     const cuando = situacion === 'instalado' ? u.installed_at : situacion === 'baja' ? u.retired_at : null
     return {
       // El nombre del artículo del almacén, no lo que apuntó quien la dio de
@@ -597,7 +616,8 @@ export function unidadesParaHoja(d: Pick<DatosDelAlmacen, 'unidades' | 'salas' |
       // es «sin indicar», no «nuevo»: nadie lo ha dicho.
       condicion: u.condicion && CONDICIONES_CONOCIDAS.has(u.condicion) ? (u.condicion as Condicion) : 'sin_indicar',
       situacion,
-      aula: s ? (donde ? `${s.code} (${donde})` : s.code) : null,
+      edificio: donde,
+      aula: s?.code ?? null,
       desde: cuando ? diaEnMadrid(new Date(cuando)) : null,
       observaciones: u.notes,
     }
@@ -751,7 +771,7 @@ export async function cargarDatosDelAlmacen(): Promise<DatosDelAlmacen> {
         supabase.from('zones').select('id, building_id').order('id').range(d, h).abortSignal(plazo()),
       ),
       descargaEntera<FilaEdificio>((d, h) =>
-        supabase.from('buildings').select('id, name').order('id').range(d, h).abortSignal(plazo()),
+        supabase.from('buildings').select('id, name, code').order('id').range(d, h).abortSignal(plazo()),
       ),
       cargarPerfiles(),
       // Las unidades salen de la vista `stock_unit_list`, que trae el nombre de

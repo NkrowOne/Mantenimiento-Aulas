@@ -639,10 +639,15 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     (incidenciasD.data ?? []).map((i) => [i.id, i.external_ref ?? ''] as [string, string]),
   )
   const salaDeIncidencia = new Map(
-    (incidenciasD.data ?? []).map(
-      (i) => [i.id, i.room_id ? (salaPorId.get(i.room_id)?.code ?? '') : ''] as [string, string],
-    ),
+    (incidenciasD.data ?? []).map((i) => [i.id, i.room_id ? salaPorId.get(i.room_id) : undefined] as const),
   )
+  // La sigla del edificio (`H`, `CSQ`), o su nombre si no la tiene: va en su
+  // propia columna, al lado del aula, para poder filtrar por edificio.
+  const siglaDe = (zoneId: string): string | null => {
+    const z = zonas.get(zoneId)
+    const b = z ? edificios.get(z.building_id) : undefined
+    return b ? b.code?.trim() || b.name.trim() || null : null
+  }
   // De qué clase es cada parte, para que su número vaya en la columna que le
   // toca: «Incidencia» o «Solicitud». Una observación lleva número pero no es
   // un parte, y no va en ninguna de las dos.
@@ -651,7 +656,14 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
       (i) => [i.id, claseDeParte(i.kind)] as [string, MovimientoParaHoja['claseDeParte']],
     ),
   )
-  const movimientos: MovimientoParaHoja[] = (movimientosD.data ?? []).map((m) => ({
+  const movimientos: MovimientoParaHoja[] = (movimientosD.data ?? []).map((m) => {
+    // El aula del propio movimiento primero: el material que se apunta desde
+    // la ficha del aula lleva la sala y no siempre un parte, y sin esto esas
+    // filas salían sin aula en la hoja.
+    const sala =
+      (m.room_id ? salaPorId.get(m.room_id) : undefined) ??
+      (m.incident_id ? salaDeIncidencia.get(m.incident_id) : undefined)
+    return {
     // `slice(0, 10)` daba el día en UTC: un consumo de las 23:30 salía en la
     // hoja con el día de antes. El resto de la aplicación cuenta en Madrid.
     cuando: diaEnMadrid(new Date(m.occurred_at)),
@@ -660,18 +672,14 @@ export async function datosDeLaPasada(anyo: number): Promise<DatosDeLaPasada> {
     tipo: m.kind,
     incidencia: m.incident_id ? (numeroDeIncidencia.get(m.incident_id) ?? null) : null,
     claseDeParte: m.incident_id ? (claseDeIncidencia.get(m.incident_id) ?? null) : null,
-    // El aula del propio movimiento primero: el material que se apunta desde
-    // la ficha del aula lleva la sala y no siempre un parte, y sin esto esas
-    // filas salían sin aula en la hoja.
-    sala:
-      (m.room_id ? (salaPorId.get(m.room_id)?.code ?? null) : null) ??
-      (m.incident_id ? (salaDeIncidencia.get(m.incident_id) ?? null) : null) ??
-      null,
+    edificio: sala ? siglaDe(sala.zone_id) : null,
+    sala: sala?.code || null,
     // Lo que entró por el Excel no lo hizo nadie de la aplicación, y la hoja
     // tiene que decirlo: una columna «Quién» vacía se lee como un dato perdido.
     quien: m.by_user ? (perfiles.get(m.by_user) ?? null) : m.source === 'sharepoint' ? 'Excel' : null,
     nota: m.note,
-  }))
+    }
+  })
 
   // --- Unidades del almacén, para la hoja de PCs ---------------------------
   const unidades: UnidadVolcada[] = (unidadesD.data ?? []).map((u) => {
