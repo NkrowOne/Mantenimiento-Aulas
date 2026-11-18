@@ -11,6 +11,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { db, enqueue } from '@/db/dexie'
 import { supabase } from '@/lib/supabase'
 import { flush } from '@/sync/outbox'
+import type { Condicion } from '@/domain/unidades'
 import { assetTypeId, conflictoDeAlta, nextLabel, type ConflictoDeAlta } from '@/domain/inventory'
 import type {
   Asset,
@@ -71,6 +72,12 @@ export type Origen =
       unidades: number
       /** Si se eligió una unidad por su número de serie. Entonces `unidades` es 1. */
       unidad?: UnidadElegida
+      /**
+       * De qué estado sale cada una, cuando del artículo hay de varios: «2
+       * nuevas y 1 usada». Suman `unidades`. Sin esto, el almacén saca de lo
+       * que haya.
+       */
+      porEstado?: Partial<Record<Condicion, number>>
       /** El equipo de la sala al que sustituye, y a dónde se pide que vaya. */
       sustituye?: { assetId: string; destino: RemovalDestino }
     }
@@ -274,16 +281,28 @@ export function useRoomInventory(roomId: string | null, userId: string | null) {
       }
 
       if (origen.tipo === 'almacen' && roomId) {
-        const id = uuidv7()
-        await enqueue('stock_movement', id, {
-          id,
-          stock_item_id: origen.stockItemId,
-          qty: -unidades,
-          kind: 'consumo',
-          room_id: roomId,
-          occurred_at: new Date().toISOString(),
-          by_user: userId,
-        })
+        /*
+         * Un asiento por estado elegido, cada uno con el suyo; sin elección, uno
+         * solo y sin estado, como siempre, y el almacén saca de lo que haya.
+         * Todos con la misma hora: son la misma instalación.
+         */
+        const cuando = new Date().toISOString()
+        const elegidos = Object.entries(origen.porEstado ?? {}).filter(([, n]) => (n ?? 0) > 0) as Array<[Condicion, number]>
+        const asientos: Array<{ qty: number; condicion?: Condicion }> =
+          elegidos.length > 0 ? elegidos.map(([condicion, n]) => ({ qty: n, condicion })) : [{ qty: unidades }]
+        for (const a of asientos) {
+          const id = uuidv7()
+          await enqueue('stock_movement', id, {
+            id,
+            stock_item_id: origen.stockItemId,
+            qty: -a.qty,
+            kind: 'consumo',
+            room_id: roomId,
+            occurred_at: cuando,
+            by_user: userId,
+            ...(a.condicion ? { condicion: a.condicion } : {}),
+          })
+        }
         void flush()
       }
 

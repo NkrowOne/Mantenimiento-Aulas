@@ -7536,15 +7536,17 @@ begin;
     end if;
     raise notice 'OK: el cierre descuenta su parte repartido entre estados, con su sala, su autor y su fecha, y no se atasca si solo quedan averiados';
 
-    -- Bajar el parte después del cierre devuelve la de más, usada, y la cuenta
-    -- neta del parte sigue cuadrando con las filas repartidas.
+    -- Bajar el parte después del cierre devuelve la de más AL ESTADO DEL QUE
+    -- SALIÓ (`20261118000200`): de un usado y dos nuevos, las dos que se quedan
+    -- son las que se habrían cogido primero —la usada y una nueva—, y vuelve
+    -- una nueva, que sigue en su caja. La cuenta neta del parte sigue cuadrando.
     update incident_materials set qty = 2 where incident_id = v_inc;
     if (select coalesce(-sum(qty), 0) from stock_movements
          where incident_id = v_inc and kind in ('consumo', 'devolucion')) <> 2
-       or (select condicion from stock_movements where incident_id = v_inc and kind = 'devolucion') <> 'usado' then
-      raise exception 'FALLO: bajar el parte de una incidencia repartida no devolvió una, usada';
+       or (select condicion from stock_movements where incident_id = v_inc and kind = 'devolucion') <> 'nuevo' then
+      raise exception 'FALLO: bajar el parte de una incidencia repartida no devolvió una, nueva';
     end if;
-    raise notice 'OK: bajar el parte de una incidencia cerrada devuelve una usada y la cuenta neta sigue cuadrando';
+    raise notice 'OK: bajar el parte de una incidencia cerrada devuelve una nueva y la cuenta neta sigue cuadrando';
   end $$;
 rollback;
 
@@ -7760,3 +7762,155 @@ begin;
     raise notice 'OK: la unidad que entra sumando apunta su estado en el asiento';
   end $$;
 rollback;
+
+\echo ''
+\echo '=== 115. El parte dice cuál: de qué estado sale cada unidad y qué aparato es ==='
+begin;
+  select pg_temp.escenario_estados();
+  insert into stock_units (id, stock_item_id, asset_type_id, articulo, serial, condicion, status)
+  select ('10150000-0000-4000-8000-00000000000' || n)::uuid, current_setting('prueba100.proy')::uuid,
+         current_setting('prueba100.tipo')::uuid, 'Proyector de la prueba 100 (almacén)', 'SN-115-' || n, c, 'disponible'
+    from (values (1, 'nuevo'), (2, 'usado'), (3, 'nuevo')) as t(n, c);
+  do $$
+  begin
+    perform pg_temp.asiento('prueba100.teclado', 1, 'devolucion');               -- 1 usado
+    perform pg_temp.asiento('prueba100.teclado', 5, 'compra');                   -- 5 nuevos
+    perform pg_temp.asiento('prueba100.raton', 1, 'compra');                     -- 1 nuevo
+    perform pg_temp.asiento('prueba100.raton', 3, 'devolucion');                 -- 3 usados
+    perform pg_temp.asiento('prueba100.proy', 2, 'compra');                      -- 2 nuevos
+    perform pg_temp.asiento('prueba100.proy', 1, 'devolucion');                  -- 1 usado
+  end $$;
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  insert into incidents (id, room_id, title, severity, state, kind, opened_at, opened_by)
+  values ('10150000-0000-4000-8000-0000000000a1', current_setting('prueba100.sala')::uuid,
+          'Teclados de la 100.1', 'baja', 'abierta', 'incidencia', now() - interval '1 day',
+          '11111111-1111-4111-8111-111111111111'),
+         ('10150000-0000-4000-8000-0000000000a2', current_setting('prueba100.sala')::uuid,
+          'Ratones de la 100.1', 'baja', 'abierta', 'incidencia', now() - interval '1 day',
+          '11111111-1111-4111-8111-111111111111'),
+         ('10150000-0000-4000-8000-0000000000a3', current_setting('prueba100.sala')::uuid,
+          'Proyector de la 100.1', 'baja', 'abierta', 'incidencia', now() - interval '1 day',
+          '11111111-1111-4111-8111-111111111111');
+  -- Teclados: dos nuevos dichos y uno sin decir. Ratones: dos «nuevos» con uno
+  -- solo en la estantería. Proyector: el SN-115-1, con su unidad.
+  insert into incident_materials (id, incident_id, stock_item_id, qty, origen, condicion, stock_unit_id)
+  values ('10150000-0000-4000-8000-0000000000b1', '10150000-0000-4000-8000-0000000000a1',
+          current_setting('prueba100.teclado')::uuid, 2, 'app', 'nuevo', null),
+         ('10150000-0000-4000-8000-0000000000b2', '10150000-0000-4000-8000-0000000000a1',
+          current_setting('prueba100.teclado')::uuid, 1, 'app', null, null),
+         ('10150000-0000-4000-8000-0000000000b3', '10150000-0000-4000-8000-0000000000a2',
+          current_setting('prueba100.raton')::uuid, 2, 'app', 'nuevo', null),
+         ('10150000-0000-4000-8000-0000000000b4', '10150000-0000-4000-8000-0000000000a3',
+          current_setting('prueba100.proy')::uuid, 1, 'app', 'nuevo', '10150000-0000-4000-8000-000000000001');
+  do $$
+  begin
+    begin
+      insert into incident_materials (id, incident_id, stock_item_id, qty, origen, condicion)
+      values (gen_random_uuid(), '10150000-0000-4000-8000-0000000000a1',
+              current_setting('prueba100.teclado')::uuid, 1, 'app', 'roto');
+      raise exception 'FALLO: el parte aceptó un estado que no existe';
+    exception when check_violation then null;
+    end;
+    begin
+      insert into incident_materials (id, incident_id, stock_item_id, qty, origen, condicion, stock_unit_id)
+      values (gen_random_uuid(), '10150000-0000-4000-8000-0000000000a3',
+              current_setting('prueba100.proy')::uuid, 1, 'app', 'nuevo', '10150000-0000-4000-8000-000000000001');
+      raise exception 'FALLO: el mismo aparato se apuntó dos veces en la misma incidencia';
+    exception when unique_violation then null;
+    end;
+    if exists (select 1 from stock_movements where incident_id::text like '10150000-%')
+       or (select status from stock_units where id = '10150000-0000-4000-8000-000000000001') <> 'disponible' then
+      raise exception 'FALLO: con la incidencia abierta, el almacén ya se había movido';
+    end if;
+    raise notice 'OK: el parte admite estado y unidad, rechaza un estado inventado y el mismo aparato dos veces, y abierto no mueve nada';
+  end $$;
+
+  insert into incident_resolutions (id, incident_id, resolution, resolved_at, resolved_by)
+  select gen_random_uuid(), i, 'Hecho.', now() - interval '1 hour', '11111111-1111-4111-8111-111111111111'
+    from unnest(array['10150000-0000-4000-8000-0000000000a1', '10150000-0000-4000-8000-0000000000a2',
+                      '10150000-0000-4000-8000-0000000000a3']::uuid[]) as i;
+  do $$
+  declare
+    v_tec  uuid := '10150000-0000-4000-8000-0000000000a1';
+    v_rat  uuid := '10150000-0000-4000-8000-0000000000a2';
+    v_pro  uuid := '10150000-0000-4000-8000-0000000000a3';
+    v_cual text;
+    v_n    int;
+  begin
+    select string_agg(condicion || ' ' || qty, ', ' order by condicion) into v_cual
+      from stock_movements where incident_id = v_tec;
+    if v_cual is distinct from 'nuevo -2, usado -1' then
+      raise exception 'FALLO: dos nuevos dichos y uno sin decir no salieron de dos nuevos y del usado: %', v_cual;
+    end if;
+    -- Dos «nuevos» con uno solo: el nuevo que hay, y el otro de lo que haya.
+    select string_agg(condicion || ' ' || qty, ', ' order by condicion) into v_cual
+      from stock_movements where incident_id = v_rat;
+    if v_cual is distinct from 'nuevo -1, usado -1'
+       or (select state from incidents where id = v_rat) <> 'resuelta' then
+      raise exception 'FALLO: pedir más nuevos de los que hay tumbó el cierre o no salió de lo que había: %', v_cual;
+    end if;
+    -- El aparato: descontado de su estado, y la unidad fuera del almacén, en el aula.
+    if (select condicion || ' ' || qty from stock_movements where incident_id = v_pro) is distinct from 'nuevo -1'
+       or (select (status, room_id, asset_id is null) from stock_units where id = '10150000-0000-4000-8000-000000000001')
+          is distinct from ('instalado'::text, current_setting('prueba100.sala')::uuid, true) then
+      raise exception 'FALLO: la unidad del parte no se descontó de su estado o no salió del almacén al aula';
+    end if;
+    raise notice 'OK: al cerrar, lo dicho sale de su estado, lo que no llega sale de lo que haya sin tumbar el cierre, y la unidad pasa al aula';
+
+    -- Repetir la cuenta sin cambiar el parte no apunta nada.
+    select count(*) into v_n from stock_movements where incident_id in (v_tec, v_rat, v_pro);
+    update incident_materials set qty = qty where incident_id in (v_tec, v_rat, v_pro);
+    if (select count(*) from stock_movements where incident_id in (v_tec, v_rat, v_pro)) <> v_n then
+      raise exception 'FALLO: repetir la cuenta sin cambiar el parte apuntó movimientos';
+    end if;
+    raise notice 'OK: repetir la cuenta no apunta nada, ni donde un estado no llegó';
+
+    -- Cambiar «2 nuevos» por «1 nuevo y 1 usado» en un parte cerrado: el nuevo
+    -- vuelve a los nuevos. El usado ya había salido —era el «sin decir»—, así
+    -- que la fila sin estado es la que sale ahora, de lo que haya: un nuevo.
+    -- En neto, nada: los tres teclados siguen siendo dos nuevos y un usado.
+    update incident_materials set qty = 1 where id = '10150000-0000-4000-8000-0000000000b1';
+    if (select string_agg(kind || ' ' || condicion || ' ' || qty, ', ' order by recorded_at, kind)
+          from stock_movements where incident_id = v_tec and kind = 'devolucion')
+       is distinct from 'devolucion nuevo 1' then
+      raise exception 'FALLO: bajar los nuevos de un parte cerrado no devolvió un nuevo a los nuevos';
+    end if;
+    insert into incident_materials (id, incident_id, stock_item_id, qty, origen, condicion)
+    values ('10150000-0000-4000-8000-0000000000b5', v_tec, current_setting('prueba100.teclado')::uuid, 1, 'app', 'usado');
+    if (select coalesce(-sum(qty), 0) from stock_movements where incident_id = v_tec) <> 3
+       or (select (nuevo, usado) from stock_levels_por_estado
+            where stock_item_id = current_setting('prueba100.teclado')::uuid) is distinct from (3, 0) then
+      raise exception 'FALLO: tras el cambio de estado el parte no descuenta tres o el almacén no quedó en 3 nuevos y 0 usados';
+    end if;
+    raise notice 'OK: lo que sobra de un estado vuelve a ese estado, y el parte sigue cuadrando';
+
+    -- Quitar el aparato del parte lo devuelve a la estantería.
+    update incident_materials set qty = 0 where id = '10150000-0000-4000-8000-0000000000b4';
+    if (select (status, room_id is null) from stock_units where id = '10150000-0000-4000-8000-000000000001')
+         is distinct from ('disponible'::text, true)
+       or (select coalesce(-sum(qty), 0) from stock_movements where incident_id = v_pro) <> 0
+       or (select condicion from stock_movements where incident_id = v_pro and kind = 'devolucion') <> 'nuevo' then
+      raise exception 'FALLO: quitar la unidad del parte no la devolvió al almacén, nueva';
+    end if;
+    -- Y volver a apuntarla la saca otra vez; el equipo que llega al aula con
+    -- su número de serie la recoge, sin descontar nada más.
+    update incident_materials set qty = 1 where id = '10150000-0000-4000-8000-0000000000b4';
+    select count(*) into v_n from stock_movements where stock_item_id = current_setting('prueba100.proy')::uuid;
+    insert into assets (id, asset_type_id, room_id, serial, status, confirmed)
+    values ('10150000-0000-4000-8000-0000000000c1', current_setting('prueba100.tipo')::uuid,
+            current_setting('prueba100.sala2')::uuid, 'sn 115-1', 'instalado', false);
+    if (select (status, asset_id, room_id) from stock_units where id = '10150000-0000-4000-8000-000000000001')
+         is distinct from ('instalado'::text, '10150000-0000-4000-8000-0000000000c1'::uuid, current_setting('prueba100.sala2')::uuid)
+       or (select count(*) from stock_movements where stock_item_id = current_setting('prueba100.proy')::uuid) <> v_n then
+      raise exception 'FALLO: el equipo que llega con el número de serie no recogió la unidad que salió por el parte, o descontó otra vez';
+    end if;
+    -- Con equipo, ya no se quita desde el parte: se retira desde el aula.
+    begin
+      update incident_materials set qty = 0 where id = '10150000-0000-4000-8000-0000000000b4';
+      raise exception 'FALLO: se quitó del parte una unidad que ya es un equipo del aula';
+    exception when sqlstate '22023' then null;
+    end;
+    raise notice 'OK: la unidad quitada vuelve, la apuntada sale, el equipo con su número la recoge y desde entonces se retira en el aula';
+  end $$;
+rollback;
+

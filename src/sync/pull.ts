@@ -34,6 +34,7 @@ import { claveDeVersion, hayQueBajar, type VersionGuardada } from './version'
 import type { Asset, AssetRemoval, AssetType, Building, Incident, Room, StockItem,
   StockLevel, Zone } from '@/domain/types'
 import type { UnidadDeAlmacen } from '@/domain/unidades'
+import type { NivelPorEstado } from '@/domain/estados'
 
 /** Dónde queda el parte de la última descarga, para que la interfaz lo lea. */
 export const DIAGNOSTICO_PULL = 'ultimo-pull'
@@ -166,6 +167,32 @@ function sinVistaDeUnidades<T>(r: Pagina<T>): Pagina<T> {
 }
 
 /**
+ * Lo mismo para `stock_levels_por_estado`, que nació con la segunda migración
+ * de ese día: sin ella no hay estados que elegir, y el aula apunta el material
+ * como siempre.
+ */
+function sinVistaDeEstados<T>(r: Pagina<T>): Pagina<T> {
+  if (r.error && /stock_levels_por_estado|schema cache|does not exist|PGRST20[05]|42P01/i.test(`${r.error.message} ${r.error.code ?? ''}`)) {
+    return { data: [], error: null }
+  }
+  return r
+}
+
+/**
+ * Las existencias por estado, enteras: se sustituyen, como las unidades y por
+ * lo mismo. Una fila que ya no viene es un artículo retirado, y quedarse con su
+ * cifra vieja sería ofrecer para elegir algo que ya no está.
+ */
+async function espejarEstados(res: Descarga<Record<string, unknown>>): Promise<void> {
+  if (res.error || !res.completa) return
+  const filas = (res.data ?? []) as unknown as NivelPorEstado[]
+  await db.transaction('rw', db.stockLevelsPorEstado, async () => {
+    await db.stockLevelsPorEstado.clear()
+    if (filas.length > 0) await db.stockLevelsPorEstado.bulkPut(filas)
+  })
+}
+
+/**
  * Las unidades disponibles, enteras: se sustituyen y no se suman.
  *
  * Aquí no vale la regla de las demás tablas de no podar sobre una respuesta
@@ -258,6 +285,7 @@ export async function pullMaster(opts: { soloSiCambio?: boolean } = {}): Promise
     // parar.
     ['asset_removals', (d, h) => supabase.from('asset_removals').select('*').eq('state', 'pendiente').order('id').range(d, h)],
     ['stock_units', (d, h) => supabase.from('stock_unit_list').select('*').eq('status', 'disponible').order('id').range(d, h).then(sinVistaDeUnidades)],
+    ['stock_levels_por_estado', (d, h) => supabase.from('stock_levels_por_estado').select('*').order('stock_item_id').range(d, h).then(sinVistaDeEstados)],
   ]
 
   const consultas: Array<{ tabla: string; res: Respuesta<Record<string, unknown>> }> =
@@ -401,6 +429,7 @@ export async function pullMaster(opts: { soloSiCambio?: boolean } = {}): Promise
   await quitarCopiasDeUnidades(de('assets'), enCola)
   await guardar<AssetRemoval>(de('asset_removals'), db.assetRemovals)
   await espejarUnidades(de('stock_units'))
+  await espejarEstados(de('stock_levels_por_estado'))
 
   const rooms = de('room_overview')
   if (!rooms.error && rooms.data?.length) {

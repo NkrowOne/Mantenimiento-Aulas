@@ -4,8 +4,9 @@ import { db } from '@/db/dexie'
 import { conflictoDeAlta, type ConflictoDeAlta } from '@/domain/inventory'
 import { displayRoomCode } from '@/domain/normalize'
 import type { AssetType, RemovalDestino } from '@/domain/types'
-import { serialComparable, sinNumeroDeSerie, type UnidadDeAlmacen } from '@/domain/unidades'
-import { ElegirUnidad } from './ElegirUnidad'
+import { CONDICION_LABEL, serialComparable, sinNumeroDeSerie, type Condicion, type UnidadDeAlmacen } from '@/domain/unidades'
+import { opcionesDeMaterial } from '@/features/incidents/cual'
+import { ElegirUnidad, PUNTO_DE_CONDICION } from './ElegirUnidad'
 import type { Origen } from './useRoomInventory'
 import { ordenarEdificios } from '@/domain/ordenDeEdificios'
 
@@ -63,7 +64,7 @@ export function OrigenDelEquipo({
       const niveles = new Map((await db.stockLevels.toArray()).map((n) => [n.stock_item_id, n]))
       return items
         .filter((i) => i.asset_type_id === type.id)
-        .map((i) => ({ id: i.id, name: i.name, onHand: niveles.get(i.id)?.on_hand ?? null }))
+        .map((i) => ({ id: i.id, name: i.name, seguimiento: i.seguimiento ?? null, onHand: niveles.get(i.id)?.on_hand ?? null }))
         .sort((a, b) => (b.onHand ?? -1) - (a.onHand ?? -1) || a.name.localeCompare(b.name, 'es'))
     },
     [type?.id],
@@ -73,6 +74,18 @@ export function OrigenDelEquipo({
   const conExistencias = articulos.filter((a) => (a.onHand ?? 0) > 0)
   const [stockItemId, setStockItemId] = useState('')
   const [unidades, setUnidades] = useState(1)
+  /** Cuántas de cada estado, cuando del artículo hay de varios. */
+  const [porEstado, setPorEstado] = useState<Partial<Record<Condicion, number>>>({})
+
+  /*
+   * Cuántas hay de cada estado del artículo elegido, del espejo. Es lo que
+   * decide si hay que preguntar «¿nuevas o usadas?»: solo cuando hay de las dos.
+   */
+  const nivelDelArticulo = useLiveQuery(
+    async () => (stockItemId ? ((await db.stockLevelsPorEstado.get(stockItemId)) ?? null) : null),
+    [stockItemId],
+    null,
+  )
 
   /*
    * Las unidades disponibles de este tipo, del espejo: también sin cobertura.
@@ -216,6 +229,7 @@ export function OrigenDelEquipo({
   useEffect(() => {
     setUnidadElegida(null)
     setSustituye(null)
+    setPorEstado({})
   }, [stockItemId])
 
   useEffect(() => setOrigenRoomId(''), [buildingId])
@@ -255,16 +269,38 @@ export function OrigenDelEquipo({
     if (unicaUnidad !== null && unidadElegida === null) setUnidadElegida(unicaUnidad)
   }, [unicaUnidad, unidadElegida])
 
+  /*
+   * ¿Hay que decir de qué estado son?
+   *
+   * Solo en un artículo que se cuenta —los de número de serie ya eligen su
+   * aparato, que trae su estado— y solo si en la estantería hay de más de uno.
+   * Entonces el contador de «Unidades» se parte en uno por estado: «Nuevas 2,
+   * Usadas 1». Antes salía siempre lo usado, lo eligiera quien lo eligiera.
+   */
+  const estadosDelArticulo =
+    elegido && (elegido.seguimiento ?? nivelDelArticulo?.seguimiento) !== 'serie'
+      ? opcionesDeMaterial({
+          seguimiento: 'cantidad',
+          nivel: nivelDelArticulo,
+          quedan: elegido.onHand,
+          unidades: [],
+          apuntado: [],
+        })
+      : null
+  const eligeEstado = Boolean(estadosDelArticulo?.hayQueElegir)
+  const elegidasPorEstado = Object.values(porEstado).reduce((s, n) => s + (n ?? 0), 0)
+
   const listo = useMemo(() => {
     if (modo === 'almacen') {
       if (hayQueElegir && unidadElegida === null) return false
       if (preguntaSustitucion && sustituye === null) return false
       if (unidad) return true
+      if (eligeEstado) return Boolean(stockItemId) && elegidasPorEstado >= 1
       return Boolean(stockItemId) && unidades >= 1
     }
     if (modo === 'traslado') return Boolean(assetId)
     return true
-  }, [modo, hayQueElegir, unidadElegida, preguntaSustitucion, sustituye, unidad, stockItemId, unidades, assetId])
+  }, [modo, hayQueElegir, unidadElegida, preguntaSustitucion, sustituye, unidad, stockItemId, unidades, assetId, eligeEstado, elegidasPorEstado])
 
   // El aviso de choque solo pesa cuando se va a CREAR una fila nueva. Con una
   // unidad elegida lo sustituye la pregunta de si cambia a uno que ya está.
@@ -284,6 +320,8 @@ export function OrigenDelEquipo({
         },
         opciones,
       )
+    } else if (modo === 'almacen' && eligeEstado) {
+      onConfirmar({ tipo: 'almacen', stockItemId, unidades: elegidasPorEstado, porEstado }, opciones)
     } else if (modo === 'almacen') onConfirmar({ tipo: 'almacen', stockItemId, unidades }, opciones)
     else if (modo === 'traslado')
       onConfirmar({ tipo: 'traslado', assetId, desdeRoomId: origenRoomId }, opciones)
@@ -394,6 +432,65 @@ export function OrigenDelEquipo({
 
           {articulos.length > 0 && !unidad && !(hayQueElegir && unidadElegida === null) && (
             <>
+              {eligeEstado && estadosDelArticulo ? (
+                <fieldset className="mt-2">
+                  <legend className="text-xs text-muted">
+                    ¿De cuáles? Hay de varios estados: di cuántas de cada uno.
+                  </legend>
+                  <ul className="mt-1 space-y-1">
+                    {estadosDelArticulo.estados.map((e) => {
+                      const n = porEstado[e.condicion] ?? 0
+                      const nombre = e.condicion === 'sin_indicar' ? 'Sin estado' : CONDICION_LABEL[e.condicion]
+                      return (
+                        <li key={e.condicion} className="flex items-center justify-between gap-3">
+                          <span className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+                            <span aria-hidden className={`h-2.5 w-2.5 shrink-0 rounded-full ${PUNTO_DE_CONDICION[e.condicion]}`} />
+                            <span className={`truncate ${e.condicion === 'averiado' ? 'text-crit' : ''}`}>{nombre}</span>
+                            <span className="shrink-0 font-mono text-xs text-muted tabular">
+                              {e.quedan === 1 ? 'queda 1' : `quedan ${e.quedan}`}
+                            </span>
+                          </span>
+                          <span className="inline-flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTocado(true)
+                                setPorEstado((p) => ({ ...p, [e.condicion]: Math.max(0, (p[e.condicion] ?? 0) - 1) }))
+                              }}
+                              disabled={n === 0}
+                              className="key key-quiet h-11 w-11"
+                              aria-label={`Una menos de ${nombre}`}
+                            >
+                              −
+                            </button>
+                            <span className="w-6 text-center font-mono tabular" aria-label={`${n} de ${nombre}`}>
+                              {n}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTocado(true)
+                                setPorEstado((p) => ({ ...p, [e.condicion]: (p[e.condicion] ?? 0) + 1 }))
+                              }}
+                              className="key key-quiet h-11 w-11"
+                              aria-label={`Una más de ${nombre}`}
+                            >
+                              +
+                            </button>
+                          </span>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                  {estadosDelArticulo.estados.some((e) => (porEstado[e.condicion] ?? 0) > e.quedan) && (
+                    <p className="mt-2 text-xs text-warn">
+                      Según la última descarga no quedan tantas de ese estado. Si no llegan, el descuento
+                      se quedará pendiente y lo verás en el chip de sincronización.
+                    </p>
+                  )}
+                </fieldset>
+              ) : (
+              <>
               <div className="mt-2 flex items-center justify-between gap-3">
                 <span className="text-xs text-muted">Unidades</span>
                 <span className="inline-flex items-center gap-2">
@@ -428,6 +525,8 @@ export function OrigenDelEquipo({
                   Según la última descarga solo quedan {disponibles}. Si no llegan, el descuento se
                   quedará pendiente y lo verás en el chip de sincronización.
                 </p>
+              )}
+              </>
               )}
             </>
           )}
@@ -558,6 +657,9 @@ export function OrigenDelEquipo({
       </button>
       {modo === 'almacen' && hayQueElegir && unidadElegida === null && (
         <p className="mt-1 text-center text-xs text-muted">Elige cuál de arriba se instala.</p>
+      )}
+      {modo === 'almacen' && eligeEstado && !unidad && !(hayQueElegir && unidadElegida === null) && elegidasPorEstado === 0 && (
+        <p className="mt-1 text-center text-xs text-muted">Di arriba cuántas de cada estado.</p>
       )}
       {preguntaSustitucion && sustituye === null && (
         <p className="mt-1 text-center text-xs text-muted">Di si sustituye a uno de la sala.</p>

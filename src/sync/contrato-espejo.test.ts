@@ -47,6 +47,9 @@ const FUENTES: Record<string, string[]> = {
   asset_removals: ['asset_removals'],
   // `stock_unit_list`: la unidad, su artículo, su tipo y la sala donde está.
   stock_units: ['stock_units', 'stock_items', 'asset_types', 'rooms', 'zones', 'buildings'],
+  // `stock_levels_por_estado`: los saldos por estado salen de los movimientos,
+  // y las cifras de un artículo por número de serie, de sus unidades.
+  stock_levels_por_estado: ['stock_items', 'stock_movements', 'stock_units'],
 }
 
 /** Lo que deja rastro en audit_log (auth_rls + migraciones posteriores). */
