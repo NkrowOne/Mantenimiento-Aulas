@@ -460,6 +460,12 @@ export interface StockItem {
    * siempre lo siga encontrando.
    */
   aliases?: string[] | null
+  /**
+   * Cómo se lleva: por cantidad (se cuenta, y se dice cuántas hay de cada
+   * estado) o por número de serie (cada aparato con el suyo). Un espejo bajado
+   * de un servidor anterior al 27/10/2026 no lo trae.
+   */
+  seguimiento?: 'cantidad' | 'serie'
 }
 
 /**

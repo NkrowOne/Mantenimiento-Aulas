@@ -26,6 +26,7 @@ import type {
   Zone,
 } from '@/domain/types'
 import type { UnidadDeAlmacen } from '@/domain/unidades'
+import type { NivelPorEstado } from '@/domain/estados'
 
 /** Una operación esperando a subir. El id es la clave de idempotencia. */
 export interface OutboxEntry {
@@ -173,6 +174,10 @@ export class AulasDB extends Dexie {
      serie y su estado. Se espejan para que al añadir un equipo en el aula se
      pueda elegir CUÁL se instala aunque no haya cobertura. */
   stockUnits!: EntityTable<UnidadDeAlmacen, 'id'>
+  /* Cuántas hay de cada artículo EN CADA ESTADO. Se espejan para que, al
+     apuntar material en el aula, se pueda preguntar «¿nuevo o usado?» solo
+     cuando de verdad hay de los dos, también sin cobertura. */
+  stockLevelsPorEstado!: EntityTable<NivelPorEstado, 'stock_item_id'>
   incidents!: EntityTable<Incident, 'id'>
   assetTypes!: EntityTable<AssetType, 'id'>
 
@@ -269,6 +274,15 @@ export class AulasDB extends Dexie {
      */
     this.version(7).stores({
       stockUnits: 'id, stock_item_id, status',
+    })
+
+    /*
+     * Las existencias partidas por estado: una fila por artículo, la de la
+     * vista `stock_levels_por_estado`. Es lo que decide si al apuntar material
+     * hay algo que elegir.
+     */
+    this.version(8).stores({
+      stockLevelsPorEstado: 'stock_item_id',
     })
   }
 }

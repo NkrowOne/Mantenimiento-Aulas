@@ -6,15 +6,23 @@ import { db, enqueue } from '@/db/dexie'
 import { flush } from '@/sync/outbox'
 import { supabase } from '@/lib/supabase'
 import {
+  detalleDe,
   lineasDeMaterial,
   mezclarParte,
-  planQuitar,
   planRestar,
   planSumar,
   type Cambio,
+  type Cual,
+  type DetalleDeMaterial,
   type LineaDelParte,
 } from './material'
 import { buscarArticulos } from './buscarArticulo'
+import { opcionesDeMaterial, unidadesLibres, type Opciones } from './cual'
+import { ElegirCual, nombreDelGrupo } from './ElegirCual'
+import { CONDICION_LABEL, cuantasEnEstado, type Condicion, type UnidadDeAlmacen } from '@/domain/unidades'
+import { PUNTO_DE_CONDICION } from '@/features/inventory/ElegirUnidad'
+import { Contador } from '@/components/Contador'
+import { Icono } from '@/components/Icono'
 
 /**
  * El material que se ha gastado en una incidencia.
@@ -39,7 +47,10 @@ import { buscarArticulos } from './buscarArticulo'
  * **Un toque apunta, y lo apuntado se puede deshacer.** Antes hacían falta dos
  * pasos —elegir el artículo y confirmar con «Apuntar»— y una vez apuntado no
  * había forma de quitarlo desde aquí. Ahora tocar el artículo lo apunta, y la
- * línea que sale lleva su `−`, su `+` y su `×`.
+ * línea que sale lleva su contador (`components/Contador.tsx`): menos, la
+ * cifra y más en una sola pieza, y con una sola unidad el menos es una
+ * papelera, que es quitarla. Llevaba además una `×` aparte; eran cuatro cajas
+ * por fila y se leía como un teclado.
  *
  * **Y el almacén no se entera hasta que la avería se cierra.** Lo que se apunta
  * aquí es el **parte de material** de la incidencia —una fila por artículo en
@@ -51,6 +62,14 @@ import { buscarArticulos } from './buscarArticulo'
  * descuenta la diferencia neta al cerrar —un asiento por artículo, con la fecha
  * del cierre— y si el parte llega detrás del cierre, lo descuenta al llegar. A
  * qué fila va cada toque lo decide `material.ts`, que es donde está probado.
+ *
+ * **Y solo se pregunta cuál cuando hay más de una respuesta.** Un cable se toca
+ * y se apunta. Pero si del artículo hay nuevas y usadas, o lleva número de
+ * serie, el toque abre «¿Cuál has usado?» (`ElegirCual`): se elige de un toque
+ * y la línea lo enseña debajo —«Nuevas 2», el número de serie—, cada cosa en
+ * su fila y con su contador. Antes lo decidía la base por su cuenta al cerrar, sacando siempre lo
+ * usado, y del aparato con número de serie no quedaba apuntado cuál era. Cuándo
+ * hay algo que elegir lo decide `cual.ts`.
  */
 export function MaterialUsado({
   incidentId,
@@ -68,6 +87,12 @@ export function MaterialUsado({
 }): React.ReactElement {
   const [query, setQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
+  /**
+   * El artículo del que se está preguntando cuál, y DÓNDE se pregunta: debajo
+   * del buscador, si se acaba de tocar un resultado, o dentro de su propia
+   * línea, si lo que se tocó fue su «más». La pregunta sale donde está el dedo.
+   */
+  const [eligiendo, setEligiendo] = useState<{ id: string; donde: 'busqueda' | 'linea' } | null>(null)
   const qc = useQueryClient()
 
   /*
@@ -109,6 +134,36 @@ export function MaterialUsado({
     [],
   )
 
+  /*
+   * Lo que hace falta para saber si hay algo que elegir, también del espejo:
+   * cuántas hay de cada estado y qué aparatos con número de serie están en la
+   * estantería. Sin ninguna de las dos cosas —un servidor anterior, un iPad que
+   * aún no ha sincronizado— no se pregunta nada y se apunta como siempre.
+   */
+  const niveles = useLiveQuery(
+    async () => new Map((await db.stockLevelsPorEstado.toArray()).map((n) => [n.stock_item_id, n])),
+    [],
+    new Map(),
+  )
+  const unidadesPorArticulo = useLiveQuery(
+    async () => {
+      const [disponibles, partes] = await Promise.all([
+        db.stockUnits.where('status').equals('disponible').toArray(),
+        db.outbox.where('entity').equals('incident_material').toArray(),
+      ])
+      // Las que otra avería de este iPad ya tiene apuntadas y sin subir.
+      const enOtros = new Set(
+        partes
+          .filter((e) => e.payload['incident_id'] !== incidentId && Number(e.payload['qty'] ?? 0) > 0)
+          .map((e) => String(e.payload['stock_unit_id'] ?? ''))
+          .filter(Boolean),
+      )
+      return unidadesLibres(disponibles, enOtros)
+    },
+    [incidentId],
+    new Map<string, UnidadDeAlmacen[]>(),
+  )
+
   // Todos, no los seis primeros: con «HDMI» el cable gastado podía ser el
   // séptimo y no había forma de llegar a él. Lo cuenta `buscarArticulo.ts`.
   const coincidencias = useMemo(() => buscarArticulos(articulos, query), [articulos, query])
@@ -127,13 +182,20 @@ export function MaterialUsado({
   const { data: enElServidor } = useQuery({
     queryKey: ['incident-materials', incidentId],
     queryFn: async () => {
-      const { data, error: err } = await supabase
-        .from('incident_materials')
-        .select('id, qty, stock_item_id')
-        .eq('incident_id', incidentId)
-        .not('stock_item_id', 'is', null)
-      if (err) throw err
-      return (data ?? []) as Array<{ id: string; qty: number; stock_item_id: string }>
+      const pedir = (columnas: string) =>
+        supabase
+          .from('incident_materials')
+          .select(columnas)
+          .eq('incident_id', incidentId)
+          .not('stock_item_id', 'is', null)
+      let res = await pedir('id, qty, stock_item_id, condicion, stock_unit_id')
+      // Un servidor anterior al 18/11/2026 no tiene las dos columnas: se pide
+      // como antes, y ninguna fila dice cuál.
+      if (res.error && /condicion|stock_unit_id|42703|PGRST204/i.test(`${res.error.message} ${res.error.code ?? ''}`)) {
+        res = await pedir('id, qty, stock_item_id')
+      }
+      if (res.error) throw res.error
+      return (res.data ?? []) as unknown as FilaDelServidor[]
     },
     retry: false,
   })
@@ -157,6 +219,8 @@ export function MaterialUsado({
     qty: Number(e.payload['qty'] ?? 0),
     stockItemId: String(e.payload['stock_item_id'] ?? ''),
     donde: 'en_cola',
+    condicion: (e.payload['condicion'] as Condicion | null | undefined) ?? null,
+    unitId: (e.payload['stock_unit_id'] as string | null | undefined) ?? null,
   })
 
   const enCola = useLiveQuery(
@@ -177,6 +241,8 @@ export function MaterialUsado({
     qty: m.qty,
     stockItemId: m.stock_item_id,
     donde: 'arriba' as const,
+    condicion: m.condicion ?? null,
+    unitId: m.stock_unit_id ?? null,
   }))
   const parte = mezclarParte(enCola, delServidor, apuntadasAqui.current)
 
@@ -195,8 +261,47 @@ export function MaterialUsado({
 
   const lineas = lineasDeMaterial(parte)
 
-  const articuloDe = (id: string): { name: string; quedan: number | null; unit: string } | null =>
-    articulos.find((a) => a.id === id) ?? null
+  const articuloDe = (id: string): (typeof articulos)[number] | null => articulos.find((a) => a.id === id) ?? null
+
+  /** Qué se puede elegir de ese artículo AHORA, con lo que el parte ya lleva. */
+  const opcionesDe = (id: string): Opciones => {
+    const art = articuloDe(id)
+    return opcionesDeMaterial({
+      seguimiento: art?.seguimiento ?? null,
+      nivel: niveles.get(id) ?? null,
+      quedan: art?.quedan ?? null,
+      unidades: unidadesPorArticulo.get(id) ?? [],
+      apuntado: detalleDe(parte, id),
+    })
+  }
+
+  /*
+   * El número de serie de cada aparato del parte.
+   *
+   * Los que siguen en la estantería están en el espejo. Los de una avería ya
+   * cerrada no —salieron del almacén, y el espejo solo guarda las
+   * disponibles—, así que esos se le preguntan al servidor. Sin cobertura se
+   * queda en «con número de serie», que es verdad y no inventa nada.
+   */
+  const unidadesDelParte = [...new Set(parte.map((l) => l.unitId).filter((u): u is string => Boolean(u)))].sort()
+  const enElEspejo = useLiveQuery(
+    async () => new Map((await db.stockUnits.bulkGet(unidadesDelParte)).filter(Boolean).map((u) => [u!.id, u!])),
+    [unidadesDelParte.join(',')],
+    new Map<string, UnidadDeAlmacen>(),
+  )
+  const queFaltan = unidadesDelParte.filter((id) => !enElEspejo.has(id))
+  const { data: delServidorPorId } = useQuery({
+    queryKey: ['incident-materials', 'unidades', queFaltan.join(',')],
+    enabled: queFaltan.length > 0,
+    queryFn: async () => {
+      const { data, error: err } = await supabase.from('stock_units').select('id, serial, condicion').in('id', queFaltan)
+      if (err) throw err
+      return new Map((data ?? []).map((u) => [u.id as string, u as { id: string; serial: string; condicion: Condicion }]))
+    },
+    retry: false,
+  })
+  const serieDe = (unitId: string): string | null =>
+    enElEspejo.get(unitId)?.serial ?? delServidorPorId?.get(unitId)?.serial ?? null
 
   const nombreDe = (id: string): string =>
     articuloDe(id)?.name ?? 'Artículo retirado del catálogo'
@@ -217,6 +322,9 @@ export function MaterialUsado({
       stock_item_id: cambio.stockItemId,
       qty: cambio.qty,
       origen: 'app',
+      // Solo si dice cuál: una fila que no elige nada viaja como siempre.
+      ...(cambio.condicion ? { condicion: cambio.condicion } : {}),
+      ...(cambio.unitId ? { stock_unit_id: cambio.unitId } : {}),
     })
     const recordada = apuntadasAqui.current.some((l) => l.id === cambio.id)
     apuntadasAqui.current = recordada
@@ -272,7 +380,43 @@ export function MaterialUsado({
   }
 
   /** Sumar lleva su generador de ids: la fila nueva nace con el suyo. */
-  const sumar = (p: LineaDelParte[], stockItemId: string): Cambio[] => planSumar(p, stockItemId, uuidv7)
+  const sumar =
+    (cual: Cual) =>
+    (p: LineaDelParte[], stockItemId: string): Cambio[] =>
+      planSumar(p, stockItemId, uuidv7, cual)
+
+  /** El `−` de una de las cosas elegidas: «una nueva menos», «quitar ese aparato». */
+  const restar =
+    (clave?: string) =>
+    (p: LineaDelParte[], stockItemId: string): Cambio[] =>
+      planRestar(p, stockItemId, clave)
+
+  /**
+   * Una más de ese artículo: si hay algo que elegir, se pregunta; si no, se
+   * apunta —sin decir cuál, o el único aparato que hay—.
+   */
+  function unaMas(stockItemId: string, donde: 'busqueda' | 'linea'): void {
+    const o = opcionesDe(stockItemId)
+    if (o.hayQueElegir) setEligiendo({ id: stockItemId, donde })
+    else pedir(sumar(o.unica), stockItemId)
+  }
+
+  const preguntaDe = (stockItemId: string): React.ReactElement => (
+    <ElegirCual
+      // Otra pregunta, otro buscador: el de dentro no arrastra lo tecleado.
+      key={stockItemId}
+      nombre={eligiendo?.donde === 'busqueda' ? nombreDe(stockItemId) : undefined}
+      opciones={opcionesDe(stockItemId)}
+      onElegir={(cual) => {
+        pedir(sumar(cual), stockItemId)
+        setEligiendo(null)
+      }}
+      onCancelar={() => setEligiendo(null)}
+    />
+  )
+
+  const enBusqueda = eligiendo?.donde === 'busqueda' ? eligiendo.id : null
+  const algoSinSubir = lineas.some((l) => l.sinSubir)
 
   /** La cola tal y como está AHORA, sin pasar por el render. */
   async function colaDeAhora(): Promise<LineaDelParte[]> {
@@ -280,92 +424,36 @@ export function MaterialUsado({
     return filas.filter((e) => e.payload['incident_id'] === incidentId).map(filaDeLaCola)
   }
 
+  /*
+   * El orden de la pantalla, de arriba abajo, es el de lo que se hace:
+   *
+   *   1. El buscador. Es por donde se empieza, y con el teclado arriba es lo
+   *      único que cabe con sus resultados.
+   *   2. Los resultados —o la pregunta «¿Cuál has usado?»—, pegados a él.
+   *   3. Lo apuntado, en un solo bloque: una fila por artículo.
+   *
+   * Antes lo apuntado iba ENCIMA del buscador, y cada artículo que se añadía
+   * empujaba el buscador y sus resultados una fila hacia abajo: el segundo
+   * toque seguido caía en otro artículo. Debajo, añadir no mueve nada de lo que
+   * se está tocando; y que el toque ha valido lo dice el propio resultado, que
+   * pasa a llevar cuántas hay apuntadas.
+   *
+   * Y sin caja propia: esta pantalla ya vive dentro de la ficha de la avería,
+   * que vive dentro de la lista. Una caja más eran cuatro bordes anidados y
+   * veinticuatro píxeles menos de ancho para el nombre del artículo.
+   */
   return (
-    <div className="mt-3 rounded-ctl border border-line bg-raised p-3">
-      {lineas.length > 0 && (
-        <ul className="mb-3 space-y-2">
-          {lineas.map((l) => {
-            const art = articuloDe(l.stockItemId)
-            const pasado = art?.quedan !== null && art !== null && l.unidades > art.quedan
-            return (
-              <li key={l.stockItemId} className="flex items-center gap-2">
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm">{nombreDe(l.stockItemId)}</span>
-                  {l.sinSubir && <span className="text-xs text-warn">sin subir</span>}
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => pedir(planRestar, l.stockItemId)}
-                    className="key key-quiet h-11 w-11"
-                    aria-label={`Una unidad menos de ${nombreDe(l.stockItemId)}`}
-                  >
-                    −
-                  </button>
-                  <span
-                    className={`w-7 text-center font-mono tabular ${pasado ? 'text-warn' : ''}`}
-                    aria-label={`${l.unidades} unidades`}
-                  >
-                    {l.unidades}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => pedir(sumar, l.stockItemId)}
-                    className="key key-quiet h-11 w-11"
-                    aria-label={`Una unidad más de ${nombreDe(l.stockItemId)}`}
-                  >
-                    +
-                  </button>
-                  {/* Quitar la línea entera: sus filas a cero. El almacén no
-                      ha descontado nada todavía, así que no hay nada que
-                      devolver; y si la avería ya estaba cerrada, el cero es lo
-                      que le dice al servidor que devuelva lo descontado. */}
-                  <button
-                    type="button"
-                    onClick={() => pedir(planQuitar, l.stockItemId)}
-                    className="key key-quiet h-11 w-11 text-crit"
-                    aria-label={`Quitar ${nombreDe(l.stockItemId)} de esta avería`}
-                  >
-                    ×
-                  </button>
-                </span>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-
-      {/*
-        El aviso cuando lo apuntado se pasa de lo que hay.
-
-        Avisa y **no bloquea**, a propósito: la cifra del dispositivo es una
-        foto que puede estar vieja, y negarle a alguien apuntar el cable que
-        acaba de poner porque su iPad cree que no quedaba sería fiarse más de la
-        copia que de la persona. Lo que no puede pasar es que se entere el
-        servidor y no quien lo apunta: el saldo no puede quedar en negativo y el
-        almacén se descuenta al cerrar la avería, así que es el cierre lo que
-        volverá rechazado — y hay que decirlo aquí, antes.
-      */}
-      {lineas.map((l) => {
-        const art = articuloDe(l.stockItemId)
-        if (!art || art.quedan === null || l.unidades <= art.quedan) return null
-        return (
-          <p key={`aviso-${l.stockItemId}`} className="mb-2 text-sm text-warn">
-            {art.quedan <= 0
-              ? `Según la última sincronización no queda ningún ${art.name.toLowerCase()} en el almacén.`
-              : `Según la última sincronización solo quedan ${art.quedan} de ${art.name.toLowerCase()}.`}{' '}
-            Si de verdad has usado {l.unidades}, déjalo — pero el almacén rechazará el cierre de la
-            avería hasta que se registre la compra que falta.
-          </p>
-        )
-      })}
-
+    <div className="mt-3">
       <label className="block">
         <span className="sr-only">Buscar artículo del almacén</span>
         <input
           type="search"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            // Otra búsqueda: la pregunta de la anterior ya no viene a cuento.
+            if (enBusqueda) setEligiendo(null)
+          }}
           autoFocus={enfocar}
           /*
            * Enter aquí no hace nada —la lista filtra según se teclea— y
@@ -377,13 +465,17 @@ export function MaterialUsado({
           onKeyDown={(e) => {
             if (e.key === 'Enter') e.preventDefault()
           }}
-          placeholder="Material usado: busca el artículo"
+          placeholder="Busca el artículo usado"
           enterKeyHint="search"
           className="h-touch w-full rounded-ctl border border-line bg-sunken px-3 text-base"
         />
       </label>
 
-      {coincidencias.length > 0 && (
+      {enBusqueda && <div className="mt-2">{preguntaDe(enBusqueda)}</div>}
+
+      {/* Mientras se pregunta cuál, la lista de resultados se aparta: dos
+          listas tocables seguidas, en un teléfono, es tocar la que no era. */}
+      {!enBusqueda && coincidencias.length > 0 && (
         <>
           {/* Cuántos hay, dicho antes de la lista: si no caben, es lo único que
               avisa de que la lista sigue por debajo. */}
@@ -399,45 +491,55 @@ export function MaterialUsado({
             media fila más: cortada justo entre dos filas, la lista parece
             terminar ahí.
           */}
-          <ul className="mt-1 max-h-[18.5rem] divide-y divide-line overflow-y-auto overscroll-contain rounded-ctl border border-line bg-surface px-3">
-            {coincidencias.map(({ articulo: a, alias }) => (
-              <li key={a.id}>
-                {/*
-                  Un toque y está apuntado.
-
-                  Antes esto solo lo seleccionaba y hacía falta un segundo toque
-                  en «Apuntar». Los dos pasos existían para poder elegir la
-                  cantidad antes de confirmar, y la cantidad se elige igual de bien
-                  después, en la línea que sale arriba — con la ventaja de que
-                  ahora también se puede corregir.
-                */}
-                <button
-                  type="button"
-                  onClick={() => pedir(sumar, a.id)}
-                  className="flex min-h-11 w-full items-center gap-3 py-2 text-left text-sm"
-                >
-                  <span className="min-w-0 flex-1">
-                    {a.name}
-                    {/* Si ha salido por un nombre de antes, se dice cuál: si no,
-                        un resultado que no se parece a lo tecleado parece un
-                        error. */}
-                    {alias && <span className="block text-xs text-muted">antes «{alias}»</span>}
-                  </span>
-                  {/* Cuánto queda, en la propia lista: es lo que decide cuál
-                      de los tres cables se coge, y preguntarlo después de
-                      elegir llega tarde. */}
-                  {a.quedan !== null && (
-                    <span
-                      className={`shrink-0 font-mono text-xs tabular ${
-                        a.quedan <= 0 ? 'text-crit' : a.quedan <= a.min_threshold ? 'text-warn' : 'text-muted'
-                      }`}
-                    >
-                      {a.quedan} {a.unit}
+          <ul className="mt-1 max-h-[18.5rem] divide-y divide-line-soft overflow-y-auto overscroll-contain rounded-ctl border border-line bg-surface">
+            {coincidencias.map(({ articulo: a, alias }) => {
+              const o = opcionesDe(a.id)
+              const apuntadas = lineas.find((l) => l.stockItemId === a.id)?.unidades ?? 0
+              return (
+                <li key={a.id}>
+                  {/*
+                    Un toque y está apuntado — o, si del artículo hay de varios
+                    estados o lleva número de serie, un toque y se pregunta cuál.
+                    La segunda línea lo avisa antes de tocar: «5 nuevas · 3
+                    usadas», «3 con n.º de serie».
+                  */}
+                  <button
+                    type="button"
+                    onClick={() => unaMas(a.id, 'busqueda')}
+                    className="flex min-h-touch w-full items-center gap-3 px-3 py-2 text-left transition-colors duration-100 active:bg-raised"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm">{a.name}</span>
+                      {/* Si ha salido por un nombre de antes, se dice cuál: si no,
+                          un resultado que no se parece a lo tecleado parece un
+                          error. */}
+                      {alias && <span className="block text-xs text-muted">antes «{alias}»</span>}
+                      {o.hayQueElegir && <span className="block text-xs text-muted">{loQueHay(o)}</span>}
                     </span>
-                  )}
-                </button>
-              </li>
-            ))}
+                    {/* Que el toque ha valido: lo que ya lleva la avería. */}
+                    {apuntadas > 0 && (
+                      <span className="chip chip-accent shrink-0">
+                        <Icono nombre="hecho" lado={12} />
+                        {apuntadas}
+                        <span className="sr-only"> {apuntadas === 1 ? 'apuntada' : 'apuntadas'}</span>
+                      </span>
+                    )}
+                    {/* Cuánto queda, en la propia lista: es lo que decide cuál
+                        de los tres cables se coge, y preguntarlo después de
+                        elegir llega tarde. */}
+                    {a.quedan !== null && (
+                      <span
+                        className={`w-12 shrink-0 text-right text-xs tabular ${
+                          a.quedan <= 0 ? 'text-crit' : a.quedan <= a.min_threshold ? 'text-warn' : 'text-muted'
+                        }`}
+                      >
+                        {a.quedan} {a.unit}
+                      </span>
+                    )}
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         </>
       )}
@@ -445,14 +547,204 @@ export function MaterialUsado({
       {/* Que no aparezca lo que se busca no es un callejón sin salida, pero
           tampoco se puede inventar el artículo desde aquí: el almacén es
           maestro y darle de alta un artículo es cosa del administrador. */}
-      {query && coincidencias.length === 0 && (
+      {!enBusqueda && query && coincidencias.length === 0 && (
         <p className="mt-2 text-xs text-muted">
           Ningún artículo coincide. Si es material nuevo, tiene que darlo de alta un administrador
           desde Almacén.
         </p>
       )}
 
+      {lineas.length > 0 && (
+        <section className="mt-4" aria-label="Material apuntado">
+          <div className="flex min-h-6 items-center justify-between gap-3">
+            <h4 className="eyebrow">Apuntado</h4>
+            {/* Una vez, aquí, y no debajo de cada artículo: sin cobertura lo
+                llevan todos, y repetido cinco veces era lo que más pesaba de
+                la lista. Con cobertura dura lo que tarda la cola en subir. */}
+            {algoSinSubir && <span className="chip chip-warn">Sin subir</span>}
+          </div>
+
+          <ul className="mt-1.5 divide-y divide-line-soft rounded-ctl border border-line bg-surface">
+            {lineas.map((l) => {
+              const art = articuloDe(l.stockItemId)
+              const nombre = nombreDe(l.stockItemId)
+              const pasado = art?.quedan !== null && art !== null && l.unidades > art.quedan
+              // Sin nada elegido, una sola fila: el nombre y su contador.
+              const simple = l.detalle.length === 1 && l.detalle[0]!.clave === ''
+              const aqui = eligiendo?.donde === 'linea' && eligiendo.id === l.stockItemId
+              const o = opcionesDe(l.stockItemId)
+              const cabeMas = o.hayQueElegir || o.unica !== null
+              return (
+                <li key={l.stockItemId} className="px-3 py-2">
+                  <div className={`flex items-center gap-3 ${simple ? 'min-h-11' : 'min-h-9'}`}>
+                    <span className="line-clamp-2 min-w-0 flex-1 text-sm font-medium leading-snug">
+                      {nombre}
+                      {l.sinSubir && <span className="sr-only"> (sin subir)</span>}
+                    </span>
+                    {simple ? (
+                      <Contador
+                        valor={l.unidades}
+                        quitaEnUno
+                        aviso={pasado}
+                        onMenos={() => pedir(restar(), l.stockItemId)}
+                        onMas={() => unaMas(l.stockItemId, 'linea')}
+                        etiquetaMenos={`Una unidad menos de ${nombre}`}
+                        etiquetaQuitar={`Quitar ${nombre} de esta avería`}
+                        etiquetaMas={`Una unidad más de ${nombre}`}
+                      />
+                    ) : (
+                      // El total, en la columna de los contadores: se lee de
+                      // arriba abajo como una suma.
+                      <span
+                        className={`shrink-0 text-sm tabular ${pasado ? 'text-warn' : 'text-muted'}`}
+                        aria-label={`${l.unidades} en total`}
+                      >
+                        {l.unidades} {art?.unit ?? ''}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Cuáles son, cuando se ha elegido: una fila por cosa, con
+                      su contador en la misma columna que los de arriba. */}
+                  {!simple && (
+                    <ul>
+                      {l.detalle.map((d) => {
+                        const serie = d.unitId ? serieDe(d.unitId) : null
+                        const que = `${textoDe(d, serie)}, ${nombre}`
+                        return (
+                          <li key={d.clave} className="flex min-h-touch items-center gap-3">
+                            <LoElegido detalle={d} serie={serie} />
+                            {d.unitId ? (
+                              // Un aparato es uno: no lleva cifra, solo se quita.
+                              <button
+                                type="button"
+                                onClick={() => pedir(restar(d.clave), l.stockItemId)}
+                                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-ctl border border-line bg-surface text-ink-2 transition-colors duration-100 active:bg-raised"
+                                aria-label={`Quitar ${que}`}
+                              >
+                                <Icono nombre="papelera" lado={18} />
+                              </button>
+                            ) : (
+                              <Contador
+                                valor={d.unidades}
+                                quitaEnUno
+                                onMenos={() => pedir(restar(d.clave), l.stockItemId)}
+                                onMas={() => pedir(sumar(d.condicion ? { condicion: d.condicion } : null), l.stockItemId)}
+                                etiquetaMenos={`Una menos de ${que}`}
+                                etiquetaQuitar={`Quitar ${que}`}
+                                etiquetaMas={`Una más de ${que}`}
+                              />
+                            )}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+
+                  {aqui && <div className="mb-1 mt-1">{preguntaDe(l.stockItemId)}</div>}
+
+                  {/* Otra de este artículo que no sea de las que ya están: de
+                      otro estado, otro aparato. Las que ya están llevan su más. */}
+                  {!simple && !aqui && cabeMas && (
+                    <button
+                      type="button"
+                      onClick={() => unaMas(l.stockItemId, 'linea')}
+                      className="key-ghost -ml-2 flex min-h-11 items-center gap-1.5 px-2 text-sm"
+                    >
+                      <Icono nombre="anadir" lado={16} />
+                      {o.unidades.length > 0 ? 'Otra unidad' : 'De otro estado'}
+                    </button>
+                  )}
+
+                  {/*
+                    El aviso cuando lo apuntado se pasa de lo que hay.
+
+                    Avisa y **no bloquea**, a propósito: la cifra del dispositivo es
+                    una foto que puede estar vieja, y negarle a alguien apuntar el
+                    cable que acaba de poner porque su iPad cree que no quedaba
+                    sería fiarse más de la copia que de la persona. Lo que no puede
+                    pasar es que se entere el servidor y no quien lo apunta: el
+                    saldo no puede quedar en negativo y el almacén se descuenta al
+                    cerrar la avería, así que es el cierre lo que volverá rechazado
+                    — y hay que decirlo aquí, antes.
+                  */}
+                  {art && art.quedan !== null && l.unidades > art.quedan && (
+                    <p className="mb-1 mt-1 text-xs leading-snug text-warn">
+                      {art.quedan <= 0
+                        ? 'Según la última sincronización no queda ninguno en el almacén.'
+                        : `Según la última sincronización solo ${art.quedan === 1 ? 'queda 1' : `quedan ${art.quedan}`}.`}{' '}
+                      Si de verdad has usado {l.unidades}, déjalo: el cierre de la avería esperará a que
+                      se registre la compra que falta.
+                    </p>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      )}
+
       {error && <p className="mt-2 text-sm text-crit">{error}</p>}
     </div>
+  )
+}
+
+/** Una fila de `incident_materials` tal y como la devuelve el servidor. */
+interface FilaDelServidor {
+  id: string
+  qty: number
+  stock_item_id: string
+  condicion?: Condicion | null
+  stock_unit_id?: string | null
+}
+
+/** Cómo se dice, en una frase, una de las cosas elegidas: para los lectores de pantalla. */
+function textoDe(d: DetalleDeMaterial, serie: string | null): string {
+  if (d.unitId) return serie ? `la unidad con número de serie ${serie}` : 'la unidad con número de serie'
+  if (d.condicion) return nombreDelGrupo(d.condicion).toLowerCase()
+  return 'las que no dicen cuál'
+}
+
+/**
+ * Lo que hay para elegir, en una línea, bajo el nombre de un resultado: «5
+ * nuevas · 3 usadas», «3 con n.º de serie». Dice antes de tocar que el toque va
+ * a preguntar, y entre qué.
+ */
+function loQueHay(o: Opciones): string {
+  if (o.unidades.length > 0) {
+    const sin = o.sinNumero > 0 ? ` · ${o.sinNumero} sin número` : ''
+    return `${o.unidades.length} con n.º de serie${sin}`
+  }
+  return o.estados.map((e) => cuantasEnEstado(e.condicion, e.quedan)).join(' · ')
+}
+
+/**
+ * Una de las cosas elegidas de una línea: «● Nuevas», el número de serie con su
+ * estado, o «Sin elegir» para las que se apuntaron sin decir cuál.
+ *
+ * Todas empiezan en el mismo sitio: un punto del color del estado y, a su
+ * derecha, el texto. El aparato lleva su estado en el punto y en una segunda
+ * línea, no en una etiqueta al final que empuje el número de serie.
+ */
+function LoElegido({ detalle: d, serie }: { detalle: DetalleDeMaterial; serie: string | null }): React.ReactElement {
+  const punto = d.condicion ? PUNTO_DE_CONDICION[d.condicion] : 'border-2 border-line'
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-2.5">
+      <span aria-hidden className={`h-2.5 w-2.5 shrink-0 rounded-full ${punto}`} />
+      {d.unitId ? (
+        <span className="min-w-0">
+          <span className="block truncate font-mono text-sm">{serie ?? 'Con número de serie'}</span>
+          {d.condicion && (
+            <span className={`block text-xs ${d.condicion === 'averiado' ? 'text-crit' : 'text-muted'}`}>
+              {CONDICION_LABEL[d.condicion]}
+            </span>
+          )}
+        </span>
+      ) : (
+        <span className={`truncate text-sm ${d.condicion === 'averiado' ? 'text-crit' : d.condicion ? '' : 'text-muted'}`}>
+          {d.condicion ? nombreDelGrupo(d.condicion) : 'Sin elegir'}
+        </span>
+      )}
+    </span>
   )
 }

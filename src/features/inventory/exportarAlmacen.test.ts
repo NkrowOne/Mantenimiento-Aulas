@@ -116,6 +116,7 @@ function unidad(extra: Partial<UnidadParaHoja> = {}): UnidadParaHoja {
     serial: 'PF3ABC12',
     condicion: 'nuevo',
     situacion: 'disponible',
+    edificio: null,
     aula: null,
     desde: null,
     observaciones: null,
@@ -466,6 +467,7 @@ describe('hojaDeUnidadesConSerie', () => {
       'N.º de serie',
       'Estado',
       'Situación',
+      'Edificio',
       'Aula',
       'Desde',
       'Observaciones',
@@ -488,6 +490,7 @@ describe('hojaDeUnidadesConSerie', () => {
       'N.º de serie': 'PF3ABC12',
       Estado: 'Nuevo',
       Situación: 'En almacén',
+      Edificio: null,
       Aula: null,
       Desde: null,
       Observaciones: null,
@@ -582,10 +585,10 @@ describe('hojaDeUnidadesConSerie', () => {
 
   it('declara la fecha y el ajuste de texto en sus columnas', () => {
     const h = hojaDeUnidadesConSerie([unidad()])
-    expect(h.filas[0]![7]).toBe('Desde')
-    expect(h.formatos?.[7]).toBe('fecha')
-    expect(h.filas[0]![8]).toBe('Observaciones')
-    expect(h.formatos?.[8]).toBe('textoAjustado')
+    expect(h.filas[0]![8]).toBe('Desde')
+    expect(h.formatos?.[8]).toBe('fecha')
+    expect(h.filas[0]![9]).toBe('Observaciones')
+    expect(h.formatos?.[9]).toBe('textoAjustado')
   })
 
   it('sin unidades sale solo la cabecera', () => {
@@ -829,6 +832,38 @@ describe('movimientosParaHoja', () => {
     expect(r.map((m) => m.sala)).toEqual(['0.1 P', '1.7 H', '0.1 P', null, null])
   })
 
+  it('el edificio va aparte, por su sigla, y sigue al aula que haya salido', () => {
+    const r = movimientosParaHoja({
+      ...base,
+      salas: [
+        { id: 's1', code: '1.7', zone_id: 'zh' },
+        { id: 's2', code: '0.1', zone_id: 'zp' },
+      ],
+      zonas: [
+        { id: 'zh', building_id: 'bh' },
+        { id: 'zp', building_id: 'bp' },
+      ],
+      edificios: [
+        { id: 'bh', name: 'Edificio H', code: 'H' },
+        { id: 'bp', name: 'Pabellón', code: null },
+      ],
+      movimientos: [
+        MOV({ stock_item_id: 'a', qty: -1, incident_id: 'i1', room_id: 's2' }),
+        MOV({ stock_item_id: 'a', qty: -1, incident_id: 'i1' }),
+        MOV({ stock_item_id: 'a', qty: 5 }),
+      ],
+    })
+    expect(r.map((m) => [m.edificio, m.sala])).toEqual([
+      ['Pabellón', '0.1'],
+      ['H', '1.7'],
+      [null, null],
+    ])
+    const h = hojaDeMovimientos(r)
+    const e = h.filas[0]!.indexOf('Edificio')
+    expect(e).toBe(h.filas[0]!.indexOf('Aula') - 1)
+    expect(h.filas.slice(1).map((f) => f[e]).sort()).toEqual([null, 'H', 'Pabellón'].sort())
+  })
+
   it('«Quién»: la persona, «Excel» si entró por la hoja, y vacío si no hay dato', () => {
     const r = movimientosParaHoja({
       ...base,
@@ -938,7 +973,20 @@ describe('unidadesParaHoja', () => {
       ...sitio,
       unidades: [FILA({ status: 'instalado', room_id: 'r1', installed_at: '2026-09-07T22:30:00Z' })],
     })
-    expect(u).toMatchObject({ situacion: 'instalado', aula: '2.1 C (Edificio H)', desde: '2026-09-08' })
+    expect(u).toMatchObject({ situacion: 'instalado', edificio: 'Edificio H', aula: '2.1 C', desde: '2026-09-08' })
+  })
+
+  it('el edificio sale por su sigla, que es como se le llama; sin sigla, por su nombre', () => {
+    const con = (edificio: { id: string; name: string; code?: string | null }) =>
+      unidadesParaHoja({
+        ...sitio,
+        edificios: [edificio],
+        unidades: [FILA({ status: 'instalado', room_id: 'r1', installed_at: '2026-09-07T22:30:00Z' })],
+      })[0]!.edificio
+    expect(con({ id: 'b1', name: 'Edificio H', code: 'H' })).toBe('H')
+    expect(con({ id: 'b1', name: 'Edificio H', code: '  ' })).toBe('Edificio H')
+    expect(con({ id: 'b1', name: 'Edificio H', code: null })).toBe('Edificio H')
+    expect(con({ id: 'otro', name: 'Otro', code: 'O' })).toBeNull()
   })
 
   it('una en el almacén no lleva aula ni fecha, aunque conserve un aula de antes', () => {
@@ -1327,10 +1375,10 @@ describe('hojasDelAlmacen', () => {
 
     const movimientos = await leerHoja(libro, 'Movimientos de Almacén')
     expect(movimientos).toHaveLength(4)
-    expect(movimientos[3]!.celdas).toMatchObject({ A: D_2026_10_27, B: 'Cable HDMI', C: 'Consumo', E: 4, F: 2, G: 'I261027_0001', I: '2.1 C', J: 'Ana Pérez', K: 'Cambio de cable' })
+    expect(movimientos[3]!.celdas).toMatchObject({ A: D_2026_10_27, B: 'Cable HDMI', C: 'Consumo', E: 4, F: 2, G: 'I261027_0001', I: 'Edificio H', J: '2.1 C', K: 'Ana Pérez', L: 'Cambio de cable' })
 
     const unidades = await leerHoja(libro, 'Unidades con n.º de serie')
-    expect(unidades[0]!.celdas).toMatchObject({ D: 'N.º de serie', E: 'Estado', F: 'Situación', G: 'Aula', H: 'Desde' })
+    expect(unidades[0]!.celdas).toMatchObject({ D: 'N.º de serie', E: 'Estado', F: 'Situación', G: 'Edificio', H: 'Aula', I: 'Desde' })
     expect(unidades[1]!.celdas).toEqual({
       A: 'Ordenador Tiny M70Q',
       B: 'Lenovo',
@@ -1338,8 +1386,9 @@ describe('hojasDelAlmacen', () => {
       D: 'S1',
       E: 'Usado',
       F: 'Instalada',
-      G: '2.1 C (Edificio H)',
-      H: D_2026_09_08,
+      G: 'Edificio H',
+      H: '2.1 C',
+      I: D_2026_09_08,
     })
   })
 
@@ -1358,7 +1407,7 @@ describe('hojasDelAlmacen', () => {
       for (const f of filas) expect(f.formulas, `${h.nombre} fila ${f.fila}`).toEqual({})
     }
     expect((await leerHoja(libro, 'Existencias'))[1]!.celdas.A).toBe('\'=HYPERLINK("http://malo","x")')
-    expect((await leerHoja(libro, 'Movimientos de Almacén'))[1]!.celdas.K).toBe("'=1+1")
+    expect((await leerHoja(libro, 'Movimientos de Almacén'))[1]!.celdas.L).toBe("'=1+1")
     expect((await leerHoja(libro, 'Unidades con n.º de serie'))[1]!.celdas.D).toBe("'=cmd|' /C calc'!A0")
   })
 
@@ -1459,15 +1508,16 @@ describe('prepararExportacionDelAlmacen', () => {
       D: 'P1',
       E: 'Averiado',
       F: 'En almacén',
-      I: 'Lámpara por cambiar',
+      J: 'Lámpara por cambiar',
     })
     expect(unidades[2]!.celdas).toMatchObject({
       A: 'Ordenador Tiny M70Q',
       D: 'S1',
       E: 'Usado',
       F: 'Instalada',
-      G: '2.1 C (Edificio H)',
-      H: D_2026_09_08,
+      G: 'Edificio H',
+      H: '2.1 C',
+      I: D_2026_09_08,
     })
     // Y sin tocar la tabla: la vista basta.
     expect(falso.estado.peticiones.filter((p) => p.startsWith('stock_unit_list'))).toHaveLength(1)
@@ -1485,7 +1535,7 @@ describe('prepararExportacionDelAlmacen', () => {
     const { bytes } = await prepararExcelDelAlmacen()
     const movimientos = await leerHoja(await abrirLibro(bytes), 'Movimientos de Almacén')
     // Primero el del 1 de septiembre (Excel, sin persona) y después el del 23.
-    expect(movimientos.map((f) => f.celdas.J)).toEqual(['Quién', 'Excel', 'Ana Pérez'])
+    expect(movimientos.map((f) => f.celdas.K)).toEqual(['Quién', 'Excel', 'Ana Pérez'])
     expect(falso.estado.peticiones.some((p) => p.startsWith('profiles'))).toBe(false)
   })
 
@@ -1493,7 +1543,7 @@ describe('prepararExportacionDelAlmacen', () => {
     falso.estado.rpc = {}
     const { bytes } = await prepararExcelDelAlmacen()
     const movimientos = await leerHoja(await abrirLibro(bytes), 'Movimientos de Almacén')
-    expect(movimientos.map((f) => f.celdas.J)).toEqual(['Quién', 'Excel', 'Solo yo'])
+    expect(movimientos.map((f) => f.celdas.K)).toEqual(['Quién', 'Excel', 'Solo yo'])
   })
 
   it('pasa de las mil filas: pide página a página y no pierde ni repite ninguna', async () => {
@@ -1512,7 +1562,7 @@ describe('prepararExportacionDelAlmacen', () => {
     const { bytes } = await prepararExcelDelAlmacen()
     const filas = await leerHoja(await abrirLibro(bytes), 'Movimientos de Almacén')
     expect(filas).toHaveLength(2301)
-    expect(new Set(filas.slice(1).map((f) => f.celdas.K)).size).toBe(2300)
+    expect(new Set(filas.slice(1).map((f) => f.celdas.L)).size).toBe(2300)
     expect(falso.estado.peticiones.filter((p) => p.startsWith('stock_movements'))).toHaveLength(3)
   })
 
@@ -1694,8 +1744,9 @@ describe('prepararExportacionDelAlmacen', () => {
         D: 'S1',
         E: 'Sin indicar',
         F: 'Instalada',
-        G: '2.1 C (Edificio H)',
-        H: D_2026_09_08,
+        G: 'Edificio H',
+        H: '2.1 C',
+        I: D_2026_09_08,
       })
       // Primero la vista, y al no estar, la tabla —sin pedirle columnas que no tiene—.
       const aLaTabla = falso.estado.peticiones.filter((p) => p.startsWith('stock_units'))

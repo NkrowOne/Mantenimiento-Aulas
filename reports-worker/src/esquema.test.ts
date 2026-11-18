@@ -48,13 +48,43 @@ describe('leer las funciones de las migraciones de verdad', () => {
     expect(vigente.get('public.sync_mover_sala')?.fichero).toBe(
       '20260921000300_la_planta_la_trae_el_excel.sql',
     )
+    // Ésta la retocó `20261116000100` releyéndola de la base, sin escribirla; la
+    // siguiente la escribe entera para que el último fichero diga lo que hay.
     expect(vigente.get('public.sync_celda_de_articulo')?.fichero).toBe(
-      '20260921000200_el_recuento_arranca_en_agosto.sql',
+      '20261118000100_la_frase_del_ajuste_tambien_esta_escrita.sql',
     )
     // Y ésta se volvió a tocar el 22, para que nombre el material que no reconoce.
     expect(vigente.get('public.sync_material_del_parte')?.fichero).toBe(
       '20260922000100_el_almacen_dice_que_material_no_reconoce.sql',
     )
+  })
+
+  /*
+   * Una función se cambia escribiéndola entera.
+   *
+   * `20261116000100` cambió una frase de `sync_celda_de_articulo` pidiéndole a
+   * Postgres la definición (`pg_get_functiondef`) y volviéndola a crear con un
+   * `replace`. La base quedó bien y este comprobador quedó ciego: para él la
+   * versión vigente seguía siendo la del fichero de septiembre, y la pantalla
+   * de diagnóstico estuvo diciendo en rojo «la base no tiene las migraciones
+   * que dice tener» sobre una base al día. Y el remedio que imprimía
+   * —reaplicar aquel fichero— devolvía la frase vieja.
+   *
+   * Así que: si un fichero retoca una función sin escribirla, tiene que haber
+   * DESPUÉS un fichero que la escriba entera.
+   */
+  it('una función retocada al vuelo tiene después un fichero que la escribe entera', () => {
+    const RETOCA = /pg_get_functiondef\(\s*'([a-zA-Z_][\w.]*)\s*\(/gi
+    const sinEscribir: string[] = []
+    leidos.forEach(({ fichero, sql }, i) => {
+      for (const m of sql.matchAll(RETOCA)) {
+        const crudo = (m[1] ?? '').toLowerCase()
+        const nombre = crudo.includes('.') ? crudo : `public.${crudo}`
+        const despues = analizados.slice(i + 1).some((a) => a.funciones.some((f) => f.nombre === nombre))
+        if (!despues) sinEscribir.push(`${fichero} retoca ${nombre}`)
+      }
+    })
+    expect(sinEscribir).toEqual([])
   })
 
   it('ningún cuerpo sale ridículamente corto, que es el síntoma de un cierre leído mal', () => {

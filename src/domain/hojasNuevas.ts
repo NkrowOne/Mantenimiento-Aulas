@@ -204,6 +204,12 @@ export interface MovimientoParaHoja {
    * y entonces el número no va en ninguna de las dos.
    */
   claseDeParte: 'incidencia' | 'solicitud' | null
+  /**
+   * La sigla del edificio del aula (`H`, `CSQ`), o su nombre si no tiene sigla.
+   * Va en su propia columna y no pegada al aula para poder filtrar por
+   * edificio: un `2.1` a secas puede ser de cualquiera.
+   */
+  edificio: string | null
   sala: string | null
   quien: string | null
   nota: string | null
@@ -218,6 +224,7 @@ const COL_MOVIMIENTOS = [
   'Saldo',
   'Incidencia',
   'Solicitud',
+  'Edificio',
   'Aula',
   'Quién',
   'Nota',
@@ -270,6 +277,7 @@ export function hojaDeMovimientos(movimientos: MovimientoParaHoja[]): HojaNueva 
       acumulado,
       m.claseDeParte === 'incidencia' ? m.incidencia : null,
       m.claseDeParte === 'solicitud' ? m.incidencia : null,
+      m.sala ? m.edificio : null,
       m.sala,
       m.quien,
       m.nota,
@@ -280,8 +288,8 @@ export function hojaDeMovimientos(movimientos: MovimientoParaHoja[]): HojaNueva 
   return {
     nombre: 'Movimientos de Almacén',
     filas,
-    anchos: [11, 38, 14, 10, 10, 10, 16, 16, 16, 22, 40],
-    formatos: formatos({ 0: 'fecha', 3: 'entero', 4: 'entero', 5: 'entero', 10: 'textoAjustado' }),
+    anchos: [11, 38, 14, 10, 10, 10, 16, 16, 12, 16, 22, 40],
+    formatos: formatos({ 0: 'fecha', 3: 'entero', 4: 'entero', 5: 'entero', 11: 'textoAjustado' }),
     tintes,
     caracter: 'app',
   }

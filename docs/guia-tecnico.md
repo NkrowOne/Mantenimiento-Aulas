@@ -290,6 +290,11 @@ aquí**, sin salir de la revisión.
 
   Elige y dale a **Añadir**. Un toque más que antes, y a cambio el almacén
   cuadra: hasta ahora se instalaban proyectores que no salían de ningún sitio.
+
+  Con **Del almacén**, si el artículo lleva número de serie eliges cuál; y si
+  se cuenta y hay de varios estados, en vez de «Unidades» te sale un contador
+  por estado —«Nuevo, quedan 2», «Usado, quedan 3»— para decir cuántas de cada
+  uno. Con un solo estado no cambia nada.
 - **No está en la lista.** Sale **«Crear "lo que has escrito"»** en naranja.
   Créalo y sigue: el equipo queda dado de alta y usable al momento, y el
   coordinador lo confirma después. **No esperes a preguntar** — lo que no se
@@ -368,12 +373,34 @@ enseñar. La foto es opcional a propósito: una regleta nueva se ve, un ajuste d
 la matriz de vídeo no.
 
 **Si has gastado material, ahí mismo lo apuntas.** Pulsa «¿Has usado material?
-Apúntalo», busca el artículo y tócalo: queda apuntado con una unidad, y en la
-línea que sale puedes subir, bajar o quitar las veces que haga falta. Al lado
-de cada artículo ves cuánto queda —en rojo si está a cero—, así que se
-distingue de un vistazo cuál de los tres cables coger. Si apuntas más de lo que
+Apúntalo», busca el artículo y tócalo: queda apuntado con una unidad. Va en
+este orden, de arriba abajo: el buscador, sus resultados y, debajo, **Apuntado**,
+una fila por artículo con su contador —menos, la cifra y más—. Con una sola
+unidad, el menos es una papelera: quita la fila. Al lado de cada resultado ves
+cuánto queda —en rojo si está a cero—, así que se distingue de un vistazo cuál
+de los tres cables coger; y el que ya has apuntado lleva una marca con cuántos
+van. Si apuntas más de lo que
 el almacén cree que hay, la aplicación te lo dice pero te deja apuntarlo: la
 cifra del dispositivo puede estar vieja y tú tienes el cable en la mano.
+
+**Solo te pregunta cuál cuando hay más de una respuesta.** Un cable se toca y
+queda apuntado. Pero hay dos casos en los que sale «¿Cuál has usado?»:
+
+| Si del artículo… | Te enseña | Y queda apuntado |
+|---|---|---|
+| hay de **varios estados** (5 nuevos y 3 usados) | Una fila por estado, con cuántos quedan | Debajo del artículo, «Nuevas» y «Usadas», cada una con su contador |
+| lleva **número de serie** | Una fila por aparato, con su número como en la pegatina y su estado | Debajo del artículo, el número de serie, con su papelera para quitarlo |
+
+Es un toque: eliges y se cierra. El resultado ya te avisa antes de tocarlo
+—«5 nuevas · 3 usadas», «3 con n.º de serie»—. Para añadir otra distinta, en la
+fila del artículo tienes **«De otro estado»** u **«Otra unidad»**, que vuelve a
+preguntar ahí mismo. Si solo hay de un estado, o un único aparato, no pregunta
+nada: se apunta solo, y el aparato sale con su número para que lo compruebes.
+
+Lo que eliges es de dónde sale en el almacén cuando cierres. Si al cerrar ya no
+queda de ese estado —otro se lo llevó antes—, sale de lo que haya y el cierre
+no se atasca por eso. Y el aparato con número de serie deja de estar «en el
+almacén»: queda en el aula de la avería.
 
 **El almacén se descuenta al cerrar, no al apuntar.** Mientras la avería está
 abierta, lo apuntado es su parte de material y se corrige sin que el almacén se
