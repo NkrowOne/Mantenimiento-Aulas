@@ -293,6 +293,30 @@ describe('vigilarElTeclado', () => {
     expect(n.llamadas).toEqual([[0, 0]])
   })
 
+  it('con el marco, si el documento se desplaza sin teclado se devuelve en el momento', () => {
+    const n = navegador({ marco: true, scrollY: 500 })
+    vigilarElTeclado(n.entorno)
+    n.win.scrollTo.mockImplementation((x: number, y: number) => {
+      n.llamadas.push([x, y])
+      n.win.scrollY = y
+    })
+
+    n.win.dispatchEvent(new Event('scroll'))
+    n.pintar()
+
+    expect(n.llamadas).toEqual([[0, 0]])
+  })
+
+  it('sin el marco, el documento desplaza de verdad y no se toca', () => {
+    const n = navegador({ scrollY: 500, pageTop: 500 })
+    vigilarElTeclado(n.entorno)
+
+    n.win.dispatchEvent(new Event('scroll'))
+    n.pintar()
+
+    expect(n.llamadas).toEqual([])
+  })
+
   it('con el marco y todo en su sitio, ni un scroll de más', () => {
     const n = navegador({ marco: true })
     vigilarElTeclado(n.entorno)

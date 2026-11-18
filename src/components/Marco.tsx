@@ -232,11 +232,21 @@ export function Marco({
        *
        * `overscroll-y-none`: ni rebote ni arrastre del documento de detrás, lo
        * mismo que ya pedía `html` cuando el que desplazaba era él.
+       *
+       * `relative`: para que lo `absolute` de dentro sea SUYO. Sin esto, un
+       * `sr-only` —que es `position: absolute`— al final de una pantalla larga
+       * no se recortaba aquí ni se desplazaba con el contenido: colgaba del
+       * documento, a tres mil píxeles de arriba, y lo hacía tres mil píxeles
+       * de alto por detrás del marco. `overflow: hidden` impide desplazarlo
+       * con el dedo, pero no a iOS ni a un `focus()`: el documento se iba
+       * hacia arriba y la barra de pestañas quedaba a media pantalla con un
+       * vacío debajo. Se vio en el Almacén, con el aviso oculto de «Ver y
+       * exportar». Lo vigila `src/marco.test.ts`.
        */}
       <main
         ref={recordar}
         id={ID_CONTENIDO}
-        className="marco-contenido hueco-del-teclado min-h-0 flex-1 overflow-y-auto overscroll-y-none"
+        className="marco-contenido hueco-del-teclado relative min-h-0 flex-1 overflow-y-auto overscroll-y-none"
       >
         <RanuraDelPie.Provider value={ranura}>
           {/*

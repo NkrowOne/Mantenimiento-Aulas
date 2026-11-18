@@ -324,12 +324,22 @@ export function vigilarElTeclado(entorno: Entorno = entornoReal()): () => void {
 
   const alCambiarDeTamano = (): void => comprobar()
 
+  // Con el marco, el documento no tiene por qué desplazarse NUNCA: si lo hace
+  // sin teclado —un `focus()`, un `scrollIntoView`, iOS por su cuenta— se
+  // devuelve en el momento, sin esperar a que alguien abra y cierre un teclado.
+  // Fuera del marco el documento desplaza de verdad y no se toca.
+  const alDesplazarElDocumento = (): void => {
+    if (enMarco()) comprobar()
+  }
+
   d.addEventListener('focusout', alSoltarElFoco)
   vv.addEventListener('resize', alCambiarDeTamano)
+  w.addEventListener('scroll', alDesplazarElDocumento, { passive: true })
 
   return () => {
     d.removeEventListener('focusout', alSoltarElFoco)
     vv.removeEventListener('resize', alCambiarDeTamano)
+    w.removeEventListener('scroll', alDesplazarElDocumento)
     if (espera !== null) entorno.cancelar(espera)
   }
 }
