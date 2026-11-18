@@ -167,5 +167,15 @@ echo "▸ Pruebas de RLS e inmutabilidad"
 psql "$PGURL" -q -v ON_ERROR_STOP=1 -f supabase/rls-test.sql 2>&1 \
   | grep -E "===|OK:|FALLO|ATENCIÓN|ERROR|DETAIL:|CONTEXT:" | sed 's/^/   /'
 
+echo "▸ El esquema, contra el repositorio"
+# Lo mismo que comprueba `migrar` al arrancar en producción. Sobre una base que
+# acaba de recibir todas las migraciones no puede fallar: si falla, producción
+# dirá «la base no tiene las migraciones que dice tener» estando al día.
+psql "$PGURL" -At -F '|' -v ON_ERROR_STOP=1 -c "
+select lower(n.nspname || '.' || p.proname), md5(p.prosrc)
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname not in ('pg_catalog', 'information_schema');" \
+  | npx tsx scripts/comparar-esquema.ts
+
 echo
 echo "✓ Verificación completada"
