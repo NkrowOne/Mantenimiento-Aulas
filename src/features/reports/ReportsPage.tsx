@@ -16,20 +16,25 @@ import {
   nombrePeriodo,
 } from './periodos'
 import {
+  type Fichero,
   type InformeGenerado,
   type Paso,
+  excelDeUnInforme,
   generarInforme,
   nombreDeArchivo,
+  nombreDelPdf,
 } from './informe/generar'
 import {
+  type ResultadoPdf,
   descargarDocumento,
   imprimirDocumento,
   mostrarEn,
   prepararPdf,
   ventanaEnBlanco,
 } from './informe/imprimir'
-import { ofrecerFichero } from '@/lib/ficheros'
+import { ofrecerFicheros } from '@/lib/ficheros'
 import { TOPE_CONSULTA_MS, TOPE_PDF_MS, conPlazo } from './informe/espera'
+import { VistaPrevia } from './VistaPrevia'
 
 interface ReportRow {
   id: string
@@ -57,18 +62,32 @@ const KIND_LABEL: Record<Kind, string> = {
 /**
  * Lo que se dice entre las dos pulsaciones.
  *
- * Es el texto que sostiene todo el arreglo del iPhone: el PDF ya existe y la
- * única forma de que llegue a Archivos es un segundo toque. Sin decirlo, el
+ * Es el texto que sostiene todo el arreglo del iPhone: el fichero ya existe y
+ * la única forma de que llegue a Archivos es un segundo toque. Sin decirlo, el
  * botón cambia de nombre y parece que no ha pasado nada.
  */
-const LISTO_PULSA_GUARDAR =
-  'El PDF ya está hecho. Pulsa «Guardar el PDF» para llevártelo: en el iPhone y el iPad se abre la hoja de compartir, y desde ahí va a Archivos, a Correo o a SharePoint.'
+const DONDE_VA =
+  'En el iPhone y el iPad se abre la hoja de compartir, y desde ahí va a Archivos, a Correo o a SharePoint; en el ordenador cae en la carpeta de descargas.'
+const PDF_LISTO = `El PDF ya está hecho. Pulsa «Guardar PDF» para llevártelo. ${DONDE_VA}`
+const EXCEL_LISTO = `El Excel ya está hecho. Pulsa «Guardar Excel» para llevártelo. ${DONDE_VA}`
 
 const PASOS: Record<Paso, string> = {
   datos: 'Leyendo los datos del periodo',
   analisis: 'Calculando las cifras',
   documento: 'Componiendo el documento',
+  almacen: 'Terminando el Excel del almacén',
   archivo: 'Guardándolo en el archivo',
+}
+
+/** De qué informe es un fichero: el recién hecho, o la fila del archivo con ese id. */
+type Para = string
+const RECIEN: Para = 'recien'
+
+/** Los ficheros ya hechos de UN informe, esperando el toque que los guarda. */
+interface Hechos {
+  para: Para
+  pdf?: Fichero
+  excel?: Fichero
 }
 
 /**
@@ -81,9 +100,15 @@ const PASOS: Record<Paso, string> = {
  * configurar para que el análisis lo escriba una IA es la clave de Gemini, y se
  * pega en la tarjeta de arriba.
  *
- * El PDF lo hace el navegador: el documento está maquetado para A4 y «Guardar
- * como PDF» es un destino de impresión más. Eso ahorra media librería en el
- * arranque de una aplicación que se abre desde un iPad en un pasillo.
+ * DE CADA INFORME SALEN DOS FICHEROS, sueltos y sin comprimir: el informe en
+ * PDF y el Excel del almacén de esos días —el stock al abrir y al cerrar el
+ * periodo, cada movimiento con su saldo, el consumo por aula y el stock de
+ * hoy—. Se pueden guardar de uno en uno o los dos de una vez.
+ *
+ * El PDF lo convierte el servidor, y empieza a convertirse solo en cuanto el
+ * informe está hecho: antes había que pedirlo con un botón y esperar, y era un
+ * paso que no decidía nada —nadie genera un informe para no llevárselo—. El
+ * Excel se arma en el propio navegador mientras se redacta el análisis.
  *
  * Un informe emitido **no se regenera nunca**: se versiona. Si los datos cambian
  * después, el documento del viernes tiene que seguir diciendo lo que decía el
@@ -117,29 +142,33 @@ export function ReportsPage(): React.ReactElement {
      permisos o red, y descartarlo dejaba el botón «Abrir» como un botón que a
      veces no hace nada. */
   const [falloDescarga, setFalloDescarga] = useState<string | null>(null)
-  const [bajandoPdf, setBajandoPdf] = useState(false)
-  /** Qué informe del archivo se está convirtiendo, para no dejar el botón mudo. */
-  const [pdfDelArchivo, setPdfDelArchivo] = useState<string | null>(null)
   /*
-   * El PDF ya hecho, esperando el toque que lo guarda.
+   * Los ficheros ya hechos, esperando el toque que los guarda.
    *
-   * Hacerlo y guardarlo son dos pulsaciones, y no por gusto: en iOS la hoja de
+   * Hacerlos y guardarlos son dos momentos, y no por gusto: en iOS la hoja de
    * compartir —lo único que lleva un fichero a Archivos o a SharePoint desde el
-   * iPhone— solo se abre mientras dura la pulsación que la pidió, y hacer el PDF
-   * es una vuelta al servidor. Con una sola pulsación el permiso caducaba por el
-   * camino, `navigator.share` fallaba, y el `<a download>` de red sobre un
-   * `blob:` fuera del gesto en iOS no hace nada: ni descarga, ni abre, ni avisa.
+   * iPhone— solo se abre mientras dura la pulsación que la pidió, y hacer el
+   * PDF es una vuelta al servidor. Con una sola pulsación el permiso caducaba
+   * por el camino, `navigator.share` fallaba, y el `<a download>` de red sobre
+   * un `blob:` fuera del gesto en iOS no hace nada: ni descarga, ni abre, ni
+   * avisa.
    *
-   * `para` dice de qué informe es: el recién hecho (`recien`) o la fila del
-   * archivo. Así un PDF preparado no se ofrece desde el botón de otro.
+   * `para` dice de qué informe son: el recién hecho o la fila del archivo. Así
+   * un fichero preparado no se ofrece desde el botón de otro. Solo se guardan
+   * los de uno a la vez: preparar los de otro informe suelta los anteriores.
    */
-  const [pdfListo, setPdfListo] = useState<{
-    para: string
-    nombre: string
-    blob: Blob
-  } | null>(null)
+  const [hechos, setHechos] = useState<Hechos | null>(null)
+  /** Qué se está preparando ahora mismo, para no dejar el botón mudo. */
+  const [ocupado, setOcupado] = useState<{ para: Para; que: 'pdf' | 'excel' } | null>(null)
   /*
-   * Y el aviso del PDF, **con el informe al que pertenece dentro**.
+   * El PDF del informe recién hecho no ha salido solo. Entonces se ofrece el
+   * botón de prepararlo a mano, que es el que puede caer al diálogo de imprimir:
+   * abrir una ventana pide una pulsación, y la conversión automática no la
+   * tiene.
+   */
+  const [pdfPendiente, setPdfPendiente] = useState(false)
+  /*
+   * Y el aviso, **con el informe al que pertenece dentro**.
    *
    * Antes esto era `falloDescarga`, que se pinta al final de la página, detrás
    * del archivo entero. El botón está arriba, en la tarjeta del informe recién
@@ -148,11 +177,18 @@ export function ReportsPage(): React.ReactElement {
    * dos a varias pantallas de scroll por debajo, pasado todo el archivo. En un
    * móvil eso es exactamente lo mismo que no decir nada.
    */
-  const [avisoPdf, setAvisoPdf] = useState<{ para: string; texto: string; mal: boolean } | null>(
-    null,
-  )
+  const [aviso, setAviso] = useState<{ para: Para; texto: string; mal: boolean } | null>(null)
+  /*
+   * A qué petición pertenece lo que vuelve. Una conversión tarda, y mientras
+   * tanto se puede haber generado otro informe: el PDF que llega tarde es del
+   * anterior, y guardarlo con el nombre del nuevo sería el peor fallo posible
+   * de esta pantalla. Cada petición coge su número y solo cuenta la última.
+   */
+  const turno = useRef(0)
 
   const marco = useRef<HTMLIFrameElement>(null)
+  /* La tarjeta del informe recién hecho, para llevar la pantalla hasta ella. */
+  const tarjeta = useRef<HTMLElement>(null)
 
   const { data: estadoIA } = useEstadoIA()
 
@@ -189,10 +225,13 @@ export function ReportsPage(): React.ReactElement {
   const generar = useMutation({
     mutationFn: async (): Promise<InformeGenerado> => {
       setRecien(null)
-      // Un informe nuevo deja obsoleto el PDF del anterior, y el botón dice
-      // «Guardar PDF» sin distinguirlos: se guardaría el de antes.
-      setPdfListo(null)
-      setAvisoPdf(null)
+      // Un informe nuevo deja obsoletos los ficheros del anterior, y el botón
+      // dice «Guardar PDF» sin distinguirlos: se guardaría el de antes.
+      turno.current += 1
+      setHechos(null)
+      setOcupado(null)
+      setPdfPendiente(false)
+      setAviso(null)
       setFalloDescarga(null)
       return generarInforme(eleccion, (fase, detalle, fallo) =>
         setPaso({ fase, ...(detalle ? { detalle } : {}), ...(fallo ? { fallo: true } : {}) }),
@@ -201,6 +240,20 @@ export function ReportsPage(): React.ReactElement {
     onSettled: () => setPaso(null),
     onSuccess: (informe) => {
       setRecien(informe)
+      // El Excel ya viene hecho; el PDF se pide solo, sin esperar a un botón.
+      setHechos({ para: RECIEN, ...(informe.excel ? { excel: informe.excel } : {}) })
+      convertirElRecien(informe, false)
+      /*
+       * Y la pantalla, hasta el resultado. En un teléfono la tarjeta sale por
+       * debajo del formulario —con las opciones abiertas, dos pantallas más
+       * abajo—, y lo que se veía al terminar era el botón «Generar informe»
+       * otra vez quieto, como si no hubiera pasado nada. Tras el pintado, que
+       * es cuando la tarjeta existe.
+       */
+      requestAnimationFrame(() => {
+        const sinAnimar = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+        tarjeta.current?.scrollIntoView({ block: 'start', behavior: sinAnimar ? 'auto' : 'smooth' })
+      })
       // El archivo acaba de cambiar, y la tarjeta de la IA también: la
       // procedencia del último informe es justo lo que enseña.
       void qc.invalidateQueries({ queryKey: ['reports'] })
@@ -233,13 +286,73 @@ export function ReportsPage(): React.ReactElement {
     mostrarEn(ventana, data)
   }
 
+  /** Añade un fichero hecho a los de ese informe, soltando los de cualquier otro. */
+  const anotar = (para: Para, que: 'pdf' | 'excel', fichero: Fichero): void =>
+    setHechos((h) => ({ ...(h?.para === para ? h : { para }), [que]: fichero }))
+
+  /** Convierte un documento a PDF con la sesión de quien lo pide. Nunca lanza. */
+  async function convertir(html: string, nombre: string): Promise<ResultadoPdf> {
+    try {
+      const { data } = await conPlazo('La sesión', TOPE_CONSULTA_MS, supabase.auth.getSession())
+      return await prepararPdf(html, nombre, data.session?.access_token ?? null)
+    } catch (err) {
+      // Ninguna espera de esta pantalla puede ser infinita: los botones se
+      // deshabilitan mientras dura, así que una promesa que no termina los
+      // deja muertos hasta recargar.
+      return { ok: false, motivo: err instanceof Error ? err.message : String(err), sinServicio: false }
+    }
+  }
+
+  /**
+   * El PDF del informe recién hecho.
+   *
+   * Se llama sola al terminar de generar, y también desde el botón de
+   * reintento. La diferencia es `conDialogo`: si el servidor no puede —un
+   * despliegue sin la ruta, el worker caído— el camino de siempre es abrir el
+   * informe con el diálogo de imprimir, que también da un PDF, y eso solo se
+   * puede hacer desde una pulsación.
+   */
+  function convertirElRecien(informe: InformeGenerado, conDialogo: boolean): void {
+    const mio = ++turno.current
+    setOcupado({ para: RECIEN, que: 'pdf' })
+    setPdfPendiente(false)
+    setAviso(null)
+    void convertir(informe.html, nombreDelPdf(informe.kind, informe.rango)).then((r) => {
+      if (turno.current !== mio) return
+      setOcupado(null)
+      if (r.ok) {
+        anotar(RECIEN, 'pdf', { nombre: r.nombre, blob: r.blob })
+        return
+      }
+      setPdfPendiente(true)
+      if (r.sinServicio && conDialogo) {
+        const via = imprimirDocumento(informe.html, marco.current)
+        setAviso({
+          para: RECIEN,
+          mal: true,
+          texto:
+            via === 'bloqueado'
+              ? `No se ha podido preparar el PDF (${r.motivo}) y el navegador ha bloqueado la ventana del informe. Permite las ventanas emergentes de esta página, o usa «Descargar el original».`
+              : `El servidor no ha podido preparar el PDF (${r.motivo}): se ha abierto el informe con el diálogo de imprimir, que también lo guarda como PDF.`,
+        })
+        return
+      }
+      setAviso({
+        para: RECIEN,
+        mal: true,
+        texto: r.sinServicio
+          ? `El servidor no ha podido preparar el PDF (${r.motivo}). Pulsa «Preparar el PDF»: si sigue sin poder, se abre el informe con el diálogo de imprimir, que también lo guarda como PDF.`
+          : `No se ha podido preparar el PDF: ${r.motivo}.`,
+      })
+    })
+  }
+
   /**
    * El PDF de un informe que ya está archivado.
    *
-   * En el archivo solo había «Abrir», que enseña el documento en una pestaña.
-   * Sirve para consultarlo y no sirve para nada más: quien entra al archivo
-   * suele venir a mandarle a alguien el informe del mes pasado, y lo que se
-   * llevaba era un HTML que en el correo del cliente se abre como código.
+   * Quien entra al archivo suele venir a mandarle a alguien el informe del mes
+   * pasado, y con «Abrir» lo que se llevaba era un HTML que en el correo del
+   * cliente se abre como código.
    *
    * El original se guarda entero y autocontenido —los gráficos son SVG y las
    * fotos van dentro—, así que basta con recuperarlo y pasarlo por el mismo
@@ -247,18 +360,12 @@ export function ReportsPage(): React.ReactElement {
    * se recalcula nada: el PDF de un informe de marzo dice lo que decía en
    * marzo, que es justo lo que se espera de un archivo.
    */
-  async function pdfArchivado(r: {
-    id: string
-    kind: string
-    storage_path: string
-    period_start: string
-    period_end: string
-  }): Promise<void> {
+  async function pdfArchivado(r: ReportRow): Promise<void> {
+    const mio = ++turno.current
     setFalloDescarga(null)
-    setPdfListo(null)
-    setAvisoPdf(null)
-    setPdfDelArchivo(r.id)
-    const mal = (texto: string): void => setAvisoPdf({ para: r.id, texto, mal: true })
+    setAviso(null)
+    setOcupado({ para: r.id, que: 'pdf' })
+    const mal = (texto: string): void => setAviso({ para: r.id, texto, mal: true })
     try {
       // Con plazo, como todo lo de esta pantalla: `storage.download` no acepta
       // señal, así que lo que se corta es la espera. Sin esto, un almacén mudo
@@ -268,21 +375,14 @@ export function ReportsPage(): React.ReactElement {
         TOPE_PDF_MS,
         supabase.storage.from('reports').download(r.storage_path),
       )
+      if (turno.current !== mio) return
       if (error || !data) {
         mal(`No se ha podido leer el informe del archivo${error ? `: ${error.message}` : ''}.`)
         return
       }
       const html = await data.text()
-      const { data: sesion } = await conPlazo(
-        'La sesión',
-        TOPE_CONSULTA_MS,
-        supabase.auth.getSession(),
-      )
-      const nombre = nombreDeArchivo(r.kind, { start: r.period_start, end: r.period_end }).replace(
-        /\.html$/,
-        '.pdf',
-      )
-      const hecho = await prepararPdf(html, nombre, sesion.session?.access_token ?? null)
+      const hecho = await convertir(html, nombreDelPdf(r.kind, { start: r.period_start, end: r.period_end }))
+      if (turno.current !== mio) return
       if (!hecho.ok) {
         mal(
           hecho.sinServicio
@@ -291,70 +391,108 @@ export function ReportsPage(): React.ReactElement {
         )
         return
       }
-      setPdfListo({ para: r.id, nombre: hecho.nombre, blob: hecho.blob })
-      setAvisoPdf({ para: r.id, texto: LISTO_PULSA_GUARDAR, mal: false })
+      anotar(r.id, 'pdf', { nombre: hecho.nombre, blob: hecho.blob })
+      setAviso({ para: r.id, texto: PDF_LISTO, mal: false })
     } catch (err) {
       // El plazo salta aquí. Antes no había nada que saltara: la promesa no
       // terminaba y el `finally` no llegaba, así que el botón se quedaba
       // deshabilitado en «Preparando…» hasta recargar la página.
+      if (turno.current !== mio) return
       mal(`No se ha podido preparar el PDF: ${err instanceof Error ? err.message : String(err)}.`)
     } finally {
-      setPdfDelArchivo(null)
+      if (turno.current === mio) setOcupado(null)
     }
   }
 
   /**
-   * Entregar el PDF que ya está hecho. **Se llama desde la pulsación**, sin un
-   * solo `await` por delante: la hoja de compartir de iOS se abre mientras dura
-   * el gesto y un turno de espera la cierra.
+   * El Excel del almacén de un informe: el de una fila del archivo, o el del
+   * recién hecho cuando no salió a la primera.
    *
-   * El fichero no se tira al entregarlo: quien cancela la hoja de compartir sin
-   * querer —o comparte por correo y además quiere guardarlo en Archivos— vuelve
-   * a pulsar y ya está, sin otra vuelta al servidor.
+   * No está guardado en ninguna parte y no hace falta: se rehace de los
+   * movimientos del almacén, que no se editan ni se borran, así que el libro de
+   * un periodo cerrado sale igual se pida cuando se pida.
    */
-  function guardarPdf(listo: { para: string; nombre: string; blob: Blob }): void {
-    setAvisoPdf(null)
-    void ofrecerFichero(listo.nombre, listo.blob)
-      .then((via) =>
-        setAvisoPdf({
-          para: listo.para,
-          texto:
-            via === 'compartido'
-              ? 'PDF compartido. Ya lo tienes donde lo hayas mandado.'
-              : 'PDF descargado.',
-          mal: false,
-        }),
-      )
-      .catch((e: Error) =>
-        setAvisoPdf({ para: listo.para, texto: `No se ha podido guardar el PDF: ${e.message}`, mal: true }),
-      )
+  async function hacerExcel(para: Para, kind: string, rango: Rango): Promise<void> {
+    const mio = ++turno.current
+    setFalloDescarga(null)
+    setAviso(null)
+    setOcupado({ para, que: 'excel' })
+    try {
+      const excel = await excelDeUnInforme(kind, rango)
+      if (turno.current !== mio) return
+      anotar(para, 'excel', excel)
+      setAviso({ para, texto: EXCEL_LISTO, mal: false })
+    } catch (err) {
+      if (turno.current !== mio) return
+      setAviso({
+        para,
+        mal: true,
+        texto: `No se ha podido preparar el Excel: ${err instanceof Error ? err.message : String(err)}`,
+      })
+    } finally {
+      if (turno.current === mio) setOcupado(null)
+    }
   }
 
   /**
-   * El aviso del PDF, pegado al botón que lo produjo y no al final de la página.
+   * Entregar lo que ya está hecho. **Se llama desde la pulsación**, sin un solo
+   * `await` por delante: la hoja de compartir de iOS se abre mientras dura el
+   * gesto y un turno de espera la cierra.
    *
-   * Y mientras se prepara, cuánto puede tardar. No es relleno: el informe se
-   * sube entero al servidor —con las fotos del periodo dentro van varios
+   * Uno o los dos, y los dos van sueltos: la hoja de compartir los lleva a
+   * Correo como dos adjuntos, no como un paquete que haya que descomprimir.
+   *
+   * Los ficheros no se tiran al entregarlos: quien cancela la hoja de compartir
+   * sin querer —o comparte por correo y además quiere guardarlo en Archivos—
+   * vuelve a pulsar y ya está, sin otra vuelta al servidor.
+   */
+  function guardar(para: Para, ficheros: Fichero[]): void {
+    const que = ficheros.length > 1 ? 'Los dos archivos' : ficheros[0]?.nombre.endsWith('.pdf') ? 'El PDF' : 'El Excel'
+    const varios = ficheros.length > 1
+    setAviso(null)
+    void ofrecerFicheros(ficheros)
+      .then((via) =>
+        setAviso({
+          para,
+          texto:
+            via === 'compartido'
+              ? `${que}, ${varios ? 'compartidos. Ya los' : 'compartido. Ya lo'} tienes donde ${varios ? 'los' : 'lo'} hayas mandado.`
+              : `${que}, ${varios ? 'descargados' : 'descargado'}.`,
+          mal: false,
+        }),
+      )
+      .catch((e: Error) => setAviso({ para, texto: `No se ha podido guardar: ${e.message}`, mal: true }))
+  }
+
+  /**
+   * El aviso de un informe, pegado a los botones que lo produjeron y no al
+   * final de la página.
+   *
+   * Y mientras se prepara algo, cuánto puede tardar. No es relleno: el informe
+   * se sube entero al servidor —con las fotos del periodo dentro van varios
    * megas—, WeasyPrint lo compone y vuelve el fichero. Son decenas de segundos
    * por 5G, y un botón que solo pone «Preparando…» durante medio minuto se lee
    * como un botón roto.
    */
-  function AvisoPdf({ para, preparando }: { para: string; preparando?: boolean }): React.ReactElement | null {
-    if (preparando) {
+  function Aviso({ para }: { para: Para }): React.ReactElement | null {
+    if (ocupado?.para === para) {
       return (
-        <p aria-live="polite" className="mt-2 text-sm text-muted">
-          Mandando el informe al servidor y convirtiéndolo. Puede tardar medio minuto, y algo más si
-          lleva fotos. No cierres la pantalla.
+        <p aria-live="polite" className="mt-2 w-full text-sm text-muted sm:basis-full">
+          {ocupado.que === 'pdf'
+            ? 'Convirtiendo el informe a PDF en el servidor. Puede tardar medio minuto, y algo más si lleva fotos. No cierres la pantalla.'
+            : 'Leyendo el almacén y armando el Excel. Son unos segundos.'}
         </p>
       )
     }
-    if (avisoPdf?.para !== para) return null
+    if (aviso?.para !== para) return null
     return (
       <p
-        {...(avisoPdf.mal ? { role: 'alert' as const } : { 'aria-live': 'polite' as const })}
-        className={`mt-2 text-sm ${avisoPdf.mal ? 'text-crit' : 'text-ok'}`}
+        {...(aviso.mal ? { role: 'alert' as const } : { 'aria-live': 'polite' as const })}
+        /* A todo lo ancho: en la fila del archivo, que es flexible, se metía
+           al lado de los botones y estrujaba la fecha a palabra por línea. */
+        className={`mt-2 w-full text-sm sm:basis-full ${aviso.mal ? 'text-crit' : 'text-ok'}`}
       >
-        {avisoPdf.texto}
+        {aviso.texto}
       </p>
     )
   }
@@ -374,9 +512,9 @@ export function ReportsPage(): React.ReactElement {
       <header>
         <h1 className="text-2xl font-bold tracking-tight">Informes</h1>
         <p className="mt-1 text-sm text-muted">
-          El informe se genera con los datos del periodo elegido, listo para imprimir o guardar
-          como PDF, y queda archivado. Un informe emitido no se modifica: se emite uno nuevo y se
-          conservan los dos.
+          El informe se genera con los datos del periodo elegido y sale en dos archivos: el
+          informe en PDF y un Excel con el almacén de esos días. Queda archivado. Un informe
+          emitido no se modifica: se emite uno nuevo y se conservan los dos.
         </p>
       </header>
 
@@ -671,113 +809,88 @@ export function ReportsPage(): React.ReactElement {
       </section>
 
       {recien && (
-        <section className="card p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="font-semibold">
-                Listo: {KIND_LABEL[recien.kind as Kind]}, {recien.periodoTexto}
-              </h2>
-              <p className="mt-1 text-sm text-muted">
-                {recien.conIA
-                  ? 'El análisis lo ha redactado la IA. Las cifras no salen de ahí: se calculan con los datos.'
-                  : 'Con el análisis calculado a partir de los datos.'}
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              {/*
-                Dos botones y no uno: ver el comentario de `pdfListo`. En el
-                iPhone la hoja de compartir caduca con la pulsación que la pidió,
-                y hacer el PDF es una vuelta al servidor.
-              */}
-              {pdfListo?.para === 'recien' ? (
-                <button
-                  type="button"
-                  onClick={() => guardarPdf(pdfListo)}
-                  className="key key-accent min-h-11 px-3 text-sm"
-                >
-                  Guardar el PDF
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={bajandoPdf}
-                  onClick={() => {
-                    setFalloDescarga(null)
-                    setPdfListo(null)
-                    setAvisoPdf(null)
-                    setBajandoPdf(true)
-                    void (async () => {
-                      let r: Awaited<ReturnType<typeof prepararPdf>>
-                      try {
-                        const { data } = await conPlazo(
-                          'La sesión',
-                          TOPE_CONSULTA_MS,
-                          supabase.auth.getSession(),
-                        )
-                        const nombre = nombreDeArchivo(recien.kind, recien.rango).replace(/\.html$/, '.pdf')
-                        r = await prepararPdf(recien.html, nombre, data.session?.access_token ?? null)
-                      } catch (err) {
-                        // Ninguna espera de esta pantalla puede ser infinita: el
-                        // botón se deshabilita mientras dura, así que una promesa
-                        // que no termina lo deja muerto hasta recargar.
-                        setBajandoPdf(false)
-                        setAvisoPdf({
-                          para: 'recien',
-                          mal: true,
-                          texto: `No se ha podido preparar el PDF: ${err instanceof Error ? err.message : String(err)}.`,
-                        })
-                        return
-                      }
-                      setBajandoPdf(false)
-                      if (r.ok) {
-                        setPdfListo({ para: 'recien', nombre: r.nombre, blob: r.blob })
-                        setAvisoPdf({ para: 'recien', texto: LISTO_PULSA_GUARDAR, mal: false })
-                        return
-                      }
-                      /*
-                       * Sin servicio de PDF —un servidor que aún no lo tiene, el
-                       * worker caído— se cae al camino de siempre en vez de dejar
-                       * a nadie sin documento: la ventana con el diálogo de
-                       * imprimir, que también da un PDF.
-                       */
-                      if (r.sinServicio) {
-                        const via = imprimirDocumento(recien.html, marco.current)
-                        setAvisoPdf({
-                          para: 'recien',
-                          mal: true,
-                          texto:
-                            via === 'bloqueado'
-                              ? `No se ha podido preparar el PDF (${r.motivo}) y el navegador ha bloqueado la ventana del informe. Permite las ventanas emergentes de esta página, o usa «Descargar el original».`
-                              : `El servidor no ha podido preparar el PDF (${r.motivo}): se ha abierto el informe con el diálogo de imprimir, que también lo guarda como PDF.`,
-                        })
-                        return
-                      }
-                      setAvisoPdf({
-                        para: 'recien',
-                        mal: true,
-                        texto: `No se ha podido preparar el PDF: ${r.motivo}.`,
-                      })
-                    })()
-                  }}
-                  className="key key-accent min-h-11 px-3 text-sm"
-                >
-                  {bajandoPdf ? 'Preparando el PDF…' : 'Preparar el PDF'}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => descargarDocumento(recien.html, nombreDeArchivo(recien.kind, recien.rango))}
-                className="key key-quiet min-h-11 px-3 text-sm"
-                title="El original en HTML, del que sale el PDF"
-              >
-                Descargar el original
-              </button>
-            </div>
+        <section ref={tarjeta} className="card scroll-mt-20 p-4">
+          <div className="min-w-0">
+            <h2 className="font-semibold">
+              Listo: {KIND_LABEL[recien.kind as Kind]}, {recien.periodoTexto}
+            </h2>
+            <p className="mt-1 text-sm text-muted">
+              Son dos archivos, sin comprimir: el informe en PDF y el Excel del almacén —el stock
+              de esos días, sus movimientos y el stock de hoy—.{' '}
+              {recien.conIA
+                ? 'El análisis lo ha redactado la IA; las cifras no salen de ahí: se calculan con los datos.'
+                : 'El análisis sale calculado a partir de los datos.'}
+            </p>
           </div>
 
-          {/* Pegado a los botones. Es todo el arreglo: el PDF ya está hecho y
-              falta una pulsación, y eso hay que decirlo donde está el dedo. */}
-          <AvisoPdf para="recien" preparando={bajandoPdf} />
+          {/*
+            Tres botones, y el primero es el que se viene a pulsar: los dos
+            archivos de una vez. Los otros dos son para quien solo quiere uno.
+
+            Aparecen ya en su sitio y apagados mientras el PDF se convierte, en
+            vez de aparecer cuando está: un botón que sale de la nada mueve los
+            de al lado justo cuando el dedo va hacia ellos.
+          */}
+          {(() => {
+            const mios = hechos?.para === RECIEN ? hechos : null
+            const pdf = mios?.pdf
+            const excel = mios?.excel
+            const convirtiendo = ocupado?.para === RECIEN && ocupado.que === 'pdf'
+            const armando = ocupado?.para === RECIEN && ocupado.que === 'excel'
+            return (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={!pdf || !excel}
+                  onClick={() => pdf && excel && guardar(RECIEN, [pdf, excel])}
+                  className="key key-accent min-h-11 w-full px-4 text-sm sm:w-auto"
+                >
+                  Guardar los dos archivos
+                </button>
+                {pdfPendiente && !pdf ? (
+                  <button
+                    type="button"
+                    disabled={ocupado !== null}
+                    onClick={() => convertirElRecien(recien, true)}
+                    className="key key-quiet min-h-11 flex-1 px-3 text-sm sm:flex-none"
+                  >
+                    Preparar el PDF
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!pdf}
+                    onClick={() => pdf && guardar(RECIEN, [pdf])}
+                    className="key key-quiet min-h-11 flex-1 px-3 text-sm sm:flex-none"
+                  >
+                    {convirtiendo ? 'Preparando el PDF…' : 'Guardar PDF'}
+                  </button>
+                )}
+                {excel ? (
+                  <button
+                    type="button"
+                    onClick={() => guardar(RECIEN, [excel])}
+                    className="key key-quiet min-h-11 flex-1 px-3 text-sm sm:flex-none"
+                  >
+                    Guardar Excel
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={ocupado !== null}
+                    onClick={() => void hacerExcel(RECIEN, recien.kind, recien.rango)}
+                    className="key key-quiet min-h-11 flex-1 px-3 text-sm sm:flex-none"
+                  >
+                    {armando ? 'Preparando el Excel…' : 'Preparar el Excel'}
+                  </button>
+                )}
+              </div>
+            )
+          })()}
+
+          {/* Pegado a los botones: lo que falta y lo que ha pasado se dice
+              donde está el dedo. */}
+          <Aviso para={RECIEN} />
 
           {/* Lo que no ha salido como se pidió, dicho. Que el análisis venga
               calculado cuando se marcó «con IA» no es un detalle: quien lo pidió
@@ -788,37 +901,42 @@ export function ReportsPage(): React.ReactElement {
             </p>
           )}
 
-          {recien.motivoArchivo && (
-            <p role="alert" className="mt-3 rounded-ctl border border-warn/40 bg-warn-tint p-3 text-sm text-warn">
-              El informe está hecho, pero {recien.motivoArchivo}. Descárgalo para no perderlo.
+          {/* El Excel que no salió: el informe está entero y el libro se puede
+              volver a pedir, pero hay que decir que ahora mismo falta uno de
+              los dos archivos. */}
+          {recien.motivoExcel && !(hechos?.para === RECIEN && hechos.excel) && (
+            <p className="mt-3 rounded-ctl border border-warn/40 bg-warn-tint p-3 text-sm text-warn">
+              El informe está hecho, pero el Excel del almacén no ha salido:{' '}
+              {recien.motivoExcel.replace(/[.\s]+$/, '')}. Pulsa «Preparar el Excel» para volver a
+              intentarlo.
             </p>
           )}
 
+          {recien.motivoArchivo && (
+            <p role="alert" className="mt-3 rounded-ctl border border-warn/40 bg-warn-tint p-3 text-sm text-warn">
+              El informe está hecho, pero {recien.motivoArchivo}. Guárdalo para no perderlo.
+            </p>
+          )}
+
+          {/* La vista previa, a escala: la hoja entera también en un teléfono. */}
+          <VistaPrevia html={recien.html} titulo={`Informe · ${recien.periodoTexto}`} marco={marco} />
+
           {/*
-            La vista previa, en un marco aislado.
-            El documento trae sus propios estilos de página —cuerpos en puntos,
-            márgenes en milímetros— y soltarlos en la aplicación repintaría media
-            pantalla. Sin `allow-scripts`: el informe no lleva ni una línea de
-            JavaScript y así se queda.
-          */}
-          <iframe
-            ref={marco}
-            title={`Informe · ${recien.periodoTexto}`}
-            srcDoc={recien.html}
-            sandbox="allow-same-origin allow-modals"
-            className="mt-4 h-[70vh] w-full rounded-card border border-line bg-white"
-          />
-          {/*
-            Lo que hace cada botón, en una línea. Y por qué son dos pulsaciones,
-            que es lo que más desconcierta de esta pantalla: el PDF lo convierte
-            el servidor y la hoja de compartir del iPhone caduca con el gesto que
-            la pidió, así que no se puede hacer y entregar de un solo toque.
+            Lo que hace cada botón, en dos líneas, y el original al final: es el
+            HTML del que sale el PDF, y casi nadie lo necesita.
           */}
           <p className="mt-2 text-xs text-muted">
-            El PDF lo convierte el servidor, y por eso va en dos toques: «Preparar el PDF» lo pide y
-            «Guardar el PDF» te lo lleva. En el iPhone y el iPad se abre la hoja de compartir —a
-            Archivos, a Correo o a SharePoint— y en el ordenador cae en la carpeta de descargas.
-            «Descargar el original» baja el mismo informe en HTML, que es de donde sale.
+            El PDF lo convierte el servidor en cuanto el informe está hecho; el Excel se arma aquí
+            mismo. {DONDE_VA}{' '}
+            <button
+              type="button"
+              onClick={() => descargarDocumento(recien.html, nombreDeArchivo(recien.kind, recien.rango))}
+              className="text-accent underline"
+              title="El original en HTML, del que sale el PDF"
+            >
+              Descargar el original
+            </button>
+            , que es el mismo informe en HTML.
           </p>
         </section>
       )}
@@ -876,10 +994,10 @@ export function ReportsPage(): React.ReactElement {
                     {redaccion.etiqueta}
                   </span>
                 )}
-                {pdfListo?.para === r.id ? (
+                {hechos?.para === r.id && hechos.pdf ? (
                   <button
                     type="button"
-                    onClick={() => guardarPdf(pdfListo)}
+                    onClick={() => hechos.pdf && guardar(r.id, [hechos.pdf])}
                     className="key key-accent min-h-11 px-3 text-xs"
                     title="El PDF ya está hecho: pulsa para guardarlo"
                   >
@@ -888,12 +1006,34 @@ export function ReportsPage(): React.ReactElement {
                 ) : (
                   <button
                     type="button"
-                    disabled={pdfDelArchivo !== null}
+                    disabled={ocupado !== null}
                     onClick={() => void pdfArchivado(r)}
                     className="key key-accent min-h-11 px-3 text-xs"
                     title="El informe archivado, en PDF"
                   >
-                    {pdfDelArchivo === r.id ? 'Preparando…' : 'PDF'}
+                    {ocupado?.para === r.id && ocupado.que === 'pdf' ? 'Preparando…' : 'PDF'}
+                  </button>
+                )}
+                {hechos?.para === r.id && hechos.excel ? (
+                  <button
+                    type="button"
+                    onClick={() => hechos.excel && guardar(r.id, [hechos.excel])}
+                    className="key key-accent min-h-11 px-3 text-xs"
+                    title="El Excel ya está hecho: pulsa para guardarlo"
+                  >
+                    Guardar Excel
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={ocupado !== null}
+                    onClick={() =>
+                      void hacerExcel(r.id, r.kind, { start: r.period_start, end: r.period_end })
+                    }
+                    className="key key-quiet min-h-11 px-3 text-xs"
+                    title="El almacén de ese periodo, en Excel: stock, movimientos y stock de hoy"
+                  >
+                    {ocupado?.para === r.id && ocupado.que === 'excel' ? 'Preparando…' : 'Excel'}
                   </button>
                 )}
                 <button
@@ -905,7 +1045,7 @@ export function ReportsPage(): React.ReactElement {
                 </button>
                 </div>
                 {/* Debajo de su propia fila, no entre los botones de otra. */}
-                <AvisoPdf para={r.id} preparando={pdfDelArchivo === r.id} />
+                <Aviso para={r.id} />
               </li>
             )
           })}

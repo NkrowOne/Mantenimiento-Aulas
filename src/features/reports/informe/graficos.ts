@@ -45,6 +45,32 @@ import { echarts } from '@/design/echarts'
  *        --mode light --surface "#FFFFFF"
  */
 const CATEGORICAL = ['#4A78D4', '#12A396', '#B063D6', '#8A8F3C'] as const
+
+/**
+ * Los tres primeros tonos, con nombre, para lo que se pinta fuera de ECharts:
+ * la franja de «de qué son los partes» y su lista. El color sigue a la cosa y
+ * no al sitio que ocupa: una incidencia es azul en la franja, en la leyenda y
+ * donde vuelva a salir.
+ */
+export const TONO_DE_SERIE = {
+  primero: CATEGORICAL[0],
+  segundo: CATEGORICAL[1],
+  tercero: CATEGORICAL[2],
+} as const
+
+/**
+ * La rampa de un solo tono para lo que tiene ORDEN —los tramos de tiempo de un
+ * cierre: el mismo día, en 48 horas, en la semana, más—. No es la paleta de
+ * series: allí cada color es una cosa distinta, y aquí el color tiene que decir
+ * que una viene detrás de otra. Del más oscuro —lo más rápido, que es lo que
+ * se quiere ver— al más claro.
+ *
+ * Comprobada como rampa ordinal sobre papel blanco (pasos visibles, un solo
+ * tono y el extremo claro por encima de 2:1):
+ *   node scripts/validate_palette.js "#084F53,#0B6B70,#3D9499,#8ABFC2" \
+ *        --ordinal --mode light --surface "#FFFFFF"
+ */
+export const RAMPA_DE_TIEMPOS = ['#084F53', '#0B6B70', '#3D9499', '#8ABFC2'] as const
 /* Los mismos grises que la plantilla, para que el gráfico no venga de otro
    documento: la tinta tira un punto al cálido y la rejilla es más suave. */
 const INK = '#1A2226'
@@ -57,8 +83,18 @@ export const ANCHO_TOTAL = 672
 /** Media caja, descontando la calle central de 6 mm. */
 export const ANCHO_MEDIO = 326
 
-const TIPO = '"IBM Plex Sans", "Instrument Sans Variable", system-ui, sans-serif'
-const MONO = '"IBM Plex Mono", ui-monospace, monospace'
+/*
+ * Las familias, con comillas SIMPLES por dentro, y no por gusto.
+ *
+ * ECharts escribe el estilo de cada texto en un atributo entre comillas dobles
+ * —`style="font-size:10px;font-family:…"`— y no escapa lo que le llega. Con
+ * `"IBM Plex Sans"` dentro, el atributo se cerraba en la primera comilla:
+ * quedaba `font-family:` sin valor, y los ejes y las cifras de todos los
+ * gráficos salían con la letra por defecto del visor en vez de con la del
+ * documento. No fallaba nada; WeasyPrint lo decía en un aviso que nadie leía.
+ */
+const TIPO = "'IBM Plex Sans', 'Instrument Sans Variable', system-ui, sans-serif"
+const MONO = "'IBM Plex Mono', ui-monospace, monospace"
 
 function render(option: Record<string, unknown>, width: number, height: number): string {
   const completa = {
@@ -181,7 +217,9 @@ export function actividadDiaria(
         barCategoryGap: '34%',
         itemStyle: {
           color: CATEGORICAL[i % CATEGORICAL.length],
-          borderRadius: [3, 3, 0, 0],
+          // Redondeado donde acaba el dato y a escuadra en la base, que es de
+          // donde crece la columna.
+          borderRadius: [4, 4, 0, 0],
         },
         label: cifras ? etiquetaValor : { show: false },
       })),
@@ -222,7 +260,7 @@ export function barrasHorizontales(
           barCategoryGap: '38%',
           itemStyle: {
             color: CATEGORICAL[color % CATEGORICAL.length],
-            borderRadius: [2, 2, 2, 2],
+            borderRadius: [0, 4, 4, 0],
           },
           // El valor al final de la barra: sin eje de valores, es el único sitio
           // donde puede estar la cifra.
@@ -253,31 +291,178 @@ export function tendencia(
 
   return render(
     {
-      grid: { left: 2, right: 16, top: 14, bottom: 2, containLabel: true },
+      grid: { left: 2, right: 18, top: 16, bottom: 2, containLabel: true },
       xAxis: { ...ejeCategoria, data: etiquetas, boundaryGap: false },
       yAxis: ejeValor,
       series: [
         {
           type: 'line',
           data: valores,
-          symbol: 'circle',
-          symbolSize: 6,
-          lineStyle: { width: 2, color: tono },
+          showSymbol: false,
+          lineStyle: { width: 2, color: tono, join: 'round', cap: 'round' },
           itemStyle: { color: tono },
-          areaStyle: { color: tono, opacity: 0.09 },
+          areaStyle: { color: tono, opacity: 0.1 },
+        },
+        /*
+         * El último punto, en una serie aparte que solo lo tiene a él. Es el
+         * único que lleva marca y cifra: doce puntos gordos sobre una línea de
+         * doce meses son doce cosas que mirar. Con su anillo de papel, para que
+         * no se funda con la línea.
+         *
+         * Aparte, y no con un tamaño de símbolo por punto: un símbolo de tamaño
+         * cero sigue dibujándose en el SVG, y dejaba una mota en la esquina del
+         * gráfico.
+         */
+        {
+          type: 'line',
+          data: valores.map((v, i) => (i === ultimo ? v : null)),
+          symbol: 'circle',
+          symbolSize: 9,
+          lineStyle: { width: 0 },
+          itemStyle: { color: tono, borderColor: '#FFFFFF', borderWidth: 2 },
           label: {
             show: true,
             position: 'top',
             color: INK,
             fontSize: 9,
             fontFamily: MONO,
-            formatter: (p: { dataIndex: number; value: number }) =>
-              p.dataIndex === ultimo ? String(p.value) : '',
+            formatter: (p: { value: number | null }) => (p.value === null ? '' : String(p.value)),
           },
         },
       ],
     },
     width,
     height,
+  )
+}
+
+// ── Las figuras que no son un gráfico ────────────────────────────────────────
+
+/**
+ * Lo que ocupa un texto, a ojo y por lo alto.
+ *
+ * Aquí no hay lienzo con el que medir —el documento se compone en una cadena—,
+ * así que se cuenta por caracteres con la anchura media de la sans a ese
+ * cuerpo. Por lo alto a propósito: lo que se decide con esto es si una cifra
+ * cabe DENTRO de su tramo, y la que no cabe se va a la leyenda. Equivocarse
+ * hacia «no cabe» cuesta una cifra un poco más lejos; hacia «cabe», una cifra
+ * cortada.
+ */
+function anchoDeTexto(texto: string, cuerpo: number): number {
+  return texto.length * cuerpo * 0.62
+}
+
+/** La luminancia relativa de un color, la de la fórmula de contraste de WCAG. */
+function luminancia(hex: string): number {
+  const n = parseInt(hex.slice(1), 16)
+  const canal = (v: number): number => {
+    const c = v / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * canal((n >> 16) & 255) + 0.7152 * canal((n >> 8) & 255) + 0.0722 * canal(n & 255)
+}
+
+/**
+ * ¿Va el texto en blanco o en tinta sobre este fondo? El que más contraste dé.
+ *
+ * Calculado y no por un umbral a ojo: el tono intermedio de la rampa queda
+ * justo donde un umbral se equivoca —con blanco no llega a 3,6:1 y con tinta
+ * pasa de 4,5:1—, y es una cifra de once puntos impresa en papel.
+ */
+export function tintaSobre(hex: string): string {
+  const fondo = luminancia(hex)
+  const conBlanco = 1.05 / (fondo + 0.05)
+  const conTinta = (fondo + 0.05) / (luminancia(INK) + 0.05)
+  return conTinta > conBlanco ? INK : '#FFFFFF'
+}
+
+export interface Tramo {
+  nombre: string
+  valor: number
+  color: string
+}
+
+/**
+ * Un todo partido en tramos, en una sola barra.
+ *
+ * Es la forma de enseñar un reparto que se lee de un vistazo —de doce cierres,
+ * ocho el mismo día—: una barra alta, cada tramo con su cifra dentro donde
+ * cabe, y dos píxeles de papel entre tramo y tramo, que es lo que los separa
+ * sin dibujarles un borde. Los nombres van en la leyenda, que pinta la
+ * plantilla debajo; un tramo demasiado estrecho para su cifra no la lleva, y la
+ * leyenda se la pone al lado del nombre.
+ *
+ * Se dibuja a mano y no con ECharts: es una figura, no un gráfico con ejes, y
+ * así mide exactamente lo que tiene que medir.
+ *
+ * `devuelve.sinCifra` dice qué tramos se han quedado sin su número dentro.
+ */
+export function barraDeTramos(
+  tramos: Tramo[],
+  opts: { width?: number; alto?: number } = {},
+): { svg: string; sinCifra: Set<string> } {
+  const { width = ANCHO_MEDIO, alto = 28 } = opts
+  const vivos = tramos.filter((t) => t.valor > 0)
+  const total = vivos.reduce((a, t) => a + t.valor, 0)
+  const sinCifra = new Set<string>()
+  if (!total) return { svg: '', sinCifra }
+
+  const HUECO = 2
+  const util = width - HUECO * (vivos.length - 1)
+  const CUERPO = 11
+  let x = 0
+  const piezas = vivos
+    .map((t) => {
+      const w = (t.valor / total) * util
+      const cifra = String(t.valor)
+      const cabe = anchoDeTexto(cifra, CUERPO) + 14 <= w
+      if (!cabe) sinCifra.add(t.nombre)
+      const pieza =
+        `<rect x="${x.toFixed(2)}" y="0" width="${w.toFixed(2)}" height="${alto}" rx="4" fill="${t.color}"/>` +
+        (cabe
+          ? `<text x="${(x + 8).toFixed(2)}" y="${alto / 2}" dominant-baseline="central" ` +
+            `font-family="${MONO}" font-size="${CUERPO}" font-weight="600" fill="${tintaSobre(t.color)}">${cifra}</text>`
+          : '')
+      x += w + HUECO
+      return pieza
+    })
+    .join('')
+
+  return {
+    svg:
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${alto}" viewBox="0 0 ${width} ${alto}" role="img" ` +
+      `aria-label="${vivos.map((t) => `${t.nombre}: ${t.valor}`).join(', ')}">${piezas}</svg>`,
+    sinCifra,
+  }
+}
+
+/**
+ * El mismo reparto, en fino y sin texto.
+ *
+ * Para cuando la barra va ENCIMA de una lista que ya da el nombre y la cifra de
+ * cada parte: repetir los números dentro no añade nada. Extremos redondos y los
+ * mismos dos píxeles de papel entre tramos.
+ */
+export function franjaDeTramos(tramos: Tramo[], opts: { width?: number; alto?: number } = {}): string {
+  const { width = ANCHO_MEDIO, alto = 8 } = opts
+  const vivos = tramos.filter((t) => t.valor > 0)
+  const total = vivos.reduce((a, t) => a + t.valor, 0)
+  if (!total) return ''
+
+  const HUECO = 2
+  const util = width - HUECO * (vivos.length - 1)
+  let x = 0
+  const piezas = vivos
+    .map((t) => {
+      const w = Math.max(2, (t.valor / total) * util)
+      const pieza = `<rect x="${x.toFixed(2)}" y="0" width="${w.toFixed(2)}" height="${alto}" rx="${alto / 2}" fill="${t.color}"/>`
+      x += w + HUECO
+      return pieza
+    })
+    .join('')
+
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${alto}" viewBox="0 0 ${width} ${alto}" role="img" ` +
+    `aria-label="${vivos.map((t) => `${t.nombre}: ${t.valor}`).join(', ')}">${piezas}</svg>`
   )
 }

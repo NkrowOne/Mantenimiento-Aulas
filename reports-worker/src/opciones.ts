@@ -53,8 +53,12 @@ export type Audiencia = 'direccion' | 'equipo'
  * días lleva abierta nada, y por eso esta sección no se puede pedir para él.
  * Se quita al leer las opciones, no al imprimir, para que el archivo tampoco
  * diga que se pidió.
+ *
+ * «Salas señaladas» va detrás: el ranking es el señalamiento que este
+ * documento no hace, y la tabla del mismo repuesto en la misma sala es
+ * desgaste de uso —los cables se rompen—, no una mejora que proponer.
  */
-export const VETADAS_PARA_DIRECCION: Seccion[] = ['estancadas']
+export const VETADAS_PARA_DIRECCION: Seccion[] = ['estancadas', 'salas']
 
 /**
  * Lo que sale para cada audiencia si nadie elige nada.

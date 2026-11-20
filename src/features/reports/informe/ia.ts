@@ -40,9 +40,15 @@
  */
 
 import type { ReportData } from './tipos'
-import { MARCO_DEL_SERVICIO, fueraDeAlcance, sinPedirPermiso } from './contrato'
+import {
+  MARCO_DEL_SERVICIO,
+  fueraDeAlcance,
+  insisteEnLaRonda,
+  leeElDesgasteComoFallo,
+  sinPedirPermiso,
+} from './contrato'
 import { TOPE_ENFOQUE } from './opciones'
-import { type Lectura, type Senal, dias, porcentaje } from './analisis'
+import { type Lectura, type QueSeCuenta, type Senal, dias } from './analisis'
 import type { Separado } from './cierres'
 
 /** El último Flash. `gemini-flash-latest` sigue al día solo; esto fija la versión. */
@@ -77,6 +83,12 @@ export interface OpcionesIA {
   audiencia: Audiencia
   /** Instrucción libre del usuario: «céntrate en el edificio H», «sé muy breve». */
   enfoque?: string
+  /**
+   * Si el informe da los tiempos de cierre. En falso —la sección «Cuánto se
+   * tarda en cerrar» desmarcada— el expediente no los lleva, y lo que no se le
+   * da al modelo no puede acabar en el texto.
+   */
+  tiempos?: boolean
 }
 
 export interface Ajustes {
@@ -85,6 +97,7 @@ export interface Ajustes {
   thinking?: string | undefined
   audiencia?: string | undefined
   enfoque?: string | undefined
+  tiempos?: boolean | undefined
 }
 
 /**
@@ -111,6 +124,7 @@ export function configurarIA(ajustes: Ajustes = {}): OpcionesIA | null {
       : THINKING_POR_DEFECTO,
     audiencia: ajustes.audiencia === 'equipo' ? 'equipo' : 'direccion',
     ...(ajustes.enfoque ? { enfoque: ajustes.enfoque.slice(0, TOPE_ENFOQUE) } : {}),
+    ...(ajustes.tiempos === false ? { tiempos: false } : {}),
   }
 }
 
@@ -130,10 +144,20 @@ export function configurarIA(ajustes: Ajustes = {}): OpcionesIA | null {
 const INSTRUCCION = `Eres el redactor de un informe de mantenimiento de aulas de un campus universitario español. Escribes en español de España.
 
 Cómo se escribe aquí:
-- Prosa corriente, en párrafos. Frases de longitud desigual. Voz sobria, sin entusiasmo y sin alarmismo.
-- Concreto siempre: sala, edificio, pieza, número de días. Nada de «diversos aspectos» ni «ciertas incidencias».
-- Se dice qué ha cambiado y qué conviene hacer. Un informe que solo describe la tabla que está al lado no aporta nada.
+- Prosa corriente, en párrafos. Frases de longitud desigual. Voz serena y en positivo: se abre por lo que se ha conseguido, con su cifra, y lo pendiente se cuenta como trabajo en curso. Sin triunfalismo y sin alarmismo: que va bien lo demuestra el número, no el adjetivo.
+- Concreto siempre: sala, edificio, pieza, cifra. Nada de «diversos aspectos» ni «ciertas incidencias».
+- Se dice qué se ha hecho, qué ha mejorado y qué conviene hacer. Un informe que solo describe la tabla que está al lado no aporta nada.
 - Si los datos no dan para una conclusión, se dice que no dan. Nunca se rellena.
+
+Las revisiones de aulas, que tienen su regla aparte:
+- La ronda de revisión se hace por campañas —antes del comienzo de curso, en Navidad y en Semana Santa—, no todas las semanas. Un periodo sin revisiones es lo normal y no se menciona.
+- Nunca se habla de la cobertura del campus, del porcentaje de salas revisadas, de salas sin revisar ni de ampliar o reforzar la ronda. No es una falta y no se cuenta como tal.
+- Si el expediente trae revisiones, se cuentan como lo que son, una puesta a punto hecha, con su cifra y nada más.
+
+El desgaste, que tampoco es una falta, y las mejoras que no hay:
+- Esto es una universidad: los cables, los adaptadores, las pilas, los mandos, los teclados y los ratones se gastan y se rompen con el uso, o los rompen. Que el mismo material vuelva a la misma aula es consumo normal. Se cuenta como material servido y nada más: no se deduce de ahí un problema de instalación ni una causa de fondo, y no se recomienda revisar nada.
+- Que un edificio abra más partes que otro tampoco pide explicación: suele ser el que tiene más aulas y más clases.
+- No se proponen mejoras donde no las hay. Las recomendaciones son los pasos siguientes del propio servicio —reponer lo que baja del mínimo, cambiar una lámpara antes de que se funda, atender primero lo grave—. Si no hay ninguno, la lista va vacía: no se rellena.
 
 Prohibido, sin excepciones:
 - Emojis, negritas, markdown, viñetas, títulos con dos puntos, MAYÚSCULAS de énfasis.
@@ -148,19 +172,20 @@ Prohibido, sin excepciones:
  * del equipo dice lo grave primero y con sus días. El informe de dirección
  * llega al cliente, y se escribe para dar cuenta del trabajo con buena imagen
  * sin faltar a los datos: lo que ha ido bien abre; lo pendiente es trabajo en
- * curso y margen de mejora; los días que lleva abierta una incidencia no se
- * dicen, y una sala no se señala como problemática. Los problemas de verdad sí
- * se cuentan, con su cifra, como algo visto y una decisión que conviene tomar.
+ * curso; los días que lleva abierta una incidencia no se dicen, y una sala no
+ * se señala como problemática. Los problemas de verdad sí se cuentan, con su
+ * cifra, como algo visto y lo que se va a hacer con ello. Y no se inventan
+ * mejoras: un cable que se rompe en un aula es desgaste, no un proyecto.
  */
 const POR_AUDIENCIA: Record<Audiencia, string> = {
-  equipo: `Lo leen el responsable del servicio y el equipo técnico que va a las aulas. Es un parte de trabajo: lo grave primero, con sus días y su sala, y lo que hay que hacer esta semana.`,
+  equipo: `Lo leen el responsable del servicio y el equipo técnico que va a las aulas. Es un parte de trabajo: el titular y la entradilla dan cuenta de lo hecho, y los hallazgos dicen lo que hay que hacer esta semana, lo grave primero, con sus días y su sala.`,
   direccion: `Lo recibe la dirección de la universidad, que es el cliente del servicio. Se escribe para dar cuenta del trabajo con buena imagen y sin faltar a los datos:
-- Se abre por lo que ha ido bien o ha mejorado, con su cifra: más revisiones, más cierres que aperturas, cierres rápidos, ninguna incidencia de gravedad alta. Lo pendiente se cuenta como lo que es, trabajo en curso y margen de mejora, nunca como reproche.
+- Se abre por lo que ha ido bien o ha mejorado, con su cifra: partes resueltos, más cierres que aperturas, cierres en el día o en menos de 48 horas, ninguna incidencia de gravedad alta, material servido desde el almacén, almacén y ordenadores de repuesto preparados. Lo pendiente se cuenta como lo que es, trabajo en curso, nunca como reproche.
 - No se dice cuántos días lleva abierta una incidencia, ni «estancadas», ni «sin cerrar desde hace», ni «las más antiguas», ni se señala una sala como problemática o poco fiable: hay aulas difíciles y eso no es noticia.
-- Los problemas reales sí se dicen, con su dato: una incidencia de gravedad alta, una lámpara a punto de fundirse, una pieza que se repite en la misma sala, un edificio que concentra lo abierto, un almacén por reponer. Se cuentan como algo que el servicio tiene visto y una decisión que conviene tomar.
+- Los problemas reales sí se dicen, con su dato: una incidencia de gravedad alta en curso, una lámpara a punto de fundirse, un artículo del almacén por reponer. Se cuentan como algo que el servicio tiene visto y lo que va a hacer con ello.
 - Tono cordial y sereno. Sin triunfalismo: que va bien se demuestra con la cifra, no con adjetivos.
-- Las recomendaciones se escriben en la voz de quien hace el trabajo, porque el informe lo firma el servicio: «Sustituir las seis lámparas por debajo del 20 %», «Reforzar la ronda del edificio P». Nunca «Autorizar», «Aprobar» ni «Solicitar el visto bueno»: el aula es nuestro encargo y no se pide permiso para cumplirlo. Cuando hay un gasto de por medio se dice qué hace falta y por qué, que es lo que la universidad necesita para decidir.
-- Y son cosas de conjunto —una ronda, un edificio, una reposición—, no el parte de taller de cada avería.`,
+- Las recomendaciones se escriben en la voz de quien hace el trabajo, porque el informe lo firma el servicio: «Sustituir las seis lámparas por debajo del 20 %», «Reponer los cables HDMI que quedan bajo mínimo». Nunca «Autorizar», «Aprobar» ni «Solicitar el visto bueno»: el aula es nuestro encargo y no se pide permiso para cumplirlo. Cuando hay un gasto de por medio se dice qué hace falta y por qué, que es lo que la universidad necesita para decidir.
+- Y son cosas de conjunto —un edificio, una reposición, un cambio programado—, no el parte de taller de cada avería.`,
 }
 
 /**
@@ -182,20 +207,26 @@ const ESQUEMA = {
     titular: {
       type: 'STRING',
       description:
-        'Una frase de menos de 80 caracteres que diga lo más importante del periodo. Sin dos puntos y sin punto final.',
+        'Una frase de menos de 80 caracteres que diga lo más importante que se ha conseguido en el periodo, con su cifra. Sin dos puntos y sin punto final.',
     },
     entradilla: {
       type: 'STRING',
       description:
-        'Un párrafo de tres a cinco frases: qué se ha hecho, cómo ha quedado el saldo de trabajo y qué es lo que pide atención. Es lo primero que se lee del informe.',
+        'Un párrafo de tres a cinco frases: qué se ha atendido y resuelto, cómo queda el trabajo en curso y, si lo hay, qué conviene decidir. Es lo primero que se lee del informe.',
     },
     hallazgos: {
       type: 'ARRAY',
       minItems: 2,
-      maxItems: 4,
+      maxItems: 5,
       items: {
         type: 'OBJECT',
         properties: {
+          clase: {
+            type: 'STRING',
+            enum: ['logro', 'seguimiento'],
+            description:
+              '«logro» si es algo conseguido o que ha ido bien; «seguimiento» si es algo que está en curso o que pide una decisión.',
+          },
           titulo: { type: 'STRING', description: 'Frase corta, sin dos puntos, menos de 70 caracteres.' },
           cuerpo: {
             type: 'STRING',
@@ -203,13 +234,15 @@ const ESQUEMA = {
               'Dos o tres frases. Explica por qué importa y qué lo sostiene. No repite el título.',
           },
         },
-        required: ['titulo', 'cuerpo'],
-        propertyOrdering: ['titulo', 'cuerpo'],
+        required: ['clase', 'titulo', 'cuerpo'],
+        propertyOrdering: ['clase', 'titulo', 'cuerpo'],
       },
     },
     recomendaciones: {
       type: 'ARRAY',
-      minItems: 2,
+      // Sin mínimo: una semana en la que todo está en orden no tiene por qué
+      // proponer nada, y obligar a dos es pedirle al modelo que se las invente.
+      minItems: 0,
       maxItems: 4,
       items: {
         type: 'OBJECT',
@@ -240,8 +273,15 @@ const ESQUEMA = {
  * terceros no tiene por qué ir quién revisó cuántas aulas—, y los títulos de
  * incidencia van recortados.
  */
-export function expediente(d: ReportData, se: Senal[], audiencia: Audiencia): string {
+export function expediente(
+  d: ReportData,
+  se: Senal[],
+  audiencia: Audiencia,
+  o: QueSeCuenta = {},
+): string {
   const dir = audiencia === 'direccion'
+  const tiempos = o.tiempos !== false
+  const a = d.ahora
   const l: string[] = []
   const v = (n: number, antes: number): string =>
     antes === 0 ? `${n} (antes ninguno)` : `${n} (antes ${antes})`
@@ -250,52 +290,75 @@ export function expediente(d: ReportData, se: Senal[], audiencia: Audiencia): st
   l.push(`Se compara con ${d.comparacionTexto}: del ${d.anterior.start} al ${d.anterior.end}.`)
   l.push('')
   l.push('EN EL PERIODO')
-  l.push(`- revisiones completadas: ${v(d.ahora.revisiones, d.antes.revisiones)}`)
+  l.push(`- partes atendidos (los que entraron): ${v(a.registros, d.antes.registros)}`)
+  l.push(`  · incidencias ${a.incidencias}, solicitudes ${a.solicitudes}, observaciones ${a.observaciones}`)
   l.push(
-    `- salas distintas revisadas: ${v(d.ahora.salasRevisadas, d.antes.salasRevisadas)} de ${d.situacion.salasTotal} activas (${porcentaje(d.ahora.salasRevisadas, d.situacion.salasTotal)})`,
+    `- aulas atendidas (con un parte, un cierre o material): ${v(a.salasAtendidas, d.antes.salasAtendidas)}` +
+      `${a.edificiosAtendidos > 0 ? `, en ${a.edificiosAtendidos} edificios` : ''}`,
   )
-  l.push(`- registros abiertos: ${v(d.ahora.registros, d.antes.registros)}`)
   l.push(
-    `  · incidencias ${d.ahora.incidencias}, solicitudes ${d.ahora.solicitudes}, observaciones ${d.ahora.observaciones}`,
+    `- de gravedad alta: ${v(a.gravedadAlta, d.antes.gravedadAlta)}` +
+      `${a.gravedadAlta > 0 ? `; ya resueltas: ${a.gravedadAltaResueltas}` : ''}`,
   )
-  l.push(`- de gravedad alta: ${v(d.ahora.gravedadAlta, d.antes.gravedadAlta)}`)
-  l.push(`- cerradas: ${v(d.ahora.resueltas, d.antes.resueltas)}`)
-  l.push(`- unidades de material consumidas: ${v(d.ahora.materialConsumido, d.antes.materialConsumido)}`)
-  if (d.resolucion.resueltas > 0) {
+  l.push(`- partes resueltos (cerrados): ${v(a.resueltas, d.antes.resueltas)}`)
+  if (tiempos && d.resolucion.resueltas > 0) {
+    l.push(`- resueltos el mismo día en que entraron: ${d.resolucion.tramos.mismoDia} de ${d.resolucion.resueltas}`)
     l.push(
       `- tiempo hasta el cierre: mediana ${dias(d.resolucion.medianaDias)}, media ${dias(d.resolucion.mediaDias)}; ${d.resolucion.enMenosDe48h} de ${d.resolucion.resueltas} en menos de 48 h`,
     )
   }
-  if (d.sinSala > 0) l.push(`- registros sin sala identificada: ${d.sinSala}`)
+  l.push(
+    `- unidades de material servidas desde el almacén: ${v(a.materialConsumido, d.antes.materialConsumido)}` +
+      `${a.materialConsumido > 0 ? `; ${a.articulosConsumidos} artículos distintos, para ${a.salasConMaterial} aulas` : ''}`,
+  )
+  if (a.materialEntrado > 0) l.push(`- unidades que han entrado en el almacén: ${a.materialEntrado}`)
+  /*
+   * Las revisiones, solo si las hubo. La ronda es de campaña: en una semana
+   * cualquiera no hay ninguna, y una línea «revisiones: 0» es justo el dato del
+   * que el modelo sacaría la frase que este informe no dice.
+   */
+  if (a.revisiones > 0) {
+    l.push(
+      `- revisiones de aula completadas (campaña de puesta a punto): ${a.revisiones}, en ${a.salasRevisadas} aulas; ${a.revisionesSinIncidencias} sin ninguna incidencia`,
+    )
+  }
+  if (d.inventario.equipos > 0 || d.inventario.confirmados > 0) {
+    l.push(
+      `- inventario: ${d.inventario.equipos} cambios de equipamiento apuntados, ${d.inventario.confirmados} inventarios de aula confirmados`,
+    )
+  }
+  if (d.sinSala > 0 && !dir) l.push(`- registros sin sala identificada: ${d.sinSala}`)
 
   l.push('')
   l.push('SITUACIÓN A DÍA DE HOY (no del periodo)')
-  l.push(`- incidencias abiertas en total: ${d.situacion.incidenciasAbiertas}`)
+  l.push(`- incidencias abiertas en total, en seguimiento: ${d.situacion.incidenciasAbiertas}`)
   // Lo que no se le da al modelo no puede acabar en el texto: para dirección
   // no viajan ni los días abiertas ni la lista de las más antiguas ni el
   // ranking de salas con más incidencias. Es más seguro que prohibirlo.
   if (!dir) l.push(`- de ellas con más de 7 días: ${d.situacion.estancadas}`)
   l.push(`- lámparas por debajo del 20 % de vida: ${d.situacion.lamparasAlLimite}`)
-  l.push(`- salas nunca revisadas: ${d.situacion.salasNuncaRevisadas}`)
-  l.push(`- salas sin revisar desde hace más de 6 meses: ${d.situacion.salasSinRevisarHace6Meses}`)
-  l.push(`- artículos de almacén bajo mínimo: ${d.situacion.articulosBajoMinimo}`)
+  l.push(
+    `- almacén: ${d.situacion.articulosEnAlmacen} artículos, ${d.situacion.articulosConExistencias} con existencias, ${d.situacion.articulosBajoMinimo} por debajo de su mínimo`,
+  )
+  l.push(`- ordenadores de repuesto en el almacén: ${d.situacion.pcsDeRepuesto}`)
 
   if (d.serieDiaria.length > 1) {
+    const conRevisiones = a.revisiones > 0
     l.push('')
-    l.push('DÍA A DÍA (día: revisiones / abiertas / cerradas)')
+    l.push(`DÍA A DÍA (día: entran / se resuelven${conRevisiones ? ' / revisiones' : ''})`)
     l.push(
       d.serieDiaria
-        .map((x) => `${x.dia}: ${x.revisiones} / ${x.abiertas} / ${x.resueltas}`)
+        .map((x) => `${x.dia}: ${x.abiertas} / ${x.resueltas}${conRevisiones ? ` / ${x.revisiones}` : ''}`)
         .join('; '),
     )
   }
 
-  const conActividad = d.porEdificio.filter((b) => b.abiertas > 0 || b.revisadas > 0)
+  const conActividad = d.porEdificio.filter((b) => b.abiertas > 0 || b.cerradas > 0 || b.atendidas > 0)
   if (conActividad.length) {
     l.push('')
-    l.push('POR EDIFICIO EN EL PERIODO (código: abiertas, salas revisadas de N, pendientes hoy)')
+    l.push('POR EDIFICIO EN EL PERIODO (código: entraron, resueltos, aulas atendidas, en seguimiento hoy)')
     for (const b of conActividad.slice(0, 10)) {
-      l.push(`- ${b.code}: ${b.abiertas} abiertas, ${b.revisadas} de ${b.salas} salas, ${b.pendientes} pendientes`)
+      l.push(`- ${b.code}: ${b.abiertas} entraron, ${b.cerradas} resueltos, ${b.atendidas} aulas, ${b.pendientes} en seguimiento`)
     }
   }
 
@@ -318,16 +381,33 @@ export function expediente(d: ReportData, se: Senal[], audiencia: Audiencia): st
     }
   }
 
-  if (d.reincidentes.length) {
+  /*
+   * Dónde se repone más, solo para el equipo y dicho como lo que es. A
+   * dirección no viaja: de «el mismo cable cuatro veces en la misma aula» un
+   * modelo saca siempre la misma conclusión —hay que revisar la instalación—,
+   * y en un campus no la hay: los cables se rompen. Lo que no se le da no puede
+   * acabar en el texto.
+   */
+  if (d.reincidentes.length && !dir) {
     l.push('')
-    l.push('MISMO CONSUMO REPETIDO EN LA MISMA SALA (6 meses)')
+    l.push('DÓNDE SE REPONE MÁS EL MISMO MATERIAL (6 meses; es desgaste de uso, no una avería de la instalación)')
     for (const r of d.reincidentes) l.push(`- ${r.building} ${r.room}: «${r.item}» ${r.veces} veces`)
   }
 
   if (d.materiales.length) {
     l.push('')
-    l.push('MATERIAL MÁS CONSUMIDO EN EL PERIODO')
-    for (const m of d.materiales.slice(0, 6)) l.push(`- ${m.name}: ${m.consumido} ${m.unidad}`)
+    l.push('MATERIAL MÁS USADO EN EL PERIODO (y lo que queda hoy en el almacén)')
+    for (const m of d.materiales.slice(0, 6)) {
+      l.push(`- ${m.name}: ${m.consumido} ${m.unidad}${m.quedan === null ? '' : `; quedan ${m.quedan}`}`)
+    }
+  }
+
+  if (d.almacen.porReponer.length) {
+    l.push('')
+    l.push('ARTÍCULOS POR REPONER (lo que queda y su mínimo)')
+    for (const x of d.almacen.porReponer.slice(0, 6)) {
+      l.push(`- ${x.name}: quedan ${x.quedan} ${x.unidad}, mínimo ${x.minimo}`)
+    }
   }
 
   if (d.lamparas.length) {
@@ -345,14 +425,14 @@ export function expediente(d: ReportData, se: Senal[], audiencia: Audiencia): st
     l.push('REPARTO DEL TRABAJO (anonimizado)')
     l.push(
       d.equipo
-        .map((p, i) => `persona ${i + 1}: ${p.revisiones} revisiones, ${p.registros} registros`)
+        .map((p, i) => `persona ${i + 1}: ${p.registros} partes${p.revisiones ? `, ${p.revisiones} revisiones` : ''}`)
         .join('; '),
     )
   }
 
   if (se.length) {
     l.push('')
-    l.push('AVISOS QUE YA HA CALCULADO EL SISTEMA (por orden de importancia)')
+    l.push('LO QUE YA HA CALCULADO EL SISTEMA (primero lo conseguido, marcado [ok]; después lo que está en seguimiento)')
     for (const x of se) l.push(`- [${x.tono}] ${x.titulo}. ${x.cuerpo}`)
   }
 
@@ -376,7 +456,7 @@ function sangrada(texto: string): string {
 export function encargo(d: ReportData, se: Senal[], o: OpcionesIA): string {
   const paraQuien =
     o.audiencia === 'direccion'
-      ? 'Es el informe para la dirección de la universidad: le interesa saber que el campus está atendido, qué ha mejorado y qué decisiones convienen (compras, refuerzos, prioridades).'
+      ? 'Es el informe para la dirección de la universidad: le interesa saber que el campus está atendido, qué se ha resuelto y, si lo hay, qué viene ahora (reposiciones, prioridades). No espera propuestas de mejora: si no hay nada que proponer, no se propone.'
       : 'Es el parte para el equipo técnico que va a las aulas: le interesa qué salas tocar, con qué material y en qué orden.'
 
   return `${paraQuien}
@@ -384,16 +464,19 @@ export function encargo(d: ReportData, se: Senal[], o: OpcionesIA): string {
 Escribe el análisis del informe del periodo ${d.periodoTexto}.
 
 Con estas condiciones:
-- Los avisos calculados del final del expediente son el punto de partida, no un guion: agrúpalos si cuentan lo mismo, descarta el que no aporte y añade lo que veas tú en los datos.
+- Lo calculado al final del expediente es el punto de partida, no un guion: agrúpalo si cuenta lo mismo, descarta lo que no aporte y añade lo que veas tú en los datos.
+- El titular y la entradilla abren por lo conseguido. Lo que está en curso va después, como trabajo en marcha.
+- Cada hallazgo lleva su clase: «logro» si es algo conseguido, «seguimiento» si está en curso o pide una decisión. Primero los logros.
 - La entradilla no repite la lista de indicadores. Los indicadores ya están impresos justo encima, con sus cifras y sus variaciones.
 - Entre dos hallazgos igual de ciertos, elige el que cambie una decisión.
+- Las recomendaciones, solo las que salgan de los datos. Si no hay nada que proponer, la lista va vacía.
 ${
   o.enfoque
     ? `- Instrucción de quien pide el informe, que va por delante de lo anterior:\n${sangrada(o.enfoque)}\n`
     : ''
 }
 EXPEDIENTE
-${expediente(d, se, o.audiencia)}`
+${expediente(d, se, o.audiencia, { tiempos: o.tiempos !== false })}`
 }
 
 // ── Limpieza de la respuesta ─────────────────────────────────────────────────
@@ -574,7 +657,7 @@ export async function redactar(
       const bruto = JSON.parse(texto) as {
         titular?: unknown
         entradilla?: unknown
-        hallazgos?: Array<{ titulo?: unknown; cuerpo?: unknown }>
+        hallazgos?: Array<{ clase?: unknown; titulo?: unknown; cuerpo?: unknown }>
         recomendaciones?: Array<{ accion?: unknown; porque?: unknown }>
       }
 
@@ -582,9 +665,21 @@ export async function redactar(
         titular: limpia(bruto.titular, 110).replace(/[.:]$/, ''),
         entradilla: limpia(bruto.entradilla, 1200),
         hallazgos: (bruto.hallazgos ?? [])
-          .slice(0, 4)
-          .map((h) => ({ titulo: limpia(h.titulo, 90).replace(/[.:]$/, ''), cuerpo: limpia(h.cuerpo, 600) }))
-          .filter((h) => h.titulo && h.cuerpo),
+          .slice(0, 5)
+          .map((h) => ({
+            titulo: limpia(h.titulo, 90).replace(/[.:]$/, ''),
+            cuerpo: limpia(h.cuerpo, 600),
+            // Una clase que no se entiende no es un error del informe: el
+            // hallazgo sale sin marca, que es como salía antes de que la hubiera.
+            ...(h.clase === 'logro' || h.clase === 'seguimiento'
+              ? { clase: h.clase as 'logro' | 'seguimiento' }
+              : {}),
+          }))
+          .filter((h) => h.titulo && h.cuerpo)
+          // Lo conseguido, primero. Se lo pide la instrucción y aun así se
+          // ordena aquí: el orden del documento no depende de que el modelo
+          // se acuerde.
+          .sort((x, y) => Number(y.clase === 'logro') - Number(x.clase === 'logro')),
         /*
          * Y la acción, en la voz de quien la hace. La instrucción lo dice y aun
          * así se cuela, porque el modelo sabe que el informe lo lee la
@@ -608,7 +703,7 @@ export async function redactar(
         throw new Error('la respuesta no traía titular, entradilla o hallazgos')
       }
 
-      const hechos = expediente(d, se, o.audiencia)
+      const hechos = expediente(d, se, o.audiencia, { tiempos: o.tiempos !== false })
       const todo = [
         lectura.titular,
         lectura.entradilla,
@@ -636,6 +731,30 @@ export async function redactar(
             .map((f) => `${f.que} («${f.dice}»)`)
             .join('; ')}`,
         )
+      }
+
+      /*
+       * Y la ronda de revisión, que no es materia de este informe salvo como
+       * puesta a punto hecha. Lo dice la instrucción y el expediente no trae
+       * ni la cobertura ni las salas sin revisar; esto es la red de debajo,
+       * para el día en que el modelo lo deduzca solo de un «0 revisiones» que
+       * alguien le escriba en el enfoque.
+       */
+      const ronda = insisteEnLaRonda(todo)
+      if (ronda) {
+        throw new Error(`cuenta la ronda de revisión como una falta («${ronda}»)`)
+      }
+
+      /*
+       * Y el desgaste leído como avería, o la mejora que no hay. «Revisar la
+       * instalación del aula en vez de reponer el cable otra vez» suena a buen
+       * consejo y es recomendarle al cliente un trabajo que no existe: en una
+       * universidad los cables se rompen. Con una basta, como con lo que se
+       * sale del encargo: es un error de fondo, no un tic.
+       */
+      const desgaste = leeElDesgasteComoFallo(todo)
+      if (desgaste) {
+        throw new Error(`lee el desgaste de uso como una avería, o propone una mejora que no hay («${desgaste}»)`)
       }
 
       /*

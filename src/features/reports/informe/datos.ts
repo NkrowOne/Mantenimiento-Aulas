@@ -520,22 +520,108 @@ async function filasDelPeriodo(r: Rango, conDiario: boolean): Promise<FilasDelPe
   }
 }
 
-export function contadores(f: FilasDelPeriodo): Contadores {
+/**
+ * Las cifras del periodo.
+ *
+ * `deSala` solo hace falta para una: en cuántos EDIFICIOS están las aulas
+ * atendidas. Sin él esa cifra sale a cero y el resto no cambia, que es lo que
+ * permite seguir probando las demás con un puñado de filas escritas a mano.
+ *
+ * **Qué es un aula atendida.** Aquella en la que el servicio hizo algo que
+ * queda apuntado: un parte que entró, uno que se cerró, o material que se llevó
+ * allí. Las revisiones no entran —tienen su propia cifra— porque esto mide la
+ * atención de todos los días, y la ronda de revisión se hace en campañas: antes
+ * de empezar el curso, en Navidad y en Semana Santa. Contarlas aquí haría que
+ * la semana de la campaña pareciera diez veces más trabajada que las demás.
+ */
+export function contadores(
+  f: FilasDelPeriodo,
+  deSala: Map<string, FilaSala> = new Map(),
+): Contadores {
   const visitas = new Set(f.revisiones.map(claveDeVisita))
   const salas = new Set(f.revisiones.map((r) => r.room_id).filter((x): x is string => Boolean(x)))
   const consumo = f.movimientos.filter((m) => m.kind === 'consumo')
+  const atendidas = salasAtendidas(f.abiertas, f.cerradas, f.movimientos)
+  const edificios = new Set(
+    [...atendidas].map((id) => deSala.get(id)?.building_code).filter((x): x is string => Boolean(x)),
+  )
 
   return {
     revisiones: visitas.size,
     salasRevisadas: salas.size,
+    // Por visita y no por fila: la corrección de una revisión que salió mal no
+    // puede sumar una revisión «sin incidencias» que no ha existido.
+    revisionesSinIncidencias: porVisita(f.revisiones).filter((r) => (r.overall ?? 'ok') === 'ok').length,
     registros: f.abiertas.length,
     incidencias: f.abiertas.filter((i) => i.kind === 'incidencia').length,
     solicitudes: f.abiertas.filter((i) => i.kind === 'solicitud').length,
     observaciones: f.abiertas.filter((i) => i.kind === 'observacion').length,
     gravedadAlta: f.abiertas.filter((i) => i.severity === 'alta').length,
+    gravedadAltaResueltas: f.abiertas.filter((i) => i.severity === 'alta' && i.state === 'resuelta').length,
     resueltas: f.cerradas.length,
+    resueltasEnElDia: f.cerradas.filter(cerradaEnElDia).length,
+    salasAtendidas: atendidas.size,
+    edificiosAtendidos: edificios.size,
     materialConsumido: consumo.reduce((a, m) => a + -num(m.qty), 0),
+    articulosConsumidos: new Set(consumo.map((m) => m.stock_item_id)).size,
+    salasConMaterial: salasDelMaterial(consumo, f.abiertas, f.cerradas).size,
+    // Lo que entra: una compra o una devolución. Los ajustes no —corrigen un
+    // apunte, en un sentido o en el otro— y sumarlos aquí llamaría «entrada» a
+    // la corrección de un recuento.
+    materialEntrado: f.movimientos
+      .filter((m) => (m.kind === 'compra' || m.kind === 'devolucion') && num(m.qty) > 0)
+      .reduce((a, m) => a + num(m.qty), 0),
   }
+}
+
+/** ¿Se cerró el mismo día —de Madrid— en que se abrió? */
+function cerradaEnElDia(i: FilaCierre): boolean {
+  return Boolean(i.resolved_at) && diaEnMadrid(new Date(i.opened_at)) === diaEnMadrid(new Date(i.resolved_at!))
+}
+
+/**
+ * A qué aula fue cada consumo.
+ *
+ * El movimiento lleva su propia aula cuando se apuntó desde la ficha del aula;
+ * cuando se apuntó al cerrar un parte lleva el parte y a veces nada más, y
+ * entonces el aula es la del parte. Solo se conocen los partes que entraron o
+ * se cerraron en el periodo —son los que el informe ya ha leído—: un consumo
+ * colgado de un parte más antiguo y todavía abierto se queda sin aula, y la
+ * cifra peca de corta, nunca de larga.
+ */
+function salasDelMaterial(
+  consumo: FilaMovimiento[],
+  abiertas: FilaApertura[],
+  cerradas: FilaCierre[],
+): Set<string> {
+  const delParte = new Map<string, string | null>()
+  for (const i of abiertas) delParte.set(i.id, i.room_id)
+  for (const i of cerradas) delParte.set(i.id, i.room_id)
+  const salas = new Set<string>()
+  for (const m of consumo) {
+    const sala = m.room_id ?? (m.incident_id ? (delParte.get(m.incident_id) ?? null) : null)
+    if (sala) salas.add(sala)
+  }
+  return salas
+}
+
+/** Las aulas con un parte abierto o cerrado en el periodo, o con material servido. */
+export function salasAtendidas(
+  abiertas: FilaApertura[],
+  cerradas: FilaCierre[],
+  movimientos: FilaMovimiento[],
+): Set<string> {
+  const salas = new Set<string>()
+  for (const i of abiertas) if (i.room_id) salas.add(i.room_id)
+  for (const i of cerradas) if (i.room_id) salas.add(i.room_id)
+  for (const id of salasDelMaterial(
+    movimientos.filter((m) => m.kind === 'consumo'),
+    abiertas,
+    cerradas,
+  )) {
+    salas.add(id)
+  }
+  return salas
 }
 
 /**
@@ -649,9 +735,8 @@ export async function ordenadoresDeRepuesto(): Promise<number> {
   }
 }
 
-async function situacion(salas: FilaSala[]): Promise<Situacion> {
+async function situacion(salas: FilaSala[], niveles: FilaNivelDeAlmacen[]): Promise<Situacion> {
   const hace7dias = new Date(Date.now() - 7 * 86_400_000).toISOString()
-  const hace180dias = new Date(Date.now() - 180 * 86_400_000).toISOString()
   const head = { count: 'exact' as const, head: true }
 
   /*
@@ -661,7 +746,7 @@ async function situacion(salas: FilaSala[]): Promise<Situacion> {
    * del Excel llevan abiertas desde 2025 por definición. Contarlas convertía
    * cientos de notas en «incidencias abiertas» de un informe firmado.
    */
-  const [abiertas, estancadas, lamparas, bajoMinimo, pcs] = await Promise.all([
+  const [abiertas, estancadas, lamparas, pcs] = await Promise.all([
     cuantas('las incidencias abiertas', (señal) =>
       supabase
         .from('incidents')
@@ -684,13 +769,6 @@ async function situacion(salas: FilaSala[]): Promise<Situacion> {
     cuantas('las lámparas al límite', (señal) =>
       supabase.from('alerts_lamp_low').select('*', head).abortSignal(señal),
     ),
-    cuantas('el almacén bajo mínimo', (señal) =>
-      supabase
-        .from('stock_levels')
-        .select('*', head)
-        .eq('below_threshold', true)
-        .abortSignal(señal),
-    ),
     ordenadoresDeRepuesto(),
   ])
 
@@ -709,11 +787,11 @@ async function situacion(salas: FilaSala[]): Promise<Situacion> {
     incidenciasAbiertas: abiertas,
     estancadas,
     lamparasAlLimite: lamparas,
-    salasSinRevisarHace6Meses: salas.filter(
-      (s) => s.last_inspection_at !== null && s.last_inspection_at < hace180dias,
-    ).length,
-    salasNuncaRevisadas: salas.filter((s) => s.last_inspection_at === null).length,
-    articulosBajoMinimo: bajoMinimo,
+    // De la vista ya leída y no de un recuento aparte: así el número de la
+    // cabecera y la lista de «por reponer» no pueden decir cosas distintas.
+    articulosBajoMinimo: niveles.filter((n) => n.below_threshold).length,
+    articulosEnAlmacen: niveles.length,
+    articulosConExistencias: niveles.filter((n) => num(n.on_hand) > 0).length,
     pcsDeRepuesto: pcs,
   }
 }
@@ -756,8 +834,6 @@ export async function cargarDatos(
   avisar('el periodo anterior, para comparar')
   const antesFilas = await filasDelPeriodo(anterior, false)
 
-  const ahora = contadores(ahoraFilas)
-  const antes = contadores(antesFilas)
   const deSala = new Map(salas.map((s) => [s.room_id, s]))
 
   /*
@@ -776,13 +852,24 @@ export async function cargarDatos(
   const archivadas = await salasFueraDeLaLista([...mencionadas].filter((id) => !deSala.has(id)))
   for (const s of archivadas) deSala.set(s.room_id, s)
 
+  // Con el mapa ya completo: «en cuántos edificios» tiene que contar también
+  // el edificio archivado en el que se trabajó.
+  const ahora = contadores(ahoraFilas, deSala)
+  const antes = contadores(antesFilas, deSala)
+
   avisar('la situación de hoy y las alertas')
-  const [sit, porMes, reincidentes, lamparas, olvidadas, estancadas, articulos] = await Promise.all([
-    situacion(salas),
+  const niveles = await nivelesDelAlmacen()
+  /*
+   * Aquí se pedían también las salas sin revisar desde hace meses y las nunca
+   * revisadas. Ya no: el informe no mide el servicio por la ronda de revisión
+   * —es de campaña, no de todas las semanas— y un dato que no se va a decir no
+   * se va a buscar. Lo que no está en el expediente no puede acabar en el texto.
+   */
+  const [sit, porMes, reincidentes, lamparas, estancadas, articulos] = await Promise.all([
+    situacion(salas, niveles),
     porMeses(),
     salasQueRepiten(deSala),
     lamparasAlLimite(),
-    salasOlvidadas(),
     sinCerrarDesdeHaceUnaSemana(deSala),
     articulosDeAlmacen(),
   ])
@@ -840,7 +927,14 @@ export async function cargarDatos(
     antes,
     situacion: sit,
     serieDiaria: serieDiaria(rango, visitas, ahoraFilas),
-    porEdificio: porEdificio(salas, visitas, ahoraFilas.abiertas, deSala),
+    porEdificio: porEdificio(
+      salas,
+      visitas,
+      ahoraFilas.abiertas,
+      deSala,
+      ahoraFilas.cerradas,
+      ahoraFilas.movimientos,
+    ),
     porTipo: agrupa(ahoraFilas.abiertas.map((i) => i.kind)).map(([tipo, total]) => ({ tipo, total })),
     porGravedad: agrupa(
       ahoraFilas.abiertas.filter((i) => i.kind === 'incidencia').map((i) => i.severity ?? 'baja'),
@@ -850,13 +944,22 @@ export async function cargarDatos(
     resolucion: resolucion(ahoraFilas.cerradas),
     lamparas,
     estancadas,
-    materiales: materiales(ahoraFilas.movimientos, articulos),
+    materiales: materiales(ahoraFilas.movimientos, articulos, niveles),
+    almacen: {
+      movimientos: ahoraFilas.movimientos.length,
+      salidas: ahora.materialConsumido,
+      entradas: ahora.materialEntrado,
+      porReponer: porReponer(niveles),
+    },
+    inventario: {
+      confirmados: ahoraFilas.inventarios.length,
+      equipos: ahoraFilas.equipos.length,
+    },
     cierres: cierres.slice(0, TOPE_FILAS),
     cierresTotal: cierres.length,
     fotos,
     fotosTotal,
     reincidentes,
-    olvidadas,
     equipo: repartoDelTrabajo(ahoraFilas, quien),
     revisiones: revisiones.map((r) => ({ ...r, quien: r.quien ? (quien.get(r.quien) ?? null) : null })),
     revisionesTotal: ahora.revisiones,
@@ -920,6 +1023,10 @@ export function porEdificio(
   visitas: FilaRevision[],
   abiertas: FilaApertura[],
   deSala: Map<string, FilaSala>,
+  /* Lo que se cerró y el material que se sirvió, para contar también lo que el
+     edificio recibió y no solo lo que pidió. Sin ellos, esas dos cifras a cero. */
+  cerradas: FilaCierre[] = [],
+  movimientos: FilaMovimiento[] = [],
 ): ReportData['porEdificio'] {
   interface Acumulado {
     code: string
@@ -927,6 +1034,8 @@ export function porEdificio(
     salas: number
     revisadas: number
     abiertas: number
+    cerradas: number
+    atendidas: number
     pendientes: number
     archivado: boolean
   }
@@ -947,6 +1056,8 @@ export function porEdificio(
       salas: 0,
       revisadas: 0,
       abiertas: 0,
+      cerradas: 0,
+      atendidas: 0,
       pendientes: 0,
       archivado: true,
     }
@@ -977,7 +1088,21 @@ export function porEdificio(
     if (s) entrada(s.building_code, s.building_name).abiertas += 1
   }
 
-  return [...por.values()].sort((a, b) => b.abiertas - a.abiertas || b.salas - a.salas)
+  for (const i of cerradas) {
+    const s = i.room_id ? deSala.get(i.room_id) : undefined
+    if (s) entrada(s.building_code, s.building_name).cerradas += 1
+  }
+
+  for (const id of salasAtendidas(abiertas, cerradas, movimientos)) {
+    const s = deSala.get(id)
+    if (s) entrada(s.building_code, s.building_name).atendidas += 1
+  }
+
+  // Por lo que entró, que es lo que mide dónde está la demanda; a igualdad,
+  // por lo que se cerró. El tamaño del edificio desempata al final.
+  return [...por.values()].sort(
+    (a, b) => b.abiertas - a.abiertas || b.cerradas - a.cerradas || b.salas - a.salas,
+  )
 }
 
 async function porMeses(): Promise<ReportData['porMes']> {
@@ -1064,11 +1189,28 @@ export function resolucion(cerradas: FilaCierre[]): ReportData['resolucion'] {
   const redondea = (v: number | null): number | null =>
     v === null ? null : Math.round(v * 10) / 10
 
+  /*
+   * Los mismos cierres, por tramos que no se pisan. El primero es de
+   * calendario y no de reloj —«el mismo día» es lo que se dice al contarlo, y
+   * un parte abierto a las 20:30 y cerrado a las 8:10 no lo es aunque lleve
+   * doce horas—; los demás, de duración. Suman `resueltas`.
+   */
+  const tramos = { mismoDia: 0, hasta48h: 0, hastaUnaSemana: 0, mas: 0 }
+  for (const i of cerradas) {
+    if (!i.resolved_at) continue
+    const d = (new Date(i.resolved_at).getTime() - new Date(i.opened_at).getTime()) / 86_400_000
+    if (cerradaEnElDia(i)) tramos.mismoDia += 1
+    else if (d <= 2) tramos.hasta48h += 1
+    else if (d <= 7) tramos.hastaUnaSemana += 1
+    else tramos.mas += 1
+  }
+
   return {
     resueltas: cerradas.length,
     medianaDias: redondea(mediana(dias)),
     mediaDias: redondea(dias.length ? dias.reduce((a, b) => a + b, 0) / dias.length : null),
     enMenosDe48h: dias.filter((d) => d <= 2).length,
+    tramos,
   }
 }
 
@@ -1100,24 +1242,6 @@ async function lamparasAlLimite(): Promise<ReportData['lamparas']> {
     room: l.room_code,
     horas: l.projector_hours === null ? null : num(l.projector_hours),
     pct: num(l.lamp_pct),
-  }))
-}
-
-async function salasOlvidadas(): Promise<ReportData['olvidadas']> {
-  const filas = await pide<{ building_code: string; room_code: string; days_since: number | null }>(
-    'las salas sin revisar',
-    (señal) =>
-      supabase
-        .from('alerts_overdue_rooms')
-        .select('building_code,room_code,days_since')
-        .order('days_since', { ascending: false, nullsFirst: true })
-        .limit(10)
-        .abortSignal(señal),
-  )
-  return filas.map((o) => ({
-    building: o.building_code,
-    room: o.room_code,
-    dias: o.days_since === null ? null : num(o.days_since),
   }))
 }
 
@@ -1176,17 +1300,63 @@ async function articulosDeAlmacen(): Promise<Map<string, { name: string; unit: s
   return new Map(filas.map((a) => [a.id, { name: a.name, unit: a.unit }]))
 }
 
+/** Una fila de `stock_levels`: un artículo activo, con lo que queda y su mínimo. */
+export interface FilaNivelDeAlmacen {
+  stock_item_id: string
+  name: string
+  unit: string
+  min_threshold: number | null
+  on_hand: number | null
+  below_threshold: boolean | null
+}
+
+/**
+ * Las existencias de hoy, de la misma vista que pinta la pestaña Almacén.
+ *
+ * Entera y no tres recuentos: de aquí salen cuántos artículos hay, cuántos
+ * tienen existencias, cuáles hay que reponer y lo que queda de cada uno de los
+ * que se han gastado en el periodo. Son unas decenas de filas.
+ */
+async function nivelesDelAlmacen(): Promise<FilaNivelDeAlmacen[]> {
+  return todas<FilaNivelDeAlmacen>('las existencias del almacén', (d, h, señal) =>
+    supabase
+      .from('stock_levels')
+      .select('stock_item_id,name,unit,min_threshold,on_hand,below_threshold')
+      .order('stock_item_id')
+      .abortSignal(señal).range(d, h),
+  )
+}
+
+/**
+ * Lo que hay que reponer, de menos margen a más.
+ *
+ * `below_threshold` es de la vista y es la misma regla que la pantalla: solo
+ * alerta el artículo al que alguien puso un mínimo de verdad.
+ */
+export function porReponer(niveles: FilaNivelDeAlmacen[]): ReportData['almacen']['porReponer'] {
+  return niveles
+    .filter((n) => n.below_threshold)
+    .map((n) => ({ name: n.name, unidad: n.unit, quedan: num(n.on_hand), minimo: num(n.min_threshold) }))
+    .sort((a, b) => a.quedan - a.minimo - (b.quedan - b.minimo) || a.name.localeCompare(b.name, 'es'))
+    .slice(0, 8)
+}
+
 export function materiales(
   movimientos: FilaMovimiento[],
   articulos: Map<string, { name: string; unit: string }>,
+  /* Lo que queda hoy de cada artículo. Sin esto la columna sale en blanco, que
+     es lo que tiene que decir de un artículo retirado. */
+  niveles: FilaNivelDeAlmacen[] = [],
 ): ReportData['materiales'] {
   interface Acumulado {
     name: string
     unidad: string
     consumido: number
     incidencias: Set<string>
+    ids: Set<string>
   }
   const por = new Map<string, Acumulado>()
+  const nivel = new Map(niveles.map((n) => [n.stock_item_id, n]))
 
   for (const m of movimientos) {
     if (m.kind !== 'consumo') continue
@@ -1198,7 +1368,9 @@ export function materiales(
       unidad: art.unit,
       consumido: 0,
       incidencias: new Set<string>(),
+      ids: new Set<string>(),
     }
+    acc.ids.add(m.stock_item_id)
     acc.consumido += -num(m.qty)
     // `count(distinct incident_id)` no cuenta los nulos: un consumo sin
     // incidencia asociada no es «una incidencia más» de ese material.
@@ -1209,12 +1381,19 @@ export function materiales(
   return [...por.values()]
     .sort((a, b) => b.consumido - a.consumido)
     .slice(0, 10)
-    .map((a) => ({
-      name: a.name,
-      unidad: a.unidad,
-      consumido: a.consumido,
-      incidencias: a.incidencias.size,
-    }))
+    .map((a) => {
+      // Dos artículos con el mismo nombre y unidad salen en una sola fila, así
+      // que lo que queda es la suma de los dos.
+      const conNivel = [...a.ids].map((id) => nivel.get(id)).filter((n): n is FilaNivelDeAlmacen => Boolean(n))
+      return {
+        name: a.name,
+        unidad: a.unidad,
+        consumido: a.consumido,
+        incidencias: a.incidencias.size,
+        quedan: conNivel.length ? conNivel.reduce((s, n) => s + num(n.on_hand), 0) : null,
+        minimo: conNivel.reduce((s, n) => s + num(n.min_threshold), 0),
+      }
+    })
 }
 
 /**

@@ -2,10 +2,16 @@
  * El informe, de principio a fin, dentro de la aplicación.
  *
  * La cadena entera: datos → cifras → redacción (Gemini, si hay clave) →
- * documento → archivo. Sin worker, sin pg_net, sin cron, sin token y sin una
- * sola variable de entorno. Lo único que hay que configurar para que el
- * análisis lo escriba una IA es la clave de Gemini, y se pega desde la propia
- * pantalla.
+ * documento → archivo, y a su lado el Excel del almacén del periodo. Sin
+ * worker, sin pg_net, sin cron, sin token y sin una sola variable de entorno.
+ * Lo único que hay que configurar para que el análisis lo escriba una IA es la
+ * clave de Gemini, y se pega desde la propia pantalla.
+ *
+ * DE AQUÍ SALEN DOS FICHEROS, y no uno: el informe y el Excel que lo acompaña
+ * —el stock al abrir y al cerrar el periodo, cada movimiento con su saldo, el
+ * consumo por aula y el stock de hoy—. Van sueltos, sin comprimir: son un PDF
+ * que se lee y un Excel que se abre, y metidos en un zip no se pueden adjuntar
+ * a un correo desde el iPhone sin descomprimirlos antes.
  *
  * EL ORDEN NO ES CASUAL. Primero la redacción calculada, siempre. Si Gemini
  * contesta, se sustituye; si no contesta, si no hay clave o si quien pide el
@@ -17,6 +23,11 @@
  * conexión— el informe ya está hecho y en pantalla, listo para imprimir. Lo que
  * no se hace es callarlo: quien lo pidió tiene que saber que ese no ha quedado
  * en el archivo.
+ *
+ * Y EL EXCEL TAMPOCO. Se hace mientras la IA redacta —es otra lectura y no
+ * tiene por qué esperar— y, si falla, el informe sale igual y se dice por qué
+ * no hay libro: se puede volver a pedir desde el archivo en cuanto vuelva la
+ * conexión, porque se rehace de los movimientos, que no cambian.
  */
 
 import { supabase } from '@/lib/supabase'
@@ -31,6 +42,13 @@ import { aplicarSeparacion, cierresDelRayo, separarTodos } from './cierres'
 import { claveDeGemini } from './clave'
 import { leerOpciones, tiene } from './opciones'
 import { renderReport } from './plantilla'
+import { prepararExcelDelPeriodo } from './almacenDelPeriodo'
+
+/** Un fichero hecho, esperando a que alguien se lo lleve. */
+export interface Fichero {
+  nombre: string
+  blob: Blob
+}
 
 export interface InformeGenerado {
   /** El documento entero, autocontenido. Es lo que se imprime y lo que se archiva. */
@@ -54,10 +72,14 @@ export interface InformeGenerado {
   /** Dónde ha quedado guardado, o `null` si no se ha podido archivar. */
   archivado: string | null
   motivoArchivo: string | null
+  /** El Excel del almacén del periodo, o `null` si no se ha podido hacer. */
+  excel: Fichero | null
+  /** Por qué no hay Excel, dicho para enseñarlo. `null` si salió. */
+  motivoExcel: string | null
 }
 
 /** Los pasos, para que la pantalla pueda decir en cuál va. */
-export type Paso = 'datos' | 'analisis' | 'documento' | 'archivo'
+export type Paso = 'datos' | 'analisis' | 'documento' | 'almacen' | 'archivo'
 
 /**
  * Cómo se cuenta un paso mientras pasa.
@@ -161,9 +183,38 @@ export async function generarInforme(
     solicitante(),
   ])
 
+  // El pie del informe daba la hora UTC sin decirlo: un documento emitido a las
+  // 09:00 de Madrid ponía «07:00», y quien lo archivara lo fecharía mal.
+  const emitido = new Intl.DateTimeFormat('es-ES', {
+    timeZone: ZONA,
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(new Date())
+
+  /*
+   * El Excel del almacén, en marcha desde ya y sin esperarlo: lee el almacén
+   * entero, que es otra tanda de consultas, y la IA va a tardar más que él. Se
+   * recoge al final. Nunca lanza hacia fuera: un libro que no sale es un aviso
+   * en la pantalla, no un informe perdido.
+   */
+  const libro: Promise<{ excel: Fichero | null; motivo: string | null }> = prepararExcelDelPeriodo(
+    eleccion.rango,
+    {
+      titulo: `Almacén · ${TITULO[eleccion.kind] ?? 'Informe'} · ${nombrePeriodo(eleccion.rango)}`,
+      nombre: nombreDelExcel(eleccion.kind, eleccion.rango),
+      emitido,
+    },
+  ).then(
+    (x) => ({ excel: { nombre: x.nombre, blob: x.blob }, motivo: null }),
+    (err: unknown) => ({ excel: null, motivo: err instanceof Error ? err.message : String(err) }),
+  )
+
   avisar('analisis')
-  const se = senales(datos, opciones.audiencia)
-  let lectura = lecturaCalculada(datos, opciones.audiencia)
+  // Si la sección de tiempos está desmarcada, el análisis tampoco los cuenta:
+  // la casilla promete que el informe no da ese número, en ninguna parte.
+  const queSeCuenta = { tiempos: tiene(opciones, 'tiempos') }
+  const se = senales(datos, opciones.audiencia, queSeCuenta)
+  let lectura = lecturaCalculada(datos, opciones.audiencia, queSeCuenta)
   let conIA = false
   let avisoIA: string | null = null
 
@@ -183,6 +234,7 @@ export async function generarInforme(
           ...(await ajustesGuardados()),
           audiencia: opciones.audiencia,
           ...(opciones.enfoque ? { enfoque: opciones.enfoque } : {}),
+          tiempos: queSeCuenta.tiempos,
         })
       : null
 
@@ -216,18 +268,14 @@ export async function generarInforme(
   const paraImprimir = aplicarSeparacion(datos, separarTodos(delRayo, separados?.separados))
 
   avisar('documento')
-  // El pie del informe daba la hora UTC sin decirlo: un documento emitido a las
-  // 09:00 de Madrid ponía «07:00», y quien lo archivara lo fecharía mal.
-  const emitido = new Intl.DateTimeFormat('es-ES', {
-    timeZone: ZONA,
-    dateStyle: 'short',
-    timeStyle: 'short',
-  }).format(new Date())
-
   const html = renderReport(paraImprimir, lectura, opciones, {
     emitido,
     ...(quienPide.nombre ? { solicitante: quienPide.nombre } : {}),
   })
+
+  avisar('almacen')
+  const { excel, motivo: motivoExcel } = await libro
+  if (motivoExcel) avisar('almacen', `sin Excel (${motivoExcel}): el informe sigue`, true)
 
   avisar('archivo')
   const archivo = await archivar(html, eleccion, opciones, quienPide.id, {
@@ -246,7 +294,33 @@ export async function generarInforme(
     avisoIA,
     archivado: archivo.path,
     motivoArchivo: archivo.motivo,
+    excel,
+    motivoExcel,
   }
+}
+
+/**
+ * El Excel del almacén de un informe que ya está en el archivo.
+ *
+ * No se guarda con el informe y no hace falta: el stock de un periodo es la
+ * suma de sus movimientos, y los movimientos no se editan ni se borran. El
+ * libro de marzo pedido hoy dice de marzo lo mismo que habría dicho en marzo;
+ * lo único de hoy es la hoja «Stock actual», que lleva escrito de cuándo es.
+ *
+ * Lanza con un mensaje que se puede enseñar, como `prepararExcelDelPeriodo`.
+ */
+export async function excelDeUnInforme(kind: string, rango: Rango): Promise<Fichero> {
+  const emitido = new Intl.DateTimeFormat('es-ES', {
+    timeZone: ZONA,
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(new Date())
+  const x = await prepararExcelDelPeriodo(rango, {
+    titulo: `Almacén · ${TITULO[kind] ?? 'Informe'} · ${nombrePeriodo(rango)}`,
+    nombre: nombreDelExcel(kind, rango),
+    emitido,
+  })
+  return { nombre: x.nombre, blob: x.blob }
 }
 
 /**
@@ -361,4 +435,18 @@ async function archivar(
 export function nombreDeArchivo(kind: string, rango: { start: string; end: string }): string {
   const titulo = (TITULO[kind] ?? 'Informe').toLowerCase().replace(/\s+/g, '-')
   return `${titulo}-${rango.start}_${rango.end}.html`
+}
+
+/** El mismo nombre, para el PDF. */
+export function nombreDelPdf(kind: string, rango: { start: string; end: string }): string {
+  return nombreDeArchivo(kind, rango).replace(/\.html$/, '.pdf')
+}
+
+/**
+ * Y para el Excel: el del informe con «-almacen» detrás. Empiezan igual a
+ * propósito, para que en una carpeta de descargas los dos ficheros de un mismo
+ * informe queden uno debajo del otro.
+ */
+export function nombreDelExcel(kind: string, rango: { start: string; end: string }): string {
+  return nombreDeArchivo(kind, rango).replace(/\.html$/, '-almacen.xlsx')
 }

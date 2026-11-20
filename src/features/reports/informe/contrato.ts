@@ -93,8 +93,8 @@ atender lo que pase en ellos mientras hay clase.
 Qué entra en el encargo:
 - Atender incidencias y peticiones de los espacios: aulas, laboratorios, salas de reuniones y espacios DOT.
 - Instalar y configurar los equipos del aula, y plataformar y actualizar los que lo necesiten.
-- Mantenimiento y puesta a punto de aulas y laboratorios antes del comienzo de curso, de Navidad y de Semana Santa.
-- Sustituir equipos y piezas averiadas, gestionando con el fabricante o el proveedor la reparación o el reemplazo.
+- Mantenimiento y puesta a punto de aulas y laboratorios antes del comienzo de curso, de Navidad y de Semana Santa. La revisión de las aulas se hace en esas campañas y no todas las semanas: fuera de ellas, el trabajo del servicio es atender y resolver lo que entra.
+- Sustituir equipos y piezas averiadas, gestionando con el fabricante o el proveedor la reparación o el reemplazo. El material de uso —cables, adaptadores, pilas, mandos, teclados, ratones— se gasta y se rompe con el uso en un campus, o lo rompen: reponerlo es el trabajo normal del servicio, no una avería de la instalación ni una mejora pendiente.
 - Mantener el inventario de los equipos de las aulas —hardware al día cada semana, y el software instalado señalando el que no esté homologado.
 - Formar y orientar a quien usa el aula, y proponer mejoras.
 - Horario de lunes a viernes de 7:00 a 21:00, presencial. Fines de semana solo en eventos puntuales.
@@ -176,6 +176,49 @@ export function fueraDeAlcance(texto: string): Array<{ que: string; dice: string
     if (m) out.push({ que, dice: m[0] })
   }
   return out
+}
+
+/**
+ * ¿Cuenta el texto la ronda de revisión como una falta?
+ *
+ * La revisión de aulas es de campaña —antes del comienzo de curso, en Navidad
+ * y en Semana Santa—, así que en una semana cualquiera no hay ninguna y no
+ * tiene por qué haberla. Un texto que habla de la cobertura del campus, de las
+ * salas sin revisar o de reforzar la ronda está midiendo el servicio con una
+ * vara que no es la suya, y además lo hace en el documento que llega al
+ * cliente. Devuelve el trozo que lo delata, o `null` si va limpio.
+ *
+ * Solo caza la queja. «Se han revisado 16 aulas en la puesta a punto» no lleva
+ * ninguna de estas y pasa: contar una revisión hecha sí es del informe.
+ */
+const RONDA_COMO_FALTA =
+  /\b(cobertura (del campus|de la ronda|de revisi[oó]n)|(ampliar|reforzar|completar|extender|intensificar|retomar) (la|las) (ronda|rondas|revisi[oó]n|revisiones)|vuelta (completa )?al campus|(salas?|aulas?) (sin|nunca|todav[ií]a sin|pendientes? de) revis\w*|sin una sola revisi[oó]n|no se ha(n)? (hecho|realizado|completado|registrado) (ninguna )?revisi\w*|ninguna revisi[oó]n|(baja(n)?|descien\w+|cae(n)?) (las|el n[uú]mero de) revisiones)/i
+
+export function insisteEnLaRonda(texto: string): string | null {
+  const m = RONDA_COMO_FALTA.exec(texto)
+  return m ? m[0] : null
+}
+
+/**
+ * ¿Lee el texto el desgaste como una avería de fondo, o propone una mejora
+ * que no hay?
+ *
+ * Es una universidad: los cables se rompen o los rompen. Un modelo que ve el
+ * mismo repuesto cuatro veces en la misma aula escribe lo que escribiría
+ * cualquier consultor —«revisar la instalación en vez de reponer otra vez»,
+ * «tiene una causa común»— y el cliente lee que hay un trabajo por hacer que
+ * nadie va a hacer, porque no hay nada que arreglar. Lo mismo con el edificio
+ * que más partes abre, que es simplemente el más grande.
+ *
+ * Devuelve el trozo que lo delata, o `null` si va limpio. Solo caza la
+ * conclusión, no el dato: «se han servido seis cables HDMI» pasa.
+ */
+const DESGASTE_COMO_FALLO =
+  /\b((revisar|mirar|comprobar|auditar|estudiar|analizar|investigar) (a fondo )?(la|el|las|los) (instalaci[oó]n|instalaciones|cableado|canalizaci[oó]n|conexionado)|revisi[oó]n (de conjunto|integral|a fondo) (de|del)|en (vez|lugar) de (reponer|sustituir|cambiar)|causa (com[uú]n|de fondo|ra[ií]z)|no es (mala suerte|casualidad)|el problema no es (la pieza|el cable)|problema de (fondo|instalaci[oó]n))\b/i
+
+export function leeElDesgasteComoFallo(texto: string): string | null {
+  const m = DESGASTE_COMO_FALLO.exec(texto)
+  return m ? m[0] : null
 }
 
 /**

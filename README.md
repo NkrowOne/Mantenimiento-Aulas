@@ -376,7 +376,7 @@ npm run informe:ia
 | Almacén: el estado de lo que se cuenta | ✅ cada artículo se lleva por cantidad (cables, teclados: «5 nuevas · 3 usadas») o por número de serie; cada estado con su `−` y su `+`, cambiar el estado de unas cuantas sin tocar el total, y lo que no tiene estado se clasifica con un toque; lo que llega sin estado (parte cerrado, Excel) lo resuelve el servidor; un servidor sin la migración se queda como antes |
 | Exportar el inventario y el almacén, con vista previa | ✅ se ve antes de descargar, una pestaña por hoja; Excel con todo y PDF hecho en el servidor, como la hoja de las aulas y el informe. El del almacén lleva las existencias con cuántas hay de cada estado (nuevas, usadas, reacondicionadas, averiadas, sin estado) y cómo se cuenta cada artículo, los movimientos y las unidades con n.º de serie |
 | Inventario de una sala o de un edificio en PDF | ✅ marca, modelo, serie y las fechas de alta, cambio y baja; se imprime desde el navegador y avisa —en el papel— cuando la hoja se ha hecho sin servidor |
-| Informes desde la propia aplicación | ✅ documento renderizado y revisado en un navegador real; se imprime a PDF y se archiva en HTML autocontenido |
+| Informes desde la propia aplicación | ✅ dos archivos por informe, sin comprimir: el PDF y el Excel del almacén del periodo (stock al abrir y al cerrar, movimientos con su saldo, consumo por aula y stock de hoy). Documento revisado con WeasyPrint y en un navegador real; se archiva en HTML autocontenido |
 | Worker de informes PDF (camino antiguo, ya opcional) | ✅ PDF real generado y revisado |
 | Análisis con IA (Gemini, con razonamiento) | ✅ probado contra un servidor de mentira; degrada a análisis calculado |
 | Buckets de Storage y sus políticas | ✅ 3 pruebas de RLS propias |
@@ -581,30 +581,68 @@ caído, ni una cola de la que nadie se entera, ni un token que sincronizar: lo
 de Gemini**, y se pega desde la propia pantalla.
 
 **Hay dos documentos, no dos tonos.** «Escrito para» elige la audiencia.
-*Equipo técnico* es el parte del servicio: lo grave primero, cada incidencia con
-sus días abiertas, cada sala con su fiabilidad. *Dirección* es lo que se entrega
+*Equipo técnico* es el parte del servicio: después del titular, lo que hay que
+hacer primero, cada incidencia con sus días abiertas, cada sala con su
+fiabilidad. *Dirección* es lo que se entrega
 al cliente: abre por lo que ha mejorado, cuenta lo pendiente como trabajo en
-curso y margen de mejora, y no dice cuántos días lleva abierta una incidencia ni
-señala un aula como problemática —la sección «Sin cerrar» no se puede pedir para
-él, se marque lo que se marque—. Los problemas de verdad sí salen, con su cifra:
-una incidencia de gravedad alta, una lámpara al límite, la misma pieza repetida
-en la misma sala, un edificio que concentra lo abierto. Las cifras son las
-mismas en los dos; cambia lo que se cuenta y cómo se cuenta. Los informes
-programados salen para dirección.
+curso, y no dice cuántos días lleva abierta una incidencia ni señala un aula
+como problemática —las secciones «Sin cerrar» y «Salas señaladas» no se pueden
+pedir para él, se marque lo que se marque—. Los problemas de verdad sí salen,
+con su cifra: una incidencia de gravedad alta, una lámpara al límite, un
+artículo por reponer. Las cifras son las mismas en los dos; cambia lo que se
+cuenta y cómo se cuenta. Los informes programados salen para dirección.
 
-**El PDF lo hace el navegador.** El documento sale maquetado para A4 y «Guardar
-como PDF» es un destino de impresión más, así que no hay que arrastrar media
-librería de PDF a una aplicación que se abre desde un iPad en un pasillo. Se
-archiva en Storage tal cual: HTML autocontenido, con los gráficos dentro como
-SVG y sin una sola petición a la red al abrirlo. Un informe emitido no se
-regenera nunca: se versiona.
+**No se inventan mejoras.** Esto es una universidad: los cables, los
+adaptadores y las pilas se gastan y se rompen con el uso, o los rompen. El
+informe leía el mismo repuesto varias veces en la misma aula como un fallo de la
+instalación («revisar la instalación en vez de reponer otra vez») y del edificio
+con más partes decía que «suele tener una causa común». Las dos lecturas se han
+quitado: lo primero es desgaste y lo segundo es el edificio más grande. La
+sección del cliente ya no se llama «Propuestas de mejora» sino «Próximos pasos»
+—reponer, cambiar una lámpara a tiempo, atender primero lo grave—, y si no hay
+ninguno no sale. El equipo conserva la tabla «Dónde se repone más», como lo que
+es: saber qué llevar encima. A la IA se le dice lo mismo, y un texto suyo que
+mande «revisar la instalación» se descarta.
+
+**De qué habla, y por dónde abre.** De lo que el servicio hace todos los días:
+los partes que entran y los que se resuelven, con qué rapidez se cierran, en
+qué aulas se ha trabajado, el material que se ha servido y cómo queda el
+almacén. Abre por lo conseguido, con su cifra, y deja para después lo que pide
+una decisión. Las cuatro cifras de cabecera son las de cualquier servicio de
+soporte: partes atendidos, resueltos, en menos de 48 h y en seguimiento hoy.
+
+**Las revisiones de aulas son de campaña, no de todas las semanas** —antes del
+comienzo de curso, en Navidad y en Semana Santa, que es lo que dice el pliego—.
+El informe medía cada semana contra esa ronda y titulaba una semana normal
+«Cero salas revisadas»; ahora, si en el periodo no hubo revisiones, no las
+nombra —ni cifra a cero, ni columna, ni sección—, y en la semana de la campaña
+las cuenta como una puesta a punto hecha. Ya no hay aviso de cobertura del
+campus ni de salas sin revisar, y a la IA tampoco se le da de dónde sacarlo.
+
+**Son dos archivos, sueltos.** El informe en PDF y un **Excel con el almacén del
+periodo**: el stock al abrir y al cerrar, cada movimiento con su saldo, el
+consumo por aula, el stock de hoy y las unidades con número de serie, con una
+hoja de resumen que da el contexto. Se guardan los dos de una vez —la hoja de
+compartir del iPhone los lleva a Correo como dos adjuntos— o de uno en uno. No
+se comprimen. El Excel no se archiva: se rehace de los movimientos, que no se
+editan ni se borran, así que el de un periodo cerrado sale igual se pida cuando
+se pida, y cada fila del archivo lleva su botón.
+
+**El PDF lo convierte el servidor, y solo.** En cuanto el informe está hecho se
+manda a `POST /informe/pdf` —WeasyPrint, con la sesión de quien lo pide— sin
+esperar a un botón; si el servidor no está, se cae al diálogo de imprimir del
+navegador, que también da un PDF. El documento está maquetado para A4 con
+tablas y cajas simples, sin Flex ni Grid, porque lo componen dos motores y
+tiene que salir igual de los dos. Se archiva en Storage tal cual: HTML
+autocontenido, con los gráficos dentro como SVG y sin una sola petición a la
+red al abrirlo. Un informe emitido no se regenera nunca: se versiona.
 
 Lleva las dos cosas que hacen falta para responder «¿cómo vamos?» y «¿qué se ha
-hecho?»: el **estado** —indicadores con su variación, cobertura por edificio,
-lámparas al límite, incidencias sin cerrar— y el **registro del periodo**, que
-son la lista de todas las revisiones completadas (sala, hora, quién y cómo
-salió) y el diario cronológico de lo que ocurrió cada día: altas, cierres,
-material consumido, inventarios y cambios de equipo.
+hecho?»: el **estado** —las cifras con su variación, lo atendido y lo que queda
+en curso por edificio, el almacén, las lámparas al límite— y el **registro del
+periodo**: el diario de lo que ocurrió cada día (altas, cierres, material,
+inventarios y cambios de equipo), cada cierre con sus fechas y lo que se hizo,
+las revisiones cuando las hay y las fotos.
 
 ### El análisis lo escribe una IA; las cifras, no
 

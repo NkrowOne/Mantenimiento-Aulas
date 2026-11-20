@@ -61,16 +61,23 @@ export type Audiencia = 'direccion' | 'equipo'
  * días lleva abierta nada, y por eso esta sección no se puede pedir para él.
  * Se quita al leer las opciones, no al imprimir, para que el archivo tampoco
  * diga que se pidió.
+ *
+ * «Salas señaladas» va detrás por lo mismo y por algo más. El ranking de aulas
+ * con más incidencias es justo el señalamiento que este documento no hace. Y
+ * la tabla del mismo repuesto en la misma sala se le enseñaba al cliente como
+ * «una mejora clara», cuando en una universidad es desgaste: los cables se
+ * rompen o los rompen, y no hay instalación que revisar. Para dirección no
+ * imprime nada, así que tampoco se ofrece la casilla.
  */
-export const VETADAS_PARA_DIRECCION: Seccion[] = ['estancadas']
+export const VETADAS_PARA_DIRECCION: Seccion[] = ['estancadas', 'salas']
 
 /**
  * Lo que sale para cada audiencia si nadie elige nada.
  *
- * Para dirección quedan fuera, además de la vetada, las secciones que son
+ * Para dirección quedan fuera, además de las vetadas, las secciones que son
  * registro del servicio y no estado del campus: cada revisión con quién la
  * hizo, el diario de movimientos, cada cierre con sus días y el reparto con
- * nombres. Se pueden marcar a mano —salvo la vetada—, pero no son lo que se
+ * nombres. Se pueden marcar a mano —salvo las vetadas—, pero no son lo que se
  * lleva a la mesa del cliente sin que nadie lo haya pedido.
  */
 const FUERA_PARA_DIRECCION: Seccion[] = ['revisiones', 'eventos', 'cierres', 'equipo', ...VETADAS_PARA_DIRECCION]
