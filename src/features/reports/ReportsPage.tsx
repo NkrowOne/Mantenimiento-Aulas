@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import { fechaCorta } from '@/domain/fechas'
+import { fechaCorta, horaCorta } from '@/domain/fechas'
 import { EstadoIA, useEstadoIA } from './EstadoIA'
 import { AUDIENCIAS, SECCIONES, porDefectoDe, seccionesDe } from './secciones'
 import { type HuellaDeRedaccion, redaccionDe } from './redaccion'
@@ -34,6 +34,28 @@ import {
 } from './informe/imprimir'
 import { ofrecerFicheros } from '@/lib/ficheros'
 import { TOPE_CONSULTA_MS, TOPE_PDF_MS, conPlazo } from './informe/espera'
+import { claveDelDispositivo } from './informe/clave'
+import {
+  type Trabajo,
+  eleccionDe,
+  estaAMedias,
+  guardarPdfAlLado,
+  leerTrabajos,
+  paraEnsenar,
+  pdfGuardado,
+  pedirAlServidor,
+  quitarTrabajo,
+  recogerInforme,
+  sigueVivo,
+} from './informe/enElServidor'
+import {
+  esLaDeSiempre,
+  instruccionesAnteriores,
+  olvidarEleccion,
+  reciclar,
+  recordarEleccion,
+  ultimaEleccion,
+} from './recicladas'
 import { VistaPrevia } from './VistaPrevia'
 
 interface ReportRow {
@@ -48,6 +70,8 @@ interface ReportRow {
         analisis?: string
         secciones?: string[]
         audiencia?: string
+        comparar?: boolean
+        enfoque?: string
         nota?: string
       })
     | null
@@ -79,6 +103,17 @@ const PASOS: Record<Paso, string> = {
   archivo: 'Guardándolo en el archivo',
 }
 
+/** Lo que el servidor dice que está haciendo, con las mismas palabras que aquí. */
+function queHace(t: Trabajo): string {
+  if (t.estado === 'en_cola') return 'En cola: empieza enseguida'
+  const paso = PASOS[t.paso as Paso] ?? 'Generándolo'
+  return `${paso}${t.detalle ? `: ${t.detalle}` : ''}`
+}
+
+/** Lo que se le dice a quien acaba de pedirlo. Es la frase que cambia cómo se usa la pantalla. */
+const PUEDES_CERRAR =
+  'Lo está generando el servidor: puedes cerrar la aplicación o bloquear el teléfono. Cuando vuelvas estará aquí y en el archivo.'
+
 /** De qué informe es un fichero: el recién hecho, o la fila del archivo con ese id. */
 type Para = string
 const RECIEN: Para = 'recien'
@@ -93,12 +128,21 @@ interface Hechos {
 /**
  * Informes.
  *
- * El informe se arma **aquí**, en el propio navegador: se leen los datos, se
- * calculan las cifras, se le pide a Gemini que redacte el análisis y se compone
- * el documento. No hay un servicio detrás que pueda estar caído, ni una cola de
- * la que nadie se entera, ni un token que sincronizar. Lo único que hay que
- * configurar para que el análisis lo escriba una IA es la clave de Gemini, y se
- * pega en la tarjeta de arriba.
+ * El informe **se pide y ya está**. Lo genera el servidor de informes con el
+ * mismo código que hay aquí —`informe/enElServidor.ts`—, de modo que se puede
+ * cerrar la aplicación o bloquear el teléfono: al volver está en la lista «En
+ * segundo plano» y en el archivo, con su PDF hecho. Antes se armaba solo en el
+ * navegador, y un iPhone congela el navegador en cuanto deja de estar delante:
+ * había que quedarse mirando la pantalla hasta un minuto.
+ *
+ * Y si el servidor no puede —no está desplegado, está caído, falta su tabla—
+ * **el informe se arma aquí**, como siempre: se leen los datos, se calculan las
+ * cifras, se le pide a Gemini que redacte el análisis y se compone el
+ * documento. Entonces sí hay que dejar la pantalla abierta, y se dice.
+ *
+ * LAS CASILLAS Y LAS INSTRUCCIONES SE RECICLAN (`recicladas.ts`): la pantalla
+ * arranca con las de la última vez, cualquier informe del archivo devuelve las
+ * suyas con «Repetir», y las instrucciones anteriores están a un toque.
  *
  * DE CADA INFORME SALEN DOS FICHEROS, sueltos y sin comprimir: el informe en
  * PDF y el Excel del almacén de esos días —el stock al abrir y al cerrar el
@@ -122,16 +166,43 @@ export function ReportsPage(): React.ReactElement {
   const [preset, setPreset] = useState<string>('semana')
   const [desde, setDesde] = useState('')
   const [hasta, setHasta] = useState('')
-  const [audiencia, setAudiencia] = useState<'direccion' | 'equipo'>('direccion')
-  const [secciones, setSecciones] = useState<string[]>(porDefectoDe('direccion'))
-  const [comparar, setComparar] = useState(true)
-  const [conIA, setConIA] = useState(true)
+  /* Lo de la última vez en este dispositivo: las casillas y las instrucciones,
+     no el periodo ni la nota de la portada (ver `recicladas.ts`). */
+  const [deAntes] = useState(() => ultimaEleccion())
+  const [audiencia, setAudiencia] = useState<'direccion' | 'equipo'>(deAntes?.audiencia ?? 'direccion')
+  const [secciones, setSecciones] = useState<string[]>(deAntes?.secciones ?? porDefectoDe('direccion'))
+  const [comparar, setComparar] = useState(deAntes?.comparar ?? true)
+  const [conIA, setConIA] = useState(deAntes?.ia ?? true)
   /* Las casillas que existen para esta audiencia. «Sin cerrar» no se ofrece
      para dirección: ese documento no dice cuántos días lleva abierta nada. */
   const ofrecidas = seccionesDe(audiencia)
-  const [enfoque, setEnfoque] = useState('')
+  const [enfoque, setEnfoque] = useState(deAntes?.enfoque ?? '')
   const [nota, setNota] = useState('')
   const [ajustes, setAjustes] = useState(false)
+  /*
+   * De dónde han salido las opciones que hay puestas, cuando no son las de
+   * fábrica. Se dice arriba del formulario y no se da por sabido: unas
+   * instrucciones recuperadas cambian lo que escribe la IA, y con las opciones
+   * plegadas no se ven.
+   */
+  const [recicladoDe, setRecicladoDe] = useState<string | null>(
+    deAntes && !esLaDeSiempre(deAntes) ? 'la última vez' : null,
+  )
+  const formulario = useRef<HTMLElement>(null)
+
+  /*
+   * El informe que se ha pedido al servidor desde ESTA pantalla. Es el que se
+   * abre solo al terminar; los demás —pedidos antes, o desde otro dispositivo—
+   * esperan en la lista a que alguien pulse «Ver».
+   */
+  const [siguiendo, setSiguiendo] = useState<string | null>(null)
+  /* Por qué se está generando aquí y no en el servidor, cuando pasa. */
+  const [aqui, setAqui] = useState<string | null>(null)
+  /* Cuál se está trayendo del archivo, y lo que haya que decir de uno de la lista. */
+  const [recogiendo, setRecogiendo] = useState<string | null>(null)
+  const [avisoTrabajo, setAvisoTrabajo] = useState<{ id: string; texto: string } | null>(null)
+  /* Los que ya se han abierto solos: uno que termina no se abre dos veces. */
+  const abiertos = useRef(new Set<string>())
 
   /* En qué paso va y QUÉ está leyendo. Lo segundo no es adorno: cuando algo se
      atasca, la diferencia entre «Leyendo los datos» y «leyendo el diario del
@@ -207,6 +278,22 @@ export function ReportsPage(): React.ReactElement {
     },
   })
 
+  /*
+   * Los informes pedidos al servidor. Se pregunta cada dos segundos SOLO
+   * mientras haya alguno haciéndose; con todos terminados no se pregunta más.
+   * Al volver a la pantalla se vuelve a mirar, que es justo el momento en que
+   * importa: se pidió, se guardó el teléfono, y ahora se quiere el informe.
+   */
+  const { data: trabajos } = useQuery({
+    queryKey: ['report-jobs'],
+    queryFn: leerTrabajos,
+    refetchInterval: (q) => ((q.state.data ?? []).some((t) => sigueVivo(t)) ? 2000 : false),
+    refetchOnWindowFocus: true,
+    retry: false,
+  })
+  const enLista = paraEnsenar(trabajos ?? [])
+  const seguido = siguiendo ? ((trabajos ?? []).find((t) => t.id === siguiendo) ?? null) : null
+
   const rango: Rango = useMemo(() => {
     if (preset === 'medida') return { start: desde, end: hasta }
     const p = PRESETS.find((x) => x.id === preset)
@@ -223,7 +310,50 @@ export function ReportsPage(): React.ReactElement {
   const impedimento = motivoParaNoPedir(eleccion, dias)
 
   const generar = useMutation({
-    mutationFn: async (): Promise<InformeGenerado> => {
+    /**
+     * Primero se le pide al servidor, que es lo que permite cerrar la pantalla.
+     * Si no puede, se genera aquí. Devuelve `null` cuando lo ha cogido el
+     * servidor: entonces no hay informe todavía, hay un trabajo que seguir.
+     *
+     * `aquiMismo` se salta el servidor. Es la salida para cuando el servidor lo
+     * cogió y no supo terminarlo: repetirlo allí daría el mismo fallo.
+     */
+    mutationFn: async (
+      pedido: { que: Eleccion; aquiMismo?: boolean } | void,
+    ): Promise<InformeGenerado | null> => {
+      const que = pedido?.que ?? eleccion
+      setAqui(null)
+      setAvisoTrabajo(null)
+      // Lo que se pide es lo que se recuerda para la próxima.
+      recordarEleccion(que)
+
+      if (!pedido?.aquiMismo) {
+        let token: string | null = null
+        try {
+          const { data } = await conPlazo('La sesión', TOPE_CONSULTA_MS, supabase.auth.getSession())
+          token = data.session?.access_token ?? null
+        } catch {
+          // Sin sesión a tiempo no se le puede pedir al servidor: se hace aquí.
+        }
+        // La clave de este dispositivo solo viaja si es la que se va a usar:
+        // con una guardada en el despliegue, el servidor ya tiene la suya.
+        const aceptado = await pedirAlServidor(
+          que,
+          token,
+          estadoIA?.clave_guardada ? '' : claveDelDispositivo(),
+        )
+        if (aceptado.ok) {
+          setSiguiendo(aceptado.id)
+          void qc.invalidateQueries({ queryKey: ['report-jobs'] })
+          return null
+        }
+        if (!aceptado.sinServicio) throw new Error(aceptado.motivo)
+        setAqui(aceptado.motivo)
+      } else {
+        setAqui('se ha pedido generarlo en este dispositivo')
+      }
+
+      setSiguiendo(null)
       setRecien(null)
       // Un informe nuevo deja obsoletos los ficheros del anterior, y el botón
       // dice «Guardar PDF» sin distinguirlos: se guardaría el de antes.
@@ -233,12 +363,14 @@ export function ReportsPage(): React.ReactElement {
       setPdfPendiente(false)
       setAviso(null)
       setFalloDescarga(null)
-      return generarInforme(eleccion, (fase, detalle, fallo) =>
+      return generarInforme(que, (fase, detalle, fallo) =>
         setPaso({ fase, ...(detalle ? { detalle } : {}), ...(fallo ? { fallo: true } : {}) }),
       )
     },
     onSettled: () => setPaso(null),
     onSuccess: (informe) => {
+      // Lo ha cogido el servidor: lo que venga se lee en su fila.
+      if (!informe) return
       setRecien(informe)
       // El Excel ya viene hecho; el PDF se pide solo, sin esperar a un botón.
       setHechos({ para: RECIEN, ...(informe.excel ? { excel: informe.excel } : {}) })
@@ -322,6 +454,9 @@ export function ReportsPage(): React.ReactElement {
       setOcupado(null)
       if (r.ok) {
         anotar(RECIEN, 'pdf', { nombre: r.nombre, blob: r.blob })
+        // Y al archivo, al lado del documento: quien lo pida mañana lo baja
+        // hecho en vez de esperar otra vez al conversor.
+        if (informe.archivado) guardarPdfAlLado(informe.archivado, r.blob)
         return
       }
       setPdfPendiente(true)
@@ -366,7 +501,24 @@ export function ReportsPage(): React.ReactElement {
     setAviso(null)
     setOcupado({ para: r.id, que: 'pdf' })
     const mal = (texto: string): void => setAviso({ para: r.id, texto, mal: true })
+    const nombre = nombreDelPdf(r.kind, { start: r.period_start, end: r.period_end })
     try {
+      /*
+       * Primero, el que ya esté hecho. El servidor deja el PDF al lado del
+       * documento cuando genera el informe, y esta pantalla también la primera
+       * vez que lo convierte: lo normal es que esté, y entonces es una descarga
+       * y no medio minuto de conversor. De paso arregla los informes antiguos,
+       * que el worker archivaba ya en PDF y aquí se intentaban convertir como
+       * si fueran el documento.
+       */
+      const hechoYa = await pdfGuardado(r.storage_path)
+      if (turno.current !== mio) return
+      if (hechoYa) {
+        anotar(r.id, 'pdf', { nombre, blob: hechoYa })
+        setAviso({ para: r.id, texto: PDF_LISTO, mal: false })
+        return
+      }
+
       // Con plazo, como todo lo de esta pantalla: `storage.download` no acepta
       // señal, así que lo que se corta es la espera. Sin esto, un almacén mudo
       // dejaba el botón en «Preparando…» antes siquiera de llegar al PDF.
@@ -381,7 +533,7 @@ export function ReportsPage(): React.ReactElement {
         return
       }
       const html = await data.text()
-      const hecho = await convertir(html, nombreDelPdf(r.kind, { start: r.period_start, end: r.period_end }))
+      const hecho = await convertir(html, nombre)
       if (turno.current !== mio) return
       if (!hecho.ok) {
         mal(
@@ -392,6 +544,7 @@ export function ReportsPage(): React.ReactElement {
         return
       }
       anotar(r.id, 'pdf', { nombre: hecho.nombre, blob: hecho.blob })
+      guardarPdfAlLado(r.storage_path, hecho.blob)
       setAviso({ para: r.id, texto: PDF_LISTO, mal: false })
     } catch (err) {
       // El plazo salta aquí. Antes no había nada que saltara: la promesa no
@@ -433,6 +586,160 @@ export function ReportsPage(): React.ReactElement {
       if (turno.current === mio) setOcupado(null)
     }
   }
+
+  /**
+   * Trae a la pantalla un informe que dejó hecho el servidor, con sus dos
+   * ficheros listos para guardar.
+   *
+   * Es lo que se encuentra quien pidió el informe, guardó el teléfono y vuelve:
+   * la misma tarjeta de «Listo» que si lo hubiera esperado. El PDF casi nunca
+   * hay que convertirlo —el servidor lo dejó al lado del documento— y el Excel
+   * se arma aquí en unos segundos, como el de cualquier fila del archivo.
+   *
+   * Uno detrás de otro, con un solo turno: si mientras tanto se pide otro
+   * informe o se abre otro de la lista, lo que vuelva de este ya no cuenta.
+   */
+  async function recoger(t: Trabajo): Promise<void> {
+    const mio = ++turno.current
+    setFalloDescarga(null)
+    setAviso(null)
+    setAvisoTrabajo(null)
+    setHechos(null)
+    setPdfPendiente(false)
+    setOcupado(null)
+    setRecogiendo(t.id)
+    try {
+      const informe = await recogerInforme(t)
+      if (turno.current !== mio) return
+      setRecien(informe)
+      setRecogiendo(null)
+      requestAnimationFrame(() => {
+        const sinAnimar = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+        tarjeta.current?.scrollIntoView({ block: 'start', behavior: sinAnimar ? 'auto' : 'smooth' })
+      })
+
+      const ruta = informe.archivado ?? ''
+      const nombre = nombreDelPdf(informe.kind, informe.rango)
+      setOcupado({ para: RECIEN, que: 'pdf' })
+      let pdf = await pdfGuardado(ruta)
+      if (turno.current !== mio) return
+      if (!pdf) {
+        const r = await convertir(informe.html, nombre)
+        if (turno.current !== mio) return
+        if (r.ok) {
+          pdf = r.blob
+          guardarPdfAlLado(ruta, r.blob)
+        } else {
+          setPdfPendiente(true)
+          setAviso({
+            para: RECIEN,
+            mal: true,
+            texto: `No se ha podido preparar el PDF: ${r.motivo}. Pulsa «Preparar el PDF» para volver a intentarlo.`,
+          })
+        }
+      }
+      if (pdf) anotar(RECIEN, 'pdf', { nombre, blob: pdf })
+
+      setOcupado({ para: RECIEN, que: 'excel' })
+      try {
+        const excel = await excelDeUnInforme(informe.kind, informe.rango)
+        if (turno.current !== mio) return
+        anotar(RECIEN, 'excel', excel)
+      } catch (err) {
+        if (turno.current !== mio) return
+        const motivo = err instanceof Error ? err.message : String(err)
+        setRecien((r) => (r ? { ...r, motivoExcel: motivo } : r))
+      }
+      setOcupado(null)
+    } catch (err) {
+      if (turno.current !== mio) return
+      setOcupado(null)
+      setAvisoTrabajo({ id: t.id, texto: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setRecogiendo((r) => (r === t.id ? null : r))
+    }
+  }
+
+  /*
+   * El que se pidió desde esta pantalla se abre solo en cuanto termina. Solo
+   * ese y solo una vez: abrir uno que pidió otra persona, o reabrirlo cada vez
+   * que la lista se refresca, sería quitarle la pantalla de las manos a quien
+   * la está usando.
+   */
+  const estadoDelSeguido = seguido?.estado ?? null
+  useEffect(() => {
+    if (!seguido || estadoDelSeguido !== 'hecho' || abiertos.current.has(seguido.id)) return
+    abiertos.current.add(seguido.id)
+    void recoger(seguido)
+    // El archivo acaba de cambiar, y la tarjeta de la IA también.
+    void qc.invalidateQueries({ queryKey: ['reports'] })
+    void qc.invalidateQueries({ queryKey: ['ia-estado'] })
+    // `recoger` no va en las dependencias a propósito: es una función nueva en
+    // cada pintado, y lo que dispara esto es que el trabajo cambie de estado.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [estadoDelSeguido, seguido?.id])
+
+  /** Quita de la lista uno que ya no hace falta ver. El informe, si salió, sigue en el archivo. */
+  async function quitar(t: Trabajo): Promise<void> {
+    setAvisoTrabajo(null)
+    try {
+      await quitarTrabajo(t.id)
+      if (siguiendo === t.id) setSiguiendo(null)
+      void qc.invalidateQueries({ queryKey: ['report-jobs'] })
+    } catch (err) {
+      setAvisoTrabajo({
+        id: t.id,
+        texto: `No se ha podido quitar: ${err instanceof Error ? err.message : String(err)}`,
+      })
+    }
+  }
+
+  /**
+   * Volver a pedir uno que no salió, con lo mismo que se pidió. La fila guarda
+   * el periodo, las casillas y las instrucciones: es un toque, no rellenar el
+   * formulario otra vez.
+   */
+  function repetir(t: Trabajo, aquiMismo = false): void {
+    generar.mutate(
+      { que: eleccionDe(t), aquiMismo },
+      // La fila vieja se va cuando la nueva petición ya está en marcha, no
+      // antes: si esta tampoco sale, la anterior sigue ahí para reintentarla.
+      { onSuccess: () => void quitarTrabajo(t.id).then(() => qc.invalidateQueries({ queryKey: ['report-jobs'] })).catch(() => undefined) },
+    )
+  }
+
+  /** Lleva al formulario unas opciones recicladas y dice de dónde han salido. */
+  function ponerRecicladas(bruto: unknown, de: string, conNota: boolean): void {
+    const r = reciclar(bruto)
+    if (!r) return
+    setAudiencia(r.audiencia)
+    setSecciones(r.secciones)
+    setComparar(r.comparar)
+    setConIA(r.ia)
+    setEnfoque(r.enfoque)
+    if (conNota) setNota(r.nota)
+    setRecicladoDe(de)
+    setAjustes(true)
+    requestAnimationFrame(() => {
+      const sinAnimar = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      formulario.current?.scrollIntoView({ block: 'start', behavior: sinAnimar ? 'auto' : 'smooth' })
+    })
+  }
+
+  /** Todo como sale de fábrica, y sin nada recordado para la próxima. */
+  function empezarDeCero(): void {
+    setAudiencia('direccion')
+    setSecciones(porDefectoDe('direccion'))
+    setComparar(true)
+    setConIA(true)
+    setEnfoque('')
+    setNota('')
+    setRecicladoDe(null)
+    olvidarEleccion()
+  }
+
+  /** Las instrucciones que ya se le dieron a la IA en informes anteriores. */
+  const anteriores = useMemo(() => instruccionesAnteriores(reports ?? []), [reports])
 
   /**
    * Entregar lo que ya está hecho. **Se llama desde la pulsación**, sin un solo
@@ -513,13 +820,30 @@ export function ReportsPage(): React.ReactElement {
         <h1 className="text-2xl font-bold tracking-tight">Informes</h1>
         <p className="mt-1 text-sm text-muted">
           El informe se genera con los datos del periodo elegido y sale en dos archivos: el
-          informe en PDF y un Excel con el almacén de esos días. Queda archivado. Un informe
-          emitido no se modifica: se emite uno nuevo y se conservan los dos.
+          informe en PDF y un Excel con el almacén de esos días. Lo genera el servidor, así que
+          no hace falta dejar la aplicación abierta: se pide, y al volver está aquí. Queda
+          archivado. Un informe emitido no se modifica: se emite uno nuevo y se conservan los
+          dos.
         </p>
       </header>
 
-      <section className="card p-4">
+      <section ref={formulario} className="card scroll-mt-20 p-4">
         <h2 className="font-semibold">Generar un informe</h2>
+
+        {/*
+          De dónde salen las opciones que hay puestas, cuando no son las de
+          fábrica. Se dice aquí arriba, fuera del desplegable: unas
+          instrucciones recuperadas cambian lo que escribe la IA, y plegadas no
+          se ven. Con su salida al lado, que es un toque.
+        */}
+        {recicladoDe && (
+          <p className="mt-2 rounded-ctl bg-raised px-3 py-2 text-sm">
+            Están puestas las casillas y las instrucciones de {recicladoDe}.{' '}
+            <button type="button" onClick={empezarDeCero} className="text-accent underline">
+              Empezar de cero
+            </button>
+          </p>
+        )}
 
         {/* ── Periodo ── */}
         <div className="mt-3">
@@ -610,6 +934,10 @@ export function ReportsPage(): React.ReactElement {
           <span className="text-muted">
             {secciones.length} de {ofrecidas.length} secciones
             {conIA ? ' · con IA' : ' · sin IA'}
+            {/* Lo que no se ve con las opciones plegadas y sí cambia el
+                documento: que la IA lleva instrucciones y que hay nota. */}
+            {enfoque.trim() && ' · con instrucciones'}
+            {nota.trim() && ' · con nota'}
           </span>
         </button>
 
@@ -749,6 +1077,39 @@ export function ReportsPage(): React.ReactElement {
                 </span>
               </label>
 
+              {/*
+                Las instrucciones de otros informes, a un toque. Quien escribe
+                media página de contexto para la IA la escribe una vez: la
+                semana siguiente la obra del edificio H sigue ahí. Salen del
+                archivo —cada informe guarda las suyas—, así que están en
+                cualquier dispositivo, y sin repetir.
+              */}
+              {anteriores.length > 0 && (
+                <details className="mt-2 text-sm">
+                  <summary className="cursor-pointer text-accent">
+                    Usar unas instrucciones anteriores ({anteriores.length})
+                  </summary>
+                  <ul className="mt-2 space-y-1">
+                    {anteriores.map((a) => (
+                      <li key={a.generado}>
+                        <button
+                          type="button"
+                          onClick={() => setEnfoque(a.texto)}
+                          aria-pressed={enfoque.trim() === a.texto}
+                          className="w-full rounded-ctl border border-line px-3 py-2 text-left hover:bg-raised aria-pressed:border-accent"
+                        >
+                          <span className="line-clamp-3 whitespace-pre-line">{a.texto}</span>
+                          <span className="mt-1 block text-xs text-muted">
+                            Del informe {a.periodo.start === a.periodo.end ? 'del ' : ''}
+                            {nombrePeriodo(a.periodo)}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+
               <label className="mt-4 block text-sm">
                 <span className="text-muted">Nota en la portada (opcional)</span>
                 <input
@@ -775,7 +1136,7 @@ export function ReportsPage(): React.ReactElement {
             onClick={() => generar.mutate()}
             className="key key-accent min-h-touch w-full px-4 sm:w-auto sm:min-w-40"
           >
-            {generar.isPending ? 'Generando…' : 'Generar informe'}
+            {!generar.isPending ? 'Generar informe' : aqui ? 'Generando…' : 'Pidiéndolo…'}
           </button>
           {/* El motivo, a la vista: un botón apagado sin explicación deja a quien
               lo mira buscando qué le falta. */}
@@ -785,7 +1146,25 @@ export function ReportsPage(): React.ReactElement {
         {/* En qué paso va. No es decoración: con IA la espera pasa del medio
             minuto, y una barra que no dice nada se lee como una pantalla
             colgada. */}
-        {generar.isPending && (
+        {/*
+          Se genera AQUÍ, y por qué. Es el caso en el que sí hay que dejar la
+          pantalla abierta, y eso no se puede dar por sabido cuando lo normal ya
+          es poder cerrarla.
+        */}
+        {generar.isPending && aqui && (
+          <p className="mt-3 rounded-ctl border border-warn/40 bg-warn-tint p-3 text-sm text-warn">
+            El servidor no puede encargarse ahora ({aqui.replace(/[.\s]+$/, '')}): el informe se
+            genera en este dispositivo. No cierres la pantalla hasta que termine.
+          </p>
+        )}
+
+        {generar.isPending && !aqui && (
+          <p className="mt-3 text-sm text-muted" role="status">
+            Pidiéndoselo al servidor…
+          </p>
+        )}
+
+        {generar.isPending && aqui && (
           <p className={`mt-3 text-sm ${paso?.fallo ? 'text-warn' : 'text-muted'}`} role="status">
             {paso ? `${PASOS[paso.fase]}${paso.detalle ? `: ${paso.detalle}` : ''}…` : 'Preparando…'}
             {/* La espera larga se anuncia solo mientras de verdad se está
@@ -806,7 +1185,166 @@ export function ReportsPage(): React.ReactElement {
               : 'No se ha podido generar el informe.'}
           </p>
         )}
+
+        {/*
+          El que se acaba de pedir, mientras se hace. Aquí y no en la lista de
+          abajo: es la respuesta al botón que se acaba de pulsar, y tiene que
+          salir donde está el dedo. Lo primero que dice es lo que cambia: que
+          ya se puede cerrar.
+        */}
+        {!generar.isPending && seguido && sigueVivo(seguido) && (
+          <div className="mt-3 rounded-ctl border border-ok/40 bg-ok-tint p-3 text-sm" role="status">
+            <p className="font-medium text-ok">Pedido. {PUEDES_CERRAR}</p>
+            <p className="mt-1 text-muted">
+              {KIND_LABEL[seguido.kind]},{' '}
+              {nombrePeriodo({ start: seguido.period_start, end: seguido.period_end })} ·{' '}
+              {queHace(seguido)}…
+              {seguido.paso === 'analisis' &&
+                seguido.params?.['ia'] !== false &&
+                ' Con IA suele tardar entre veinte segundos y un minuto.'}
+            </p>
+          </div>
+        )}
+
+        {!generar.isPending && seguido?.estado === 'hecho' && recogiendo === seguido.id && (
+          <p className="mt-3 text-sm text-muted" role="status">
+            Hecho. Trayéndolo del archivo…
+          </p>
+        )}
+
+        {/* El que no ha salido: por qué, y las dos salidas. */}
+        {!generar.isPending && seguido && (seguido.estado === 'fallido' || estaAMedias(seguido)) && (
+          <div role="alert" className="mt-3 rounded-ctl border border-crit/40 p-3 text-sm">
+            <p className="text-crit">
+              {seguido.estado === 'fallido'
+                ? `El servidor no ha podido terminar el informe: ${(seguido.error ?? 'no ha dicho por qué').replace(/[.\s]+$/, '')}.`
+                : 'El servidor ha dejado de dar señales con el informe a medias: puede que se haya reiniciado.'}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => repetir(seguido)}
+                className="key key-accent min-h-11 px-3 text-sm"
+              >
+                Volver a pedirlo
+              </button>
+              <button
+                type="button"
+                onClick={() => repetir(seguido, true)}
+                className="key key-quiet min-h-11 px-3 text-sm"
+                title="Lo genera este dispositivo, sin pasar por el servidor. Hay que dejar la pantalla abierta."
+              >
+                Generarlo aquí
+              </button>
+            </div>
+          </div>
+        )}
+
+        {avisoTrabajo && avisoTrabajo.id === siguiendo && (
+          <p role="alert" className="mt-3 text-sm text-crit">
+            {avisoTrabajo.texto}
+          </p>
+        )}
       </section>
+
+      {/*
+        Los informes pedidos al servidor que tienen algo que decir: los que se
+        están haciendo, los que no salieron y los hechos en el último día. Es
+        lo que se encuentra quien pidió uno, guardó el teléfono y vuelve —desde
+        este dispositivo o desde otro—. El que se acaba de pedir desde aquí no
+        sale: ya está arriba, junto al botón.
+      */}
+      {(() => {
+        const lista = enLista.filter((t) => t.id !== siguiendo)
+        if (lista.length === 0) return null
+        return (
+          <section className="card p-4">
+            <h2 className="font-semibold">En segundo plano</h2>
+            <p className="mt-1 text-sm text-muted">
+              Los informes pedidos al servidor. Se terminan solos, con la aplicación cerrada.
+            </p>
+            <ul className="mt-2 divide-y divide-line">
+              {lista.map((t) => {
+                const vivo = sigueVivo(t)
+                const aMedias = estaAMedias(t)
+                return (
+                  <li
+                    key={t.id}
+                    className="flex flex-col gap-2 py-3 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:gap-y-1"
+                  >
+                    <span className="font-medium sm:w-20 sm:shrink-0">{KIND_LABEL[t.kind]}</span>
+                    <span className="min-w-0 sm:flex-1">
+                      <span className="block">
+                        {nombrePeriodo({ start: t.period_start, end: t.period_end })}
+                      </span>
+                      {vivo && (
+                        <span className="block text-xs text-muted" role="status">
+                          {queHace(t)}…
+                        </span>
+                      )}
+                      {aMedias && (
+                        <span className="block text-xs text-warn">
+                          El servidor ha dejado de dar señales: puede que se haya reiniciado a mitad.
+                        </span>
+                      )}
+                      {t.estado === 'hecho' && (
+                        <span className="block text-xs text-ok">
+                          Listo · {fechaCorta(t.terminado_at ?? t.pedido_at)},{' '}
+                          {horaCorta(t.terminado_at ?? t.pedido_at)}
+                        </span>
+                      )}
+                      {t.estado === 'fallido' && (
+                        <span className="block text-xs text-crit">
+                          No ha salido: {(t.error ?? 'el servidor no ha dicho por qué').replace(/[.\s]+$/, '')}.
+                        </span>
+                      )}
+                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {t.estado === 'hecho' && (
+                        <button
+                          type="button"
+                          disabled={recogiendo !== null}
+                          onClick={() => void recoger(t)}
+                          className="key key-accent min-h-11 px-3 text-xs"
+                          title="Abre el informe, con su PDF y su Excel listos para guardar"
+                        >
+                          {recogiendo === t.id ? 'Abriendo…' : 'Ver'}
+                        </button>
+                      )}
+                      {(t.estado === 'fallido' || aMedias) && (
+                        <button
+                          type="button"
+                          disabled={generar.isPending}
+                          onClick={() => repetir(t)}
+                          className="key key-accent min-h-11 px-3 text-xs"
+                          title="Lo pide otra vez, con el mismo periodo, las mismas casillas y las mismas instrucciones"
+                        >
+                          Volver a pedirlo
+                        </button>
+                      )}
+                      {!vivo && (
+                        <button
+                          type="button"
+                          onClick={() => void quitar(t)}
+                          className="key key-quiet min-h-11 px-3 text-xs"
+                          title="Lo quita de esta lista. El informe, si salió, sigue en el archivo"
+                        >
+                          Quitar
+                        </button>
+                      )}
+                    </div>
+                    {avisoTrabajo?.id === t.id && (
+                      <p role="alert" className="w-full text-sm text-crit sm:basis-full">
+                        {avisoTrabajo.texto}
+                      </p>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+        )
+      })()}
 
       {recien && (
         <section ref={tarjeta} className="card scroll-mt-20 p-4">
@@ -926,7 +1464,7 @@ export function ReportsPage(): React.ReactElement {
             HTML del que sale el PDF, y casi nadie lo necesita.
           */}
           <p className="mt-2 text-xs text-muted">
-            El PDF lo convierte el servidor en cuanto el informe está hecho; el Excel se arma aquí
+            El PDF lo hace el servidor y queda guardado con el informe; el Excel se arma aquí
             mismo. {DONDE_VA}{' '}
             <button
               type="button"
@@ -1043,6 +1581,24 @@ export function ReportsPage(): React.ReactElement {
                 >
                   Abrir
                 </button>
+                {/* Las casillas y las instrucciones de este, para uno nuevo.
+                    El periodo no: el mismo informe es de otros días. */}
+                {r.params && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      ponerRecicladas(
+                        r.params,
+                        `el informe ${r.period_start === r.period_end ? 'del ' : ''}${nombrePeriodo({ start: r.period_start, end: r.period_end })}`,
+                        true,
+                      )
+                    }
+                    className="key key-quiet min-h-11 px-3 text-xs"
+                    title="Pone en el formulario las mismas casillas, instrucciones y nota, para generar uno nuevo"
+                  >
+                    Repetir
+                  </button>
+                )}
                 </div>
                 {/* Debajo de su propia fila, no entre los botones de otra. */}
                 <Aviso para={r.id} />

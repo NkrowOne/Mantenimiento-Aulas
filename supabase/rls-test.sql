@@ -7914,3 +7914,161 @@ begin;
   end $$;
 rollback;
 
+
+-- =============================================================================
+-- Los informes en segundo plano (`20261120000100_el_informe_se_pide_y_se_cierra`)
+--
+-- `report_jobs` es la cuenta de los informes pedidos al servidor. La escribe el
+-- servidor de informes con el rol de servicio; la pantalla solo la lee y quita
+-- filas de la lista. Lo que se comprueba es que eso sea verdad en la base y no
+-- solo en la pantalla: una fila lleva dentro las instrucciones que se le dieron
+-- a la IA y la nota de la portada, y «hecho» no puede ser un campo de
+-- formulario.
+-- =============================================================================
+
+\echo ''
+\echo '=== 116. Los informes en segundo plano: los apunta el servidor, los ve y los quita un administrador, y nadie más ==='
+begin;
+  -- El servidor de informes, con el rol de servicio: apunta dos peticiones.
+  set local role service_role;
+  insert into report_jobs (id, kind, period_start, period_end, params, estado, pedido_por)
+  values ('11600000-0000-4000-8000-000000000001', 'semanal', '2026-11-16', '2026-11-20',
+          '{"secciones":["resumen"],"enfoque":"Este lo lee el vicerrector"}'::jsonb, 'en_cola',
+          '44444444-4444-4444-8444-444444444444'),
+         ('11600000-0000-4000-8000-000000000002', 'diario', '2026-11-19', '2026-11-19',
+          '{}'::jsonb, 'fallido', '44444444-4444-4444-8444-444444444444');
+  update report_jobs set estado = 'en_curso', paso = 'datos', latido_at = now()
+   where id = '11600000-0000-4000-8000-000000000001';
+  reset role;
+
+  do $$
+  begin
+    if (select (estado, paso) from report_jobs where id = '11600000-0000-4000-8000-000000000001')
+         is distinct from ('en_curso'::text, 'datos'::text) then
+      raise exception 'FALLO: el servidor de informes no ha podido apuntar por dónde va';
+    end if;
+    raise notice 'OK: el servidor apunta la petición y por dónde va';
+  end $$;
+
+  -- Un estado inventado no entra ni con el rol de servicio.
+  savepoint s;
+  do $$
+  begin
+    set local role service_role;
+    update report_jobs set estado = 'casi' where id = '11600000-0000-4000-8000-000000000001';
+    raise exception 'FALLO: ha entrado un estado que no existe';
+  exception when check_violation then
+    raise notice 'OK: el estado solo puede ser uno de los cuatro';
+  end $$;
+  rollback to savepoint s;
+
+  -- Ni un técnico ni un supervisor ven la lista: lleva las instrucciones y la nota.
+  select test_as('11111111-1111-4111-8111-111111111111', 'tecnico');
+  do $$
+  begin
+    if (select count(*) from report_jobs) <> 0 then
+      raise exception 'FALLO: un técnico ve los informes en segundo plano';
+    end if;
+  end $$;
+  reset role;
+  select test_as('22222222-2222-4222-8222-222222222222', 'supervisor');
+  do $$
+  declare n int;
+  begin
+    if (select count(*) from report_jobs) <> 0 then
+      raise exception 'FALLO: un supervisor ve los informes en segundo plano';
+    end if;
+    -- Y borrar sin verlas no borra nada.
+    delete from report_jobs;
+    get diagnostics n = row_count;
+    if n <> 0 then raise exception 'FALLO: un supervisor ha quitado % informes de la lista', n; end if;
+    raise notice 'OK: ni el técnico ni el supervisor los ven, ni los quitan';
+  end $$;
+  reset role;
+
+  -- El administrador los ve…
+  select test_as('44444444-4444-4444-8444-444444444444', 'admin');
+  do $$
+  begin
+    if (select count(*) from report_jobs) <> 2 then
+      raise exception 'FALLO: el administrador no ve los informes pedidos al servidor';
+    end if;
+    raise notice 'OK: el administrador ve los informes pedidos al servidor';
+  end $$;
+
+  -- …pero no los escribe: ni pedir uno por su cuenta, ni darlo por hecho.
+  savepoint s;
+  do $$
+  begin
+    insert into report_jobs (kind, period_start, period_end)
+    values ('semanal', '2026-11-16', '2026-11-20');
+    raise exception 'FALLO: un administrador ha apuntado un trabajo sin pasar por el servidor de informes';
+  exception when insufficient_privilege then
+    raise notice 'OK: la pantalla no puede apuntar un trabajo: solo el servidor de informes';
+  end $$;
+  rollback to savepoint s;
+
+  savepoint s;
+  do $$
+  declare n int;
+  begin
+    update report_jobs set estado = 'hecho', storage_path = 'semanal/inventado.html'
+     where id = '11600000-0000-4000-8000-000000000001';
+    get diagnostics n = row_count;
+    if n > 0 then raise exception 'FALLO: un administrador ha dado por hecho un informe desde la pantalla'; end if;
+    raise notice 'OK: «hecho» no se puede escribir desde la pantalla';
+  exception when insufficient_privilege then
+    raise notice 'OK: «hecho» no se puede escribir desde la pantalla';
+  end $$;
+  rollback to savepoint s;
+
+  -- Quitar uno de la lista, sí. Y eso no toca el archivo de informes.
+  do $$
+  declare n int; v_antes int;
+  begin
+    select count(*) into v_antes from reports;
+    delete from report_jobs where id = '11600000-0000-4000-8000-000000000002';
+    get diagnostics n = row_count;
+    if n <> 1 then raise exception 'FALLO: el administrador no ha podido quitar de la lista uno que falló'; end if;
+    if (select count(*) from reports) <> v_antes then
+      raise exception 'FALLO: quitar un trabajo de la lista ha tocado el archivo de informes';
+    end if;
+    raise notice 'OK: el administrador quita de la lista el que falló, y el archivo no se toca';
+  end $$;
+  reset role;
+
+  -- Un anónimo, nada.
+  savepoint s;
+  do $$
+  begin
+    set local role anon;
+    if (select count(*) from report_jobs) <> 0 then
+      raise exception 'FALLO: un anónimo ve los informes en segundo plano';
+    end if;
+    raise notice 'OK: un anónimo no ve ninguno';
+  exception when insufficient_privilege then
+    raise notice 'OK: un anónimo no llega a la tabla';
+  end $$;
+  rollback to savepoint s;
+rollback;
+
+\echo ''
+\echo '=== 117. Borrar la cuenta de quien pidió un informe en segundo plano no lo impide la cola ==='
+begin;
+  insert into auth.users (id, email) values
+    ('11700000-0000-4000-8000-000000000001', 'de-paso@test.local')
+  on conflict do nothing;
+  insert into report_jobs (id, kind, period_start, period_end, estado, pedido_por)
+  values ('11700000-0000-4000-8000-0000000000a1', 'diario', '2026-11-19', '2026-11-19', 'hecho',
+          '11700000-0000-4000-8000-000000000001');
+  do $$
+  begin
+    delete from profiles where id = '11700000-0000-4000-8000-000000000001';
+    if (select pedido_por from report_jobs where id = '11700000-0000-4000-8000-0000000000a1') is not null then
+      raise exception 'FALLO: la petición sigue apuntando a una cuenta que ya no existe';
+    end if;
+    raise notice 'OK: la cuenta se borra y la petición se queda sin autor';
+  exception when foreign_key_violation then
+    raise exception 'FALLO: una fila de la cola de informes ha impedido borrar una cuenta';
+  end $$;
+rollback;

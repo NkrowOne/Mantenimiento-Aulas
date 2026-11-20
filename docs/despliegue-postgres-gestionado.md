@@ -192,8 +192,15 @@ Caddyfile; `SUPABASE_SERVICE_ROLE_KEY` ya está entre las variables del servicio
 por el alta de usuarios.
 
 **Si prefieres el worker como servicio aparte** —para reiniciarlo o escalarlo
-sin tocar la PWA—, sigue existiendo `reports-worker/Dockerfile`. Despliégalo
-con:
+sin tocar la PWA—, sigue existiendo `reports-worker/Dockerfile`. **Se construye
+desde la raíz del repositorio**, no desde su carpeta: genera el informe en
+segundo plano con el código de la aplicación (`src/`), que queda fuera de ella.
+En el panel de la plataforma eso es «directorio raíz: la raíz del repositorio» y
+«ruta del Dockerfile: `reports-worker/Dockerfile`»; a mano,
+`docker build -f reports-worker/Dockerfile .`. Con el directorio raíz puesto en
+`reports-worker/`, que es como se desplegaba antes, la construcción falla al
+copiar los ficheros y se queda corriendo la imagen anterior: no se rompe nada,
+pero tampoco se actualiza. Despliégalo con:
 
 ```
 DATABASE_URL=postgresql://postgres:...@HOST:5432/DB

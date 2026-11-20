@@ -52,6 +52,10 @@
 	# tiene WeasyPrint. Solo `/informe/*`: `/generate` sigue siendo interno y con
 	# token, y este endpoint autoriza con la sesión del usuario, no con él.
 	#
+	# Por aquí va también `/informe/generar`: el informe entero, pedido para
+	# que el worker lo genere sin la aplicación abierta. Misma regla: sesión
+	# del usuario —y de administrador—, nunca el token.
+	#
 	# El tope de cuerpo es alto a propósito: un informe con las fotos del periodo
 	# dentro, en `data:`, pesa megas. El worker vuelve a comprobarlo por su
 	# cuenta —no se delega un límite de seguridad al proxy— y ese es el que manda.

@@ -94,10 +94,21 @@ async function leerCuerpo(req: IncomingMessage, res: ServerResponse): Promise<Bu
   return Buffer.concat(trozos)
 }
 
-/** El perfil de quien llama, si su sesión vale y sigue siendo del personal. */
-async function quienPide(
+/**
+ * El perfil de quien llama, si su sesión vale y su rol es de los que pueden.
+ *
+ * Por defecto, cualquiera del personal: es lo que pide convertir a PDF un
+ * documento que ya se tiene delante. Generar el informe es de administrador, y
+ * quien lo exige lo dice (ver `informe-generar.ts`).
+ */
+export async function quienPide(
   autorizacion: string | undefined,
-): Promise<{ ok: true; id: string } | { ok: false; codigo: number; error: string }> {
+  roles: ReadonlySet<string> = ROLES,
+  /** Lo que se le dice a quien tiene sesión pero no el rol. */
+  negativa = 'Esta cuenta no puede generar informes.',
+): Promise<
+  { ok: true; id: string; token: string } | { ok: false; codigo: number; error: string }
+> {
   const conexion = await cliente()
   if (!conexion.ok) {
     return { ok: false, codigo: 503, error: noSeHaPodidoPreguntar(conexion.motivo) }
@@ -132,10 +143,10 @@ async function quienPide(
   // sería «esta cuenta no puede», que es acusar a quien no ha hecho nada.
   if (fallo) return { ok: false, codigo: 503, error: noSeHaPodidoPreguntar(fallo.message) }
 
-  if (!perfil?.active || !ROLES.has(String(perfil.role))) {
-    return { ok: false, codigo: 403, error: 'Esta cuenta no puede generar informes.' }
+  if (!perfil?.active || !roles.has(String(perfil.role))) {
+    return { ok: false, codigo: 403, error: negativa }
   }
-  return { ok: true, id: sesion.id }
+  return { ok: true, id: sesion.id, token: jwt }
 }
 
 /**

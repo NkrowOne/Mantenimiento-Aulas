@@ -1752,13 +1752,58 @@ otras pantallas.
 
 ## 8. Informes
 
-**El informe se hace en la propia aplicación**, en la pestaña **Informes**, que
-es de administrador: un informe es un documento que se firma y se archiva, lleva
-dentro el reparto del trabajo con nombres, y emitirlo con IA hace pasar la clave
-del despliegue por el navegador de quien lo pide. No hay ningún servicio detrás: la pantalla lee los datos, calcula las cifras, le
-pide a Gemini que redacte el análisis y compone el documento. Lo único que hay
-que configurar —y solo si se quiere el análisis redactado— es la clave de
-Gemini, que se pega en esa misma pantalla.
+**El informe se pide en la pestaña Informes**, que es de administrador: un
+informe es un documento que se firma y se archiva, y lleva dentro el reparto del
+trabajo con nombres. Lo único que hay que configurar —y solo si se quiere el
+análisis redactado— es la clave de Gemini, que se pega en esa misma pantalla.
+
+**Se pide y se puede cerrar la aplicación.** Al pulsar **Generar informe** la
+pantalla contesta «Pedido» enseguida: el informe lo genera el servidor, no el
+teléfono. Se puede bloquear el iPhone, cambiar de aplicación o cerrarla. Al
+volver —desde ese dispositivo o desde otro— el informe está en la lista **«En
+segundo plano»**, con un botón **Ver** que lo abre con sus dos archivos listos
+para guardar, y también en el archivo de abajo, como todos.
+
+En esa lista cada informe pedido dice cómo va:
+
+| Lo que dice | Qué significa | Qué se hace |
+|---|---|---|
+| *Leyendo los datos…*, *Calculando las cifras…* | El servidor está en ello | Nada. Se puede cerrar |
+| **Listo** · fecha y hora | Está hecho y archivado, con su PDF | **Ver** lo abre. **Quitar** lo saca de la lista (el informe sigue en el archivo) |
+| **No ha salido:** y el motivo | El servidor no ha podido terminarlo | **Volver a pedirlo** lo pide otra vez con lo mismo —periodo, casillas e instrucciones—, sin rellenar nada |
+| *El servidor ha dejado de dar señales* | Lo reiniciaron a mitad | **Volver a pedirlo** |
+
+Los hechos se quedan un día en la lista y después solo en el archivo. Si no hay
+ninguno, la lista no sale.
+
+**Si el servidor no puede encargarse, el informe se genera en el dispositivo**,
+como se hacía antes, y la pantalla lo dice en ámbar: *«El servidor no puede
+encargarse ahora (…): el informe se genera en este dispositivo. No cierres la
+pantalla hasta que termine.»* Es el único caso en el que hay que quedarse. Pasa
+si el servidor de informes está parado o actualizándose, o si el despliegue
+todavía no lleva esta parte; el informe sale igual.
+
+**Las casillas y las instrucciones no hay que volver a ponerlas.** Tres formas:
+
+- **Solas.** La pantalla se abre con las casillas, el «escrito para» y las
+  instrucciones para la IA de la última vez que se pidió un informe en ese
+  dispositivo. Lo dice arriba —*«Están puestas las casillas y las instrucciones
+  de la última vez»*— y al lado está **Empezar de cero**, que lo deja todo como
+  de fábrica. El botón «Contenido del informe» avisa también, sin desplegarlo:
+  *«9 de 14 secciones · sin IA · con instrucciones»*.
+- **Repetir**, en cada fila del archivo. Pone en el formulario las casillas, las
+  instrucciones y la nota de ESE informe, para generar uno nuevo igual con otras
+  fechas. Sirve en cualquier dispositivo, porque sale de lo que el archivo
+  guarda de cada informe.
+- **Usar unas instrucciones anteriores**, debajo de la caja de «Qué quieres
+  contarle a la IA»: las últimas que se escribieron, sin repetir, cada una con
+  el informe en el que se usó. Un toque y están en la caja.
+
+Lo que **no** vuelve solo es la **nota de la portada**. Se imprime tal cual en
+la primera página de un documento que va al cliente: «Para la reunión del lunes
+16» no puede salir en el informe del 23 porque nadie la quitó. Vuelve con
+**Repetir**, que es pedirla. El periodo tampoco se recuerda: el mismo informe
+es, casi siempre, de otros días.
 
 **De cada informe salen dos archivos, sueltos y sin comprimir:** el informe en
 PDF y un Excel con el almacén de esos días. Se guardan los dos de una vez o de
@@ -1809,17 +1854,18 @@ Se elige:
 | **En qué fijarse** | Una instrucción libre para la redacción: «céntrate en el edificio H». No cambia ninguna cifra |
 | **Nota en portada** | Un texto que se imprime tal cual bajo el título. No pasa por la IA |
 
-Al pulsar **Generar**, la pantalla va diciendo por dónde va —leyendo los datos,
-redactando el análisis, componiendo el documento, terminando el Excel— y lleva
-la pantalla hasta el resultado: el informe entero, a la vista y a escala, también
-en un teléfono. Con IA suele tardar entre veinte segundos y un minuto; sin ella,
-unos segundos.
+Al pulsar **Generar**, la pantalla dice «Pedido» y va contando por dónde va el
+servidor —leyendo los datos, redactando el análisis, componiendo el documento—.
+Si se deja abierta, lleva sola hasta el resultado en cuanto termina: el informe
+entero, a la vista y a escala, también en un teléfono. Si se cierra, está al
+volver. Con IA suele tardar entre veinte segundos y un minuto; sin ella, unos
+segundos.
 
-**El PDF se convierte solo.** En cuanto el informe está hecho, se manda al
-servidor, que lo convierte con WeasyPrint y lo devuelve; no hay que pedirlo con
-un botón. Mientras tanto los botones están en su sitio y apagados, y la pantalla
-dice que está convirtiendo. El Excel se arma en el propio navegador mientras se
-redacta el análisis.
+**El PDF viene hecho.** El servidor lo deja guardado junto al informe, así que
+al abrirlo no hay que esperar a ningún conversor, y lo mismo al pedir el PDF de
+un informe del archivo que ya se convirtió alguna vez. El Excel se arma en el
+propio navegador al abrir el informe: son unos segundos. Mientras tanto los
+botones están en su sitio y apagados.
 
 Desde ahí salen tres botones:
 

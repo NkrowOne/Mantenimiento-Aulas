@@ -28,6 +28,14 @@
  * tiene por qué esperar— y, si falla, el informe sale igual y se dice por qué
  * no hay libro: se puede volver a pedir desde el archivo en cuanto vuelva la
  * conexión, porque se rehace de los movimientos, que no cambian.
+ *
+ * ESTE MISMO CÓDIGO CORRE EN DOS SITIOS. En el navegador, como siempre. Y en el
+ * servidor de informes, que es lo que permite pedir un informe y cerrar la
+ * aplicación: el servidor lo termina solo y lo deja en el archivo (ver
+ * `src/servidor/informe.ts` y `enElServidor.ts`). No hay una segunda plantilla
+ * ni un segundo análisis que mantener a la par —eso ya se probó, y a los dos
+ * meses eran dos informes distintos—: lo poco que cambia de un sitio a otro
+ * entra por `DondeCorre`.
  */
 
 import { supabase } from '@/lib/supabase'
@@ -40,6 +48,7 @@ import { lecturaCalculada, senales } from './analisis'
 import { configurarIA, redactar, separarConIA } from './ia'
 import { aplicarSeparacion, cierresDelRayo, separarTodos } from './cierres'
 import { claveDeGemini } from './clave'
+import type { ReductorDeFotos } from './datos'
 import { leerOpciones, tiene } from './opciones'
 import { renderReport } from './plantilla'
 import { prepararExcelDelPeriodo } from './almacenDelPeriodo'
@@ -163,9 +172,29 @@ async function solicitante(): Promise<{ id: string | null; nombre: string | unde
   }
 }
 
+/**
+ * Lo que cambia según dónde se esté generando. En el navegador, nada de esto.
+ */
+export interface DondeCorre {
+  /**
+   * Sin el Excel del almacén. El servidor no tiene a quién dárselo: el libro no
+   * se archiva —se rehace de los movimientos cuando alguien lo pide—, así que
+   * allí serían una docena de consultas para tirar el resultado.
+   */
+  sinExcel?: boolean
+  /** Con qué se encogen las fotos donde no hay un lienzo en el que pintarlas. */
+  reducirFoto?: ReductorDeFotos
+  /**
+   * La clave de Gemini del dispositivo que lo pide, si tiene una. En el
+   * navegador se lee de su almacenamiento; al servidor le llega con la petición.
+   */
+  claveDelDispositivo?: string
+}
+
 export async function generarInforme(
   eleccion: Eleccion,
   avisar: Avisar = () => undefined,
+  en: DondeCorre = {},
 ): Promise<InformeGenerado> {
   // Por `construirPeticion` y no leyendo la elección a pelo: es la pieza que
   // decide qué viaja y qué no —un enfoque en blanco no es una instrucción, una
@@ -179,6 +208,7 @@ export async function generarInforme(
       eleccion.rango,
       (leyendo) => avisar('datos', leyendo),
       tiene(opciones, 'fotos'),
+      ...(en.reducirFoto ? [en.reducirFoto] : []),
     ),
     solicitante(),
   ])
@@ -197,17 +227,16 @@ export async function generarInforme(
    * recoge al final. Nunca lanza hacia fuera: un libro que no sale es un aviso
    * en la pantalla, no un informe perdido.
    */
-  const libro: Promise<{ excel: Fichero | null; motivo: string | null }> = prepararExcelDelPeriodo(
-    eleccion.rango,
-    {
-      titulo: `Almacén · ${TITULO[eleccion.kind] ?? 'Informe'} · ${nombrePeriodo(eleccion.rango)}`,
-      nombre: nombreDelExcel(eleccion.kind, eleccion.rango),
-      emitido,
-    },
-  ).then(
-    (x) => ({ excel: { nombre: x.nombre, blob: x.blob }, motivo: null }),
-    (err: unknown) => ({ excel: null, motivo: err instanceof Error ? err.message : String(err) }),
-  )
+  const libro: Promise<{ excel: Fichero | null; motivo: string | null }> = en.sinExcel
+    ? Promise.resolve({ excel: null, motivo: null })
+    : prepararExcelDelPeriodo(eleccion.rango, {
+        titulo: `Almacén · ${TITULO[eleccion.kind] ?? 'Informe'} · ${nombrePeriodo(eleccion.rango)}`,
+        nombre: nombreDelExcel(eleccion.kind, eleccion.rango),
+        emitido,
+      }).then(
+        (x) => ({ excel: { nombre: x.nombre, blob: x.blob }, motivo: null }),
+        (err: unknown) => ({ excel: null, motivo: err instanceof Error ? err.message : String(err) }),
+      )
 
   avisar('analisis')
   // Si la sección de tiempos está desmarcada, el análisis tampoco los cuenta:
@@ -227,7 +256,9 @@ export async function generarInforme(
   let separacion: ReturnType<typeof separarConIA> | null = null
 
   if (opciones.ia) {
-    const encontrada = await claveDeGemini()
+    const encontrada = await (en.claveDelDispositivo === undefined
+      ? claveDeGemini()
+      : claveDeGemini(en.claveDelDispositivo))
     const cfg = encontrada
       ? configurarIA({
           clave: encontrada.clave,
@@ -273,7 +304,7 @@ export async function generarInforme(
     ...(quienPide.nombre ? { solicitante: quienPide.nombre } : {}),
   })
 
-  avisar('almacen')
+  if (!en.sinExcel) avisar('almacen')
   const { excel, motivo: motivoExcel } = await libro
   if (motivoExcel) avisar('almacen', `sin Excel (${motivoExcel}): el informe sigue`, true)
 

@@ -16,6 +16,11 @@
  * pestaña se abriera a otro rol, el informe le saldría con el análisis calculado
  * en vez de reventar.
  *
+ * Cuando el informe lo genera el servidor —`enElServidor.ts`— la del despliegue
+ * la lee él mismo, con la sesión de quien lo pide, por esta misma función. La
+ * del dispositivo no puede leerla: le llega con la petición, solo si no hay
+ * otra, y entra por el parámetro de `claveDeGemini`. No la guarda.
+ *
  * Aquí no hay variables de entorno, ni las va a haber. Ese era exactamente el
  * problema: `GEMINI_API_KEY` declarada vacía «por si acaso» en el compose pisaba
  * la clave que sí estaba guardada, y el registro decía «sin clave» mientras la
@@ -63,7 +68,14 @@ export function guardarClaveDelDispositivo(clave: string): void {
  * mirar en el dispositivo, y si tampoco hay, el informe sale con el análisis
  * calculado, que es un informe completo.
  */
-export async function claveDeGemini(): Promise<ClaveEncontrada | null> {
+export async function claveDeGemini(
+  /*
+   * La del dispositivo, cuando quien pregunta no es el dispositivo. El informe
+   * que genera el servidor no tiene `localStorage` en el que mirar: la clave
+   * local, si la hay, viaja con la petición y entra por aquí.
+   */
+  delDispositivo: string = claveDelDispositivo(),
+): Promise<ClaveEncontrada | null> {
   try {
     // Con plazo, como todo lo demás del informe: si `app_config` no contesta, se
     // usa la del dispositivo o sale el análisis calculado. Lo que no puede es
@@ -75,6 +87,6 @@ export async function claveDeGemini(): Promise<ClaveEncontrada | null> {
     // La función puede no estar, o no contestar: se sigue por el otro camino.
   }
 
-  const local = claveDelDispositivo()
+  const local = delDispositivo.trim()
   return local ? { clave: local, origen: 'dispositivo' } : null
 }

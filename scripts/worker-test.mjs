@@ -16,7 +16,18 @@ const SESIONES = {
   bueno: { id: '11111111-1111-4111-8111-111111111111', role: 'tecnico', active: true },
   debaja: { id: '22222222-2222-4222-8222-222222222222', role: 'tecnico', active: false },
   visita: { id: '33333333-3333-4333-8333-333333333333', role: 'none', active: true },
+  // Generar un informe es de administrador; convertirlo a PDF, de cualquiera
+  // del personal. Hacen falta los dos para comprobar que no se confunden.
+  jefa: { id: '44444444-4444-4444-8444-444444444444', role: 'admin', active: true },
 }
+/** Las filas de `report_jobs` que el worker va apuntando: lo que la pantalla leería. */
+const trabajos = []
+const cuerpoDe = (req) =>
+  new Promise((resolve) => {
+    const t = []
+    req.on('data', (c) => t.push(c))
+    req.on('end', () => resolve(Buffer.concat(t).toString()))
+  })
 const supabaseFalso = createServer((req, res) => {
   const jwt = (req.headers.authorization ?? '').replace(/^Bearer /, '')
   if (req.url.startsWith('/auth/v1/user')) {
@@ -36,7 +47,35 @@ const supabaseFalso = createServer((req, res) => {
       .end(JSON.stringify(s ? { role: s.role, active: s.active } : null))
     return
   }
-  res.writeHead(404).end('{}')
+  /*
+   * La cuenta de los informes en segundo plano. Lo justo de PostgREST: apuntar
+   * una fila y devolverla, y cambiarla por id. El resto de la base NO está —ni
+   * salas, ni incidencias—, y es a propósito: el informe va a fallar al leer, y
+   * lo que se comprueba es que ese fallo acaba escrito en la fila en vez de
+   * dejarla «en curso» para siempre.
+   */
+  if (req.url.startsWith('/rest/v1/report_jobs')) {
+    void cuerpoDe(req).then((texto) => {
+      if (req.method === 'POST') {
+        const fila = { id: `trabajo-${trabajos.length + 1}`, ...JSON.parse(texto || '{}') }
+        trabajos.push(fila)
+        res.writeHead(201, { 'Content-Type': 'application/json' }).end(JSON.stringify(fila))
+        return
+      }
+      if (req.method === 'PATCH') {
+        const url = decodeURIComponent(req.url)
+        const id = url.match(/[?&]id=eq\.([^&]+)/)?.[1]
+        const varios = url.match(/[?&]id=in\.\(([^)]*)\)/)?.[1]?.split(',')
+        // El barrido filtra por estado y por pulso, no por id: aquí no toca nada.
+        if (id || (varios && !/[?&]estado=/.test(url))) {
+          for (const f of trabajos) if (f.id === id || varios?.includes(f.id)) Object.assign(f, JSON.parse(texto || '{}'))
+        }
+      }
+      res.writeHead(204).end()
+    })
+    return
+  }
+  res.writeHead(404, { 'Content-Type': 'application/json' }).end('{"message":"no existe en esta base de mentira"}')
 })
 await new Promise((r) => supabaseFalso.listen(8098, '127.0.0.1', r))
 
@@ -159,6 +198,94 @@ await check('con sesión buena sale un PDF (o un 502 claro si falta WeasyPrint)'
   if (/[^\x00-\x7f]/.test(dis)) throw new Error('el nombre no es ASCII: ' + dis)
   const bytes = new Uint8Array(await r.arrayBuffer())
   if (String.fromCharCode(...bytes.slice(0, 5)) !== '%PDF-') throw new Error('no empieza por %PDF-')
+})
+
+/*
+ * ── El informe en segundo plano ──
+ * Se pide, se contesta «aceptado» al momento y el worker lo genera después,
+ * con el código de la aplicación. Autoriza con la sesión de quien llama, y de
+ * administrador.
+ */
+const PETICION = {
+  kind: 'semanal',
+  start: '2026-11-16',
+  end: '2026-11-20',
+  params: { secciones: ['resumen', 'analisis'], comparar: true, ia: false, audiencia: 'direccion' },
+}
+const generar = (jwt, cuerpo = PETICION) =>
+  fetch(url + '/informe/generar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(jwt ? { Authorization: 'Bearer ' + jwt } : {}) },
+    body: typeof cuerpo === 'string' ? cuerpo : JSON.stringify(cuerpo),
+  })
+
+await check('generar sin sesión → 401', async () => {
+  const r = await generar(null)
+  if (r.status !== 401) throw new Error('status ' + r.status)
+})
+await check('generar con el token del worker → 401: esta ruta es de personas', async () => {
+  const r = await generar(TOKEN)
+  if (r.status !== 401) throw new Error('status ' + r.status)
+})
+await check('un técnico puede sacar el PDF pero NO generar el informe → 403', async () => {
+  const r = await generar('bueno')
+  if (r.status !== 403) throw new Error('status ' + r.status)
+  if (!(await r.text()).includes('administrador')) throw new Error('no dice por qué')
+})
+await check('una cuenta de administrador dada de baja tampoco → 403', async () => {
+  SESIONES.jefa.active = false
+  const r = await generar('jefa')
+  SESIONES.jefa.active = true
+  if (r.status !== 403) throw new Error('status ' + r.status)
+})
+await check('fechas imposibles → 400, y no se apunta ningún trabajo', async () => {
+  const antes = trabajos.length
+  for (const mal of [{ start: '2026-02-30' }, { start: '2026-11-20', end: '2026-11-16' }, { start: "2026-01-01'; drop table rooms; --" }, { start: '2020-01-01' }]) {
+    const r = await generar('jefa', { ...PETICION, ...mal })
+    if (r.status !== 400) throw new Error(JSON.stringify(mal) + ' → status ' + r.status)
+  }
+  if (trabajos.length !== antes) throw new Error('ha apuntado un trabajo con una petición mala')
+})
+await check('una petición que no es JSON → 400', async () => {
+  const r = await generar('jefa', '{esto no')
+  if (r.status !== 400) throw new Error('status ' + r.status)
+})
+await check('una petición desmedida → 413', async () => {
+  const r = await generar('jefa', JSON.stringify({ ...PETICION, relleno: 'x'.repeat(40_000) }))
+  if (r.status !== 413) throw new Error('status ' + r.status)
+})
+let pedido = null
+await check('petición buena → 202 con su id, sin esperar al informe', async () => {
+  const t0 = Date.now()
+  const r = await generar('jefa', { ...PETICION, clave: 'una-clave-de-gemini-que-no-debe-quedar-escrita' })
+  const c = await r.json()
+  if (r.status !== 202 || c.ok !== true || !c.id) throw new Error(`status ${r.status}: ${JSON.stringify(c)}`)
+  if (Date.now() - t0 > 4000) throw new Error('ha tardado en aceptar: ' + (Date.now() - t0) + ' ms')
+  pedido = trabajos.find((f) => f.id === c.id)
+  if (!pedido) throw new Error('no ha apuntado la fila')
+  if (pedido.pedido_por !== SESIONES.jefa.id) throw new Error('no dice quién lo pidió')
+  if (pedido.period_start !== '2026-11-16' || pedido.params?.audiencia !== 'direccion') throw new Error('no guarda lo que se pidió')
+})
+await check('la clave de Gemini del dispositivo no se guarda en la fila', async () => {
+  if (JSON.stringify(trabajos).includes('una-clave-de-gemini')) throw new Error('la clave está en report_jobs')
+})
+await check('si el informe no puede salir, la fila acaba en «fallido» con su motivo, no «en curso» para siempre', async () => {
+  // Esta base de mentira no tiene salas: la primera lectura falla.
+  for (let i = 0; i < 120; i++) {
+    if (pedido?.estado === 'fallido') {
+      if (!pedido.error || !pedido.terminado_at) throw new Error('fallido sin motivo o sin hora')
+      if (/at .*\.ts:|\/home\/|node_modules/.test(pedido.error)) throw new Error('el motivo lleva una traza: ' + pedido.error)
+      if (pedido.paso !== null) throw new Error('fallido y todavía dice en qué paso va')
+      return
+    }
+    if (pedido?.estado === 'hecho') throw new Error('ha dado por hecho un informe sin datos ni archivo')
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  throw new Error('no termina: ' + JSON.stringify(pedido))
+})
+await check('y el worker sigue en pie después de un informe fallido', async () => {
+  const r = await fetch(url + '/salud')
+  if (r.status !== 200) throw new Error('status ' + r.status)
 })
 
 supabaseFalso.close()
