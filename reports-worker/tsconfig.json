@@ -1,7 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2023"],
+    // DOM, por el código de la aplicación que este servidor carga para generar
+    // el informe: está escrito para el navegador y nombra `window`, `document`
+    // o `FileReader` detrás de un `typeof`. Aquí no existen, y no se usan.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
@@ -10,7 +13,13 @@
     "noUnusedParameters": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    // El informe en segundo plano se genera con el código de la aplicación
+    // (`../src/servidor/informe.ts`), y ese código se importa a sí mismo con
+    // `@/…`. Sin esto, `tsx` —que es con lo que se arranca en desarrollo y en
+    // las pruebas— no sabría a qué carpeta se refiere.
+    "baseUrl": ".",
+    "paths": { "@/*": ["../src/*"] }
   },
   "include": ["src"]
 }

@@ -332,7 +332,15 @@ npm run build
 ### Generar un informe
 
 Desde la pantalla de Informes de la propia aplicación, con `npm run dev`
-apuntando a una base con datos. No hace falta levantar nada más.
+apuntando a una base con datos. No hace falta levantar nada más: en desarrollo
+no hay servidor de informes detrás de `/informe/*`, la pantalla lo nota y
+genera el informe en el navegador.
+
+Para probar la generación en segundo plano hace falta el worker en marcha
+(`cd reports-worker && npm start`, con `SUPABASE_URL` y
+`SUPABASE_SERVICE_ROLE_KEY`) y un proxy que le lleve `/informe/*`, que es lo que
+hacen los dos Caddyfile. `npm run worker:test` ejercita la ruta sin nada de eso,
+contra un Supabase de mentira.
 
 El worker sigue sabiendo emitirlo por línea de órdenes, que es lo cómodo para
 iterar la plantilla contra un volcado real sin abrir un navegador:
@@ -377,6 +385,8 @@ npm run informe:ia
 | Exportar el inventario y el almacén, con vista previa | ✅ se ve antes de descargar, una pestaña por hoja; Excel con todo y PDF hecho en el servidor, como la hoja de las aulas y el informe. El del almacén lleva las existencias con cuántas hay de cada estado (nuevas, usadas, reacondicionadas, averiadas, sin estado) y cómo se cuenta cada artículo, los movimientos y las unidades con n.º de serie |
 | Inventario de una sala o de un edificio en PDF | ✅ marca, modelo, serie y las fechas de alta, cambio y baja; se imprime desde el navegador y avisa —en el papel— cuando la hoja se ha hecho sin servidor |
 | Informes desde la propia aplicación | ✅ dos archivos por informe, sin comprimir: el PDF y el Excel del almacén del periodo (stock al abrir y al cerrar, movimientos con su saldo, consumo por aula y stock de hoy). Documento revisado con WeasyPrint y en un navegador real; se archiva en HTML autocontenido |
+| Informes en segundo plano | ✅ se pide y se cierra la aplicación: lo genera el servidor con el mismo código y la sesión de quien lo pide, y queda en el archivo con su PDF. Si el servidor no puede, se genera en el navegador. Probado de punta a punta con el worker real contra una API simulada; **sin probar contra el despliegue real** |
+| Reciclar casillas e instrucciones | ✅ las de la última vez, las de cualquier informe del archivo («Repetir») y las instrucciones anteriores a un toque |
 | Worker de informes PDF (camino antiguo, ya opcional) | ✅ PDF real generado y revisado |
 | Análisis con IA (Gemini, con razonamiento) | ✅ probado contra un servidor de mentira; degrada a análisis calculado |
 | Buckets de Storage y sus políticas | ✅ 3 pruebas de RLS propias |
@@ -569,16 +579,59 @@ es una afirmación falsa en un papel que se firma.
 
 ## Informes
 
-**El informe se arma en la propia aplicación**, en una pestaña de administrador:
-es un documento que se firma y se archiva, lleva dentro el reparto del trabajo
-con nombres, y emitirlo con IA hace pasar la clave del despliegue por el
-navegador de quien lo pide. Se elige periodo, secciones, para quién está escrito
-y si el análisis lo redacta la IA; la pantalla lee los
-datos con la sesión de quien lo pide, calcula las cifras, le pide a Gemini la
-redacción y compone el documento. No hay un servicio detrás que pueda estar
-caído, ni una cola de la que nadie se entera, ni un token que sincronizar: lo
-único que se configura —y solo si se quiere el análisis redactado— es **la clave
-de Gemini**, y se pega desde la propia pantalla.
+**El informe se pide desde una pestaña de administrador**: es un documento que
+se firma y se archiva, y lleva dentro el reparto del trabajo con nombres. Se
+elige periodo, secciones, para quién está escrito y si el análisis lo redacta la
+IA. Lo único que se configura —y solo si se quiere el análisis redactado— es
+**la clave de Gemini**, y se pega desde la propia pantalla.
+
+**Se pide y se cierra la aplicación.** El informe lo genera el servidor de
+informes —el mismo que convierte el documento a PDF—, así que no hace falta
+dejar la pantalla abierta ni el teléfono desbloqueado: se pulsa «Generar», la
+pantalla dice «Pedido» en décimas de segundo, y al volver el informe está en la
+lista **«En segundo plano»** y en el archivo, con su PDF hecho. Antes se armaba
+solo en el navegador, y un iPhone congela el navegador en cuanto deja de estar
+delante: con la IA redactando era hasta un minuto mirando la pantalla sin tocar
+nada, y bloquear el teléfono era quedarse sin informe.
+
+- `POST /informe/generar` (la ruta `/informe/*` que el proxy ya publicaba para
+  el PDF) valida la sesión, exige rol de administrador, apunta una fila en
+  **`report_jobs`** y contesta `202`. El informe se hace después, en ese proceso.
+- **Se genera con el código de la aplicación, no con una copia.**
+  `src/servidor/informe.ts` llama a la misma `generarInforme` que el botón; el
+  servidor la carga empaquetada (ver los dos `Dockerfile`). El worker ya tuvo
+  su propia plantilla y su propio análisis, y a los dos meses eran dos informes
+  distintos; el del servidor y el del navegador son ahora el mismo por
+  construcción.
+- **Con los permisos de quien lo pide.** Las lecturas van con SU sesión, no con
+  la clave de servicio: el informe ve lo que esa persona vería, y la fila del
+  archivo la firma ella. La clave de servicio solo comprueba la sesión y lleva
+  la cuenta del trabajo, que la pantalla no puede escribir.
+- La pantalla lee `report_jobs` cada dos segundos **solo mientras hay algo
+  haciéndose**: dice por qué paso va, y si no sale dice por qué y ofrece
+  «Volver a pedirlo» —un toque: la fila guarda lo que se pidió— o «Generarlo
+  aquí».
+- Si reinician el servidor a mitad, el trabajo se pierde y su fila se queda sin
+  pulso (`latido_at`); el propio servidor la da por fallida al minuto y medio.
+  No se reintenta solo: haría falta guardar la sesión de la persona.
+
+**Y si el servidor no puede, el informe se arma en el navegador**, como hasta
+ahora: la pantalla lee los datos, calcula las cifras, le pide a Gemini la
+redacción y compone el documento. Pasa solo —un despliegue sin el servidor de
+informes, sin actualizar, o sin la migración de `report_jobs` contesta que no—
+y se avisa de que entonces sí hay que dejar la pantalla abierta. Nadie se queda
+sin informe por una pieza que antes no existía.
+
+**Las casillas y las instrucciones se reciclan.** Quien pide el informe de la
+semana pide casi siempre el mismo. La pantalla arranca con las casillas y las
+instrucciones para la IA **de la última vez** (se guardan en el dispositivo);
+cada fila del archivo tiene **«Repetir»**, que devuelve al formulario las suyas
+—salen de `reports.params`, así que sirven en cualquier dispositivo—; y las
+**instrucciones anteriores** están a un toque bajo la caja, sin repetir. Lo que
+NO vuelve solo es la nota de la portada: se imprime tal cual en la primera
+página de un documento que va al cliente, y con las opciones plegadas no se ve.
+Vuelve con «Repetir», que es pedirla. Con algo reciclado puesto, el formulario
+lo dice arriba y ofrece «Empezar de cero».
 
 **Hay dos documentos, no dos tonos.** «Escrito para» elige la audiencia.
 *Equipo técnico* es el parte del servicio: después del titular, lo que hay que
@@ -628,10 +681,14 @@ se comprimen. El Excel no se archiva: se rehace de los movimientos, que no se
 editan ni se borran, así que el de un periodo cerrado sale igual se pida cuando
 se pida, y cada fila del archivo lleva su botón.
 
-**El PDF lo convierte el servidor, y solo.** En cuanto el informe está hecho se
+**El PDF lo hace el servidor, y queda guardado.** Cuando el servidor genera el
+informe deja el PDF al lado del documento, en el mismo sitio del archivo y con
+otra extensión; al recogerlo, o al pedir el PDF de un informe antiguo, se baja
+hecho en vez de esperar al conversor. Si el informe se armó en el navegador, se
 manda a `POST /informe/pdf` —WeasyPrint, con la sesión de quien lo pide— sin
-esperar a un botón; si el servidor no está, se cae al diálogo de imprimir del
-navegador, que también da un PDF. El documento está maquetado para A4 con
+esperar a un botón, y el resultado se guarda igual para el siguiente; si el
+servidor no está, se cae al diálogo de imprimir del navegador, que también da
+un PDF. El documento está maquetado para A4 con
 tablas y cajas simples, sin Flex ni Grid, porque lo componen dos motores y
 tiene que salir igual de los dos. Se archiva en Storage tal cual: HTML
 autocontenido, con los gráficos dentro como SVG y sin una sola petición a la
@@ -702,11 +759,13 @@ administrador ponga la suya en su dispositivo.
 
 ### La cadena
 
-La cadena es **API → análisis → ECharts a SVG → HTML → impresión del navegador →
-Storage**, entera dentro de la aplicación. Los gráficos se renderizan a cadena
-SVG y se incrustan en el documento, así que el HTML no ejecuta JavaScript ni
-pide nada a la red: se archiva tal cual, se abre años después tal cual, y el PDF
-sale del propio navegador.
+La cadena es **API → análisis → ECharts a SVG → HTML → Storage → PDF**, y es un
+solo código que corre en dos sitios: en el servidor de informes cuando se pide
+en segundo plano, y en el navegador cuando el servidor no puede. Los gráficos
+se renderizan a cadena SVG y se incrustan en el documento, así que el HTML no
+ejecuta JavaScript ni pide nada a la red: se archiva tal cual, se abre años
+después tal cual, y de él sale el PDF —con WeasyPrint en el servidor, o con el
+diálogo de imprimir del navegador si no lo hay—.
 
 Antes esa cadena empezaba en Postgres con el rol de servicio y terminaba en
 WeasyPrint dentro de un contenedor aparte, despertado por `pg_cron` a través de
@@ -716,6 +775,13 @@ pantalla de diagnóstico solo para averiguar cuál de las seis estaba rota. Ese
 camino sigue existiendo para quien tenga el worker desplegado (`request_report`,
 `enviar_informe` y el cron del viernes siguen ahí), pero ya no hace falta para
 emitir un informe.
+
+El informe en segundo plano vuelve a pasar por ese contenedor, y no trae de
+vuelta aquel problema, por tres cosas: no hay `pg_net` ni token que alinear —la
+pantalla llama por la ruta que ya usaba para el PDF, con la sesión de la
+persona—; lo que pasa queda escrito en `report_jobs`, a la vista en la propia
+pantalla, y no en una cola que nadie mira; y si falla cualquier pieza, el
+informe se genera en el navegador sin que nadie tenga que averiguar cuál.
 
 Los gráficos usan una paleta **validada**, no elegida a ojo: pasa las seis
 comprobaciones de contraste, croma y separación bajo daltonismo en ambos temas —y
@@ -746,7 +812,9 @@ src/features/     pantallas por área funcional
 supabase/         migraciones, harness de pruebas y seed generado
 src/integrations/ puerto de tickets externos (ServiceNow en el futuro)
 scripts/          importador del Excel y verificación de base de datos
-reports-worker/   informes PDF y alta de usuarios, con su Dockerfile
+src/servidor/     lo que el servidor de informes carga de la aplicación
+reports-worker/   servidor de informes (PDF y generación en segundo plano) y
+                  alta de usuarios; su Dockerfile se construye desde la raíz
 Caddyfile         TLS por DNS-01, PWA y proxy de API en un solo origen
 docker-compose.yml  Supabase self-hosted, Caddy y worker
 ```

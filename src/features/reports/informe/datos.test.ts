@@ -6,6 +6,7 @@ import {
   type FilaRevision,
   type FilaSala,
   type FilasDelPeriodo,
+  comoDataUrl,
   contadores,
   materiales,
   ordenadoresDeRepuesto,
@@ -695,5 +696,35 @@ describe('los ordenadores de repuesto del informe', () => {
 
     await expect(ordenadoresDeRepuesto()).resolves.toBe(0)
     expect(aLaTabla()).toEqual([])
+  })
+})
+
+/**
+ * El informe también se genera en el servidor, con este mismo código, y allí no
+ * hay `FileReader`. Las pruebas corren en Node, que es justo ese caso: si la
+ * foto no se convierte bien aquí, en el servidor los informes saldrían sin
+ * fotos y sin un solo error.
+ */
+describe('la foto, metida en el documento donde no hay FileReader', () => {
+  it('sale como `data:` con su tipo y sus bytes exactos', async () => {
+    expect(typeof FileReader).toBe('undefined')
+    const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70])
+    const dato = await comoDataUrl(new Blob([bytes], { type: 'image/jpeg' }))
+    expect(dato.startsWith('data:image/jpeg;base64,')).toBe(true)
+    expect([...Buffer.from(dato.split(',')[1] ?? '', 'base64')]).toEqual([...bytes])
+  })
+
+  it('una foto de varios cientos de KB no revienta la conversión', async () => {
+    // De una sola vez, `String.fromCharCode(...bytes)` desborda la pila con
+    // este tamaño. Por eso va a trozos.
+    const grande = new Uint8Array(700_000).map((_, i) => i % 251)
+    const dato = await comoDataUrl(new Blob([grande], { type: 'image/jpeg' }))
+    const vuelta = Buffer.from(dato.split(',')[1] ?? '', 'base64')
+    expect(vuelta.length).toBe(grande.length)
+    expect(vuelta[699_999]).toBe(699_999 % 251)
+  })
+
+  it('sin tipo, se da por JPEG, que es lo que guarda la aplicación', async () => {
+    expect((await comoDataUrl(new Blob([new Uint8Array([1, 2, 3])]))).startsWith('data:image/jpeg;base64,')).toBe(true)
   })
 })

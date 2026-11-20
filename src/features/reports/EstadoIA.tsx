@@ -58,8 +58,13 @@ export function useEstadoIA(): { data: Estado | null | undefined } {
  *    usan los administradores desde cualquier dispositivo. Requiere que esté
  *    aplicada la migración que crea `ia_clave()`.
  *  · **En este dispositivo**. Para quien prefiera no dejar ninguna clave en la
- *    base, o para el rato en que la migración todavía no ha llegado. No sale de
- *    este navegador y no la ve nadie más.
+ *    base, o para el rato en que la migración todavía no ha llegado. Se guarda
+ *    solo en este navegador y no la ve nadie más. Lo que ya no se puede decir
+ *    es que «no sale» de él: cuando el informe lo genera el servidor —que es lo
+ *    normal, para poder cerrar la aplicación—, la clave viaja con la petición,
+ *    el servidor la usa para esa redacción y no la guarda ni la escribe en
+ *    ningún registro. Y solo viaja si es la que se va a usar: con una clave en
+ *    el despliegue, la del dispositivo se queda donde está.
  *
  * La clave guardada en el despliegue no se enseña nunca, ni recortada:
  * `ia_estado` devuelve un booleano y el nombre del modelo, y el campo de texto
@@ -290,7 +295,7 @@ export function EstadoIA(): React.ReactElement {
               disabled={!clave.trim()}
               onClick={guardarAquí}
               className="key key-quiet min-h-11 px-4 text-sm"
-              title="No sale de este navegador"
+              title="Se guarda solo en este navegador, no en la base"
             >
               Guardar solo aquí
             </button>
@@ -331,8 +336,9 @@ export function EstadoIA(): React.ReactElement {
 
           <p className="mt-3 text-xs text-muted">
             «Guardar para todo el equipo» la deja en la configuración del despliegue y la usa
-            cualquier administrador desde cualquier dispositivo. «Guardar solo aquí» no sale de
-            este navegador.
+            cualquier administrador desde cualquier dispositivo. «Guardar solo aquí» la guarda
+            solo en este navegador: no queda en la base. Viaja con cada informe que se pide —el
+            servidor la usa para redactarlo y no la guarda—.
           </p>
         </div>
       )}

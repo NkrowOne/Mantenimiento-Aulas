@@ -129,11 +129,13 @@ export async function deQuienEsLaSesion(
  * Si ninguna llega, se devuelve el motivo de la primera, que es la que quien
  * despliega creía que valía y por tanto la que hay que mirar.
  */
-let recordado: { admin: SupabaseClient; de: string } | null = null
+let recordado: { admin: SupabaseClient; de: string; url: string } | null = null
 
 export async function apiQueResponde(
   crear: (url: string) => SupabaseClient,
-): Promise<{ ok: true; admin: SupabaseClient; de: string } | { ok: false; motivo: string }> {
+): Promise<
+  { ok: true; admin: SupabaseClient; de: string; url: string } | { ok: false; motivo: string }
+> {
   if (recordado) return { ok: true, ...recordado }
 
   const candidatas = urlsDeLaApi()
@@ -150,7 +152,7 @@ export async function apiQueResponde(
       // Cualquier respuesta vale: lo que se comprueba es que HAY alguien, no
       // que le guste la pregunta. Un 401 de Kong también dice «estoy aquí».
       if (res.status > 0) {
-        recordado = { admin: crear(c.url), de: c.de }
+        recordado = { admin: crear(c.url), de: c.de, url: c.url }
         if (c.de !== candidatas[0]!.de) {
           console.warn(
             `[api] ${candidatas[0]!.de} (${candidatas[0]!.url}) no responde; ` +

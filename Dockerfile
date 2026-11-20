@@ -88,8 +88,15 @@ RUN npx esbuild reports-worker/src/migraciones.ts \
 # un despliegue de un solo servicio genere informes sin desplegar nada más: el
 # arranque lo lanza en su propio puerto si hay WORKER_TOKEN, y quien prefiera
 # el worker como servicio aparte sigue teniendo reports-worker/Dockerfile.
+#
+# Lleva dentro, además, el código del informe de la aplicación (`src/`): con él
+# genera el informe en segundo plano, sin la pantalla abierta, y sale idéntico
+# al del navegador porque es el mismo. Ese código nombra `import.meta` —es de
+# Vite— detrás de una guarda; el aviso de esbuild por eso se calla, que si no
+# parece un fallo en el registro de cada build.
 RUN npx esbuild reports-worker/src/server.ts \
       --bundle --platform=node --target=node20 --format=cjs \
+      --log-override:empty-import-meta=silent \
       --outfile=/alta/informes.cjs
 
 # ── Servicio ─────────────────────────────────────────────────────────────

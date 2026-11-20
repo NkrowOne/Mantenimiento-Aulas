@@ -100,8 +100,11 @@ const TOPE_BYTES_FOTOS = 8 * 1024 * 1024
  * Medido en Chromium sobre fotos de aula: 226 KB de media a 1600 px, 44 KB a
  * 700 px. Cuarenta fotos pasan de unos 12 MB de documento a 2,3 MB.
  */
-const FOTO_LADO_LARGO = 700
+export const FOTO_LADO_LARGO = 700
 const FOTO_MB = 0.06
+
+/** Lo que deja una foto al tamaño del documento. Nunca lanza: si no puede, la devuelve como vino. */
+export type ReductorDeFotos = (foto: Blob) => Promise<Blob>
 
 const num = (v: unknown): number => Number(v ?? 0)
 
@@ -814,6 +817,9 @@ export async function cargarDatos(
   /* Las fotos solo se bajan si van a salir: son dos docenas de descargas y unos
      megabytes, y un informe que no las lleva no tiene por qué pagarlas. */
   conFotos = false,
+  /* Con qué se encoge cada foto. En el navegador, con lo de siempre; el
+     servidor trae lo suyo, porque allí no hay lienzo en el que pintar. */
+  reducirFoto: ReductorDeFotos = paraElDocumento,
 ): Promise<ReportData> {
   const anterior = periodoAnterior(rango)
 
@@ -911,6 +917,7 @@ export async function cargarDatos(
       ahoraFilas.cerradas,
       visitas,
       deSala,
+      reducirFoto,
     )
     fotos = recogidas.fotos
     fotosTotal = recogidas.total
@@ -1474,6 +1481,7 @@ async function fotosDelPeriodo(
   cierres: FilaCierre[],
   visitas: FilaRevision[],
   deSala: Map<string, FilaSala>,
+  reducir: ReductorDeFotos = paraElDocumento,
 ): Promise<{ fotos: ReportData['fotos']; total: number }> {
   /*
    * Una incidencia puede estar en las dos listas —abierta y cerrada dentro del
@@ -1597,7 +1605,9 @@ async function fotosDelPeriodo(
       continue
     }
 
-    const dato = await comoDataUrl(await paraElDocumento(blob))
+    // El reductor que venga de fuera no puede tumbar el informe: si falla, la
+    // foto va como está, igual que hace el de aquí.
+    const dato = await comoDataUrl(await reducir(blob).catch(() => blob))
     if (!dato) continue
     bytes += dato.length
     fotos.push({
@@ -1657,6 +1667,10 @@ async function adjuntosDe(tipo: 'incident' | 'inspection', ids: string[]): Promi
  * que una pequeña y mejor que ninguna.
  */
 async function paraElDocumento(foto: Blob): Promise<Blob> {
+  // Sin lienzo no hay con qué reescalar. No se llega aquí en el servidor —trae
+  // su propio reductor—, pero si se llegara, la librería se quedaría esperando
+  // a un `Image` que no existe en vez de fallar.
+  if (typeof document === 'undefined') return foto
   try {
     const { default: comprimir } = await import('browser-image-compression')
     const tipo = foto.type || 'image/jpeg'
@@ -1672,8 +1686,27 @@ async function paraElDocumento(foto: Blob): Promise<Blob> {
   }
 }
 
-/** El binario metido en el documento. `FileReader` porque `btoa` revienta con 200 KB. */
-function comoDataUrl(blob: Blob): Promise<string> {
+/**
+ * El binario metido en el documento.
+ *
+ * `FileReader` porque `btoa` de una sola vez revienta con 200 KB. Donde no hay
+ * `FileReader` —el servidor de informes, que corre este mismo código— se hace
+ * a trozos, que es lo que evita ese mismo reventón.
+ */
+export async function comoDataUrl(blob: Blob): Promise<string> {
+  if (typeof FileReader === 'undefined') {
+    try {
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      let binario = ''
+      const TROZO = 0x8000
+      for (let i = 0; i < bytes.length; i += TROZO) {
+        binario += String.fromCharCode(...bytes.subarray(i, i + TROZO))
+      }
+      return `data:${blob.type || 'image/jpeg'};base64,${btoa(binario)}`
+    } catch {
+      return ''
+    }
+  }
   return new Promise((resolver) => {
     const lector = new FileReader()
     lector.onload = () => resolver(typeof lector.result === 'string' ? lector.result : '')

@@ -24,6 +24,7 @@ import { canjearAlta, leerCuerpoPequeno } from './alta.js'
 import { altaCodigo } from './alta-codigo.js'
 import { apiQueResponde } from './api.js'
 import { informePdf } from './informe-pdf.js'
+import { informeGenerar, vigilarLosTrabajos } from './informe-generar.js'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type postgres from 'postgres'
 
@@ -290,6 +291,17 @@ const server = createServer((req, res) => {
       return
     }
 
+    /*
+     * El informe entero, generado aquí para que no haga falta tener la
+     * aplicación abierta. Igual que el PDF: sin token de worker, con la sesión
+     * de quien lo pide —y de administrador—. Contesta «aceptado» y sigue
+     * trabajando; por dónde va se lee en `report_jobs`.
+     */
+    if (req.method === 'POST' && req.url?.startsWith('/informe/generar')) {
+      await informeGenerar(req, res)
+      return
+    }
+
     if (req.method !== 'POST' || !req.url?.startsWith('/generate')) {
       res.writeHead(404).end('No encontrado')
       return
@@ -409,4 +421,6 @@ const server = createServer((req, res) => {
 
 if (process.env['NODE_ENV'] !== 'test') {
   server.listen(PORT, () => console.log(`Worker de informes escuchando en :${PORT}`))
+  // Lo que se quedara a medias antes de este arranque se da por perdido.
+  vigilarLosTrabajos()
 }

@@ -195,7 +195,11 @@ services:
 
   # ── Informes ─────────────────────────────────────────────────────────
   reports-worker:
-    build: ./reports-worker
+    # Desde la raíz, no desde su carpeta: genera el informe en segundo plano
+    # con el código de la aplicación (`src/`), que queda fuera de ella.
+    build:
+      context: .
+      dockerfile: reports-worker/Dockerfile
     container_name: aulas-reports
     restart: unless-stopped
     depends_on:

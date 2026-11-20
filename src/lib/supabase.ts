@@ -14,11 +14,25 @@ import { createClient } from '@supabase/supabase-js'
  * de Vite no hace de proxy de nada, y quien despliegue con la API en otro
  * nombre la necesita (y entonces tendrá que añadir CORS en Kong).
  */
-const url =
-  (import.meta.env['VITE_SUPABASE_URL'] as string | undefined) ||
-  (typeof window !== 'undefined' ? window.location.origin : undefined)
+/*
+ * Las variables de compilación, o nada.
+ *
+ * `import.meta.env` lo pone Vite. Fuera de Vite no existe: el servidor de
+ * informes carga este mismo fichero —genera el informe con el código de la
+ * aplicación, para que no haya dos informes distintos— y allí leer una
+ * propiedad de `undefined` tumbaba el proceso al arrancar. Allí tampoco se usa
+ * este cliente: ver `usarCliente`, más abajo.
+ */
+const entorno = ((import.meta as { env?: Record<string, string | undefined> }).env ?? {}) as Record<
+  string,
+  string | undefined
+>
 
-const anonKey = import.meta.env['VITE_SUPABASE_ANON_KEY'] as string | undefined
+const enNavegador = typeof window !== 'undefined'
+
+const url = entorno['VITE_SUPABASE_URL'] || (enNavegador ? window.location.origin : undefined)
+
+const anonKey = entorno['VITE_SUPABASE_ANON_KEY']
 
 /**
  * Configuración que falta, si falta alguna.
@@ -39,7 +53,8 @@ export const configError: string | null =
         .join(' y ')}`
     : null
 
-export const supabase = createClient(
+// `let` y no `const` por una sola razón, que está en `usarCliente`.
+export let supabase = createClient(
   url ?? 'https://configuracion-ausente.invalid',
   anonKey ?? 'sin-clave',
   {
@@ -47,8 +62,31 @@ export const supabase = createClient(
       // La sesión la custodiamos nosotros, cifrada con el PIN del usuario. Si la
       // dejáramos en localStorage en claro, un iPad perdido daría acceso directo.
       persistSession: false,
-      autoRefreshToken: true,
+      // Fuera del navegador no hay sesión que renovar, y el temporizador de
+      // renovación solo serviría para llamar cada medio minuto a un dominio
+      // que no existe.
+      autoRefreshToken: enNavegador,
       detectSessionInUrl: false,
     },
   },
 )
+
+/**
+ * Pone otro cliente en el sitio de este. **Solo lo llama el servidor.**
+ *
+ * El informe se puede generar sin la aplicación abierta: lo hace el servidor
+ * de informes con este mismo código —`src/servidor/informe.ts`—. Allí no hay
+ * una sesión, hay una por cada informe que se está haciendo, y cada una tiene
+ * que leer los datos con los permisos de quien lo pidió. Así que el servidor
+ * deja aquí un cliente que reparte: cada lectura va con la sesión del informe
+ * desde el que se hace.
+ *
+ * Es una costura y no un parámetro porque el cliente lo usan unas cuarenta
+ * consultas repartidas por media docena de ficheros, y pasárselo a todas para
+ * un caso que la aplicación no tiene era cambiar cuarenta firmas por una.
+ *
+ * En el navegador no se llama nunca: el cliente es el de arriba y no cambia.
+ */
+export function usarCliente(otro: typeof supabase): void {
+  supabase = otro
+}
