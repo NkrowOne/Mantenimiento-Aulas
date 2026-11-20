@@ -1760,13 +1760,37 @@ pide a Gemini que redacte el análisis y compone el documento. Lo único que hay
 que configurar —y solo si se quiere el análisis redactado— es la clave de
 Gemini, que se pega en esa misma pantalla.
 
+**De cada informe salen dos archivos, sueltos y sin comprimir:** el informe en
+PDF y un Excel con el almacén de esos días. Se guardan los dos de una vez o de
+uno en uno.
+
+**De qué habla el informe.** De lo que el servicio hace todos los días: los
+partes que entran y los que se resuelven, con qué rapidez se cierran, en qué
+aulas y edificios se ha trabajado, qué material se ha servido y cómo queda el
+almacén. Y abre por lo conseguido, con su cifra; lo que pide una decisión —una
+incidencia de gravedad alta en curso, una lámpara a punto de fundirse, la misma
+pieza tres veces en la misma sala, un artículo por reponer— sale detrás, con la
+suya.
+
+**Las revisiones de aulas no son la vara de medir.** La ronda de revisión se
+hace por campañas —antes del comienzo de curso, en Navidad y en Semana Santa—,
+no todas las semanas. El informe antiguo medía cada semana contra esa ronda: la
+primera cifra eran las revisiones, la entradilla abría con el porcentaje del
+campus revisado y la primera recomendación era «reforzar la ronda», así que una
+semana normal se titulaba «Cero salas revisadas». Ahora, **si en el periodo no
+hubo revisiones, el informe no las nombra**: ni cifra a cero, ni columna vacía,
+ni sección para decir que no hubo ninguna. Y **en la semana de la campaña sí
+salen**, como lo que son: «Puesta a punto: 61 aulas revisadas», la serie en el
+gráfico, la columna por edificio y la lista de cada revisión.
+
 Se elige:
 
 | Qué se elige | Para qué sirve |
 |---|---|
 | **Periodo** | Semana en curso, semana pasada, mes en curso, mes pasado, ayer, o dos fechas cualesquiera. Debajo se lee qué días va a cubrir antes de pedirlo |
-| **Secciones** | Las dieciséis del informe, entre ellas la lista de todas las revisiones hechas y el diario de lo que pasó cada día. «Reparto del trabajo» lleva nombres de personas y por eso hay que marcarla a mano |
-| **Cuánto se tarda en cerrar** | La mediana, la media y las cerradas en menos de 48 h. **Se puede desmarcar**: es una cifra que describe bien y justifica mal, y hay reuniones donde no ayuda |
+| **Secciones** | Las dieciséis del informe, entre ellas el diario de lo que pasó cada día y la lista de las revisiones (que solo se imprime si las hubo). «Reparto del trabajo» lleva nombres de personas y por eso hay que marcarla a mano |
+| **Con qué rapidez se resuelve** | Los cierres repartidos por lo que llevaron —el mismo día, en menos de 48 h, después—, la mediana y cuántos en 48 h. **Se puede desmarcar**: hay reuniones donde ese número no ayuda, y entonces no sale en ninguna parte del informe: ni en su sección, ni en las cifras de cabecera, ni en el titular, ni en el análisis |
+| **Material y almacén** | Lo que se ha servido en el periodo con lo que queda de cada cosa al lado, el almacén de hoy en cuatro líneas y lo que hay que reponer. El detalle va en el Excel |
 | **Cada cierre, con sus días** | Lo contrario: cada cierre en una línea, con la hora a la que se abrió, la hora a la que se cerró, cuánto llevó escrito entero —«24 días y 2 h», no «24,1»— y qué se hizo. Es lo que sirve para justificar por qué una tardó lo que tardó. Van primero las que más tardaron, que son por las que se pregunta |
 | **Fotos del periodo** | Las de las revisiones **y** las de las incidencias, **dentro del propio documento**. No son enlaces: un enlace de Storage caduca en un minuto y el informe se archiva para dentro de un año. Cada una dice de cuándo es —«En la revisión», «Incidencia abierta», «Al resolverla»— y las de una misma incidencia van seguidas, de cómo se encontró a cómo quedó. Entran hasta cuarenta, reducidas al tamaño al que se imprimen —57 mm de ancho, unos 45 KB cada una en vez de 226 KB—, y las que no caben se cuentan al pie. **No salen las retiradas**: cualquiera del equipo puede abrir una foto en la ficha del aula y marcar «Que no salga en el informe» —lo normal es que se haya colado una persona detrás del proyector—. La foto sigue guardada y visible ahí; solo deja de imprimirse, y se puede volver a incluir |
 | **Análisis con IA** | Si se desmarca, el informe sale con el análisis calculado |
@@ -1775,31 +1799,69 @@ Se elige:
 | **Nota en portada** | Un texto que se imprime tal cual bajo el título. No pasa por la IA |
 
 Al pulsar **Generar**, la pantalla va diciendo por dónde va —leyendo los datos,
-redactando el análisis, componiendo el documento— y termina enseñando el informe
-entero en la propia página. Con IA suele tardar entre veinte segundos y un
-minuto; sin ella, unos segundos.
+redactando el análisis, componiendo el documento, terminando el Excel— y lleva
+la pantalla hasta el resultado: el informe entero, a la vista y a escala, también
+en un teléfono. Con IA suele tardar entre veinte segundos y un minuto; sin ella,
+unos segundos.
 
-Desde ahí salen dos botones:
+**El PDF se convierte solo.** En cuanto el informe está hecho, se manda al
+servidor, que lo convierte con WeasyPrint y lo devuelve; no hay que pedirlo con
+un botón. Mientras tanto los botones están en su sitio y apagados, y la pantalla
+dice que está convirtiendo. El Excel se arma en el propio navegador mientras se
+redacta el análisis.
 
-- **Descargar PDF** baja el PDF ya hecho. El documento se manda al servidor, que
-  lo convierte con WeasyPrint —el mismo que hace los PDF de los informes
-  programados— y lo devuelve como fichero: en el iPad se abre la hoja de
-  compartir para guardarlo en Archivos, y en el ordenador cae en la carpeta de
-  descargas. Tarda un par de segundos.
+Desde ahí salen tres botones:
 
-  Si el servidor no puede convertirlo —está actualizándose, o el worker no
-  corre— la pantalla lo dice y cae sola al camino de antes: abre el informe en
-  una pestaña con el diálogo de imprimir, de donde también sale un PDF («Guardar
-  como PDF» en el ordenador; «Compartir → Guardar en Archivos» en el iPad).
-- **Descargar el original** guarda el HTML del que sale ese PDF: un solo fichero
-  que se abre en cualquier navegador, sin conexión y sin nada instalado. Es lo
-  que conviene guardar para archivar; no es el PDF.
+- **Guardar los dos archivos** entrega el PDF y el Excel de una vez, **sueltos**:
+  en el iPhone y el iPad se abre la hoja de compartir con los dos —van a Correo
+  como dos adjuntos y a Archivos como dos documentos— y en el ordenador caen en
+  la carpeta de descargas, uno detrás de otro. No hay zip: un zip no se adjunta
+  a un correo desde el iPhone como dos documentos, sino como un paquete que el
+  otro tiene que saber abrir.
+- **Guardar PDF** y **Guardar Excel**, para quien solo quiere uno.
 
-**El orden del documento.** Primero lo que se lee —las cifras, los gráficos,
-dónde está el trabajo y qué conviene hacer— y después, detrás del corte
-«Detalle del periodo», los listados completos: cada revisión, el diario, cada
-cierre y las fotos. Se consultan, no se leen de seguido: con un periodo largo
-son trescientas filas, y antes se metían entre el análisis y las conclusiones.
+Si el servidor no puede convertir el PDF —está actualizándose, o el worker no
+corre— la pantalla lo dice y ofrece **Preparar el PDF**: vuelve a intentarlo y,
+si sigue sin poder, abre el informe con el diálogo de imprimir, de donde también
+sale un PDF («Guardar como PDF» en el ordenador; «Compartir → Guardar en
+Archivos» en el iPad). Y si el Excel no ha salido —se fue la conexión mientras
+se leía el almacén—, el informe está entero igual y **Preparar el Excel** lo
+vuelve a hacer. Debajo de la vista previa queda **Descargar el original**, que
+guarda el HTML del que sale el PDF.
+
+Los dos archivos se llaman igual salvo el final, para que en una carpeta queden
+uno debajo del otro: `informe-semanal-2026-11-16_2026-11-20.pdf` y
+`informe-semanal-2026-11-16_2026-11-20-almacen.xlsx`.
+
+**El orden del documento.** La primera página se sostiene sola: el titular, las
+cuatro cifras —partes atendidos, resueltos, en menos de 48 h y en seguimiento
+hoy—, el párrafo que las cuenta, de qué son los partes y lo más destacado, con
+un visto en lo conseguido y una flecha en lo que sigue su curso. Detrás, cómo ha
+ido cada día, con qué rapidez se resuelve, dónde se ha trabajado, el material y
+el almacén, y lo que se propone. Y después del corte «Detalle del periodo», los
+listados completos: el diario, cada cierre, las revisiones si las hubo y las
+fotos. Se consultan, no se leen de seguido.
+
+### El Excel del almacén
+
+Es el detalle que no cabe en un papel y que alguien va a querer filtrar y sumar.
+Seis hojas:
+
+| Hoja | Qué contesta |
+|---|---|
+| **Resumen** | De qué periodo es el libro, sus cifras —movimientos, unidades servidas, unidades que han entrado, artículos bajo mínimo— y qué hay en cada hoja. Es el contexto: quien lo abre dentro de seis meses no tiene el informe delante |
+| **Stock del periodo** | Una fila por artículo: lo que había al abrir el periodo, lo que entró, lo que salió, los ajustes y lo que quedaba al cerrarlo. Las columnas cuadran: abrir + entradas − salidas + ajustes = cerrar. Primero lo que se ha movido; en verde, donde ha entrado material; en gris, lo retirado |
+| **Movimientos del periodo** | Cada apunte de esos días, del más antiguo al más reciente, con su hora, su parte, su aula, quién lo hizo y **el saldo que quedaba de ese artículo** después |
+| **Consumo por aula** | Adónde fue el material: una fila por aula y artículo. Lo que salió sin aula va al final, en «Sin aula», para que la hoja sume lo mismo que las salidas |
+| **Stock actual** | Lo que hay **hoy** en el almacén. Es la misma hoja de existencias que saca la pestaña Almacén, con sus estados y sus mínimos |
+| **Unidades con n.º de serie** | Los aparatos con número de serie —los ordenadores de repuesto, entre ellos—: cómo está cada uno y dónde |
+
+**El Excel no se guarda en el archivo, y no hace falta.** El stock de un día
+pasado no está apuntado en ninguna parte: es la suma de los movimientos hasta
+ese día, y los movimientos no se editan ni se borran. Así que el libro de un
+periodo cerrado dice siempre lo mismo se pida cuando se pida, y cada fila del
+archivo lleva su botón **Excel** que lo vuelve a hacer. Lo único que cambia de
+un día para otro es la hoja «Stock actual», que por definición es la de hoy.
 
 El informe queda además **archivado** en la lista de abajo, y cada entrada lleva
 un distintivo con **cómo salió su análisis**:
@@ -1830,9 +1892,11 @@ aparecer:
 | **No se ha podido leer *algo*** | Una de las consultas no ha llegado: sin conexión, o el perfil no es de administrador | Comprueba la conexión y el rol. El informe no se emite a medias a propósito: una cifra corta sin avisar es peor que ninguna |
 | ***algo*: la petición no ha llegado a salir** | La consulta murió antes de tener respuesta. Es red, no permisos: el dispositivo se ha quedado sin cobertura, o el servidor ha cortado la conexión | Vuelve a intentarlo. Si el iPad tiene red y se repite siempre en el mismo punto, mira el registro de Caddy o de Kong |
 | **El análisis ha salido calculado y no redactado por la IA: …** | El informe está bien; lo que ha fallado es la redacción. El motivo va en la misma frase (sin clave, clave sin permiso, cuota agotada) | Si es la clave, se arregla en la tarjeta de arriba de esa misma pantalla |
-| **El informe está hecho, pero no se ha podido guardar…** | El documento existe y se puede imprimir, pero no ha entrado en el archivo. Suele ser que falta la migración `20260821000100_informes_en_el_navegador.sql` | Descárgalo para no perderlo y aplica las migraciones pendientes |
-| **El navegador ha bloqueado la ventana del informe** | «Descargar PDF» abre una pestaña, y el navegador la trata como emergente | Permite las ventanas emergentes de esta dirección, o usa «Descargar el original» |
-| **Un edificio sale con «· archivado» y un guion en «Salas»** | No es un fallo: ese edificio está en la papelera, así que no tiene aulas en la lista de trabajo, pero durante el periodo se trabajó en él y eso se cuenta igual | Nada, salvo que no debiera estar archivado: se restaura desde **Datos → papelera** |
+| **El informe está hecho, pero no se ha podido guardar…** | El documento existe y se puede imprimir, pero no ha entrado en el archivo. Suele ser que falta la migración `20260821000100_informes_en_el_navegador.sql` | Guárdalo para no perderlo y aplica las migraciones pendientes |
+| **El informe está hecho, pero el Excel del almacén no ha salido: …** | El informe está entero; lo que ha fallado es la lectura del almacén, y el motivo va en la misma frase. El Excel se niega a salir a medias a propósito: un libro con la mitad de los movimientos tiene saldos que no cuadran | Pulsa «Preparar el Excel». También se puede pedir más tarde desde el archivo |
+| **El servidor no ha podido preparar el PDF…** | La conversión automática ha fallado: el servidor se está actualizando o el worker no corre | Pulsa «Preparar el PDF»: reintenta y, si sigue sin poder, abre el informe con el diálogo de imprimir |
+| **El navegador ha bloqueado la ventana del informe** | El diálogo de imprimir se abre en una pestaña, y el navegador la trata como emergente | Permite las ventanas emergentes de esta dirección, o usa «Descargar el original» |
+| **Un edificio sale con «· archivado»** | No es un fallo: ese edificio está en la papelera, así que no tiene aulas en la lista de trabajo, pero durante el periodo se trabajó en él y eso se cuenta igual | Nada, salvo que no debiera estar archivado: se restaura desde **Datos → papelera** |
 
 #### Cuando faltan datos de un edificio en el histórico
 

@@ -19,13 +19,34 @@ export type Periodo = Rango
 export interface Contadores {
   revisiones: number
   salasRevisadas: number
+  /** Revisiones que salieron sin ninguna incidencia. Solo dice algo si hubo revisiones. */
+  revisionesSinIncidencias: number
   registros: number
   incidencias: number
   solicitudes: number
   observaciones: number
   gravedadAlta: number
+  /** De las de gravedad alta que entraron en el periodo, las que ya están resueltas. */
+  gravedadAltaResueltas: number
   resueltas: number
+  /** Cierres hechos el mismo día —de Madrid— en que se abrió el parte. */
+  resueltasEnElDia: number
+  /**
+   * Aulas distintas en las que el servicio hizo algo: un parte abierto o
+   * cerrado, o material servido. Las revisiones no cuentan aquí —tienen su
+   * cifra—: esto mide la atención del día a día, que es la que hay todas las
+   * semanas.
+   */
+  salasAtendidas: number
+  /** En cuántos edificios están esas aulas. */
+  edificiosAtendidos: number
   materialConsumido: number
+  /** Artículos distintos del almacén que se han usado. */
+  articulosConsumidos: number
+  /** Aulas distintas a las que ha ido ese material. */
+  salasConMaterial: number
+  /** Unidades que han entrado en el almacén: compras y devoluciones. */
+  materialEntrado: number
 }
 
 /** La foto de hoy. No depende del periodo y por eso se cuenta aparte. */
@@ -34,9 +55,10 @@ export interface Situacion {
   incidenciasAbiertas: number
   estancadas: number
   lamparasAlLimite: number
-  salasSinRevisarHace6Meses: number
-  salasNuncaRevisadas: number
   articulosBajoMinimo: number
+  /** Artículos activos del almacén, y cuántos de ellos tienen existencias hoy. */
+  articulosEnAlmacen: number
+  articulosConExistencias: number
   /** Ordenadores de repuesto disponibles en el almacén, por número de serie. */
   pcsDeRepuesto: number
 }
@@ -62,6 +84,10 @@ export interface ReportData {
     salas: number
     revisadas: number
     abiertas: number
+    /** Partes cerrados en el periodo en aulas de este edificio. */
+    cerradas: number
+    /** Aulas distintas del edificio con un parte abierto o cerrado, o con material servido. */
+    atendidas: number
     pendientes: number
     /**
      * El edificio ya no está en la lista de trabajo, pero en el periodo pasaron
@@ -87,6 +113,12 @@ export interface ReportData {
     medianaDias: number | null
     mediaDias: number | null
     enMenosDe48h: number
+    /**
+     * Los mismos cierres, repartidos por lo que llevaron. Los cuatro tramos no
+     * se pisan y suman `resueltas`: el mismo día de Madrid; otro día pero en
+     * menos de 48 horas; hasta una semana; y más.
+     */
+    tramos: { mismoDia: number; hasta48h: number; hastaUnaSemana: number; mas: number }
   }
   lamparas: Array<{ building: string; room: string; horas: number | null; pct: number }>
   estancadas: Array<{
@@ -97,7 +129,43 @@ export interface ReportData {
     dias: number
     gravedad: string
   }>
-  materiales: Array<{ name: string; unidad: string; consumido: number; incidencias: number }>
+  materiales: Array<{
+    name: string
+    unidad: string
+    consumido: number
+    incidencias: number
+    /**
+     * Lo que queda hoy en el almacén de ese artículo y su mínimo (0 es «sin
+     * mínimo»). `null` cuando no se sabe: un artículo retirado no está en la
+     * vista de existencias.
+     */
+    quedan: number | null
+    minimo: number
+  }>
+
+  /**
+   * El almacén, visto desde el periodo: lo que se movió y cómo queda hoy.
+   *
+   * Es el resumen que va en el documento. El detalle —cada movimiento con su
+   * saldo, el stock al abrir y al cerrar el periodo y el stock de hoy— va en el
+   * Excel que acompaña al informe, que es donde se filtra y se suma.
+   */
+  almacen: {
+    /** Apuntes del periodo, del tipo que sean. */
+    movimientos: number
+    /** Unidades que salieron (consumo) y que entraron (compras y devoluciones). */
+    salidas: number
+    entradas: number
+    /** Lo que hay que reponer, de menos a más margen. Vacío es buena noticia. */
+    porReponer: Array<{ name: string; unidad: string; quedan: number; minimo: number }>
+  }
+
+  /**
+   * El inventario que se ha tocado en el periodo: aulas cuyo inventario se
+   * confirmó y aparatos que se instalaron, movieron o retiraron. Mantenerlo al
+   * día es parte del encargo, y hasta ahora solo salía en el diario.
+   */
+  inventario: { confirmados: number; equipos: number }
 
   /**
    * Cada cierre del periodo, con sus dos fechas y lo que llevó.
@@ -157,7 +225,6 @@ export interface ReportData {
   }>
   fotosTotal: number
   reincidentes: Array<{ building: string; room: string; item: string; veces: number }>
-  olvidadas: Array<{ building: string; room: string; dias: number | null }>
   equipo: Array<{ nombre: string; revisiones: number; registros: number }>
 
   /**

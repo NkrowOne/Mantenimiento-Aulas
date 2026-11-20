@@ -93,7 +93,7 @@ atender lo que pase en ellos mientras hay clase.
 Qué entra en el encargo:
 - Atender incidencias y peticiones de los espacios: aulas, laboratorios, salas de reuniones y espacios DOT.
 - Instalar y configurar los equipos del aula, y plataformar y actualizar los que lo necesiten.
-- Mantenimiento y puesta a punto de aulas y laboratorios antes del comienzo de curso, de Navidad y de Semana Santa.
+- Mantenimiento y puesta a punto de aulas y laboratorios antes del comienzo de curso, de Navidad y de Semana Santa. La revisión de las aulas se hace en esas campañas y no todas las semanas: fuera de ellas, el trabajo del servicio es atender y resolver lo que entra.
 - Sustituir equipos y piezas averiadas, gestionando con el fabricante o el proveedor la reparación o el reemplazo.
 - Mantener el inventario de los equipos de las aulas —hardware al día cada semana, y el software instalado señalando el que no esté homologado.
 - Formar y orientar a quien usa el aula, y proponer mejoras.
@@ -176,6 +176,27 @@ export function fueraDeAlcance(texto: string): Array<{ que: string; dice: string
     if (m) out.push({ que, dice: m[0] })
   }
   return out
+}
+
+/**
+ * ¿Cuenta el texto la ronda de revisión como una falta?
+ *
+ * La revisión de aulas es de campaña —antes del comienzo de curso, en Navidad
+ * y en Semana Santa—, así que en una semana cualquiera no hay ninguna y no
+ * tiene por qué haberla. Un texto que habla de la cobertura del campus, de las
+ * salas sin revisar o de reforzar la ronda está midiendo el servicio con una
+ * vara que no es la suya, y además lo hace en el documento que llega al
+ * cliente. Devuelve el trozo que lo delata, o `null` si va limpio.
+ *
+ * Solo caza la queja. «Se han revisado 16 aulas en la puesta a punto» no lleva
+ * ninguna de estas y pasa: contar una revisión hecha sí es del informe.
+ */
+const RONDA_COMO_FALTA =
+  /\b(cobertura (del campus|de la ronda|de revisi[oó]n)|(ampliar|reforzar|completar|extender|intensificar|retomar) (la|las) (ronda|rondas|revisi[oó]n|revisiones)|vuelta (completa )?al campus|(salas?|aulas?) (sin|nunca|todav[ií]a sin|pendientes? de) revis\w*|sin una sola revisi[oó]n|no se ha(n)? (hecho|realizado|completado|registrado) (ninguna )?revisi\w*|ninguna revisi[oó]n|(baja(n)?|descien\w+|cae(n)?) (las|el n[uú]mero de) revisiones)/i
+
+export function insisteEnLaRonda(texto: string): string | null {
+  const m = RONDA_COMO_FALTA.exec(texto)
+  return m ? m[0] : null
 }
 
 /**

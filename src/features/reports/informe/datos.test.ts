@@ -10,6 +10,7 @@ import {
   materiales,
   ordenadoresDeRepuesto,
   porEdificio,
+  porReponer,
   porVisita,
   repartoDelTrabajo,
   resolucion,
@@ -150,6 +151,105 @@ describe('los contadores del periodo', () => {
     const c = contadores({ ...vacias, movimientos: [mov('consumo', -3), mov('compra', 20)] })
     expect(c.materialConsumido).toBe(3)
   })
+
+  /*
+   * Las cifras de la atención de todos los días, que son las que ahora abren el
+   * informe. Las revisiones no entran en «aulas atendidas»: tienen su cifra, y
+   * la ronda es de campaña.
+   */
+  it('las aulas atendidas son las de los partes y el material, no las revisadas', () => {
+    const mov = (o: Partial<FilaMovimiento>): FilaMovimiento => ({
+      id: Math.random().toString(36),
+      kind: 'consumo',
+      qty: -1,
+      note: null,
+      occurred_at: '2026-07-27T09:00:00.000Z',
+      room_id: null,
+      by_user: 'ana',
+      stock_item_id: 'art-1',
+      incident_id: null,
+      ...o,
+    })
+    const salaDe = (id: string, edificio: string): FilaSala => ({
+      room_id: id,
+      room_code: id,
+      room_name: id,
+      building_code: edificio,
+      building_name: edificio,
+      last_inspection_at: null,
+      open_incidents: 0,
+    })
+    const deSala = new Map(
+      [salaDe('a', 'H'), salaDe('b', 'H'), salaDe('c', 'CRAI'), salaDe('d', 'M'), salaDe('r', 'P')].map((x) => [x.room_id, x]),
+    )
+    const c = contadores(
+      {
+        ...vacias,
+        // Una revisión en un aula en la que no pasó nada más: no cuenta.
+        revisiones: [revision({ id: 'v', room_id: 'r' })],
+        abiertas: [apertura({ id: '1', room_id: 'a' }), apertura({ id: '2', room_id: 'a' })],
+        cerradas: [{ ...cierre('2026-07-27T08:00:00.000Z', '2026-07-27T09:00:00.000Z'), id: '9', room_id: 'b' }],
+        movimientos: [
+          mov({ room_id: 'c' }),
+          // Sin aula propia: la del parte del que cuelga.
+          mov({ incident_id: '9', stock_item_id: 'art-2', qty: -2 }),
+          // Colgado de un parte que el periodo no conoce: se queda sin aula.
+          mov({ incident_id: 'antiguo' }),
+          // Una compra no es material servido a ningún aula.
+          mov({ kind: 'compra', qty: 20, room_id: 'd' }),
+          mov({ kind: 'devolucion', qty: 1 }),
+          // Un ajuste corrige un recuento: no es una entrada.
+          mov({ kind: 'ajuste', qty: 5 }),
+        ],
+      },
+      deSala,
+    )
+    expect(c.salasAtendidas).toBe(3)
+    expect(c.edificiosAtendidos).toBe(2)
+    expect(c.salasConMaterial).toBe(2)
+    expect(c.articulosConsumidos).toBe(2)
+    expect(c.materialConsumido).toBe(4)
+    expect(c.materialEntrado).toBe(21)
+    // Y sin el mapa de salas, lo único que no se sabe es en cuántos edificios.
+    expect(contadores({ ...vacias, abiertas: [apertura({ id: '1', room_id: 'a' })] }).edificiosAtendidos).toBe(0)
+  })
+
+  it('la gravedad alta ya resuelta y las revisiones sin incidencias se cuentan aparte', () => {
+    const c = contadores({
+      ...vacias,
+      revisiones: [
+        revision({ id: 'a', overall: 'con_incidencias' }),
+        // La corrección es la que vale: esta visita acabó bien.
+        revision({ id: 'b', corrects: 'a', corrected_at: '2026-07-28T10:00:00.000Z', overall: 'ok' }),
+        revision({ id: 'c', room_id: 'sala-2', overall: 'con_incidencias' }),
+      ],
+      abiertas: [
+        apertura({ id: '1', severity: 'alta', state: 'resuelta' }),
+        apertura({ id: '2', severity: 'alta', state: 'abierta' }),
+        apertura({ id: '3', severity: 'media', state: 'resuelta' }),
+      ],
+    })
+    expect(c.revisiones).toBe(2)
+    expect(c.revisionesSinIncidencias).toBe(1)
+    expect(c.gravedadAlta).toBe(2)
+    expect(c.gravedadAltaResueltas).toBe(1)
+  })
+
+  it('«el mismo día» es de calendario de Madrid, no de reloj', () => {
+    const c = contadores({
+      ...vacias,
+      cerradas: [
+        // 09:00 → 13:00 de Madrid: el mismo día.
+        cierre('2026-07-27T07:00:00.000Z', '2026-07-27T11:00:00.000Z'),
+        // 20:30 → 08:10 del día siguiente: doce horas, y otro día.
+        cierre('2026-07-27T18:30:00.000Z', '2026-07-28T06:10:00.000Z'),
+        // 23:30 de Madrid del 27 → 00:20 del 28: UTC dice el mismo día y no lo es.
+        cierre('2026-07-27T21:30:00.000Z', '2026-07-27T22:20:00.000Z'),
+      ],
+    })
+    expect(c.resueltas).toBe(3)
+    expect(c.resueltasEnElDia).toBe(1)
+  })
 })
 
 describe('la serie diaria', () => {
@@ -245,6 +345,45 @@ describe('el reparto por edificio', () => {
     expect(porEdificio(salas, [], abiertas, deSala)[0]?.code).toBe('CRAI')
   })
 
+  /*
+   * Lo que el edificio recibió, además de lo que pidió: los partes que se le
+   * cerraron y las aulas en las que se hizo algo. Es lo que ocupa el sitio de
+   * la columna de «revisadas», que fuera de campaña era una columna de ceros.
+   */
+  it('cuenta lo resuelto y las aulas atendidas de cada edificio', () => {
+    const filas = porEdificio(
+      salas,
+      [],
+      [apertura({ id: '1', room_id: 'h1' }), apertura({ id: '2', room_id: 'h1' })],
+      deSala,
+      [
+        { ...cierre('2026-07-27T08:00:00.000Z', '2026-07-27T09:00:00.000Z'), id: 'x', room_id: 'h2' },
+        { ...cierre('2026-07-27T08:00:00.000Z', '2026-07-27T09:00:00.000Z'), id: 'y', room_id: 'c1' },
+      ],
+      [
+        {
+          id: 'm',
+          kind: 'consumo',
+          qty: -1,
+          note: null,
+          occurred_at: '2026-07-27T09:00:00.000Z',
+          room_id: 'c1',
+          by_user: 'ana',
+          stock_item_id: 'cable',
+          incident_id: null,
+        },
+      ],
+    )
+    expect(filas.find((b) => b.code === 'H')).toMatchObject({ abiertas: 2, cerradas: 1, atendidas: 2 })
+    // El mismo aula con un cierre y con material es UN aula atendida.
+    expect(filas.find((b) => b.code === 'CRAI')).toMatchObject({ abiertas: 0, cerradas: 1, atendidas: 1 })
+  })
+
+  it('sin cierres ni material, esas dos cifras van a cero y lo demás no cambia', () => {
+    const filas = porEdificio(salas, [], [apertura({ id: '1', room_id: 'h1' })], deSala)
+    expect(filas.find((b) => b.code === 'H')).toMatchObject({ abiertas: 1, cerradas: 0, atendidas: 1 })
+  })
+
   it('un registro sin sala no se le cuelga a ningún edificio', () => {
     const filas = porEdificio(salas, [], [apertura({ id: '1', room_id: null })], deSala)
     expect(filas.reduce((a, b) => a + b.abiertas, 0)).toBe(0)
@@ -271,6 +410,30 @@ describe('cuánto se tarda en cerrar', () => {
     const r = resolucion([])
     expect(r.medianaDias).toBeNull()
     expect(r.mediaDias).toBeNull()
+    expect(r.tramos).toEqual({ mismoDia: 0, hasta48h: 0, hastaUnaSemana: 0, mas: 0 })
+  })
+
+  /*
+   * Los tramos son lo que pinta la barra de «cuánto llevó cada cierre», y
+   * tienen que sumar los cierres: un parte en dos tramos, o en ninguno, es una
+   * barra que no cuadra con la cifra que lleva al lado.
+   */
+  it('reparte cada cierre en un solo tramo, y los tramos suman', () => {
+    const r = resolucion([
+      // 09:00 → 13:00 de Madrid.
+      cierre('2026-07-27T07:00:00.000Z', '2026-07-27T11:00:00.000Z'),
+      // De un día para otro, en doce horas: no es «el mismo día», sí «en 48 h».
+      cierre('2026-07-27T18:30:00.000Z', '2026-07-28T06:10:00.000Z'),
+      // Cinco días.
+      cierre('2026-07-22T08:00:00.000Z', '2026-07-27T08:00:00.000Z'),
+      // Un año.
+      cierre('2025-07-27T08:00:00.000Z', '2026-07-27T08:00:00.000Z'),
+    ])
+    expect(r.tramos).toEqual({ mismoDia: 1, hasta48h: 1, hastaUnaSemana: 1, mas: 1 })
+    const suma = r.tramos.mismoDia + r.tramos.hasta48h + r.tramos.hastaUnaSemana + r.tramos.mas
+    expect(suma).toBe(r.resueltas)
+    // Y «en menos de 48 h» son exactamente los dos primeros.
+    expect(r.enMenosDe48h).toBe(r.tramos.mismoDia + r.tramos.hasta48h)
   })
 })
 
@@ -303,6 +466,40 @@ describe('el material del periodo', () => {
   it('un consumo sin incidencia no cuenta como una incidencia más', () => {
     const filas = materiales([mov('cable', -2, null), mov('cable', -1, 'i1')], articulos)
     expect(filas[0]).toMatchObject({ consumido: 3, incidencias: 1 })
+  })
+
+  /*
+   * «Se han gastado seis cables» pide la pregunta siguiente: ¿y quedan? La
+   * respuesta sale de la misma vista que pinta la pestaña Almacén.
+   */
+  const nivel = (id: string, name: string, quedan: number, minimo: number) => ({
+    stock_item_id: id,
+    name,
+    unit: 'ud',
+    min_threshold: minimo,
+    on_hand: quedan,
+    below_threshold: minimo > 0 && quedan <= minimo,
+  })
+
+  it('dice lo que queda hoy de cada artículo gastado, y su mínimo', () => {
+    const filas = materiales([mov('cable', -2, 'i1'), mov('lampara', -1, 'i1')], articulos, [
+      nivel('cable', 'Cable HDMI 3 m', 14, 5),
+    ])
+    expect(filas[0]).toMatchObject({ name: 'Cable HDMI 3 m', quedan: 14, minimo: 5 })
+    // Un artículo retirado no está en la vista: no se sabe, y no se inventa un cero.
+    expect(filas[1]).toMatchObject({ name: 'Lámpara proyector', quedan: null })
+  })
+
+  it('lo que hay que reponer sale por orden de urgencia, y solo lo que tiene mínimo', () => {
+    const lista = porReponer([
+      nivel('a', 'Pilas AAA', 4, 12),
+      nivel('b', 'Cable HDMI 3 m', 14, 5),
+      nivel('c', 'Mando de proyector', 1, 2),
+      // Agotado, pero sin mínimo fijado: no es «bajo mínimo».
+      nivel('d', 'Cable VGA', 0, 0),
+    ])
+    expect(lista.map((x) => x.name)).toEqual(['Pilas AAA', 'Mando de proyector'])
+    expect(lista[0]).toEqual({ name: 'Pilas AAA', unidad: 'ud', quedan: 4, minimo: 12 })
   })
 })
 

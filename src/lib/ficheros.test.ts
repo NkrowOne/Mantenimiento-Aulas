@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ofrecerFichero } from './ficheros'
+import { ofrecerFichero, ofrecerFicheros } from './ficheros'
 
 /**
  * Lo que se comprueba aquí es el orden de los caminos y que ninguno se quede a
@@ -92,5 +92,76 @@ describe('ofrecerFichero', () => {
     expect(URL.revokeObjectURL).not.toHaveBeenCalled()
     vi.advanceTimersByTime(60_000)
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:prueba')
+  })
+})
+
+/**
+ * Los dos ficheros de un informe —el PDF y el Excel— de una vez, y sueltos.
+ *
+ * Lo que se vigila es que vayan los DOS y que ninguno sea un zip: la hoja de
+ * compartir los lleva a Correo como dos adjuntos, y metidos en un paquete hay
+ * que saber abrirlo.
+ */
+describe('ofrecerFicheros', () => {
+  const pdf = new Blob(['%PDF-'], { type: 'application/pdf' })
+  const xlsx = new Blob(['PK'], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+  const dos = [
+    { nombre: 'informe-semanal.pdf', blob: pdf },
+    { nombre: 'informe-semanal-almacen.xlsx', blob: xlsx },
+  ]
+
+  it('comparte los dos en un solo reparto, cada uno con su nombre y su tipo', async () => {
+    const { share, enlaces } = navegador({ compartir: () => Promise.resolve() })
+
+    await expect(ofrecerFicheros(dos)).resolves.toBe('compartido')
+
+    expect(share).toHaveBeenCalledTimes(1)
+    const [reparto] = share.mock.calls[0] as [Record<string, unknown>]
+    // Solo `files`: con un texto al lado, Safari comparte la página.
+    expect(Object.keys(reparto)).toEqual(['files'])
+    const files = reparto['files'] as File[]
+    expect(files.map((f) => f.name)).toEqual(['informe-semanal.pdf', 'informe-semanal-almacen.xlsx'])
+    expect(files.map((f) => f.type)).toEqual([pdf.type, xlsx.type])
+    // Ninguno es un paquete: son los dos documentos, tal cual.
+    expect(files.some((f) => /zip/.test(f.type) || f.name.endsWith('.zip'))).toBe(false)
+    expect(enlaces).toEqual([])
+  })
+
+  it('sin hoja de compartir los descarga los dos, uno detrás de otro', async () => {
+    vi.useFakeTimers()
+    const { share, enlaces } = navegador()
+
+    const entrega = ofrecerFicheros(dos)
+    // El primero sale en el acto; el segundo, tras el respiro: dos descargas
+    // disparadas en el mismo instante, el navegador se queda con una.
+    await vi.advanceTimersByTimeAsync(0)
+    expect(enlaces).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(400)
+    await expect(entrega).resolves.toBe('descargado')
+
+    expect(share).not.toHaveBeenCalled()
+    expect(enlaces.map((a) => a.download)).toEqual(['informe-semanal.pdf', 'informe-semanal-almacen.xlsx'])
+    for (const a of enlaces) expect(a.click).toHaveBeenCalledTimes(1)
+  })
+
+  it('si se cancela la hoja de compartir, quedan igualmente los dos por descarga', async () => {
+    vi.useFakeTimers()
+    const { enlaces } = navegador({
+      compartir: () => Promise.reject(Object.assign(new Error('cancelado'), { name: 'AbortError' })),
+    })
+
+    const entrega = ofrecerFicheros(dos)
+    await vi.advanceTimersByTimeAsync(400)
+    await expect(entrega).resolves.toBe('descargado')
+    expect(enlaces).toHaveLength(2)
+  })
+
+  it('con uno solo hace lo mismo que `ofrecerFichero`', async () => {
+    const { share } = navegador({ compartir: () => Promise.resolve() })
+    await expect(ofrecerFicheros([dos[0]!])).resolves.toBe('compartido')
+    const [reparto] = share.mock.calls[0] as [Record<string, unknown>]
+    expect((reparto['files'] as File[]).map((f) => f.name)).toEqual(['informe-semanal.pdf'])
   })
 })

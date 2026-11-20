@@ -24,22 +24,27 @@ export const SECCIONES: SeccionInfo[] = [
   {
     clave: 'resumen',
     etiqueta: 'Resumen y cifras',
-    detalle: 'La entradilla, los cuatro indicadores y su variación',
+    detalle: 'Las cuatro cifras con su variación, la entradilla y de qué son los partes',
+  },
+  {
+    clave: 'analisis',
+    etiqueta: 'Lo más destacado',
+    detalle: 'Lo conseguido y lo que está en seguimiento, redactado',
   },
   {
     clave: 'actividad',
     etiqueta: 'Actividad día a día',
-    detalle: 'Revisiones, altas y cierres de cada jornada',
+    detalle: 'Partes que entran y partes que se resuelven cada jornada',
   },
   {
-    clave: 'analisis',
-    etiqueta: 'Lo que dicen los datos',
-    detalle: 'Los hallazgos del periodo, redactados',
+    clave: 'tiempos',
+    etiqueta: 'Con qué rapidez se resuelve',
+    detalle: 'Cuántos cierres en el día y en 48 h, y la mediana. Desmárcala para que el informe no dé esos números',
   },
   {
     clave: 'edificios',
-    etiqueta: 'Dónde está el trabajo',
-    detalle: 'Reparto por edificio y cobertura de la ronda',
+    etiqueta: 'Dónde se ha trabajado',
+    detalle: 'Por edificio: aulas atendidas, partes que entraron, resueltos y lo que queda en curso',
   },
   {
     clave: 'tendencia',
@@ -47,9 +52,9 @@ export const SECCIONES: SeccionInfo[] = [
     detalle: 'Para poner la semana en contexto',
   },
   {
-    clave: 'salas',
-    etiqueta: 'Salas señaladas',
-    detalle: 'Las que acumulan incidencias y las que repiten el mismo repuesto',
+    clave: 'materiales',
+    etiqueta: 'Material y almacén',
+    detalle: 'Lo que se ha servido, lo que queda de cada cosa y lo que hay que reponer',
   },
   {
     clave: 'lamparas',
@@ -57,43 +62,33 @@ export const SECCIONES: SeccionInfo[] = [
     detalle: 'Por debajo del 20 % de vida restante',
   },
   {
+    clave: 'salas',
+    etiqueta: 'Salas señaladas',
+    detalle: 'Las que repiten el mismo repuesto y, en el parte del equipo, las que acumulan incidencias',
+  },
+  {
     clave: 'estancadas',
     etiqueta: 'Sin cerrar',
     detalle: 'Lo que lleva más de una semana abierto',
   },
   {
-    clave: 'materiales',
-    etiqueta: 'Material consumido',
-    detalle: 'Qué se ha gastado del almacén en el periodo',
-  },
-  {
-    clave: 'tiempos',
-    etiqueta: 'Cuánto se tarda en cerrar',
-    detalle: 'La mediana, la media y las cerradas en menos de 48 h. Desmárcala para que el informe no dé ese número',
-  },
-  {
     clave: 'equipo',
     etiqueta: 'Reparto del trabajo',
-    detalle: 'Con nombres: revisiones y altas de cada persona',
+    detalle: 'Con nombres: los partes de cada persona',
     optativa: true,
   },
   {
     clave: 'recomendaciones',
     etiqueta: 'Qué conviene hacer',
-    detalle: 'Las acciones que salen de los hallazgos',
+    detalle: 'Las propuestas que salen de los hallazgos',
   },
 
   /*
    * A partir de aquí, los listados. Van al final del documento —detrás del
    * corte «Detalle del periodo»— porque se consultan, no se leen de seguido:
-   * con un periodo largo, la tabla de revisiones y el diario son trescientas
-   * filas que antes se metían entre el análisis y las conclusiones.
+   * con un periodo largo, el diario y los cierres son trescientas filas que
+   * antes se metían entre el análisis y las conclusiones.
    */
-  {
-    clave: 'revisiones',
-    etiqueta: 'Revisiones del periodo',
-    detalle: 'Cada revisión hecha: sala, hora, quién y cómo salió',
-  },
   {
     clave: 'eventos',
     etiqueta: 'Diario del periodo',
@@ -103,6 +98,17 @@ export const SECCIONES: SeccionInfo[] = [
     clave: 'cierres',
     etiqueta: 'Cada cierre, con sus días',
     detalle: 'Uno por línea: cuándo se abrió, cuándo se cerró, cuánto llevó y qué se hizo. Es lo que sirve para justificar un tiempo',
+  },
+  {
+    /*
+     * Las revisiones son de campaña —antes del comienzo de curso, en Navidad y
+     * en Semana Santa—. La casilla se puede dejar marcada siempre: en un
+     * periodo sin revisiones la sección no se imprime, en vez de salir para
+     * decir que no hubo ninguna.
+     */
+    clave: 'revisiones',
+    etiqueta: 'Revisiones del periodo',
+    detalle: 'Cada revisión hecha, cuando hay campaña: sala, hora, quién y cómo salió. Sin revisiones, no sale',
   },
   {
     clave: 'fotos',

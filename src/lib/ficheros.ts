@@ -54,3 +54,53 @@ export async function ofrecerFichero(nombre: string, blob: Blob): Promise<'compa
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
   return 'descargado'
 }
+
+/**
+ * Lo mismo, con varios ficheros de una vez y **sin comprimir**.
+ *
+ * El informe son dos: el PDF y el Excel del almacén. Entregarlos en un zip es
+ * lo cómodo para quien programa y lo incómodo para quien los recibe: en el
+ * iPhone un zip no se adjunta a un correo como dos documentos, se adjunta como
+ * un paquete que el otro tiene que saber abrir. La hoja de compartir admite
+ * varios ficheros en un solo reparto —van a Correo como dos adjuntos y a
+ * Archivos como dos documentos—, así que se le dan los dos.
+ *
+ * Donde no hay hoja de compartir —o no admite estos ficheros— se descargan uno
+ * detrás de otro. Con un respiro entre ellos: dos descargas disparadas en el
+ * mismo instante, Safari se queda con la primera y Chrome a veces también.
+ *
+ * Hay que llamarla **desde el gesto**, igual que `ofrecerFichero`.
+ */
+export async function ofrecerFicheros(
+  ficheros: Array<{ nombre: string; blob: Blob }>,
+): Promise<'compartido' | 'descargado'> {
+  if (ficheros.length === 1) return ofrecerFichero(ficheros[0]!.nombre, ficheros[0]!.blob)
+
+  const files = ficheros.map((f) => new File([f.blob], f.nombre, { type: f.blob.type }))
+  if (navigator.canShare?.({ files })) {
+    try {
+      // Solo `files`, por lo mismo que arriba: con un texto al lado, Safari
+      // comparte la página en vez de los ficheros.
+      await navigator.share({ files })
+      return 'compartido'
+    } catch (err) {
+      if ((err as Error)?.name !== 'AbortError') console.warn('compartir', err)
+    }
+  }
+
+  for (const [i, f] of ficheros.entries()) {
+    if (i > 0) await new Promise((r) => setTimeout(r, ENTRE_DESCARGAS_MS))
+    const url = URL.createObjectURL(f.blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = f.nombre
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  }
+  return 'descargado'
+}
+
+/** El respiro entre dos descargas seguidas. */
+const ENTRE_DESCARGAS_MS = 400
