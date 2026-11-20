@@ -43,10 +43,21 @@
  *
  * Y SE ABRE POR LO CONSEGUIDO, para las dos audiencias. No es maquillaje: cada
  * buena noticia lleva su cifra al lado, y lo que pide una decisión —una
- * incidencia de gravedad alta en curso, una lámpara a punto de fundirse, la
- * misma pieza tres veces en la misma sala, un artículo por reponer— sigue
- * saliendo, con la suya. Lo que cambia es el orden y el tono: primero lo hecho,
- * después lo que conviene hacer.
+ * incidencia de gravedad alta en curso, una lámpara a punto de fundirse, un
+ * artículo por reponer— sigue saliendo, con la suya. Lo que cambia es el orden
+ * y el tono: primero lo hecho, después lo que conviene hacer.
+ *
+ * Y NO SE INVENTAN MEJORAS. Esto es una universidad: los cables, los
+ * adaptadores, las pilas y los mandos se gastan y se rompen con el uso, o los
+ * rompen. Que el mismo repuesto vuelva a la misma aula es consumo, no un fallo
+ * de la instalación; y que el edificio más grande sea el que más partes abre
+ * no es una causa común que investigar. El informe decía las dos cosas como
+ * hallazgos y las convertía en propuestas —«revisar la instalación de H 2.1 en
+ * vez de reponer el cable otra vez»—, que es recomendarle al cliente un
+ * trabajo que no hay que hacer. Lo que se propone ahora son los pasos
+ * siguientes del propio servicio, cuando los hay: reponer lo que baja del
+ * mínimo, cambiar una lámpara antes de que se funda, atender primero lo grave.
+ * Si no hay ninguno, no hay sección.
  *
  * Las dos audiencias siguen sin ser el mismo documento:
  *
@@ -577,10 +588,22 @@ export function senalesBuenas(d: ReportData, audiencia: Audiencia = 'direccion',
  * son el «lleva N días abierta» que ese documento no dice, y los registros sin
  * sala, que son limpieza de datos del servicio y no un asunto del cliente.
  *
- * LO QUE YA NO ESTÁ: la cobertura de la ronda («se ha pasado por el 2 % del
- * campus», «a este ritmo una vuelta completa lleva dos años») y las salas sin
- * una sola revisión. Eran ciertas y no decían nada: medían contra un calendario
- * semanal un trabajo que se hace por campañas.
+ * LO QUE YA NO ESTÁ, y por qué:
+ *
+ *  · La cobertura de la ronda («se ha pasado por el 2 % del campus», «a este
+ *    ritmo una vuelta completa lleva dos años») y las salas sin una sola
+ *    revisión. Eran ciertas y no decían nada: medían contra un calendario
+ *    semanal un trabajo que se hace por campañas.
+ *  · El mismo repuesto en la misma sala («el problema no es la pieza: revisa la
+ *    instalación»). En un campus un cable HDMI se cambia cuatro veces en seis
+ *    meses porque se usa, se tira de él y se rompe. Es desgaste, no una avería
+ *    de fondo, y no hay instalación que revisar.
+ *  · El edificio que concentra los partes («suele tener una causa común»). El
+ *    edificio con más aulas y más clases abre más partes; el reparto ya se ve
+ *    en su gráfico, sin que nadie le busque un porqué.
+ *
+ * Las dos últimas eran además las que más «propuestas de mejora» fabricaban, y
+ * aquí no se propone lo que no hay que hacer.
  */
 export function senales(d: ReportData, audiencia: Audiencia, o: QueSeCuenta = {}): Senal[] {
   const dir = audiencia === 'direccion'
@@ -628,22 +651,6 @@ export function senales(d: ReportData, audiencia: Audiencia, o: QueSeCuenta = {}
     })
   }
 
-  if (d.reincidentes.length > 0) {
-    const r = d.reincidentes[0]!
-    s.push({
-      clave: 'reincidencia',
-      titulo: `${d.reincidentes.length === 1 ? 'Una sala repite' : `${d.reincidentes.length} salas repiten`} el mismo consumo`,
-      cuerpo:
-        `En ${r.building} ${r.room} se ha puesto «${r.item}» ${r.veces} veces en seis meses. ` +
-        (dir
-          ? 'Cuando la misma pieza vuelve a la misma sala conviene mirar la instalación: es la mejora que más repuestos ahorra.'
-          : 'Cuando la misma pieza vuelve a la misma sala, el problema no es la pieza.'),
-      tono: 'aviso',
-      peso: 2,
-      accion: `Revisar la instalación de ${r.building} ${r.room} en vez de reponer «${r.item}» otra vez.`,
-    })
-  }
-
   if (d.situacion.lamparasAlLimite > 0) {
     const peor = d.lamparas[0]
     s.push({
@@ -684,23 +691,6 @@ export function senales(d: ReportData, audiencia: Audiencia, o: QueSeCuenta = {}
       accion: dir
         ? 'Reponer lo que está por debajo del mínimo.'
         : 'Reponer lo que está por debajo del mínimo antes del próximo lunes.',
-    })
-  }
-
-  const cuello = d.porEdificio[0]
-  if (cuello && a.registros >= 4 && cuello.abiertas / a.registros >= 0.4) {
-    s.push({
-      clave: 'concentracion',
-      titulo: `${cuello.code} concentra ${porcentaje(cuello.abiertas, a.registros)} de lo atendido`,
-      cuerpo:
-        `${cuello.abiertas} de los ${a.registros} partes del periodo salen de ${cuello.name}` +
-        `${cuello.salas > 0 ? ` (${plural(cuello.salas, 'sala')})` : ''}. Un edificio que acapara así suele tener una causa común` +
-        (dir ? ': resolverla mejora varias aulas de golpe.' : ', no diez averías distintas.'),
-      tono: 'neutro',
-      peso: 5,
-      accion: dir
-        ? `Plantear una revisión de conjunto de ${cuello.code}: instalación, antigüedad del equipo o uso.`
-        : `Mirar ${cuello.code} como conjunto: instalación, antigüedad del equipo o uso.`,
     })
   }
 

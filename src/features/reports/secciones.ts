@@ -64,7 +64,7 @@ export const SECCIONES: SeccionInfo[] = [
   {
     clave: 'salas',
     etiqueta: 'Salas señaladas',
-    detalle: 'Las que repiten el mismo repuesto y, en el parte del equipo, las que acumulan incidencias',
+    detalle: 'Las que acumulan más incidencias y dónde se repone más el mismo material',
   },
   {
     clave: 'estancadas',
@@ -80,7 +80,7 @@ export const SECCIONES: SeccionInfo[] = [
   {
     clave: 'recomendaciones',
     etiqueta: 'Qué conviene hacer',
-    detalle: 'Las propuestas que salen de los hallazgos',
+    detalle: 'Los próximos pasos del servicio. Si no hay ninguno, no sale',
   },
 
   /*
@@ -142,7 +142,7 @@ export const AUDIENCIAS = [
     clave: 'direccion',
     etiqueta: 'Dirección',
     detalle:
-      'Para el cliente: lo que ha mejorado, lo que está en curso y las decisiones que convienen. Sin días abiertos ni salas señaladas',
+      'Para el cliente: lo que se ha hecho, lo que está en curso y los próximos pasos. Sin días abiertos ni salas señaladas',
   },
   {
     clave: 'equipo',

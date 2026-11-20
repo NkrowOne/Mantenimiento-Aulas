@@ -882,22 +882,30 @@ function seccionMateriales(d: ReportData): string {
   </section>`
 }
 
+/**
+ * Las salas con más incidencias, y dónde se repone más. Solo para el equipo.
+ *
+ * El ranking de salas con su fiabilidad es exactamente el «aula difícil» que el
+ * documento de dirección no señala: hay aulas que dan más trabajo, y eso no es
+ * noticia para el cliente.
+ *
+ * Y la tabla del mismo repuesto en la misma sala tampoco sale para dirección,
+ * ni se lee ya como un problema para nadie. Se llamaba «Dónde hay una mejora
+ * clara» y decía que tres veces la misma pieza en seis meses «no es mala
+ * suerte». En una universidad sí lo es, o ni eso: es uso. Los cables se rompen
+ * o los rompen. Al equipo le sigue sirviendo, como lo que es —saber qué llevar
+ * encima cuando se va a esa aula—, y por eso se queda aquí, en tinta y sin
+ * tono de aviso. A quien quiera el detalle por aula, el Excel se lo da entero.
+ */
 function seccionSalas(d: ReportData, audiencia: Audiencia): string {
-  /*
-   * Para dirección solo sale la pieza repetida —una mejora concreta, con su
-   * sala y su ahorro—. El ranking de salas con más incidencias y su
-   * fiabilidad en rojo es exactamente el «aula difícil» que este documento no
-   * señala: hay aulas que dan más trabajo, y eso no es noticia para el
-   * cliente.
-   */
-  const conRanking = audiencia !== 'direccion' && d.topSalas.length > 0
-  if (!conRanking && !d.reincidentes.length) return ''
+  if (audiencia === 'direccion') return ''
+  if (!d.topSalas.length && !d.reincidentes.length) return ''
 
   return `
   <section class="bloque">
-    ${rotulo(audiencia === 'direccion' ? 'Dónde hay una mejora clara' : 'Salas señaladas')}
+    ${rotulo('Salas señaladas')}
     ${
-      conRanking
+      d.topSalas.length
         ? tabla(d.topSalas, [
             {
               cab: 'Sala',
@@ -922,21 +930,14 @@ function seccionSalas(d: ReportData, audiencia: Audiencia): string {
     ${
       d.reincidentes.length
         ? `<div class="sub">
-      <div class="sub-t">Mismo repuesto, misma sala</div>
-      <p class="apunte antes">Tres veces la misma pieza en seis meses no es mala suerte.${
-        // Cómo se cuenta le sirve a quien va a ir al aula; a dirección le basta
-        // con el dato.
-        audiencia === 'direccion'
-          ? ''
-          : ` Se agrupa por
-      artículo consumido y no por el texto del parte, que cada uno escribe distinto.`
-      }</p>
+      <div class="sub-t">Dónde se repone más</div>
+      <p class="apunte antes">El mismo material en la misma sala, en los últimos seis meses. Es
+      desgaste de uso —los cables se rompen— y sirve para saber qué llevar encima. Se agrupa
+      por artículo y no por el texto del parte, que cada uno escribe distinto.</p>
       ${tabla(d.reincidentes, [
         { cab: 'Sala', celda: (r) => `<span class="mono">${esc(r.building)} ${esc(r.room)}</span>` },
-        { cab: 'Repuesto', ancho: '50%', celda: (r) => esc(r.item) },
-        // En rojo para el equipo, que es un aviso; en tinta para dirección, que
-        // es una mejora con nombre y no una alarma.
-        { cab: 'Veces', num: true, celda: (r) => `<span style="color:${audiencia === 'direccion' ? INK : CRIT}">${r.veces}</span>` },
+        { cab: 'Material', ancho: '50%', celda: (r) => esc(r.item) },
+        { cab: 'Veces', num: true, celda: (r) => String(r.veces) },
       ])}
     </div>`
         : ''
@@ -944,52 +945,28 @@ function seccionSalas(d: ReportData, audiencia: Audiencia): string {
   </section>`
 }
 
-/**
- * Las lámparas por debajo del 20 % de vida.
- *
- * `enPareja` es la versión de media anchura, para cuando va al lado de la pieza
- * repetida: el rótulo se queda con el nombre y lo que antes era su apunte baja
- * a un subtítulo, que es lo que lleva la sección de al lado. Así las dos tablas
- * empiezan a la misma altura.
- */
-function seccionLamparas(d: ReportData, audiencia: Audiencia, enPareja = false): string {
+/** Las lámparas por debajo del 20 % de vida. */
+function seccionLamparas(d: ReportData, audiencia: Audiencia): string {
   const dir = audiencia === 'direccion'
-  const titulo = dir ? 'Lámparas para cambiar' : 'Lámparas al límite'
-  const contenido = d.lamparas.length
-    ? tabla(d.lamparas, [
-        { cab: 'Sala', ancho: enPareja ? '30%' : '34%', celda: (r) => `<span class="mono">${esc(r.building)} ${esc(r.room)}</span>` },
-        {
-          cab: enPareja ? 'Horas' : 'Horas de proyector',
-          num: true,
-          celda: (r) => (r.horas === null ? '—' : String(r.horas)),
-        },
-        {
-          cab: 'Vida restante',
-          ancho: enPareja ? '42%' : '30%',
-          celda: (r) =>
-            // En rojo para el equipo, que tiene que ir a cambiarla; para
-            // dirección es un cambio programado y va en el tono de marca.
-            `<span class="junto">${medidor(Math.round(r.pct * 100), 100, dir ? ACENTO : CRIT, dir ? TINTE : CRIT_TINTE)}<span class="med-n"${dir ? '' : ` style="color:${CRIT}"`}>${Math.round(r.pct * 100)} %</span></span>`,
-        },
-      ])
-    : enOrden('Ninguna lámpara por debajo del umbral. Nada que pedir esta semana.')
-
-  if (enPareja) {
-    return `
-  <section class="bloque evitar">
-    ${rotulo(titulo)}
-    <div class="sub">
-      <div class="sub-t">Por debajo del 20 % de vida</div>
-      <p class="apunte antes">Cambiarlas antes de que se fundan no interrumpe una clase.</p>
-      ${contenido}
-    </div>
-  </section>`
-  }
-
   return `
   <section class="bloque evitar">
-    ${rotulo(titulo, 'por debajo del 20 % de vida')}
-    ${contenido}
+    ${rotulo(dir ? 'Lámparas para cambiar' : 'Lámparas al límite', 'por debajo del 20 % de vida')}
+    ${
+      d.lamparas.length
+        ? tabla(d.lamparas, [
+            { cab: 'Sala', ancho: '34%', celda: (r) => `<span class="mono">${esc(r.building)} ${esc(r.room)}</span>` },
+            { cab: 'Horas de proyector', num: true, celda: (r) => (r.horas === null ? '—' : String(r.horas)) },
+            {
+              cab: 'Vida restante',
+              ancho: '30%',
+              celda: (r) =>
+                // En rojo para el equipo, que tiene que ir a cambiarla; para
+                // dirección es un cambio programado y va en el tono de marca.
+                `<span class="junto">${medidor(Math.round(r.pct * 100), 100, dir ? ACENTO : CRIT, dir ? TINTE : CRIT_TINTE)}<span class="med-n"${dir ? '' : ` style="color:${CRIT}"`}>${Math.round(r.pct * 100)} %</span></span>`,
+            },
+          ])
+        : enOrden('Ninguna lámpara por debajo del umbral. Nada que pedir esta semana.')
+    }
   </section>`
 }
 
@@ -1035,11 +1012,21 @@ function seccionEquipo(d: ReportData): string {
   </section>`
 }
 
+/**
+ * Lo que viene ahora. Y si no viene nada, no hay sección.
+ *
+ * Para dirección se llamaba «Propuestas de mejora», y el nombre obligaba: con
+ * la sección delante había que tener mejoras que proponer, así que se
+ * proponían —revisar la instalación del aula en la que se rompen los cables,
+ * estudiar el edificio que más partes abre—. Lo que hay aquí son los pasos
+ * siguientes del propio servicio: reponer, cambiar una lámpara a tiempo,
+ * atender primero lo grave. Eso no es una propuesta, es lo que toca.
+ */
 function seccionRecomendaciones(l: Lectura, audiencia: Audiencia): string {
   if (!l.recomendaciones.length) return ''
   return `
   <section class="bloque evitar">
-    ${rotulo(audiencia === 'direccion' ? 'Propuestas de mejora' : 'Qué conviene hacer')}
+    ${rotulo(audiencia === 'direccion' ? 'Próximos pasos' : 'Qué conviene hacer')}
     <ol class="acciones">
       ${l.recomendaciones
         .map(
@@ -1483,41 +1470,6 @@ export function renderReport(
   const pedidas = (lista: Array<[Seccion, string]>): string[] =>
     lista.filter(([clave, html]) => tiene(o, clave) && html).map(([, html]) => html)
 
-  /*
-   * Dos secciones cortas, lado a lado.
-   *
-   * Las lámparas y la pieza repetida son, en el informe de dirección, dos tablas
-   * de tres columnas y un puñado de filas: una debajo de otra y a todo lo ancho
-   * se comían media página de aire para seis líneas de datos. En pareja caben
-   * en un tercio y se leen como lo que son, las dos cosas que conviene mirar.
-   *
-   * Solo cuando las dos son de verdad cortas y solo para dirección: en el parte
-   * del equipo la segunda lleva además el ranking de salas, que necesita su
-   * ancho.
-   */
-  const enPareja =
-    o.audiencia === 'direccion' &&
-    tiene(o, 'lamparas') &&
-    tiene(o, 'salas') &&
-    d.lamparas.length <= 8 &&
-    d.reincidentes.length > 0 &&
-    d.reincidentes.length <= 8
-  if (enPareja) {
-    const i = analisisDelPeriodo.findIndex(([clave]) => clave === 'lamparas')
-    const j = analisisDelPeriodo.findIndex(([clave]) => clave === 'salas')
-    const lamparas = seccionLamparas(d, o.audiencia, true)
-    const salas = analisisDelPeriodo[j]![1]
-    analisisDelPeriodo[i] = [
-      'lamparas',
-      `
-  <table class="dos pareja"><tr>
-    <td class="col-mitad">${lamparas}</td>
-    <td class="col-mitad">${salas}</td>
-  </tr></table>`,
-    ]
-    analisisDelPeriodo[j] = ['salas', '']
-  }
-
   const arriba = pedidas(analisisDelPeriodo)
   const abajo = pedidas(detalleDelPeriodo)
 
@@ -1779,10 +1731,6 @@ export function renderReport(
   .dos { width: 100%; border-collapse: collapse; }
   .col-mitad { width: 50%; vertical-align: top; padding-right: 6mm; }
   .col-mitad:last-child { padding-right: 0; padding-left: 2mm; }
-  /* Dos secciones en una fila: el aire de arriba lo pone la fila, no cada una. */
-  .pareja { margin-top: 8.5mm; page-break-inside: avoid; }
-  .pareja .bloque { margin-top: 0; }
-  .pareja .sub { margin-top: 0; }
   .col-ancha { vertical-align: top; padding-right: 8mm; }
   .col-estrecha { width: 70mm; vertical-align: top; }
 

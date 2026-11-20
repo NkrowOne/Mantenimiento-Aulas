@@ -696,20 +696,20 @@ function seccionTendencia(d: ReportData): string {
 
 function seccionSalas(d: ReportData, audiencia: Audiencia): string {
   /*
-   * Para dirección solo sale la pieza repetida —una mejora concreta, con su
-   * sala y su ahorro—. El ranking de salas con más incidencias y su
-   * fiabilidad en rojo es exactamente el «aula difícil» que este documento no
-   * señala: hay aulas que dan más trabajo, y eso no es noticia para el
-   * cliente.
+   * Solo para el equipo. El ranking de salas con más incidencias es el «aula
+   * difícil» que el documento de dirección no señala. Y la tabla del mismo
+   * repuesto en la misma sala se le enseñaba al cliente como «una mejora
+   * clara», cuando en una universidad es desgaste: los cables se rompen o los
+   * rompen. Al equipo le sirve para saber qué llevar encima, y así se dice.
    */
-  const conRanking = audiencia !== 'direccion' && d.topSalas.length > 0
-  if (!conRanking && !d.reincidentes.length) return ''
+  if (audiencia === 'direccion') return ''
+  if (!d.topSalas.length && !d.reincidentes.length) return ''
 
   return `
   <section class="bloque">
-    ${rotulo(audiencia === 'direccion' ? 'Dónde hay una mejora clara' : 'Salas señaladas')}
+    ${rotulo('Salas señaladas')}
     ${
-      conRanking
+      d.topSalas.length
         ? tabla(d.topSalas, [
             {
               cab: 'Sala',
@@ -729,22 +729,19 @@ function seccionSalas(d: ReportData, audiencia: Audiencia): string {
                   : '<span class="tenue">datos insuficientes</span>',
             },
           ])
-        : audiencia === 'direccion'
-          ? ''
-          : vacio('Ninguna sala ha acumulado incidencias en el periodo.')
+        : vacio('Ninguna sala ha acumulado incidencias en el periodo.')
     }
     ${
       d.reincidentes.length
         ? `<div class="sub">
-      <div class="sub-t">Mismo repuesto, misma sala</div>
-      <p class="apunte">Tres veces la misma pieza en seis meses no es mala suerte. Se agrupa por
-      artículo consumido y no por el texto del parte, que cada uno escribe distinto.</p>
+      <div class="sub-t">Dónde se repone más</div>
+      <p class="apunte">El mismo material en la misma sala, en los últimos seis meses. Es desgaste
+      de uso —los cables se rompen— y sirve para saber qué llevar encima. Se agrupa por artículo
+      consumido y no por el texto del parte, que cada uno escribe distinto.</p>
       ${tabla(d.reincidentes, [
         { cab: 'Sala', celda: (r) => `<span class="mono">${esc(r.building)} ${esc(r.room)}</span>` },
-        { cab: 'Repuesto', ancho: '50%', celda: (r) => esc(r.item) },
-        // En rojo para el equipo, que es un aviso; en tinta para dirección, que
-        // es una mejora con nombre y no una alarma.
-        { cab: 'Veces', num: true, celda: (r) => `<span style="color:${audiencia === 'direccion' ? INK : CRIT}">${r.veces}</span>` },
+        { cab: 'Material', ancho: '50%', celda: (r) => esc(r.item) },
+        { cab: 'Veces', num: true, celda: (r) => String(r.veces) },
       ])}
     </div>`
         : ''
@@ -860,7 +857,7 @@ function seccionRecomendaciones(l: Lectura, audiencia: Audiencia): string {
   if (!l.recomendaciones.length) return ''
   return `
   <section class="bloque evitar">
-    ${rotulo(audiencia === 'direccion' ? 'Propuestas de mejora' : 'Qué conviene hacer')}
+    ${rotulo(audiencia === 'direccion' ? 'Próximos pasos' : 'Qué conviene hacer')}
     <ol class="acciones">
       ${l.recomendaciones
         .map(

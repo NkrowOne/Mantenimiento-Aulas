@@ -1768,9 +1768,20 @@ uno en uno.
 partes que entran y los que se resuelven, con qué rapidez se cierran, en qué
 aulas y edificios se ha trabajado, qué material se ha servido y cómo queda el
 almacén. Y abre por lo conseguido, con su cifra; lo que pide una decisión —una
-incidencia de gravedad alta en curso, una lámpara a punto de fundirse, la misma
-pieza tres veces en la misma sala, un artículo por reponer— sale detrás, con la
-suya.
+incidencia de gravedad alta en curso, una lámpara a punto de fundirse, un
+artículo por reponer— sale detrás, con la suya.
+
+**Un cable roto es desgaste, no una avería.** En una universidad los cables,
+los adaptadores y las pilas se gastan y se rompen con el uso, o los rompen. El
+informe ya no lee el mismo repuesto varias veces en la misma aula como un
+problema de la instalación, ni busca una «causa común» al edificio que más
+partes abre —que es el más grande—. Tampoco propone mejoras por proponer: en el
+documento de dirección la sección se llama **«Próximos pasos»** y lleva lo que
+el servicio va a hacer —reponer lo que baja del mínimo, cambiar una lámpara
+antes de que se funda, atender primero lo grave—; si no hay nada, no sale. El
+parte del equipo conserva la tabla **«Dónde se repone más»**, para saber qué
+llevar encima cuando se va a esa aula. Para dirección no se pueden pedir ni
+«Sin cerrar» ni «Salas señaladas».
 
 **Las revisiones de aulas no son la vara de medir.** La ronda de revisión se
 hace por campañas —antes del comienzo de curso, en Navidad y en Semana Santa—,
@@ -1794,7 +1805,7 @@ Se elige:
 | **Cada cierre, con sus días** | Lo contrario: cada cierre en una línea, con la hora a la que se abrió, la hora a la que se cerró, cuánto llevó escrito entero —«24 días y 2 h», no «24,1»— y qué se hizo. Es lo que sirve para justificar por qué una tardó lo que tardó. Van primero las que más tardaron, que son por las que se pregunta |
 | **Fotos del periodo** | Las de las revisiones **y** las de las incidencias, **dentro del propio documento**. No son enlaces: un enlace de Storage caduca en un minuto y el informe se archiva para dentro de un año. Cada una dice de cuándo es —«En la revisión», «Incidencia abierta», «Al resolverla»— y las de una misma incidencia van seguidas, de cómo se encontró a cómo quedó. Entran hasta cuarenta, reducidas al tamaño al que se imprimen —57 mm de ancho, unos 45 KB cada una en vez de 226 KB—, y las que no caben se cuentan al pie. **No salen las retiradas**: cualquiera del equipo puede abrir una foto en la ficha del aula y marcar «Que no salga en el informe» —lo normal es que se haya colado una persona detrás del proyector—. La foto sigue guardada y visible ahí; solo deja de imprimirse, y se puede volver a incluir |
 | **Análisis con IA** | Si se desmarca, el informe sale con el análisis calculado |
-| **Escrito para** | Dirección (estado, tendencia y decisiones) o equipo técnico (qué salas tocar y con qué material) |
+| **Escrito para** | Dirección (lo hecho, lo que está en curso y los próximos pasos) o equipo técnico (qué salas tocar y con qué material) |
 | **En qué fijarse** | Una instrucción libre para la redacción: «céntrate en el edificio H». No cambia ninguna cifra |
 | **Nota en portada** | Un texto que se imprime tal cual bajo el título. No pasa por la IA |
 

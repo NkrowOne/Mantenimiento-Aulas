@@ -156,16 +156,19 @@ Prohibido, sin excepciones:
  * del equipo dice lo grave primero y con sus días. El informe de dirección
  * llega al cliente, y se escribe para dar cuenta del trabajo con buena imagen
  * sin faltar a los datos: lo que ha ido bien abre; lo pendiente es trabajo en
- * curso y margen de mejora; los días que lleva abierta una incidencia no se
- * dicen, y una sala no se señala como problemática. Los problemas de verdad sí
- * se cuentan, con su cifra, como algo visto y una decisión que conviene tomar.
+ * curso; los días que lleva abierta una incidencia no se dicen, y una sala no
+ * se señala como problemática. Los problemas de verdad sí se cuentan, con su
+ * cifra, como algo visto y lo que se va a hacer con ello. Y no se inventan
+ * mejoras: un cable que se rompe en un aula es desgaste, no un proyecto.
  */
 const POR_AUDIENCIA: Record<Audiencia, string> = {
   equipo: `Lo leen el responsable del servicio y el equipo técnico que va a las aulas. Es un parte de trabajo: lo grave primero, con sus días y su sala, y lo que hay que hacer esta semana.`,
   direccion: `Lo recibe la dirección de la universidad, que es el cliente del servicio. Se escribe para dar cuenta del trabajo con buena imagen y sin faltar a los datos:
-- Se abre por lo que ha ido bien o ha mejorado, con su cifra: más revisiones, más cierres que aperturas, cierres rápidos, ninguna incidencia de gravedad alta. Lo pendiente se cuenta como lo que es, trabajo en curso y margen de mejora, nunca como reproche.
+- Se abre por lo que ha ido bien o ha mejorado, con su cifra: más revisiones, más cierres que aperturas, cierres rápidos, ninguna incidencia de gravedad alta. Lo pendiente se cuenta como lo que es, trabajo en curso, nunca como reproche.
 - No se dice cuántos días lleva abierta una incidencia, ni «estancadas», ni «sin cerrar desde hace», ni «las más antiguas», ni se señala una sala como problemática o poco fiable: hay aulas difíciles y eso no es noticia.
-- Los problemas reales sí se dicen, con su dato: una incidencia de gravedad alta, una lámpara a punto de fundirse, una pieza que se repite en la misma sala, un edificio que concentra lo abierto, un almacén por reponer. Se cuentan como algo que el servicio tiene visto y una decisión que conviene tomar.
+- Los problemas reales sí se dicen, con su dato: una incidencia de gravedad alta, una lámpara a punto de fundirse, un almacén por reponer. Se cuentan como algo que el servicio tiene visto y lo que va a hacer con ello.
+- Esto es una universidad: los cables, los adaptadores, las pilas y los mandos se gastan y se rompen con el uso, o los rompen. Que el mismo material vuelva a la misma aula es consumo normal: no se deduce de ahí un problema de instalación ni una causa de fondo, y no se recomienda revisar nada. Que un edificio abra más partes que otro tampoco pide explicación.
+- No se proponen mejoras donde no las hay. Si no hay un paso siguiente claro —reponer, cambiar una lámpara, atender lo grave—, la lista de recomendaciones va vacía.
 - Tono cordial y sereno. Sin triunfalismo: que va bien se demuestra con la cifra, no con adjetivos.
 - Las recomendaciones son decisiones de dirección —aprobar una compra, reforzar una ronda, priorizar un edificio—, no tareas de taller.`,
 }
@@ -317,9 +320,11 @@ export function expediente(d: ReportData, se: Senal[], audiencia: Audiencia): st
     }
   }
 
-  if (d.reincidentes.length) {
+  // Solo para el equipo: de «el mismo cable cuatro veces en la misma aula» un
+  // modelo saca siempre que hay que revisar la instalación, y es desgaste.
+  if (d.reincidentes.length && audiencia !== 'direccion') {
     l.push('')
-    l.push('MISMO CONSUMO REPETIDO EN LA MISMA SALA (6 meses)')
+    l.push('DÓNDE SE REPONE MÁS EL MISMO MATERIAL (6 meses; es desgaste de uso, no una avería de la instalación)')
     for (const r of d.reincidentes) l.push(`- ${r.building} ${r.room}: «${r.item}» ${r.veces} veces`)
   }
 

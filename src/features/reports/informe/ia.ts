@@ -40,7 +40,13 @@
  */
 
 import type { ReportData } from './tipos'
-import { MARCO_DEL_SERVICIO, fueraDeAlcance, insisteEnLaRonda, sinPedirPermiso } from './contrato'
+import {
+  MARCO_DEL_SERVICIO,
+  fueraDeAlcance,
+  insisteEnLaRonda,
+  leeElDesgasteComoFallo,
+  sinPedirPermiso,
+} from './contrato'
 import { TOPE_ENFOQUE } from './opciones'
 import { type Lectura, type QueSeCuenta, type Senal, dias } from './analisis'
 import type { Separado } from './cierres'
@@ -148,6 +154,11 @@ Las revisiones de aulas, que tienen su regla aparte:
 - Nunca se habla de la cobertura del campus, del porcentaje de salas revisadas, de salas sin revisar ni de ampliar o reforzar la ronda. No es una falta y no se cuenta como tal.
 - Si el expediente trae revisiones, se cuentan como lo que son, una puesta a punto hecha, con su cifra y nada más.
 
+El desgaste, que tampoco es una falta, y las mejoras que no hay:
+- Esto es una universidad: los cables, los adaptadores, las pilas, los mandos, los teclados y los ratones se gastan y se rompen con el uso, o los rompen. Que el mismo material vuelva a la misma aula es consumo normal. Se cuenta como material servido y nada más: no se deduce de ahí un problema de instalación ni una causa de fondo, y no se recomienda revisar nada.
+- Que un edificio abra más partes que otro tampoco pide explicación: suele ser el que tiene más aulas y más clases.
+- No se proponen mejoras donde no las hay. Las recomendaciones son los pasos siguientes del propio servicio —reponer lo que baja del mínimo, cambiar una lámpara antes de que se funda, atender primero lo grave—. Si no hay ninguno, la lista va vacía: no se rellena.
+
 Prohibido, sin excepciones:
 - Emojis, negritas, markdown, viñetas, títulos con dos puntos, MAYÚSCULAS de énfasis.
 - Estas fórmulas y cualquier variante: «es importante destacar», «cabe señalar», «en resumen», «en conclusión», «de cara a», «a nivel de», «clave», «robusto», «óptimo», «sinergia», «no solo... sino también», «en el contexto actual», «se recomienda encarecidamente».
@@ -161,16 +172,17 @@ Prohibido, sin excepciones:
  * del equipo dice lo grave primero y con sus días. El informe de dirección
  * llega al cliente, y se escribe para dar cuenta del trabajo con buena imagen
  * sin faltar a los datos: lo que ha ido bien abre; lo pendiente es trabajo en
- * curso y margen de mejora; los días que lleva abierta una incidencia no se
- * dicen, y una sala no se señala como problemática. Los problemas de verdad sí
- * se cuentan, con su cifra, como algo visto y una decisión que conviene tomar.
+ * curso; los días que lleva abierta una incidencia no se dicen, y una sala no
+ * se señala como problemática. Los problemas de verdad sí se cuentan, con su
+ * cifra, como algo visto y lo que se va a hacer con ello. Y no se inventan
+ * mejoras: un cable que se rompe en un aula es desgaste, no un proyecto.
  */
 const POR_AUDIENCIA: Record<Audiencia, string> = {
   equipo: `Lo leen el responsable del servicio y el equipo técnico que va a las aulas. Es un parte de trabajo: el titular y la entradilla dan cuenta de lo hecho, y los hallazgos dicen lo que hay que hacer esta semana, lo grave primero, con sus días y su sala.`,
   direccion: `Lo recibe la dirección de la universidad, que es el cliente del servicio. Se escribe para dar cuenta del trabajo con buena imagen y sin faltar a los datos:
-- Se abre por lo que ha ido bien o ha mejorado, con su cifra: partes resueltos, más cierres que aperturas, cierres en el día o en menos de 48 horas, ninguna incidencia de gravedad alta, material servido desde el almacén, almacén y ordenadores de repuesto preparados. Lo pendiente se cuenta como lo que es, trabajo en curso y margen de mejora, nunca como reproche.
+- Se abre por lo que ha ido bien o ha mejorado, con su cifra: partes resueltos, más cierres que aperturas, cierres en el día o en menos de 48 horas, ninguna incidencia de gravedad alta, material servido desde el almacén, almacén y ordenadores de repuesto preparados. Lo pendiente se cuenta como lo que es, trabajo en curso, nunca como reproche.
 - No se dice cuántos días lleva abierta una incidencia, ni «estancadas», ni «sin cerrar desde hace», ni «las más antiguas», ni se señala una sala como problemática o poco fiable: hay aulas difíciles y eso no es noticia.
-- Los problemas reales sí se dicen, con su dato: una incidencia de gravedad alta, una lámpara a punto de fundirse, una pieza que se repite en la misma sala, un edificio que concentra lo abierto, un almacén por reponer. Se cuentan como algo que el servicio tiene visto y una decisión que conviene tomar.
+- Los problemas reales sí se dicen, con su dato: una incidencia de gravedad alta en curso, una lámpara a punto de fundirse, un artículo del almacén por reponer. Se cuentan como algo que el servicio tiene visto y lo que va a hacer con ello.
 - Tono cordial y sereno. Sin triunfalismo: que va bien se demuestra con la cifra, no con adjetivos.
 - Las recomendaciones se escriben en la voz de quien hace el trabajo, porque el informe lo firma el servicio: «Sustituir las seis lámparas por debajo del 20 %», «Reponer los cables HDMI que quedan bajo mínimo». Nunca «Autorizar», «Aprobar» ni «Solicitar el visto bueno»: el aula es nuestro encargo y no se pide permiso para cumplirlo. Cuando hay un gasto de por medio se dice qué hace falta y por qué, que es lo que la universidad necesita para decidir.
 - Y son cosas de conjunto —un edificio, una reposición, un cambio programado—, no el parte de taller de cada avería.`,
@@ -369,9 +381,16 @@ export function expediente(
     }
   }
 
-  if (d.reincidentes.length) {
+  /*
+   * Dónde se repone más, solo para el equipo y dicho como lo que es. A
+   * dirección no viaja: de «el mismo cable cuatro veces en la misma aula» un
+   * modelo saca siempre la misma conclusión —hay que revisar la instalación—,
+   * y en un campus no la hay: los cables se rompen. Lo que no se le da no puede
+   * acabar en el texto.
+   */
+  if (d.reincidentes.length && !dir) {
     l.push('')
-    l.push('MISMO CONSUMO REPETIDO EN LA MISMA SALA (6 meses)')
+    l.push('DÓNDE SE REPONE MÁS EL MISMO MATERIAL (6 meses; es desgaste de uso, no una avería de la instalación)')
     for (const r of d.reincidentes) l.push(`- ${r.building} ${r.room}: «${r.item}» ${r.veces} veces`)
   }
 
@@ -437,7 +456,7 @@ function sangrada(texto: string): string {
 export function encargo(d: ReportData, se: Senal[], o: OpcionesIA): string {
   const paraQuien =
     o.audiencia === 'direccion'
-      ? 'Es el informe para la dirección de la universidad: le interesa saber que el campus está atendido, qué se ha resuelto y qué decisiones convienen (reposiciones, prioridades).'
+      ? 'Es el informe para la dirección de la universidad: le interesa saber que el campus está atendido, qué se ha resuelto y, si lo hay, qué viene ahora (reposiciones, prioridades). No espera propuestas de mejora: si no hay nada que proponer, no se propone.'
       : 'Es el parte para el equipo técnico que va a las aulas: le interesa qué salas tocar, con qué material y en qué orden.'
 
   return `${paraQuien}
@@ -724,6 +743,18 @@ export async function redactar(
       const ronda = insisteEnLaRonda(todo)
       if (ronda) {
         throw new Error(`cuenta la ronda de revisión como una falta («${ronda}»)`)
+      }
+
+      /*
+       * Y el desgaste leído como avería, o la mejora que no hay. «Revisar la
+       * instalación del aula en vez de reponer el cable otra vez» suena a buen
+       * consejo y es recomendarle al cliente un trabajo que no existe: en una
+       * universidad los cables se rompen. Con una basta, como con lo que se
+       * sale del encargo: es un error de fondo, no un tic.
+       */
+      const desgaste = leeElDesgasteComoFallo(todo)
+      if (desgaste) {
+        throw new Error(`lee el desgaste de uso como una avería, o propone una mejora que no hay («${desgaste}»)`)
       }
 
       /*

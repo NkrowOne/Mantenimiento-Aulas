@@ -35,9 +35,15 @@
  *                 señala una sala como problemática: hay aulas difíciles, y eso
  *                 no es noticia para quien dirige un campus. Los problemas de
  *                 verdad —una incidencia de gravedad alta, una lámpara a punto
- *                 de fundirse, la misma pieza tres veces en la misma sala— sí
- *                 se dicen, con su cifra, como algo visto y una decisión que
- *                 conviene tomar.
+ *                 de fundirse— sí se dicen, con su cifra, como algo visto y lo
+ *                 que se va a hacer con ello.
+ *
+ * NO SE INVENTAN MEJORAS. Esto es una universidad: los cables, los adaptadores
+ * y las pilas se gastan y se rompen con el uso, o los rompen. Aquí había dos
+ * señales que lo leían al revés —«la misma pieza vuelve a la misma sala:
+ * revisa la instalación» y «el edificio que concentra lo abierto suele tener
+ * una causa común»— y las dos se han quitado: lo primero es desgaste, lo
+ * segundo es el edificio más grande. Va a la par con `analisis.ts` de la app.
  */
 
 import type { ReportData } from './data.js'
@@ -282,22 +288,6 @@ export function senales(d: ReportData, audiencia: Audiencia): Senal[] {
     })
   }
 
-  if (d.reincidentes.length > 0) {
-    const r = d.reincidentes[0]!
-    s.push({
-      clave: 'reincidencia',
-      titulo: `${d.reincidentes.length === 1 ? 'Una sala repite' : `${d.reincidentes.length} salas repiten`} el mismo consumo`,
-      cuerpo:
-        `En ${r.building} ${r.room} se ha puesto «${r.item}» ${r.veces} veces en seis meses. ` +
-        (dir
-          ? 'Cuando la misma pieza vuelve a la misma sala conviene mirar la instalación: es la mejora que más repuestos ahorra.'
-          : 'Cuando la misma pieza vuelve a la misma sala, el problema no es la pieza.'),
-      tono: 'aviso',
-      peso: dir ? 3 : 1,
-      accion: `Revisar la instalación de ${r.building} ${r.room} en vez de reponer «${r.item}» otra vez.`,
-    })
-  }
-
   if (d.situacion.lamparasAlLimite > 0) {
     const peor = d.lamparas[0]
     s.push({
@@ -315,23 +305,6 @@ export function senales(d: ReportData, audiencia: Audiencia): Senal[] {
       accion: dir
         ? 'Aprobar la compra de lámparas de repuesto y cambiarlas fuera del horario de clase.'
         : 'Pedir lámparas de repuesto y planificar el cambio fuera de horario de clase.',
-    })
-  }
-
-  const cuello = d.porEdificio[0]
-  if (cuello && d.ahora.registros >= 4 && cuello.abiertas / d.ahora.registros >= 0.4) {
-    s.push({
-      clave: 'concentracion',
-      titulo: `${cuello.code} concentra ${porcentaje(cuello.abiertas, d.ahora.registros)} de lo abierto`,
-      cuerpo:
-        `${cuello.abiertas} de los ${d.ahora.registros} registros del periodo salen de ${cuello.name} ` +
-        `(${plural(cuello.salas, 'sala')}). Un edificio que acapara así suele tener una causa común` +
-        (dir ? ': resolverla mejora varias aulas de golpe.' : ', no diez averías distintas.'),
-      tono: 'aviso',
-      peso: dir ? 5 : 3,
-      accion: dir
-        ? `Plantear una revisión de conjunto de ${cuello.code}: instalación, antigüedad del equipo o uso.`
-        : `Mirar ${cuello.code} como conjunto: instalación, antigüedad del equipo o uso.`,
     })
   }
 

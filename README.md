@@ -585,13 +585,24 @@ de Gemini**, y se pega desde la propia pantalla.
 hacer primero, cada incidencia con sus días abiertas, cada sala con su
 fiabilidad. *Dirección* es lo que se entrega
 al cliente: abre por lo que ha mejorado, cuenta lo pendiente como trabajo en
-curso y margen de mejora, y no dice cuántos días lleva abierta una incidencia ni
-señala un aula como problemática —la sección «Sin cerrar» no se puede pedir para
-él, se marque lo que se marque—. Los problemas de verdad sí salen, con su cifra:
-una incidencia de gravedad alta, una lámpara al límite, la misma pieza repetida
-en la misma sala, un edificio que concentra lo abierto. Las cifras son las
-mismas en los dos; cambia lo que se cuenta y cómo se cuenta. Los informes
-programados salen para dirección.
+curso, y no dice cuántos días lleva abierta una incidencia ni señala un aula
+como problemática —las secciones «Sin cerrar» y «Salas señaladas» no se pueden
+pedir para él, se marque lo que se marque—. Los problemas de verdad sí salen,
+con su cifra: una incidencia de gravedad alta, una lámpara al límite, un
+artículo por reponer. Las cifras son las mismas en los dos; cambia lo que se
+cuenta y cómo se cuenta. Los informes programados salen para dirección.
+
+**No se inventan mejoras.** Esto es una universidad: los cables, los
+adaptadores y las pilas se gastan y se rompen con el uso, o los rompen. El
+informe leía el mismo repuesto varias veces en la misma aula como un fallo de la
+instalación («revisar la instalación en vez de reponer otra vez») y del edificio
+con más partes decía que «suele tener una causa común». Las dos lecturas se han
+quitado: lo primero es desgaste y lo segundo es el edificio más grande. La
+sección del cliente ya no se llama «Propuestas de mejora» sino «Próximos pasos»
+—reponer, cambiar una lámpara a tiempo, atender primero lo grave—, y si no hay
+ninguno no sale. El equipo conserva la tabla «Dónde se repone más», como lo que
+es: saber qué llevar encima. A la IA se le dice lo mismo, y un texto suyo que
+mande «revisar la instalación» se descarta.
 
 **De qué habla, y por dónde abre.** De lo que el servicio hace todos los días:
 los partes que entran y los que se resuelven, con qué rapidez se cierran, en

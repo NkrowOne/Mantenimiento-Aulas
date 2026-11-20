@@ -4,7 +4,14 @@ import { SECCIONES, TOPE_ENFOQUE, leerOpciones } from './opciones'
 import { diasLargo, renderReport, titularEnDosRenglones } from './plantilla'
 import { RAMPA_DE_TIEMPOS, actividadDiaria, barraDeTramos, franjaDeTramos, tendencia, tintaSobre } from './graficos'
 import { cifrasInventadas, configurarIA, encargo, expediente, formulasDelatoras, instruccion } from './ia'
-import { MARCO_DEL_SERVICIO, NIVELES, fueraDeAlcance, insisteEnLaRonda, sinPedirPermiso } from './contrato'
+import {
+  MARCO_DEL_SERVICIO,
+  NIVELES,
+  fueraDeAlcance,
+  insisteEnLaRonda,
+  leeElDesgasteComoFallo,
+  sinPedirPermiso,
+} from './contrato'
 import { etiquetaDia, nombreComparacion, nombreDia, periodoAnterior } from '../periodos'
 import { inicioDelDia } from '@/domain/fechas'
 import type { ReportData } from './tipos'
@@ -629,11 +636,12 @@ describe('el informe para dirección', () => {
     // Y no tapan lo que pide una decisión: las lámparas siguen ahí.
     const lamparas = l.hallazgos.find((h) => h.titulo === '3 lámparas para cambiar antes de que se fundan')
     expect(lamparas?.clase).toBe('seguimiento')
-    // Tres logros como mucho cuando hay tres cosas que decidir, aunque haya más.
+    // Los logros primero y lo que está en curso detrás, sin mezclarse.
     const se = senales(bueno, 'direccion')
     expect(se.filter((x) => x.tono === 'ok').length).toBeGreaterThan(3)
-    expect(l.hallazgos.slice(0, 3).every((h) => h.clase === 'logro')).toBe(true)
-    expect(l.hallazgos[3]?.clase).toBe('seguimiento')
+    const clases = l.hallazgos.map((h) => h.clase)
+    expect(clases.slice(0, 3)).toEqual(['logro', 'logro', 'logro'])
+    expect(clases.lastIndexOf('logro')).toBeLessThan(clases.indexOf('seguimiento'))
   })
 
   it('no dice cuántos días lleva abierta nada, ni en la entradilla ni en los hallazgos', () => {
@@ -651,9 +659,8 @@ describe('el informe para dirección', () => {
     expect(claves).not.toContain('estancadas')
     expect(claves).not.toContain('sin-sala')
     expect(claves).toContain('gravedad')
-    expect(claves).toContain('reincidencia')
     expect(claves).toContain('lamparas')
-    expect(claves).toContain('concentracion')
+    expect(claves).toContain('almacen')
     expect(se.find((x) => x.clave === 'gravedad')?.tono).toBe('critico')
     expect(se.map((s) => s.peso)).toEqual([...se.map((s) => s.peso)].sort((a, b) => a - b))
   })
@@ -709,13 +716,122 @@ describe('el informe para dirección', () => {
     expect(html).not.toContain('de más de 7 días')
     expect(html).not.toContain('arrastrando las antiguas')
     expect(html).not.toContain('Salas señaladas')
-    expect(html).toContain('Propuestas de mejora')
-    // La pieza repetida sí: es una mejora concreta, con su sala.
-    expect(html).toContain('Dónde hay una mejora clara')
-    expect(html).toContain('Mismo repuesto, misma sala')
-    expect(html).toContain('Cable HDMI 3 m')
+    // Lo que viene, no «propuestas de mejora»: el nombre obligaba a tenerlas.
+    expect(html).toContain('Próximos pasos')
+    expect(html).not.toContain('Propuestas de mejora')
     // Y gravedad alta también.
     expect(html).toContain('de gravedad alta')
+  })
+
+  /*
+   * Es una universidad: los cables se rompen o los rompen. El informe leía el
+   * mismo repuesto cuatro veces en la misma aula como un fallo de la
+   * instalación y lo llevaba al cliente como «una mejora clara»; y del edificio
+   * con más partes decía que «suele tener una causa común». Ni lo uno ni lo
+   * otro: es desgaste, y es el edificio más grande.
+   */
+  describe('el desgaste no es una avería, y no se inventan mejoras', () => {
+    const todoLoEscrito = (quien: 'direccion' | 'equipo'): string => {
+      const l = lecturaCalculada(d, quien)
+      return [
+        l.titular,
+        l.entradilla,
+        ...l.hallazgos.flatMap((h) => [h.titulo, h.cuerpo]),
+        ...l.recomendaciones.flatMap((r) => [r.accion, r.porque]),
+      ].join(' ')
+    }
+
+    it('el mismo repuesto en la misma sala ya no es una señal, para nadie', () => {
+      for (const quien of ['direccion', 'equipo'] as const) {
+        const claves = senales(d, quien).map((x) => x.clave)
+        expect(claves).not.toContain('reincidencia')
+        expect(claves).not.toContain('concentracion')
+      }
+    })
+
+    it('ni la lectura ni las recomendaciones mandan revisar la instalación', () => {
+      for (const quien of ['direccion', 'equipo'] as const) {
+        const texto = todoLoEscrito(quien)
+        expect(texto).not.toMatch(/instalaci[oó]n|causa com[uú]n|mala suerte|en vez de reponer|revisi[oó]n de conjunto/i)
+        expect(leeElDesgasteComoFallo(texto)).toBeNull()
+      }
+    })
+
+    it('un edificio que se lleva casi todos los partes tampoco pide explicación', () => {
+      const acaparado: ReportData = {
+        ...d,
+        porEdificio: d.porEdificio.map((e, i) => (i === 0 ? { ...e, abiertas: d.ahora.registros } : e)),
+      }
+      const se = senales(acaparado, 'direccion')
+      expect(se.map((x) => x.clave)).not.toContain('concentracion')
+      expect(se.map((x) => `${x.titulo} ${x.cuerpo} ${x.accion ?? ''}`).join(' ')).not.toMatch(/concentra|acapara|causa/i)
+    })
+
+    it('el documento de dirección no lleva la tabla del repuesto repetido', () => {
+      const html = renderReport(d, lecturaCalculada(d, 'direccion'), opcionesDireccion, pie)
+      expect(html).not.toContain('Dónde hay una mejora clara')
+      expect(html).not.toContain('Mismo repuesto, misma sala')
+      expect(html).not.toContain('Dónde se repone más')
+      expect(html).not.toContain('no es mala suerte')
+    })
+
+    it('el del equipo sí, como lo que es: qué llevar encima', () => {
+      const html = renderReport(d, lecturaCalculada(d, 'equipo'), opcionesCompletas, pie)
+      expect(html).toContain('Dónde se repone más')
+      expect(html).toContain('desgaste de uso')
+      expect(html).toContain('Cable HDMI 3 m')
+      expect(html).not.toContain('no es mala suerte')
+      expect(html).not.toContain('Mismo repuesto, misma sala')
+    })
+
+    it('«Salas señaladas» no se puede pedir para dirección', () => {
+      expect(leerOpciones({ secciones: ['salas', 'resumen'], audiencia: 'direccion' }).secciones).toEqual(['resumen'])
+      expect(leerOpciones({ audiencia: 'direccion' }).secciones).not.toContain('salas')
+      expect(leerOpciones({ secciones: ['salas'], audiencia: 'equipo' }).secciones).toEqual(['salas'])
+    })
+
+    it('sin nada que hacer no hay «Próximos pasos»: la sección no se rellena', () => {
+      const tranquilo: ReportData = {
+        ...d,
+        ahora: { ...d.ahora, gravedadAlta: 0, gravedadAltaResueltas: 0 },
+        situacion: { ...d.situacion, lamparasAlLimite: 0, articulosBajoMinimo: 0 },
+        lamparas: [],
+        almacen: { ...d.almacen, porReponer: [] },
+      }
+      const l = lecturaCalculada(tranquilo, 'direccion')
+      expect(l.recomendaciones).toEqual([])
+      const html = renderReport(tranquilo, l, opcionesDireccion, pie)
+      expect(html).not.toContain('Próximos pasos')
+      expect(html).not.toContain('Propuestas de mejora')
+    })
+
+    it('la IA no recibe el repuesto repetido cuando escribe para dirección', () => {
+      const para = (quien: 'direccion' | 'equipo'): string => expediente(d, senales(d, quien), quien)
+      expect(para('direccion')).not.toContain('H-102: «Cable HDMI 3 m» 4 veces')
+      expect(para('equipo')).toContain('H-102: «Cable HDMI 3 m» 4 veces')
+      expect(para('equipo')).toContain('es desgaste de uso')
+    })
+
+    it('y se le dice a las dos audiencias que un cable roto es consumo', () => {
+      for (const quien of ['direccion', 'equipo'] as const) {
+        expect(instruccion(quien)).toContain('los rompen')
+        expect(instruccion(quien)).toContain('No se proponen mejoras donde no las hay')
+      }
+      expect(instruccion('direccion')).not.toMatch(/pieza que se repite|concentra lo abierto|margen de mejora/)
+    })
+
+    it('el filtro caza la conclusión, no el dato', () => {
+      expect(leeElDesgasteComoFallo('Conviene revisar la instalación del aula H-102.')).not.toBeNull()
+      expect(leeElDesgasteComoFallo('Revisar la instalación de H H-102 en vez de reponer el cable otra vez.')).not.toBeNull()
+      expect(leeElDesgasteComoFallo('Un edificio que acapara así suele tener una causa común.')).not.toBeNull()
+      expect(leeElDesgasteComoFallo('Tres veces la misma pieza no es mala suerte.')).not.toBeNull()
+      expect(leeElDesgasteComoFallo('Plantear una revisión de conjunto del edificio H.')).not.toBeNull()
+      // Lo que sí se puede decir: el consumo, la reposición, el trabajo hecho.
+      expect(leeElDesgasteComoFallo('Se han servido seis cables HDMI desde el almacén.')).toBeNull()
+      expect(leeElDesgasteComoFallo('Reponer el cable HDMI 3 m, que baja del mínimo.')).toBeNull()
+      expect(leeElDesgasteComoFallo('La instalación del proyector nuevo quedó terminada el martes.')).toBeNull()
+      expect(leeElDesgasteComoFallo('Se ha hecho la revisión de 16 aulas.')).toBeNull()
+    })
   })
 
   it('el parte del equipo sigue diciéndolo todo', () => {
